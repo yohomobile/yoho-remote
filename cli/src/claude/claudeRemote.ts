@@ -192,6 +192,9 @@ export async function claudeRemote(opts: {
         thinkingTimeoutReject = null;
     };
 
+    // Track turn duration
+    let turnStartTime = Date.now();
+
     updateThinking(true);
     try {
         logger.debug(`[claudeRemote] Starting to iterate over response`);
@@ -239,6 +242,14 @@ export async function claudeRemote(opts: {
 
             // Handle result messages
             if (message.type === 'result') {
+                // Emit turn duration event
+                const turnDurationMs = Date.now() - turnStartTime;
+                opts.onMessage({
+                    type: 'system',
+                    subtype: 'turn_duration',
+                    durationMs: turnDurationMs,
+                } as SDKMessage);
+
                 updateThinking(false);
                 clearThinkingTimeout(); // No need for timeout while waiting for user
                 const resultMsg = message as SDKResultMessage;
@@ -280,6 +291,7 @@ export async function claudeRemote(opts: {
                     return;
                 }
                 mode = next.mode;
+                turnStartTime = Date.now(); // Reset turn timer
                 const nextContent = await buildMessageContent(next.message, opts.path);
                 messages.push({ type: 'user', message: { role: 'user', content: nextContent } });
                 resetThinkingTimeout(); // Restart timeout after sending new message
