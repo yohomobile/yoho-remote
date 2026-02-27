@@ -253,6 +253,20 @@ function normalizeAgentRecord(
         if (data.type === 'user') {
             return normalizeUserOutput(messageId, localId, createdAt, data, meta)
         }
+        if (data.type === 'system' && data.subtype === 'turn_duration') {
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'event',
+                content: {
+                    type: 'turn-duration',
+                    durationMs: asNumber(data.durationMs) ?? 0
+                },
+                isSidechain: false,
+                meta
+            }
+        }
         if (data.type === 'summary' && typeof data.summary === 'string') {
             return {
                 id: messageId,
