@@ -8,6 +8,7 @@ import type { SSEManager } from '../../sse/sseManager'
 import type { WebAppEnv } from '../middleware/auth'
 import { buildInitPrompt } from '../prompts/initPrompt'
 import { requireMachine } from './guards'
+import { isMachineBlocked } from './blocklist'
 
 const spawnBodySchema = z.object({
     directory: z.string().min(1),
@@ -109,6 +110,7 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
 
         const namespace = c.get('namespace')
         const machines = engine.getOnlineMachinesByNamespace(namespace)
+            .filter((m) => !isMachineBlocked(m))
         return c.json({ machines })
     })
 

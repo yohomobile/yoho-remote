@@ -2,6 +2,7 @@ import type { Context } from 'hono'
 import type { Machine, Session, SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
 import type { IStore } from '../../store'
+import { isMachineBlocked } from './blocklist'
 
 export function requireSyncEngine(
     c: Context<WebAppEnv>,
@@ -132,6 +133,9 @@ export function requireMachine(
     }
     if (machine.namespace !== namespace) {
         return c.json({ error: 'Machine access denied' }, 403)
+    }
+    if (isMachineBlocked(machine)) {
+        return c.json({ error: 'Machine is temporarily unavailable' }, 403)
     }
     return machine
 }
