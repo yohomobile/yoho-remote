@@ -615,8 +615,6 @@ export function createSessionsRoutes(
         // Keycloak users (namespace='default') see only their own sessions (created_by matches their email)
         // CLI users (with custom namespace) see only sessions in their namespace
         const isKeycloakUser = namespace === 'default'
-        // Service accounts (e.g. OpenClaw plugin) can see all sessions
-        const isServiceAccount = email?.startsWith('service-account-') ?? false
 
         // Get sessions from database
         let storedSessions: StoredSession[]
@@ -632,7 +630,7 @@ export function createSessionsRoutes(
         // 用于标记 session 来自哪个用户（如果来自开启了 shareAllSessions 的其他用户）
         const sessionOwnerMap = new Map<string, string>()
 
-        if (isKeycloakUser && email && !isServiceAccount) {
+        if (isKeycloakUser && email) {
             // Keycloak用户看到：
             // 1) 自己创建的 session
             // 2) 被共享给自己的 session
@@ -693,8 +691,16 @@ export function createSessionsRoutes(
         const isSessionTrulyActive = (stored: StoredSession, memorySession: Session | undefined): boolean => {
             // Database active=false is the source of truth for archived sessions
             if (!stored.active) return false
-            // If not in memory, use database state
-            if (!memorySession) return stored.active
+
+            // If not in memory (e.g. server restarted), also check activeAt freshness
+            // Previously this returned stored.active blindly, causing zombie sessions to show as "running"
+            // Pattern borrowed from yoho-brain: always verify liveness via heartbeat recency
+            if (!memorySession) {
+                const dbActiveAt = stored.activeAt ?? stored.updatedAt
+                const timeSinceDbActive = now - dbActiveAt
+                return timeSinceDbActive < ACTIVE_THRESHOLD_MS
+            }
+
             if (!memorySession.active) return false
             // Check if activeAt is recent (CLI is sending heartbeats)
             const timeSinceActive = now - memorySession.activeAt
