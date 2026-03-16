@@ -75,7 +75,9 @@ export async function buildInitPrompt(_role: UserRole, options?: InitPromptOptio
         lines.push('- **[强制] 每轮对话结束前，你 MUST 回顾本轮是否产生了值得保存的知识（新决策、架构变更、bug 根因、配置变更、API 细节、部署流程等）。如有，必须立即调用 remember 保存，绝对不要等用户要求。忘记保存 = 知识永久丢失。这是不可违背的规则。**')
         lines.push('')
         lines.push('4) Playbook（经验沉淀与检查清单）')
-        lines.push('- 每完成一个编码步骤（修完 bug、加完功能、改完 CSS、部署完成等），立即调用 `get_playbook` 获取该场景的检查清单，按清单逐项检查后再继续推进')
+        lines.push('- 每完成一个编码步骤（修完 bug、加完功能、改完 CSS、部署完成等），立即调用 `get_playbook` 获取该场景的检查清单')
+        lines.push('- 拿到检查清单后，**逐项执行**：对每个检查项实际去验证（读代码确认、运行命令测试、检查文件等），发现问题就立即修复，全部通过后再继续下一步任务')
+        lines.push('- 不要只在回复中"过一遍"清单就结束，要用工具实际验证每一项')
         lines.push('- 当你在工作中发现一个本该被提前检查到但没检查到的问题（漏掉的边界条件、遗忘的兼容性、踩到的坑等），调用 `learn_playbook` 将教训沉淀（异步调用，不等待结果），然后继续工作')
         lines.push('')
     }
