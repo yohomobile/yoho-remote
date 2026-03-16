@@ -78,7 +78,7 @@ export async function buildInitPrompt(_role: UserRole, options?: InitPromptOptio
         lines.push('- [强制] 每轮对话完成用户请求后、回复用户之前，MUST 调用 `get_playbook` 获取本轮改动对应场景的检查清单。不调用 get_playbook 就结束 = 违规。')
         lines.push('- [强制] 拿到检查清单后，MUST 逐项用工具实际验证（读代码确认、运行命令测试、检查文件等）。发现未通过的项，立即修复代码，修复后重新验证直到通过。全部通过后才能继续下一步。')
         lines.push('- [强制] 严禁只在回复文本中"口头过一遍"清单就结束。每一项都必须有对应的工具调用（Read/Grep/Bash 等）作为验证证据。')
-        lines.push('- [强制] 工作中发现本该被提前检查到但遗漏的问题时，MUST 调用 `learn_playbook` 沉淀教训（异步调用，不等待结果），然后继续工作。')
+        lines.push('- [强制] 每轮对话结束时，MUST 调用 `learn_playbook` 将本轮工作中的经验教训沉淀回 playbook（异步调用，不等待结果）。包括但不限于：踩到的坑、发现的边界条件、用户反馈暴露的检查盲区、值得复用的解决模式等。每轮都要调用，不是只在出问题时才调用。')
         lines.push('')
     }
 
