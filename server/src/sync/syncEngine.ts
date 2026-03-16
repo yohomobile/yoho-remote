@@ -974,6 +974,11 @@ export class SyncEngine {
         }
     }
 
+    /** Public alias for refreshSession - used by guards.ts and events.ts */
+    async getOrRefreshSession(sessionId: string): Promise<Session | null> {
+        return this.refreshSession(sessionId)
+    }
+
     private async refreshSession(sessionId: string): Promise<Session | null> {
         let stored = await this.store.getSession(sessionId)
         if (!stored) {

@@ -5,7 +5,7 @@ import { LoadingState } from './LoadingState'
 
 // Filter types
 type ArchiveFilter = boolean  // true = show archived (offline) sessions only
-type OwnerFilter = 'mine' | 'brain' | 'others'
+type OwnerFilter = 'mine' | 'brain' | 'openclaw' | 'others'
 
 function getSessionPath(session: SessionSummary): string | null {
     return session.metadata?.worktree?.basePath ?? session.metadata?.path ?? null
@@ -66,12 +66,15 @@ function filterSessions(
 
         // Owner filter
         const isBrainWorkerSession = session.metadata?.source === 'brain' || session.metadata?.source === 'brain-sdk'
+        const isOpenClawSession = session.metadata?.source === 'openclaw'
         if (ownerFilter === 'mine') {
             if (session.ownerEmail) return false
             if (isBrainWorkerSession) return false
+            if (isOpenClawSession) return false
         } else if (ownerFilter === 'brain') {
-            // Show only brain sessions (source=brain-sdk)
             if (!isBrainWorkerSession) return false
+        } else if (ownerFilter === 'openclaw') {
+            if (!isOpenClawSession) return false
         } else if (ownerFilter === 'others') {
             if (!session.ownerEmail) return false
         }
@@ -136,6 +139,9 @@ function getSourceTag(session: SessionSummary): { label: string; color: string }
     // Machine/automation session tags
     if (source.startsWith('hapi_repair')) {
         return { label: '🤖 Auto Repair', color: 'bg-purple-500/15 text-purple-600' }
+    }
+    if (source === 'openclaw') {
+        return { label: '🦀 OpenClaw', color: 'bg-teal-500/15 text-teal-600' }
     }
     if (source === 'external-api') {
         return { label: '🔌 API', color: 'bg-blue-500/15 text-blue-600' }
@@ -411,6 +417,12 @@ export function SessionList(props: {
         [props.sessions]
     )
 
+    // Check if there are any openclaw sessions
+    const hasOpenClawSessions = useMemo(() =>
+        props.sessions.some(s => s.metadata?.source === 'openclaw'),
+        [props.sessions]
+    )
+
     // Statistics
     const activeCount = filteredSessions.filter(s => s.active).length
 
@@ -451,10 +463,10 @@ export function SessionList(props: {
                         {archiveFilter ? 'Archive' : 'Active'}
                     </button>
                 </div>
-                {(viewOthersSessions || hasBrainSessions) && (
+                {(viewOthersSessions || hasBrainSessions || hasOpenClawSessions) && (
                     <div className="flex items-center gap-1.5 min-w-0">
                         <div className="flex items-center gap-1">
-                            {(viewOthersSessions || hasBrainSessions) && (
+                            {(viewOthersSessions || hasBrainSessions || hasOpenClawSessions) && (
                                 <button
                                     type="button"
                                     onClick={() => setOwnerFilter('mine')}
@@ -482,6 +494,21 @@ export function SessionList(props: {
                                     `}
                                 >
                                     Brain
+                                </button>
+                            )}
+                            {hasOpenClawSessions && (
+                                <button
+                                    type="button"
+                                    onClick={() => setOwnerFilter('openclaw')}
+                                    className={`
+                                        px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
+                                        ${ownerFilter === 'openclaw'
+                                            ? 'bg-gradient-to-r from-teal-500 to-emerald-600 text-white shadow-sm'
+                                            : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
+                                        }
+                                    `}
+                                >
+                                    OpenClaw
                                 </button>
                             )}
                             {viewOthersSessions && (
