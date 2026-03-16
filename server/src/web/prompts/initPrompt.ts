@@ -74,11 +74,11 @@ export async function buildInitPrompt(_role: UserRole, options?: InitPromptOptio
         lines.push('- 开始工作前，先调用 recall 工具查询当前项目的信息（技术栈、目录结构、部署方式等）')
         lines.push('- **[强制] 每轮对话结束前，你 MUST 回顾本轮是否产生了值得保存的知识（新决策、架构变更、bug 根因、配置变更、API 细节、部署流程等）。如有，必须立即调用 remember 保存，绝对不要等用户要求。忘记保存 = 知识永久丢失。这是不可违背的规则。**')
         lines.push('')
-        lines.push('4) Playbook（经验沉淀与检查清单）')
-        lines.push('- 每完成一个编码步骤（修完 bug、加完功能、改完 CSS、部署完成等），立即调用 `get_playbook` 获取该场景的检查清单')
-        lines.push('- 拿到检查清单后，**逐项执行**：对每个检查项实际去验证（读代码确认、运行命令测试、检查文件等），发现问题就立即修复，全部通过后再继续下一步任务')
-        lines.push('- 不要只在回复中"过一遍"清单就结束，要用工具实际验证每一项')
-        lines.push('- 当你在工作中发现一个本该被提前检查到但没检查到的问题（漏掉的边界条件、遗忘的兼容性、踩到的坑等），调用 `learn_playbook` 将教训沉淀（异步调用，不等待结果），然后继续工作')
+        lines.push('4) Playbook（经验沉淀与检查清单）— 不可违背')
+        lines.push('- [强制] 每完成一个编码步骤（修完 bug、加完功能、改完 CSS、部署完成等），MUST 调用 `get_playbook` 获取该场景的检查清单。不调用 get_playbook 就结束 = 违规。')
+        lines.push('- [强制] 拿到检查清单后，MUST 逐项用工具实际验证（读代码确认、运行命令测试、检查文件等）。发现未通过的项，立即修复代码，修复后重新验证直到通过。全部通过后才能继续下一步。')
+        lines.push('- [强制] 严禁只在回复文本中"口头过一遍"清单就结束。每一项都必须有对应的工具调用（Read/Grep/Bash 等）作为验证证据。')
+        lines.push('- [强制] 工作中发现本该被提前检查到但遗漏的问题时，MUST 调用 `learn_playbook` 沉淀教训（异步调用，不等待结果），然后继续工作。')
         lines.push('')
     }
 
