@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
 import type { DecryptedMessage, ModelMode, ModelReasoningEffort, PermissionMode, Session, SessionViewer, TypingUser } from '@/types/api'
-import type { AgentEventBlock, ChatBlock, NormalizedMessage } from '@/chat/types'
+import type { ChatBlock, NormalizedMessage } from '@/chat/types'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import { reduceChatBlocks } from '@/chat/reducer'
@@ -13,8 +13,6 @@ import { HappyComposer } from '@/components/AssistantChat/HappyComposer'
 import { HappyThread } from '@/components/AssistantChat/HappyThread'
 import { useHappyRuntime } from '@/lib/assistant-runtime'
 import { SessionHeader } from '@/components/SessionHeader'
-import { BrainSdkProgressPanel } from '@/components/BrainSdkProgressPanel'
-import { BrainRefineIndicator } from '@/components/BrainRefineIndicator'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
@@ -30,14 +28,6 @@ const MODEL_MODE_VALUES = new Set([
     'gpt-5.1-codex-mini',
     'gpt-5.2'
 ])
-
-type BrainRefineFlow = 'refine' | 'review'
-
-type BrainRefineState = {
-    isRefining: boolean
-    noMessage: boolean
-    flow?: BrainRefineFlow
-}
 
 function coerceModelMode(value: string | null | undefined): ModelMode | undefined {
     if (!value) {
@@ -83,10 +73,6 @@ export function SessionChat(props: {
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
     const [isResuming, setIsResuming] = useState(false)
     const [resumeError, setResumeError] = useState<string | null>(null)
-    const [brainBusy, setBrainBusy] = useState(false)
-    const brainReviewEventsRef = useRef<AgentEventBlock[]>([])
-    const [brainReviewEventsVersion, setBrainReviewEventsVersion] = useState(0)
-    const lastBrainRefineStateRef = useRef<BrainRefineState | null>(null)
     const pendingMessageRef = useRef<string | null>(null)
     const composerSetTextRef = useRef<((text: string) => void) | null>(null)
 
@@ -95,10 +81,6 @@ export function SessionChat(props: {
         blocksByIdRef.current.clear()
         setIsResuming(false)
         setResumeError(null)
-        setBrainBusy(false)
-        brainReviewEventsRef.current = []
-        setBrainReviewEventsVersion(0)
-        lastBrainRefineStateRef.current = null
         pendingMessageRef.current = null
     }, [props.session.id])
 
@@ -148,37 +130,6 @@ export function SessionChat(props: {
     useEffect(() => {
         blocksByIdRef.current = reconciled.byId
     }, [reconciled.byId])
-
-    // 监听 brain-refine done 事件，将"审查通过"作为 AgentEventBlock 插入消息流
-    useEffect(() => {
-        const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
-            if (event.type === 'updated' && event.query.queryKey[0] === 'brain-refine' && event.query.queryKey[1] === props.session.id) {
-                const data = queryClient.getQueryData<BrainRefineState>(queryKeys.brainRefine(props.session.id))
-                const previous = lastBrainRefineStateRef.current
-                lastBrainRefineStateRef.current = data ?? null
-                // 只在 noMessage 从 false/undefined → true 时插入一次“Brain: 一切正常”，避免重复显示。
-                // 同时仅对 review 流程生效：refine 流程（用户消息转发）即使 noMessage=true 也不应插入“一切正常”。
-                if (data && data.flow !== 'refine' && !data.isRefining && data.noMessage && previous?.noMessage !== true) {
-                    const eventBlock: AgentEventBlock = {
-                        kind: 'agent-event',
-                        id: `brain-review-${Date.now()}`,
-                        createdAt: Date.now(),
-                        event: { type: 'message', message: 'Brain: 一切正常' }
-                    }
-                    brainReviewEventsRef.current = [...brainReviewEventsRef.current, eventBlock]
-                    setBrainReviewEventsVersion(v => v + 1)
-                }
-            }
-        })
-        return unsubscribe
-    }, [queryClient, props.session.id])
-
-    // 将 brain review 事件追加到 blocks 末尾
-    const blocksWithBrainEvents = useMemo(() => {
-        if (brainReviewEventsRef.current.length === 0) return reconciled.blocks
-        return [...reconciled.blocks, ...brainReviewEventsRef.current]
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [reconciled.blocks, brainReviewEventsVersion])
 
     // Permission mode change handler
     const handlePermissionModeChange = useCallback(async (mode: PermissionMode) => {
@@ -343,7 +294,7 @@ export function SessionChat(props: {
 
     const runtime = useHappyRuntime({
         session: props.session,
-        blocks: blocksWithBrainEvents,
+        blocks: reconciled.blocks,
         isSending: props.isSending,
         onSendMessage: handleSendMessage,
         onAbort: handleAbort
@@ -357,8 +308,6 @@ export function SessionChat(props: {
     }, [props.session.modelMode, props.session.metadata?.runtimeModel])
     const resolvedReasoningEffort = props.session.modelReasoningEffort
         ?? props.session.metadata?.runtimeModelReasoningEffort
-    const isBrainWorkerSession = props.session.metadata?.source === 'brain-sdk' || props.session.metadata?.source === 'brain'
-
     return (
         <div className="flex h-full">
             {/* 主聊天区域 */}
@@ -369,7 +318,6 @@ export function SessionChat(props: {
                     onBack={props.onBack}
                     onDelete={handleDeleteClick}
                     onRefreshAccount={props.session.metadata?.flavor === 'claude' ? handleRefreshAccount : undefined}
-                    onOpenBrain={(brainSessionId) => window.open(`/sessions/${brainSessionId}`, '_blank')}
                     deleteDisabled={isPending}
                     refreshAccountDisabled={isPending}
                     modelMode={resolvedModelMode}
@@ -436,20 +384,12 @@ export function SessionChat(props: {
                         rawMessagesCount={props.messages.length}
                         normalizedMessagesCount={normalizedMessages.length}
                         renderedMessagesCount={reconciled.blocks.length}
-                        trailing={
-                            props.session.metadata?.source === 'brain-sdk' && props.session.metadata?.mainSessionId
-                                ? <BrainSdkProgressPanel mainSessionId={props.session.metadata.mainSessionId as string} api={props.api} />
-                                : props.session.metadata?.source === 'brain'
-                                    ? undefined
-                                    : <BrainRefineIndicator sessionId={props.session.id} api={props.api} onBrainBusy={setBrainBusy} />
-                        }
                     />
 
-                    {isBrainWorkerSession ? null : (
                     <HappyComposer
                         apiClient={props.api}
                         sessionId={props.session.id}
-                        disabled={props.isSending || isResuming || controlsDisabled || brainBusy}
+                        disabled={props.isSending || isResuming || controlsDisabled}
                         permissionMode={props.session.permissionMode}
                         modelMode={resolvedModelMode}
                         modelReasoningEffort={resolvedReasoningEffort}
@@ -472,7 +412,6 @@ export function SessionChat(props: {
                         otherUserTyping={props.otherUserTyping}
                         setTextRef={composerSetTextRef}
                     />
-                    )}
                 </div>
             </AssistantRuntimeProvider>
             </div>

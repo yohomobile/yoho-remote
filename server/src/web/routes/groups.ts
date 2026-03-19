@@ -8,7 +8,7 @@ import type { SyncEngine, GroupMessageData } from '../../sync/syncEngine'
 import type { SSEManager } from '../../sse/sseManager'
 
 // Zod schemas
-const groupTypeSchema = z.enum(['collaboration', 'debate', 'brain'])
+const groupTypeSchema = z.enum(['collaboration', 'debate'])
 const groupStatusSchema = z.enum(['active', 'paused', 'completed'])
 const memberRoleSchema = z.enum(['owner', 'moderator', 'member'])
 const senderTypeSchema = z.enum(['agent', 'user', 'system'])

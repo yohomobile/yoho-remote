@@ -5,7 +5,7 @@ import { LoadingState } from './LoadingState'
 
 // Filter types
 type ArchiveFilter = boolean  // true = show archived (offline) sessions only
-type OwnerFilter = 'mine' | 'brain' | 'openclaw' | 'others'
+type OwnerFilter = 'mine' | 'openclaw' | 'others'
 
 function getSessionPath(session: SessionSummary): string | null {
     return session.metadata?.worktree?.basePath ?? session.metadata?.path ?? null
@@ -65,14 +65,10 @@ function filterSessions(
         if (!archiveFilter && !session.active) return false
 
         // Owner filter
-        const isBrainWorkerSession = session.metadata?.source === 'brain' || session.metadata?.source === 'brain-sdk'
         const isOpenClawSession = session.metadata?.source === 'openclaw'
         if (ownerFilter === 'mine') {
             if (session.ownerEmail) return false
-            if (isBrainWorkerSession) return false
             if (isOpenClawSession) return false
-        } else if (ownerFilter === 'brain') {
-            if (!isBrainWorkerSession) return false
         } else if (ownerFilter === 'openclaw') {
             if (!isOpenClawSession) return false
         } else if (ownerFilter === 'others') {
@@ -302,17 +298,6 @@ function SessionItem(props: {
                             {openCodeStatus.icon} {openCodeStatus.label}
                         </span>
                     )}
-                    {s.hasBrain && (
-                        <span className={`shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
-                            s.brainStatus === 'active' ? 'bg-indigo-500/15 text-indigo-600' :
-                            s.brainStatus === 'pending' ? 'bg-amber-500/15 text-amber-600' :
-                            'bg-emerald-500/15 text-emerald-600'
-                        }`}>
-                            {s.brainStatus === 'active' ? 'Brain' :
-                             s.brainStatus === 'pending' ? 'Brain' :
-                             'Brain ✓'}
-                        </span>
-                    )}
                     {hasPending && (
                         <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-600">
                             {s.pendingRequestsCount} pending
@@ -411,12 +396,6 @@ export function SessionList(props: {
         return sortSessions(filtered)
     }, [props.sessions, archiveFilter, ownerFilter])
 
-    // Check if there are any brain sessions
-    const hasBrainSessions = useMemo(() =>
-        props.sessions.some(s => s.metadata?.source === 'brain' || s.metadata?.source === 'brain-sdk'),
-        [props.sessions]
-    )
-
     // Check if there are any openclaw sessions
     const hasOpenClawSessions = useMemo(() =>
         props.sessions.some(s => s.metadata?.source === 'openclaw'),
@@ -463,10 +442,10 @@ export function SessionList(props: {
                         {archiveFilter ? 'Archive' : 'Active'}
                     </button>
                 </div>
-                {(viewOthersSessions || hasBrainSessions || hasOpenClawSessions) && (
+                {(viewOthersSessions || hasOpenClawSessions) && (
                     <div className="flex items-center gap-1.5 min-w-0">
                         <div className="flex items-center gap-1">
-                            {(viewOthersSessions || hasBrainSessions || hasOpenClawSessions) && (
+                            {(viewOthersSessions || hasOpenClawSessions) && (
                                 <button
                                     type="button"
                                     onClick={() => setOwnerFilter('mine')}
@@ -479,21 +458,6 @@ export function SessionList(props: {
                                     `}
                                 >
                                     Mine
-                                </button>
-                            )}
-                            {hasBrainSessions && (
-                                <button
-                                    type="button"
-                                    onClick={() => setOwnerFilter('brain')}
-                                    className={`
-                                        px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
-                                        ${ownerFilter === 'brain'
-                                            ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm'
-                                            : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
-                                        }
-                                    `}
-                                >
-                                    Brain
                                 </button>
                             )}
                             {hasOpenClawSessions && (

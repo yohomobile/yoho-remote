@@ -8,7 +8,7 @@ const litellmEnv = {
 };
 
 async function test() {
-  console.log('=== yoho-brain 方式测试 SDK ===\n');
+  console.log('=== SDK 测试 ===\n');
   console.log('ENV:', JSON.stringify(litellmEnv));
 
   const q = query({

@@ -21,7 +21,6 @@ interface SpawnPrefs {
     claudeAgent?: string
     opencodeModel?: string
     codexReasoningEffort?: 'medium' | 'high' | 'xhigh'
-    enableBrain?: boolean
 }
 
 function getSpawnPrefsKey(userEmail: string | null): string {
@@ -183,7 +182,6 @@ export function NewSession(props: {
     const [claudeAgent, setClaudeAgent] = useState(savedPrefs.claudeAgent ?? '')
     const [opencodeModel, setOpencodeModel] = useState(savedPrefs.opencodeModel ?? OPENCODE_MODELS[0].value)
     const [codexReasoningEffort, setCodexReasoningEffort] = useState<'medium' | 'high' | 'xhigh'>(savedPrefs.codexReasoningEffort ?? 'medium')
-    const [enableBrain, setEnableBrain] = useState(savedPrefs.enableBrain ?? false)
     const [error, setError] = useState<string | null>(null)
     const [isCustomPath, setIsCustomPath] = useState(false)
     const [spawnLogs, setSpawnLogs] = useState<SpawnLogEntry[]>([])
@@ -297,7 +295,6 @@ export function NewSession(props: {
                 opencodeModel: agent === 'opencode' ? opencodeModel : undefined,
                 codexModel: agent === 'codex' ? CODEX_MODEL : undefined,
                 modelReasoningEffort: agent === 'codex' ? codexReasoningEffort : undefined,
-                enableBrain: enableBrain || undefined
             })
 
             // Update logs from server response
@@ -306,14 +303,6 @@ export function NewSession(props: {
             }
 
             if (result.type === 'success') {
-                // 如果启用了 Brain，标记 brain 正在初始化，禁止用户发送消息直到 brain-ready
-                if (enableBrain) {
-                    queryClient.setQueryData(queryKeys.brainRefine(result.sessionId), {
-                        isRefining: false,
-                        noMessage: false,
-                        brainInitializing: true
-                    })
-                }
                 // 保存本次偏好设置，下次新建时自动恢复
                 saveSpawnPrefs(userEmail, {
                     machineId: machineId ?? undefined,
@@ -323,7 +312,6 @@ export function NewSession(props: {
                     claudeAgent: claudeAgent.trim() || undefined,
                     opencodeModel,
                     codexReasoningEffort,
-                    enableBrain,
                 })
                 haptic.notification('success')
                 props.onSuccess(result.sessionId)
@@ -545,21 +533,6 @@ export function NewSession(props: {
                     </div>
                 </div>
             ) : null}
-
-            {/* Enable Brain */}
-            <div className="flex items-center gap-2 px-3 py-3">
-                <input
-                    type="checkbox"
-                    id="enableBrain"
-                    checked={enableBrain}
-                    onChange={(e) => setEnableBrain(e.target.checked)}
-                    disabled={isFormDisabled}
-                    className="accent-[var(--app-link)] w-3.5 h-3.5"
-                />
-                <label htmlFor="enableBrain" className="text-xs cursor-pointer">
-                    Enable Brain
-                </label>
-            </div>
 
             {/* Spawn Logs */}
             {spawnLogs.length > 0 && (

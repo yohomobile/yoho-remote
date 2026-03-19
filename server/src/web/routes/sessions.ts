@@ -61,8 +61,6 @@ type SessionSummary = {
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     fastMode?: boolean
     viewers?: SessionViewer[]
-    hasBrain?: boolean
-    brainStatus?: string
 }
 
 function toSessionSummary(session: Session): SessionSummary {
@@ -157,7 +155,6 @@ const createSessionSchema = z.object({
     modelMode: z.enum(modelModeValues).optional(),
     modelReasoningEffort: z.enum(reasoningEffortValues).optional(),
     source: z.string().min(1).max(100).optional(),
-    enableBrain: z.boolean().optional()
 })
 
 const RESUME_TIMEOUT_MS = 60_000
@@ -316,14 +313,14 @@ async function waitForSessionInactive(engine: SyncEngine, sessionId: string, tim
     })
 }
 
-async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null, hasBrain?: boolean): Promise<void> {
+async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null): Promise<void> {
     try {
         const session = engine.getSession(sessionId)
         const projectRoot = session?.metadata?.path?.trim()
             || session?.metadata?.worktree?.basePath?.trim()
             || null
-        console.log(`[sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}, hasBrain=${hasBrain}`)
-        const prompt = await buildInitPrompt(role, { projectRoot, userName, hasBrain })
+        console.log(`[sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}`)
+        const prompt = await buildInitPrompt(role, { projectRoot, userName })
         if (!prompt.trim()) {
             console.warn(`[sendInitPrompt] Empty prompt for session ${sessionId}, skipping`)
             return
@@ -339,12 +336,12 @@ async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserR
     }
 }
 
-async function sendInitPromptAfterOnline(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null, hasBrain?: boolean): Promise<void> {
+async function sendInitPromptAfterOnline(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null): Promise<void> {
     const isOnline = await waitForSessionOnline(engine, sessionId, 60_000)
     if (!isOnline) {
         return
     }
-    await sendInitPrompt(engine, sessionId, role, userName, hasBrain)
+    await sendInitPrompt(engine, sessionId, role, userName)
 }
 
 async function resolveSpawnTarget(
@@ -515,8 +512,7 @@ function buildResumeContextMessage(session: Session, messages: DecryptedMessage[
 export function createSessionsRoutes(
     getSyncEngine: () => SyncEngine | null,
     getSseManager: () => SSEManager | null,
-    store: IStore,
-    brainStore?: import('../../brain/store').BrainStore
+    store: IStore
 ): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
@@ -564,8 +560,7 @@ export function createSessionsRoutes(
                 permissionMode: parsed.data.permissionMode,
                 modelMode,
                 modelReasoningEffort: parsed.data.modelReasoningEffort,
-                source,
-                enableBrain: parsed.data.enableBrain
+                source
             }
         )
 
@@ -593,7 +588,7 @@ export function createSessionsRoutes(
                 if (email) {
                     await store.setSessionCreatedBy(result.sessionId, email, namespace)
                 }
-                await sendInitPrompt(engine, result.sessionId, role, userName, parsed.data.enableBrain)
+                await sendInitPrompt(engine, result.sessionId, role, userName)
             })()
         }
 
@@ -694,7 +689,7 @@ export function createSessionsRoutes(
 
             // If not in memory (e.g. server restarted), also check activeAt freshness
             // Previously this returned stored.active blindly, causing zombie sessions to show as "running"
-            // Pattern borrowed from yoho-brain: always verify liveness via heartbeat recency
+            // Always verify liveness via heartbeat recency
             if (!memorySession) {
                 const dbActiveAt = stored.activeAt ?? stored.updatedAt
                 const timeSinceDbActive = now - dbActiveAt
@@ -749,32 +744,6 @@ export function createSessionsRoutes(
 
             return summary
         })
-
-        // 批量附加 brain 信息
-        if (brainStore) {
-            try {
-                const [activeBrains, completedBrains] = await Promise.all([
-                    brainStore.getActiveBrainSessions(),
-                    brainStore.getRecentCompletedBrainSessions(2 * 60 * 60 * 1000) // 2小时内
-                ])
-                const brainMap = new Map<string, { status: string }>()
-                for (const b of completedBrains) {
-                    brainMap.set(b.mainSessionId, { status: 'completed' })
-                }
-                for (const b of activeBrains) {
-                    brainMap.set(b.mainSessionId, { status: b.status })
-                }
-                for (const s of sessionSummaries) {
-                    const brain = brainMap.get(s.id)
-                    if (brain) {
-                        s.hasBrain = true
-                        s.brainStatus = brain.status
-                    }
-                }
-            } catch (err) {
-                console.warn('[Sessions] Failed to fetch brain sessions:', err)
-            }
-        }
 
         // Sort: active first, then by pending requests, then by updatedAt
         const allSessions = sessionSummaries.sort((a, b) => {
@@ -980,8 +949,7 @@ export function createSessionsRoutes(
 
         const role = c.get('role')  // Role from Keycloak token
         const userName = c.get('name')
-        const hasBrainSession = brainStore ? !!(await brainStore.getActiveBrainSession(sessionId).catch(() => null)) : false
-        await sendInitPrompt(engine, newSessionId, role, userName, hasBrainSession)
+        await sendInitPrompt(engine, newSessionId, role, userName)
 
         if (!resumeSessionId) {
             const page = await engine.getMessagesPage(sessionId, { limit: RESUME_CONTEXT_MAX_LINES * 2, beforeSeq: null })
@@ -1128,8 +1096,7 @@ export function createSessionsRoutes(
         if (!resumeSessionId || !resumeVerified) {
             const role = c.get('role')
             const userName = c.get('name')
-            const hasBrainSession = brainStore ? !!(await brainStore.getActiveBrainSession(sessionId).catch(() => null)) : false
-            await sendInitPrompt(engine, sessionId, role, userName, hasBrainSession)
+            await sendInitPrompt(engine, sessionId, role, userName)
 
             const page = await engine.getMessagesPage(sessionId, { limit: RESUME_CONTEXT_MAX_LINES * 2, beforeSeq: null })
             const contextMessage = buildResumeContextMessage(session, page.messages)

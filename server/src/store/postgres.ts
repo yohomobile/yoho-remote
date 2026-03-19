@@ -483,6 +483,11 @@ export class PostgresStore implements IStore {
             CREATE INDEX IF NOT EXISTS idx_ai_team_knowledge_team ON ai_team_knowledge(team_id);
             CREATE INDEX IF NOT EXISTS idx_ai_team_knowledge_category ON ai_team_knowledge(category);
             CREATE INDEX IF NOT EXISTS idx_ai_team_knowledge_importance ON ai_team_knowledge(importance);
+
+            -- Drop brain tables (brain module removed)
+            DROP TABLE IF EXISTS brain_executions CASCADE;
+            DROP TABLE IF EXISTS brain_rounds CASCADE;
+            DROP TABLE IF EXISTS brain_sessions CASCADE;
         `)
     }
 

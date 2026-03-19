@@ -1,16 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import type { BrainGraphData, Project, Session, SessionViewer, ModelMode, ModelReasoningEffort } from '@/types/api'
+import type { Project, Session, SessionViewer, ModelMode, ModelReasoningEffort } from '@/types/api'
 import { isTelegramApp, getTelegramWebApp } from '@/hooks/useTelegram'
 import { getClientId } from '@/lib/client-identity'
 import { ViewersBadge } from './ViewersBadge'
 import { ShareDialog } from './ShareDialog'
 import { useAppContext } from '@/lib/app-context'
 import { queryKeys } from '@/lib/query-keys'
-import { useActiveBrainSession } from '@/hooks/queries/useActiveBrainSession'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { BrainStateMachineGraph } from '@/components/BrainStateMachineGraph'
 
 function getSessionPath(session: Session): string | null {
     return session.metadata?.worktree?.basePath ?? session.metadata?.path ?? null
@@ -158,29 +155,6 @@ function RefreshAccountIcon(props: { className?: string }) {
     )
 }
 
-function BrainIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <path d="M12 8a3 3 0 1 0-3-3" />
-            <path d="M12 8a3 3 0 1 1 3-3" />
-            <path d="M12 8v13" />
-            <path d="M8 13a4 4 0 0 0 8 0" />
-            <path d="M9 21h6" />
-        </svg>
-    )
-}
-
 function ShareIcon(props: { className?: string }) {
     return (
         <svg
@@ -244,40 +218,6 @@ function UnlockIcon(props: { className?: string }) {
     )
 }
 
-function StateMachineIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <rect x="2" y="4" width="6" height="5" rx="1" />
-            <rect x="16" y="4" width="6" height="5" rx="1" />
-            <rect x="9" y="15" width="6" height="5" rx="1" />
-            <path d="M8 6.5h8" />
-            <path d="M5 9v3.5a2 2 0 0 0 2 2h2" />
-            <path d="M19 9v3.5a2 2 0 0 1-2 2h-2" />
-        </svg>
-    )
-}
-
-const STATE_LABEL_MAP: Record<string, string> = {
-    idle: '空闲',
-    developing: '开发中',
-    reviewing: '审查',
-    linting: '检查',
-    committing: '提交',
-    deploying: '部署',
-    done: '完成',
-}
-
 function getAgentLabel(session: Session): string {
     const flavor = session.metadata?.flavor?.trim()
     if (flavor === 'claude') return 'Claude'
@@ -310,7 +250,6 @@ export function SessionHeader(props: {
     onBack: () => void
     onDelete?: () => void
     onRefreshAccount?: () => void
-    onOpenBrain?: (brainSessionId: string) => void
     deleteDisabled?: boolean
     refreshAccountDisabled?: boolean
     modelMode?: ModelMode
@@ -327,14 +266,6 @@ export function SessionHeader(props: {
         () => formatRuntimeModel(props.session, props.modelMode, props.modelReasoningEffort),
         [props.session, props.modelMode, props.modelReasoningEffort]
     )
-
-    // 确定用哪个 ID 去查询活跃的 Brain session：
-    // brain-sdk / brain session 本身不需要显示 Brain 按钮，跳过查询
-    // 普通主 session → 用自身 ID 查询
-    const isBrainWorkerSession = props.session.metadata?.source === 'brain-sdk' || props.session.metadata?.source === 'brain'
-    const mainSessionIdForBrain = isBrainWorkerSession ? null : props.session.id
-
-    const { brainSession } = useActiveBrainSession(api, mainSessionIdForBrain)
 
     // Check if current user is the creator of this session (must be defined before queries that use it)
     const isCreator = useMemo(() => {
@@ -380,27 +311,6 @@ export function SessionHeader(props: {
     })
     const projects = Array.isArray(projectsData?.projects) ? projectsData.projects : []
     const project = useMemo(() => matchSessionToProject(props.session, projects), [props.session, projects])
-
-    const isBrainSdkSession = props.session.metadata?.source === 'brain-sdk'
-    const brainMainSessionId = isBrainSdkSession ? (props.session.metadata?.mainSessionId as string | undefined) : undefined
-
-    // Brain SDK session: 查询自己对应的 brain session 以获取状态机 currentState
-    const { brainSession: selfBrainSession } = useActiveBrainSession(api, brainMainSessionId)
-    const [showStateMachineDialog, setShowStateMachineDialog] = useState(false)
-
-    // 从 API 获取状态机图结构数据
-    const { data: graphData } = useQuery<BrainGraphData>({
-        queryKey: ['brain-state-machine-graph'],
-        queryFn: () => api.getBrainStateMachineGraph(),
-        enabled: Boolean(isBrainSdkSession || brainSession || showStateMachineDialog),
-        staleTime: 5 * 60 * 1000,
-    })
-
-    const shouldShowStateMachine = Boolean(isBrainSdkSession || brainSession)
-    const currentBrainState = isBrainSdkSession ? selfBrainSession?.currentState : brainSession?.currentState
-    const currentBrainStateLabel = currentBrainState
-        ? (graphData?.nodes.find(n => n.id === currentBrainState)?.label ?? STATE_LABEL_MAP[currentBrainState] ?? currentBrainState)
-        : '状态机'
 
     const claudeAccountName = props.session.metadata?.claudeAccountName || null
     const claudeAccountDisplay = useMemo(() => {
@@ -497,15 +407,6 @@ export function SessionHeader(props: {
                             <div className="truncate font-medium text-sm leading-none">
                                 {title}
                             </div>
-                            {brainMainSessionId ? (
-                                <button
-                                    type="button"
-                                    onClick={() => navigate({ to: '/sessions/$sessionId', params: { sessionId: brainMainSessionId } })}
-                                    className="text-[10px] text-indigo-500 truncate text-left leading-none"
-                                >
-                                    ← 查看原 Session
-                                </button>
-                            ) : (
                                 <button
                                     type="button"
                                     onClick={() => setShowAgentDetails(!showAgentDetails)}
@@ -513,7 +414,6 @@ export function SessionHeader(props: {
                                 >
                                     {[agentLabel, project?.name].filter(Boolean).join(' · ')}
                                 </button>
-                            )}
                         </div>
                         {/* PC端：标题 */}
                         <div className="hidden sm:block max-w-[180px] truncate font-medium text-sm sm:max-w-none">
@@ -521,17 +421,7 @@ export function SessionHeader(props: {
                         </div>
                         {/* PC端：显示完整 agentMeta */}
                         <div className="hidden sm:block text-[10px] text-[var(--app-hint)] truncate">
-                            {brainMainSessionId ? (
-                                <button
-                                    type="button"
-                                    onClick={() => navigate({ to: '/sessions/$sessionId', params: { sessionId: brainMainSessionId } })}
-                                    className="text-indigo-500 hover:text-indigo-600 transition-colors"
-                                >
-                                    ← 查看原 Session
-                                </button>
-                            ) : (
-                                agentMeta
-                            )}
+                            {agentMeta}
                         </div>
                         {/* 移动端详情弹出框 */}
                         {showAgentDetails && (
@@ -597,39 +487,6 @@ export function SessionHeader(props: {
                             </button>
                         ) : null}
 
-                        {props.onOpenBrain && brainSession ? (
-                            <button
-                                type="button"
-                                onClick={() => props.onOpenBrain?.(brainSession.brainSessionId)}
-                                className={`flex items-center gap-1.5 h-7 px-2 rounded-md text-xs font-medium transition-colors ${
-                                    brainSession.status === 'active'
-                                        ? 'bg-indigo-500/15 text-indigo-600'
-                                        : brainSession.status === 'pending'
-                                            ? 'bg-amber-500/15 text-amber-600'
-                                            : 'bg-emerald-500/15 text-emerald-600'
-                                }`}
-                                title="Open Brain session (new window)"
-                            >
-                                <BrainIcon />
-                                <span>{
-                                    brainSession.status === 'active' ? 'Brain'
-                                    : brainSession.status === 'pending' ? 'Pending'
-                                    : 'Done'
-                                }</span>
-                            </button>
-                        ) : null}
-                        {/* 状态机按钮 - 主 session / Brain SDK session 都显示 */}
-                        {shouldShowStateMachine && (
-                            <button
-                                type="button"
-                                onClick={() => setShowStateMachineDialog(true)}
-                                className="flex items-center gap-1.5 h-7 px-2 rounded-md text-xs font-medium bg-[var(--app-subtle-bg)] text-[var(--app-hint)] transition-colors hover:bg-indigo-500/10 hover:text-indigo-600"
-                                title="State Machine"
-                            >
-                                <StateMachineIcon />
-                                <span>{currentBrainStateLabel}</span>
-                            </button>
-                        )}
                         {/* Delete button - 只有创建者可见 */}
                         {isCreator && props.onDelete ? (
                             <button
@@ -719,37 +576,6 @@ export function SessionHeader(props: {
                                     </button>
                                 ) : null}
 
-                                {props.onOpenBrain && brainSession ? (
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setShowMoreMenu(false)
-                                            props.onOpenBrain?.(brainSession.brainSessionId)
-                                        }}
-                                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]"
-                                    >
-                                        <BrainIcon className="shrink-0" />
-                                        <span className="whitespace-nowrap">{
-                                            brainSession.status === 'active' ? 'Brain'
-                                            : brainSession.status === 'pending' ? 'Brain: Pending'
-                                            : 'Brain: Done'
-                                        }</span>
-                                    </button>
-                                ) : null}
-                                {/* 状态机 - Brain SDK session */}
-                                {shouldShowStateMachine && (
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setShowMoreMenu(false)
-                                            setShowStateMachineDialog(true)
-                                        }}
-                                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]"
-                                    >
-                                        <StateMachineIcon className="shrink-0" />
-                                        <span className="whitespace-nowrap">State Machine</span>
-                                    </button>
-                                )}
                                 {/* 删除会话 - 只有创建者可见 */}
                                 {isCreator && props.onDelete ? (
                                     <button
@@ -777,21 +603,6 @@ export function SessionHeader(props: {
                     onClose={() => setShowShareDialog(false)}
                 />
             )}
-            {/* State Machine Dialog */}
-            <Dialog open={showStateMachineDialog} onOpenChange={setShowStateMachineDialog}>
-                <DialogContent className="max-w-2xl">
-                    <DialogHeader>
-                        <DialogTitle>Brain 状态机</DialogTitle>
-                    </DialogHeader>
-                    <div className="mt-2">
-                        {graphData ? (
-                            <BrainStateMachineGraph currentState={currentBrainState} graphData={graphData} />
-                        ) : (
-                            <div className="text-sm text-[var(--app-hint)] text-center py-4">加载中...</div>
-                        )}
-                    </div>
-                </DialogContent>
-            </Dialog>
         </div>
     )
 }

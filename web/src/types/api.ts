@@ -183,8 +183,6 @@ export type SessionSummary = {
     modelReasoningEffort?: ModelReasoningEffort
     fastMode?: boolean
     viewers?: SessionViewer[]
-    hasBrain?: boolean
-    brainStatus?: string
 }
 
 export type MessageStatus = 'sending' | 'sent' | 'failed'
@@ -223,52 +221,6 @@ export type AuthResponse = {
 export type SessionsResponse = { sessions: SessionSummary[] }
 export type SessionResponse = { session: Session }
 export type DeleteSessionResponse = { ok: true }
-
-export type BrainSessionStatus = 'pending' | 'active' | 'completed' | 'cancelled'
-
-export type BrainGraphNode = {
-    id: string
-    label: string
-    x: number
-    y: number
-    isFinal?: boolean
-}
-
-export type BrainGraphEdge = {
-    from: string
-    to: string
-    signal: string
-    isRetry?: boolean
-    isSelfLoop?: boolean
-}
-
-export type BrainGraphData = {
-    nodes: BrainGraphNode[]
-    edges: BrainGraphEdge[]
-    mainFlow: string[]
-}
-
-export type BrainSession = {
-    id: string
-    namespace: string
-    mainSessionId: string
-    brainSessionId: string
-    brainModel: string
-    brainModelVariant?: string
-    status: BrainSessionStatus
-    contextSummary: string
-    brainResult?: string
-    isRefining?: boolean
-    currentState?: string
-    stateContext?: {
-        retries: Record<string, number>
-        lastSignal?: string
-        lastSignalDetail?: string
-    }
-    createdAt: number
-    updatedAt: number
-    completedAt?: number
-}
 
 // 用户设置类型
 export type UserPreferences = {
@@ -402,19 +354,6 @@ export type TypingUser = {
     updatedAt: number
 }
 
-// Brain SDK 进度事件
-export type BrainSdkProgressType = 'thinking' | 'tool' | 'done' | 'assistant-message' | 'tool-use'
-export type BrainSdkProgressData = {
-    brainSessionId: string
-    progressType: BrainSdkProgressType
-    data: {
-        content?: string
-        tool?: string
-        input?: string
-        toolName?: string
-    }
-}
-
 export type SyncEvent =
     | { type: 'session-added'; sessionId: string; data?: unknown; namespace?: string }
     | { type: 'session-updated'; sessionId: string; data?: unknown; namespace?: string }
@@ -425,7 +364,6 @@ export type SyncEvent =
     | { type: 'connection-changed'; data?: { status: string }; namespace?: string }
     | { type: 'online-users-changed'; users: OnlineUser[]; namespace?: string }
     | { type: 'typing-changed'; sessionId: string; typing: TypingUser; namespace?: string }
-    | { type: 'brain-sdk-progress'; sessionId: string; data: BrainSdkProgressData; namespace?: string }
 
 export type OnlineUsersResponse = { users: OnlineUser[] }
 

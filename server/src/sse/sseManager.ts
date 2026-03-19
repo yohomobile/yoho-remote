@@ -175,14 +175,6 @@ export class SSEManager {
             }
         }
 
-        // Brain 同步状态通知：发送给订阅了 all 或正在查看该主 Session 的用户
-        if ((event.type as string) === 'brain-sync-status') {
-            if (connection.all) {
-                return true
-            }
-            return Boolean(event.sessionId && connection.sessionId === event.sessionId)
-        }
-
         if (connection.all) {
             return true
         }

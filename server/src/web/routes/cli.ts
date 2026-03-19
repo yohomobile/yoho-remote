@@ -5,9 +5,7 @@ import { join } from 'node:path'
 import { configuration, getConfiguration } from '../../configuration'
 import { safeCompareStrings } from '../../utils/crypto'
 import { parseAccessToken } from '../../utils/accessToken'
-import type { Machine, Session, SyncEngine, SyncEvent } from '../../sync/syncEngine'
-import type { BrainStore } from '../../brain/store'
-import type { SSEManager } from '../../sse/sseManager'
+import type { Machine, Session, SyncEngine } from '../../sync/syncEngine'
 import {
     getActiveAccount,
     selectBestAccount,
@@ -76,7 +74,6 @@ function resolveMachineForNamespace(
 
 export function createCliRoutes(
     getSyncEngine: () => SyncEngine | null,
-    brainStore?: BrainStore,
     getSseManager?: () => SSEManager | null
 ): Hono<CliEnv> {
     const app = new Hono<CliEnv>()
@@ -175,82 +172,8 @@ export function createCliRoutes(
 
         await engine.sendMessage(sessionId, {
             text: parsed.data.text,
-            sentFrom: (parsed.data.sentFrom || 'webapp') as 'webapp' | 'telegram-bot' | 'brain-review' | 'brain-sdk-review' | 'brain-sdk-info'
+            sentFrom: (parsed.data.sentFrom || 'webapp') as 'webapp' | 'telegram-bot'
         })
-        return c.json({ ok: true })
-    })
-
-    // 获取被 Brain 拦截的待处理用户消息
-    app.get('/sessions/:id/pending-user-message', async (c) => {
-        const { pendingUserMessages } = await import('./messages.js')
-        const sessionId = c.req.param('id')
-
-        const pending = pendingUserMessages.get(sessionId)
-        console.log('[CLI] getPendingUserMessage:', sessionId, pending ? `found (len=${pending.text.length}, age=${Date.now() - pending.timestamp}ms)` : 'not found')
-        if (!pending) {
-            return c.json({ text: null })
-        }
-
-        return c.json({ text: pending.text, timestamp: pending.timestamp })
-    })
-
-    // Brain MCP 工具 brain_send_message(type=info) 调用：仅清除暂存的用户消息
-    // 注意：不要动 refiningSessions，也不要广播 done
-    // refiningSessions 的清理和 done 广播由 autoBrain.ts handleBrainAIResponse 统一负责
-    app.delete('/sessions/:id/pending-user-message', async (c) => {
-        const { pendingUserMessages } = await import('./messages.js')
-        const sessionId = c.req.param('id')
-
-        pendingUserMessages.delete(sessionId)
-        console.log('[CLI] clearPendingUserMessage:', sessionId, '(pendingUserMessages only)')
-
-        return c.json({ ok: true })
-    })
-
-    // Brain 审查通过，没有问题 — 由 brain_send_message(type='no_issues') MCP tool 调用
-    app.post('/sessions/:id/brain-no-issues', async (c) => {
-        const engine = getSyncEngine()
-        if (!engine) {
-            return c.json({ error: 'Not ready' }, 503)
-        }
-        if (!brainStore) {
-            return c.json({ error: 'Brain store not available' }, 503)
-        }
-        const mainSessionId = c.req.param('id')
-        console.log('[CLI] brain-no-issues: called for', mainSessionId)
-
-        const brainSession = await brainStore.getActiveBrainSession(mainSessionId)
-        if (!brainSession) {
-            console.log('[CLI] brain-no-issues: no active brain session for', mainSessionId)
-            return c.json({ error: 'No active brain session' }, 404)
-        }
-        console.log('[CLI] brain-no-issues: brainId=', brainSession.id, 'state=', brainSession.currentState)
-
-        // 完成 execution（标记 reviewed rounds）
-        const latestExecution = await brainStore.getLatestExecutionWithProgress(brainSession.id)
-        console.log('[CLI] brain-no-issues:', mainSessionId, 'execution=', latestExecution?.status ?? 'none')
-        if (latestExecution && latestExecution.status === 'running') {
-            await brainStore.completeBrainExecution(latestExecution.id, '[NO_MESSAGE]')
-        }
-
-        // 广播 SSE done 事件（noMessage: true 触发前端显示"一切正常"）
-        const sseManager = getSseManager?.()
-        if (sseManager) {
-            const mainSession = engine.getSession(mainSessionId)
-            console.log('[CLI] brain-no-issues: broadcasting done(noMessage=true) for', mainSessionId)
-            sseManager.broadcast({
-                type: 'brain-sdk-progress',
-                namespace: mainSession?.namespace,
-                sessionId: mainSessionId,
-                data: {
-                    brainSessionId: brainSession.id,
-                    progressType: 'done',
-                    flow: 'review',
-                    data: { status: 'completed', noMessage: true }
-                }
-            } as unknown as SyncEvent)
-        }
-
         return c.json({ ok: true })
     })
 

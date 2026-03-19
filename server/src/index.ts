@@ -17,7 +17,6 @@ import { startWebServer } from './web/server'
 import { createSocketServer } from './socket/server'
 import { SSEManager } from './sse/sseManager'
 import { initWebPushService } from './services/webPush'
-import { BrainStore, AutoBrainService } from './brain'
 import { startTokenRefreshTimer, stopTokenRefreshTimer } from './claude-accounts/accountsService'
 import type { Server as BunServer } from 'bun'
 import type { WebSocketData } from '@socket.io/bun-engine'
@@ -95,11 +94,6 @@ async function main() {
     console.log(`[Server] Store: PostgreSQL (${pgConfig.host}/${pgConfig.database})`)
     const store = await PostgresStore.create(pgConfig)
 
-    // 初始化 Brain Store
-    const brainStore = new BrainStore(store.getPool())
-    await brainStore.initSchema()
-    console.log('[Server] Brain: enabled')
-
     // Initialize Web Push service
     const webPushConfig = config.webPushVapidPublicKey && config.webPushVapidPrivateKey && config.webPushVapidSubject
         ? {
@@ -130,11 +124,6 @@ async function main() {
 
     syncEngine = new SyncEngine(store, socketServer.io, socketServer.rpcRegistry, sseManager)
 
-    // Initialize Brain Sync Service (SDK review now uses detached worker process)
-    const autoBrainService = new AutoBrainService(syncEngine, brainStore)
-    autoBrainService.setSseManager(sseManager)
-    autoBrainService.start()
-
     // Initialize Telegram bot (optional)
     if (config.telegramEnabled && config.telegramBotToken) {
         happyBot = new HappyBot({
@@ -150,8 +139,6 @@ async function main() {
         getSyncEngine: () => syncEngine,
         getSseManager: () => sseManager,
         store,
-        brainStore,
-        autoBrainService,
         socketEngine: socketServer.engine
     })
 

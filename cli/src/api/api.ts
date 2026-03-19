@@ -231,53 +231,6 @@ export class ApiClient {
         )
     }
 
-    async getPendingUserMessage(sessionId: string): Promise<{ text: string | null; timestamp?: number }> {
-        const response = await axios.get(
-            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/pending-user-message`,
-            {
-                headers: { Authorization: `Bearer ${this.token}` },
-                timeout: 10_000
-            }
-        )
-        return response.data
-    }
-
-    async brainNoIssues(mainSessionId: string): Promise<void> {
-        await axios.post(
-            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(mainSessionId)}/brain-no-issues`,
-            {},
-            {
-                headers: { Authorization: `Bearer ${this.token}` },
-                timeout: 10_000
-            }
-        )
-    }
-
-    async clearPendingUserMessage(sessionId: string): Promise<void> {
-        await axios.delete(
-            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/pending-user-message`,
-            {
-                headers: { Authorization: `Bearer ${this.token}` },
-                timeout: 10_000
-            }
-        )
-    }
-
-    async getActiveBrainSession(mainSessionId: string): Promise<{ currentState?: string } | null> {
-        try {
-            const response = await axios.get(
-                `${configuration.serverUrl}/brain/sessions/active/${encodeURIComponent(mainSessionId)}`,
-                {
-                    headers: { Authorization: `Bearer ${this.token}` },
-                    timeout: 10_000
-                }
-            )
-            return response.data
-        } catch {
-            return null
-        }
-    }
-
     /**
      * 获取当前活跃的 Claude 账号
      * 如果没有配置多账号，返回 null

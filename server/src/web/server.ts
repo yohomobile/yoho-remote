@@ -24,7 +24,6 @@ import { createUsageRoutes } from './routes/usage'
 import { createGroupRoutes } from './routes/groups'
 import { createClaudeAccountsRoutes } from './routes/claude-accounts'
 import { createYohoCredentialsRoutes } from './routes/yoho-credentials'
-import { createBrainRoutes, type BrainStore, type AutoBrainService } from '../brain'
 import { createOpenCodeRoutes } from './routes/opencode'
 import { createCodexOpenAIRoutes } from './routes/codex-openai'
 import type { SSEManager } from '../sse/sseManager'
@@ -78,8 +77,6 @@ function createWebApp(options: {
     getSyncEngine: () => SyncEngine | null
     getSseManager: () => SSEManager | null
     store: IStore
-    brainStore: BrainStore
-    autoBrainService?: AutoBrainService
     embeddedAssetMap: Map<string, EmbeddedWebAsset> | null
 }): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
@@ -97,7 +94,7 @@ function createWebApp(options: {
     app.use('/cli/*', corsMiddleware)
     app.use('/v1/*', corsMiddleware)
 
-    app.route('/cli', createCliRoutes(options.getSyncEngine, options.brainStore, options.getSseManager))
+    app.route('/cli', createCliRoutes(options.getSyncEngine, options.getSseManager))
 
     // OpenAI Compatible API for Codex CLI (public, no auth required)
     app.route('/v1', createCodexOpenAIRoutes())
@@ -109,10 +106,10 @@ function createWebApp(options: {
     // Auth middleware - verifies Keycloak JWT tokens
     app.use('/api/*', createAuthMiddleware())
     app.route('/api', createEventsRoutes(options.getSseManager, options.getSyncEngine))
-    app.route('/api', createSessionsRoutes(options.getSyncEngine, options.getSseManager, options.store, options.brainStore))
-    app.route('/api', createMessagesRoutes(options.getSyncEngine, options.store, options.brainStore, options.getSseManager))
+    app.route('/api', createSessionsRoutes(options.getSyncEngine, options.getSseManager, options.store))
+    app.route('/api', createMessagesRoutes(options.getSyncEngine, options.store))
     app.route('/api', createPermissionsRoutes(options.getSyncEngine))
-    app.route('/api', createMachinesRoutes(options.getSyncEngine, options.store, options.brainStore, options.autoBrainService, options.getSseManager))
+    app.route('/api', createMachinesRoutes(options.getSyncEngine, options.store, options.getSseManager))
     app.route('/api', createGitRoutes(options.getSyncEngine))
     app.route('/api', createSpeechRoutes())
     app.route('/api', createOptimizeRoutes())
@@ -122,7 +119,6 @@ function createWebApp(options: {
     app.route('/api', createGroupRoutes(options.store, options.getSyncEngine(), options.getSseManager()))
     app.route('/api', createClaudeAccountsRoutes())
     app.route('/api', createYohoCredentialsRoutes())
-    app.route('/api', createBrainRoutes(options.brainStore, options.getSyncEngine, () => options.getSseManager(), options.autoBrainService))
     app.route('/api', createOpenCodeRoutes(options.getSyncEngine, () => options.getSseManager()))
 
     if (options.embeddedAssetMap) {
@@ -246,8 +242,6 @@ export async function startWebServer(options: {
     getSyncEngine: () => SyncEngine | null
     getSseManager: () => SSEManager | null
     store: IStore
-    brainStore: BrainStore
-    autoBrainService?: AutoBrainService
     socketEngine: SocketEngine
 }): Promise<BunServer<WebSocketData>> {
     const isCompiled = isBunCompiled()
@@ -256,8 +250,6 @@ export async function startWebServer(options: {
         getSyncEngine: options.getSyncEngine,
         getSseManager: options.getSseManager,
         store: options.store,
-        brainStore: options.brainStore,
-        autoBrainService: options.autoBrainService,
         embeddedAssetMap
     })
 

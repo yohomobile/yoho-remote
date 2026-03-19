@@ -689,7 +689,7 @@ export class SyncEngine {
         session.active = true
         session.activeAt = Math.max(session.activeAt, t)
         // payload.thinking 是可选字段：未提供时不要覆盖已有 thinking 状态。
-        // 否则会把 session 误判为 thinking=false，导致 wasThinking 误触发（Brain/主 session 提前触发或不触发）。
+        // 否则会把 session 误判为 thinking=false，导致 wasThinking 误触发。
         if (payload.thinking !== undefined) {
             session.thinking = payload.thinking
             session.thinkingAt = t
@@ -941,8 +941,8 @@ export class SyncEngine {
 
     private expireInactive(): void {
         const now = Date.now()
-        const sessionTimeoutMs = 300_000 // 5 minutes (reduced from 30m to match brain heartbeat pattern)
-        const machineTimeoutMs = 300_000 // 5 minutes
+        const sessionTimeoutMs = 1_800_000 // 30 minutes
+        const machineTimeoutMs = 1_800_000 // 30 minutes
 
         for (const session of this.sessions.values()) {
             if (!session.active) continue
@@ -1098,37 +1098,19 @@ export class SyncEngine {
 
     private async reloadAllAsync(): Promise<void> {
         const sessions = await this.store.getSessions()
-        const now = Date.now()
-        const staleThresholdMs = 300_000 // 5 minutes - same as expireInactive
 
-        let zombieCount = 0
         for (const s of sessions) {
-            const session = await this.refreshSession(s.id)
-
-            // On server startup: clean up zombie sessions (DB says active=true but activeAt is stale)
-            // This prevents "stuck running" sessions that accumulated from crashes/restarts
-            // Pattern: yoho-brain always verifies liveness before trusting active state
-            if (session && session.active && session.activeAt) {
-                const timeSinceActive = now - session.activeAt
-                if (timeSinceActive > staleThresholdMs) {
-                    console.log(`[reloadAllAsync] Cleaning zombie session ${session.id.slice(0, 8)}... (activeAt ${Math.floor(timeSinceActive / 60000)}m ago)`)
-                    session.active = false
-                    session.thinking = false
-                    this.store.setSessionActive(session.id, false, now, session.namespace).catch(err => {
-                        console.error(`[reloadAllAsync] Failed to deactivate zombie session ${session.id}:`, err)
-                    })
-                    zombieCount++
-                }
-            }
-        }
-        if (zombieCount > 0) {
-            console.log(`[reloadAllAsync] Cleaned ${zombieCount} zombie sessions on startup`)
+            await this.refreshSession(s.id)
         }
 
         const machines = await this.store.getMachines()
         for (const m of machines) {
             await this.refreshMachine(m.id)
         }
+
+        // Don't clean up zombie sessions on startup.
+        // expireInactive() will handle stale sessions after the timer fires,
+        // giving CLI processes time to reconnect and send heartbeats.
     }
 
     async getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string): Promise<Session> {
@@ -1177,7 +1159,7 @@ export class SyncEngine {
         return false
     }
 
-    async sendMessage(sessionId: string, payload: { text: string; localId?: string | null; sentFrom?: 'telegram-bot' | 'webapp' | 'brain-review' | 'brain-sdk-review' | 'brain-sdk-info'; meta?: Record<string, unknown> }): Promise<void> {
+    async sendMessage(sessionId: string, payload: { text: string; localId?: string | null; sentFrom?: 'telegram-bot' | 'webapp'; meta?: Record<string, unknown> }): Promise<void> {
         const sentFrom = payload.sentFrom ?? 'webapp'
 
         const content = {

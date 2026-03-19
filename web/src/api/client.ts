@@ -45,8 +45,6 @@ import type {
     RemoveSessionShareResponse,
     SessionResponse,
     SessionsResponse,
-    BrainGraphData,
-    BrainSession,
     UpdateGroupResponse,
     UpdateInputPresetResponse,
     UpdateProjectResponse,
@@ -245,31 +243,6 @@ export class ApiClient {
 
     async getSession(sessionId: string): Promise<SessionResponse> {
         return await this.request<SessionResponse>(`/api/sessions/${encodeURIComponent(sessionId)}`)
-    }
-
-    async getActiveBrainSession(mainSessionId: string): Promise<BrainSession | null> {
-        try {
-            return await this.request<BrainSession>(
-                `/api/brain/sessions/active/${encodeURIComponent(mainSessionId)}`
-            )
-        } catch (error) {
-            if (error instanceof ApiError && error.status === 404) {
-                return null
-            }
-            throw error
-        }
-    }
-
-    async getBrainProgressLog(brainSessionId: string): Promise<{
-        entries: Array<{ id: string; type: string; content: string; timestamp: number }>
-        isActive: boolean
-        executionId?: string
-    }> {
-        return await this.request(`/api/brain/sessions/${encodeURIComponent(brainSessionId)}/progress-log`)
-    }
-
-    async getBrainStateMachineGraph(): Promise<BrainGraphData> {
-        return await this.request<BrainGraphData>('/api/brain/state-machine-graph')
     }
 
     async deleteSession(sessionId: string): Promise<DeleteSessionResponse> {
@@ -577,12 +550,11 @@ export class ApiClient {
         claudeAgent?: string,
         opencodeModel?: string,
         codexModel?: string,
-        modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh',
-        enableBrain?: boolean
+        modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     ): Promise<SpawnResponse> {
         return await this.request<SpawnResponse>(`/api/machines/${encodeURIComponent(machineId)}/spawn`, {
             method: 'POST',
-            body: JSON.stringify({ directory, agent, yolo, sessionType, worktreeName, claudeSettingsType, claudeAgent, opencodeModel, codexModel, modelReasoningEffort, enableBrain, source: 'webapp' })
+            body: JSON.stringify({ directory, agent, yolo, sessionType, worktreeName, claudeSettingsType, claudeAgent, opencodeModel, codexModel, modelReasoningEffort, source: 'webapp' })
         })
     }
 

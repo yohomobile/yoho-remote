@@ -9,15 +9,6 @@ function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object'
 }
 
-type BrainRefineFlow = 'refine' | 'review'
-
-type BrainRefineState = {
-    isRefining: boolean
-    noMessage: boolean
-    brainInitializing?: boolean
-    flow?: BrainRefineFlow
-}
-
 type SSESubscription = {
     all?: boolean
     sessionId?: string
@@ -254,80 +245,6 @@ export function useSSE(options: {
                     queryKeys.typing(event.sessionId),
                     { typing: event.typing, updatedAt: Date.now() }
                 )
-            }
-
-            // 处理 brain-sdk-progress 事件（仅处理 started/done 状态变更，进度通过轮询获取）
-            if (event.type === 'brain-sdk-progress' && 'sessionId' in event && event.sessionId) {
-                const progressData = 'data' in event ? event.data as { brainSessionId?: string; progressType?: string; data?: Record<string, unknown> } : null
-                if (progressData?.progressType) {
-                    type ProgressEntry = { id: string; type: string; content: string; timestamp: number }
-                    const key = queryKeys.brainSdkProgress(event.sessionId)
-                    const prev = queryClient.getQueryData<{ entries: ProgressEntry[]; isActive: boolean }>(key)
-                    const entries = prev?.entries ?? []
-
-                    const refineKey = queryKeys.brainRefine(event.sessionId)
-                    const prevRefine = queryClient.getQueryData<BrainRefineState>(refineKey)
-
-                    const inferredFlow: BrainRefineFlow | undefined = (() => {
-                        if (progressData.progressType === 'refine-started') return 'refine'
-                        const hint = (progressData as { flow?: unknown }).flow
-                        if (hint === 'refine') return 'refine'
-                        if (hint === 'review') return 'review'
-                        return undefined
-                    })()
-
-                    if (progressData.progressType === 'started') {
-                        queryClient.setQueryData(key, {
-                            entries,
-                            isActive: true
-                        })
-                        // started 也表示 Brain 正在处理（例如 reviewing/linting 等阶段的即时 action）
-                        queryClient.setQueryData(refineKey, {
-                            ...(prevRefine ?? { isRefining: false, noMessage: false }),
-                            isRefining: true,
-                            noMessage: false,
-                            flow: inferredFlow ?? 'review'
-                        })
-                    } else if (progressData.progressType === 'done') {
-                        queryClient.setQueryData(key, {
-                            entries,
-                            isActive: false
-                        })
-                        // 状态机状态更新：将 currentState 写入 brain-active-session cache
-                        const doneData = progressData.data as Record<string, unknown> | undefined
-                        if (doneData?.currentState) {
-                            const brainKey = ['brain-active-session', event.sessionId]
-                            const prevBrain = queryClient.getQueryData<Record<string, unknown>>(brainKey)
-                            if (prevBrain) {
-                                queryClient.setQueryData(brainKey, { ...prevBrain, currentState: doneData.currentState })
-                            }
-                        }
-                    }
-
-                    // Brain 初始化完成，刷新 brain session 查询并清除 brainInitializing 状态
-                    if (progressData.progressType === 'brain-ready') {
-                        void queryClient.invalidateQueries({ queryKey: ['brain-active-session', event.sessionId] })
-                        queryClient.setQueryData(refineKey, { isRefining: false, noMessage: false, brainInitializing: false, flow: inferredFlow })
-                    }
-
-                    // Brain refine/syncing loading 状态（主 session 侧）
-                    if (progressData.progressType === 'refine-started' || progressData.progressType === 'syncing') {
-                        queryClient.setQueryData(refineKey, {
-                            ...(prevRefine ?? { isRefining: false, noMessage: false }),
-                            isRefining: true,
-                            noMessage: false,
-                            flow: inferredFlow ?? (progressData.progressType === 'refine-started' ? 'refine' : 'review')
-                        })
-                    } else if (progressData.progressType === 'done') {
-                        const noMessage = !!(progressData.data as Record<string, unknown> | undefined)?.noMessage
-                        queryClient.setQueryData(refineKey, {
-                            ...(prevRefine ?? { isRefining: false, noMessage: false }),
-                            isRefining: false,
-                            noMessage,
-                            flow: inferredFlow ?? prevRefine?.flow
-                        })
-                    }
-                }
             }
 
             onEventRef.current(event)

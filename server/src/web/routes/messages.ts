@@ -2,9 +2,6 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { IStore } from '../../store'
-import type { BrainStore } from '../../brain/store'
-import type { SSEManager } from '../../sse/sseManager'
-import { buildRefinePrompt } from '../../brain/statePrompts'
 import type { WebAppEnv } from '../middleware/auth'
 import { requireSessionFromParamWithShareCheck, requireSyncEngine } from './guards'
 
@@ -24,14 +21,7 @@ const clearMessagesBodySchema = z.object({
     compact: z.boolean().optional()
 })
 
-// 跟踪正在 refine 的主 session（用于页面刷新后恢复状态）
-export const refiningSessions = new Set<string>()
-
-// 暂存被拦截的用户消息，供 Brain MCP 工具 brain_user_intent 取用
-// key: mainSessionId, value: { text, timestamp }
-export const pendingUserMessages = new Map<string, { text: string; timestamp: number }>()
-
-export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null, store: IStore, brainStore?: BrainStore, getSseManager?: () => SSEManager | null): Hono<WebAppEnv> {
+export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null, store: IStore): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
     app.get('/sessions/:id/messages', async (c) => {
@@ -72,56 +62,7 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null, sto
 
         const sentFrom = parsed.data.sentFrom || 'webapp'
 
-        // 大脑模式：拦截用户消息，暂存后通知 Brain session 分析意图
-        // 跳过来自 brain 的消息，避免循环拦截
-        const isBrainSentFrom = sentFrom === 'brain-sdk-review' || sentFrom === 'brain-sdk-info'
-        const activeBrain = (!isBrainSentFrom && brainStore) ? await brainStore.getActiveBrainSession(sessionId) : null
-        console.log(`[Messages] sendMessage: sessionId=${sessionId} sentFrom=${sentFrom} isBrainSentFrom=${isBrainSentFrom} activeBrain=${activeBrain?.id ?? 'none'} brainDisplayId=${activeBrain?.brainSessionId ?? 'none'} refining=${refiningSessions.has(sessionId)} pendingMsg=${pendingUserMessages.has(sessionId)}`)
-        if (activeBrain && activeBrain.brainSessionId) {
-            console.log(`[Messages] Brain intercept: sessionId=${sessionId} brainId=${activeBrain.id} state=${activeBrain.currentState} brainDisplayId=${activeBrain.brainSessionId} msgLen=${parsed.data.text.length} msgPreview=${parsed.data.text.slice(0, 100)}`)
-
-            // 暂存用户消息，供 brain_user_intent MCP 工具取用
-            pendingUserMessages.set(sessionId, { text: parsed.data.text, timestamp: Date.now() })
-            refiningSessions.add(sessionId)
-
-            // 发通知给 Brain session（使用状态驱动的 refine prompt）
-            try {
-                const refinePrompt = buildRefinePrompt(activeBrain.currentState)
-                console.log(`[Messages] Brain intercept: refine prompt for state=${activeBrain.currentState}, promptLen=${refinePrompt.length}`)
-                await engine.sendMessage(activeBrain.brainSessionId, {
-                    text: refinePrompt,
-                    sentFrom: 'webapp'
-                })
-                console.log(`[Messages] Brain intercept: notification sent to brain session ${activeBrain.brainSessionId}`)
-            } catch (err) {
-                console.error(`[Messages] Brain intercept: failed to notify brain session ${activeBrain.brainSessionId}, falling back to direct send. Error:`, err)
-                pendingUserMessages.delete(sessionId)
-                refiningSessions.delete(sessionId)
-                // fallback: 直接发给主 session
-                await engine.sendMessage(sessionId, { text: parsed.data.text, localId: parsed.data.localId, sentFrom: sentFrom as 'webapp' | 'telegram-bot' | 'brain-review' | 'brain-sdk-review' | 'brain-sdk-info' })
-                return c.json({ ok: true })
-            }
-
-            // SSE 广播 refine-started
-            const sseManager = getSseManager?.()
-            if (sseManager) {
-                const session = engine.getSession(sessionId)
-                sseManager.broadcast({
-                    type: 'brain-sdk-progress',
-                    namespace: session?.namespace,
-                    sessionId,
-                    data: {
-                        brainSessionId: activeBrain.id,
-                        progressType: 'refine-started',
-                        flow: 'refine',
-                        data: {}
-                    }
-                } as unknown as import('../../sync/syncEngine.js').SyncEvent)
-            }
-            return c.json({ ok: true, intercepted: true })
-        }
-
-        await engine.sendMessage(sessionId, { text: parsed.data.text, localId: parsed.data.localId, sentFrom: sentFrom as 'webapp' | 'telegram-bot' | 'brain-review' | 'brain-sdk-review' | 'brain-sdk-info' })
+        await engine.sendMessage(sessionId, { text: parsed.data.text, localId: parsed.data.localId, sentFrom: sentFrom as 'webapp' | 'telegram-bot' })
         return c.json({ ok: true })
     })
 
@@ -167,8 +108,6 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null, sto
                     text: '/compact',
                     sentFrom: 'webapp'
                 })
-                // Give Claude a moment to process the compact command
-                // The actual compaction happens asynchronously in the CLI
             }
         }
 
