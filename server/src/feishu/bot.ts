@@ -496,6 +496,19 @@ export class FeishuBot {
         }
     }
 
+    private async fetchChatName(chatId: string): Promise<string | null> {
+        try {
+            const token = await this.getToken()
+            const resp = await fetch(`https://open.feishu.cn/open-apis/im/v1/chats/${chatId}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            })
+            const data = await resp.json() as { data?: { name?: string } }
+            return data.data?.name || null
+        } catch {
+            return null
+        }
+    }
+
     // ========== Session management ==========
 
     private async ensureSession(chatId: string, chatType: string, senderName?: string): Promise<string | null> {
@@ -530,7 +543,12 @@ export class FeishuBot {
             }
 
             // No mapping exists, create new session
-            return await this.createBrainSession(chatId, chatType, undefined, senderName)
+            // For group chats, fetch the group name from Feishu API
+            let chatName: string | undefined
+            if (chatType === 'group') {
+                chatName = await this.fetchChatName(chatId) || undefined
+            }
+            return await this.createBrainSession(chatId, chatType, chatName, senderName)
         } finally {
             if (state) state.creating = false
         }
@@ -652,11 +670,12 @@ export class FeishuBot {
                 return
             }
 
-            // Set session title: "飞书: 与xxx的对话 · 03/20 18:55"
+            // Set session title
             const now = new Date()
             const timeStr = now.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Shanghai' })
-            const who = senderName || chatName || '未知'
-            const title = `飞书: 与${who}的对话 · ${timeStr}`
+            const title = chatType === 'group' && chatName
+                ? `飞书群: ${chatName} · ${timeStr}`
+                : `飞书: 与${senderName || chatName || '未知'}的对话 · ${timeStr}`
             await this.syncEngine.patchSessionMetadata(sessionId, {
                 summary: { text: title, updatedAt: Date.now() }
             })
@@ -729,7 +748,12 @@ export class FeishuBot {
             this.sessionToChatId.delete(oldSessionId)
         }
 
-        const newSessionId = await this.createBrainSession(chatId, chatType, undefined, senderName)
+        // For group chats, fetch the group name
+        let chatName: string | undefined
+        if (chatType === 'group') {
+            chatName = await this.fetchChatName(chatId) || undefined
+        }
+        const newSessionId = await this.createBrainSession(chatId, chatType, chatName, senderName)
         if (newSessionId) {
             await this.sendFeishuText(chatId, '会话已重置，请继续。')
         } else {
