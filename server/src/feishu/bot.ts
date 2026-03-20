@@ -58,6 +58,9 @@ export class FeishuBot {
     // Accumulate agent messages per chatId, send summary when task completes
     private agentMessages: Map<string, string[]> = new Map()
 
+    // Promise that resolves when session init (initPrompt) is complete
+    private initReady: Map<string, Promise<void>> = new Map()
+
     // Rebuild rate limiting: chatId -> last rebuild timestamp
     private lastRebuildAt: Map<string, number> = new Map()
     private readonly REBUILD_COOLDOWN_MS = 30_000
@@ -258,6 +261,13 @@ export class FeishuBot {
             return
         }
 
+        // Wait for initPrompt to be sent first (if session was just created)
+        const initPromise = this.initReady.get(chatId)
+        if (initPromise) {
+            await initPromise
+            this.initReady.delete(chatId)
+        }
+
         // Touch last message time
         await this.store.touchFeishuChatSession(chatId).catch(() => {})
 
@@ -439,8 +449,9 @@ export class FeishuBot {
             this.chatIdToSessionId.set(chatId, sessionId)
             this.chatIdToChatType.set(chatId, chatType)
 
-            // Async: wait for session online and send initPrompt
-            void this.initializeSession(sessionId, chatId, chatType, chatName, senderName)
+            // Wait for session online and send initPrompt (tracked by initReady)
+            const initPromise = this.initializeSession(sessionId, chatId, chatType, chatName, senderName)
+            this.initReady.set(chatId, initPromise)
 
             return sessionId
         } catch (error) {
