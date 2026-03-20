@@ -406,7 +406,7 @@ export class FeishuBot {
         // Group chat: include openId for user identity tracking
         const formattedParts = messages.map(m => {
             return chatType === 'group'
-                ? `[${m.senderName} | ${m.senderOpenId}]: ${m.text}`
+                ? `${m.senderName} (${m.senderOpenId}): ${m.text}`
                 : m.text
         })
         const combined = formattedParts.join('\n')
