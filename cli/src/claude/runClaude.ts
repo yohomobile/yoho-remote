@@ -519,7 +519,8 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         allowedTools: sessionSource === 'brain'
             ? [
                 // Brain mode: whitelist only MCP tools, no built-in tools (Read, Write, Bash, etc.)
-                ...happyServer.toolNames.map(toolName => `mcp__hapi__${toolName}`),
+                // Exclude change_title — Brain session titles are set by the server
+                ...happyServer.toolNames.filter(t => t !== 'change_title').map(toolName => `mcp__hapi__${toolName}`),
                 'mcp__yoho-memory__recall',
                 'mcp__yoho-memory__remember',
                 'mcp__yoho-memory__get_playbook',
