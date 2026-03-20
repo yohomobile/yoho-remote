@@ -7,6 +7,8 @@
  */
 
 import * as lark from '@larksuiteoapi/node-sdk'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { SyncEngine, SyncEvent } from '../sync/syncEngine'
 import type { IStore } from '../store/interface'
 import { extractAgentText, isInternalBrainMessage, buildFeishuMessage } from './formatter'
@@ -14,6 +16,7 @@ import { buildFeishuBrainInitPrompt } from '../web/prompts/initPrompt'
 import { selectBestAccount } from '../claude-accounts/accountsService'
 import { getClaudeAccessToken } from '../web/routes/usage'
 import { lookupKeycloakUserByEmail, type KeycloakUserInfo } from './keycloakLookup'
+import { getConfiguration } from '../configuration'
 
 export interface FeishuBotConfig {
     syncEngine: SyncEngine
@@ -201,9 +204,25 @@ export class FeishuBot {
             if (!botMentioned) return
         }
 
-        // Extract text content
-        let text = this.extractMessageText(messageType, message.content)
-        if (!text || !text.trim()) return
+        // Handle image messages: download from Feishu and embed as [Image: ...] reference
+        let text: string | null = null
+        if (messageType === 'image') {
+            text = await this.handleImageMessage(messageId, message.content, chatId)
+        } else {
+            text = this.extractMessageText(messageType, message.content)
+        }
+        if (!text || !text.trim()) {
+            // For known non-text types, send a friendly hint
+            const typeLabels: Record<string, string> = {
+                file: '文件', audio: '语音', video: '视频',
+                sticker: '表情', media: '媒体', share_chat: '群名片', share_user: '个人名片',
+            }
+            if (typeLabels[messageType]) {
+                console.log(`[FeishuBot] Unsupported message type "${messageType}" from ${senderOpenId.slice(0, 8)} in ${chatId.slice(0, 12)}`)
+                await this.sendFeishuText(chatId, `暂不支持${typeLabels[messageType]}消息，请用文字描述你的问题。`)
+            }
+            return
+        }
 
         // Group chat: strip @bot mention placeholder from text
         if (chatType === 'group' && message.mentions) {
@@ -389,6 +408,65 @@ export class FeishuBot {
         }
 
         return texts.length > 0 ? texts.join('\n') : '[用户发送了一条卡片消息]'
+    }
+
+    /**
+     * Download a Feishu image and save to server-uploads so CLI can read it via [Image: ...] reference.
+     * Returns text like "[Image: server-uploads/{sessionId}/{filename}]" or null on failure.
+     */
+    private async handleImageMessage(messageId: string, contentStr: string, chatId: string): Promise<string | null> {
+        try {
+            const content = JSON.parse(contentStr)
+            const imageKey = content.image_key as string
+            if (!imageKey) {
+                console.error('[FeishuBot] Image message missing image_key')
+                return null
+            }
+
+            // We need the sessionId to save the image under the right uploads directory.
+            // Ensure session exists (or will be created) - use chatId to look up existing sessionId.
+            const sessionId = this.chatIdToSessionId.get(chatId)
+
+            // Download image from Feishu API
+            const token = await this.getToken()
+            const resp = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${imageKey}?type=image`, {
+                headers: { Authorization: `Bearer ${token}` }
+            })
+            if (!resp.ok) {
+                console.error(`[FeishuBot] Failed to download image: ${resp.status} ${resp.statusText}`)
+                return null
+            }
+
+            const arrayBuffer = await resp.arrayBuffer()
+            const buffer = Buffer.from(arrayBuffer)
+
+            // Determine file extension from content-type
+            const contentType = resp.headers.get('content-type') || 'image/png'
+            const extMap: Record<string, string> = {
+                'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif',
+                'image/webp': 'webp', 'image/bmp': 'bmp', 'image/svg+xml': 'svg',
+            }
+            const ext = extMap[contentType] || 'png'
+            const filename = `feishu-${imageKey.slice(0, 16)}.${ext}`
+
+            // Save to {dataDir}/uploads/{sessionId}/{filename}
+            // Use a shared 'feishu-images' dir if no session yet (image arrives before session creation)
+            const uploadSessionId = sessionId || 'feishu-images'
+            const config = getConfiguration()
+            const uploadDir = join(config.dataDir, 'uploads', uploadSessionId)
+            if (!existsSync(uploadDir)) {
+                mkdirSync(uploadDir, { recursive: true })
+            }
+            writeFileSync(join(uploadDir, filename), buffer)
+
+            const serverPath = `server-uploads/${uploadSessionId}/${filename}`
+            console.log(`[FeishuBot] Downloaded image: ${serverPath} (${buffer.length} bytes, ${contentType})`)
+
+            return `[Image: ${serverPath}]`
+        } catch (err) {
+            console.error('[FeishuBot] handleImageMessage failed:', err)
+            return null
+        }
     }
 
     private async resolveSenderInfo(openId: string): Promise<{ name: string; email: string | null }> {
