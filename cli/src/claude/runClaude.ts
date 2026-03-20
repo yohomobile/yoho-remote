@@ -126,6 +126,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         os: os.platform(),
         machineId: machineId,
         source: sessionSource || undefined,
+        mainSessionId: mainSessionId || undefined,
         homeDir: os.homedir(),
         happyHomeDir: configuration.happyHomeDir,
         happyLibDir: runtimePath(),
@@ -515,7 +516,20 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         sessionId: resumeSessionId,
         messageQueue,
         api,
-        allowedTools: happyServer.toolNames.map(toolName => `mcp__hapi__${toolName}`),
+        allowedTools: sessionSource === 'brain'
+            ? [
+                // Brain mode: whitelist only MCP tools, no built-in tools (Read, Write, Bash, etc.)
+                ...happyServer.toolNames.map(toolName => `mcp__hapi__${toolName}`),
+                'mcp__yoho-memory__recall',
+                'mcp__yoho-memory__remember',
+                'mcp__yoho-memory__get_playbook',
+                'mcp__yoho-memory__learn_playbook',
+                'mcp__yoho-credentials__list_credentials',
+                'mcp__yoho-credentials__get_credential',
+                'mcp__yoho-credentials__set_credential',
+                'mcp__yoho-credentials__delete_credential',
+            ]
+            : happyServer.toolNames.map(toolName => `mcp__hapi__${toolName}`),
         onModeChange: (newMode) => {
             session.sendSessionEvent({ type: 'switch', mode: newMode });
             session.updateAgentState((currentState) => ({

@@ -61,6 +61,7 @@ export type Metadata = {
     }
     claudeAccountId?: string
     claudeAccountName?: string
+    mainSessionId?: string
 }
 
 export const MetadataSchema = z.object({

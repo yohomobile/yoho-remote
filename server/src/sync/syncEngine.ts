@@ -798,6 +798,9 @@ export class SyncEngine {
 
             // 同时发送 Web Push 通知
             this.sendTaskCompletePushNotification(session)
+
+            // Brain 回调：如果这是 brain-child session，把结果推回 Brain session
+            this.sendBrainCallbackIfNeeded(session)
         }).catch(error => {
             console.error('[syncEngine] failed to get notification recipients:', error)
             // 出错时发送空订阅者列表，这样 SSE 过滤器不会广播给 all:true 订阅
@@ -819,6 +822,83 @@ export class SyncEngine {
             })
             this.sendTaskCompletePushNotification(session)
         })
+    }
+
+    /**
+     * Brain callback: when a brain-child session completes, push the result back to the Brain session.
+     * This enables true async orchestration - Brain sends a task and gets notified when it's done.
+     */
+    private async sendBrainCallbackIfNeeded(session: Session): Promise<void> {
+        try {
+            const source = (session.metadata as any)?.source
+            const mainSessionId = (session.metadata as any)?.mainSessionId
+            if (source !== 'brain-child' || !mainSessionId) {
+                return
+            }
+
+            // Check Brain session exists and is active
+            const brainSession = this.getSession(mainSessionId)
+            if (!brainSession) {
+                console.log(`[brain-callback] Brain session ${mainSessionId} not found, skipping`)
+                return
+            }
+
+            // Get the last few messages from child session to extract result
+            const messages = await this.store.getMessages(session.id, 20)
+            let resultText: string | null = null
+            for (let i = messages.length - 1; i >= 0; i--) {
+                const content = messages[i].content as any
+                if (!content) continue
+                // agent message format: { role: 'agent', content: { data: { type: 'assistant', message: { content: [...] } } } }
+                if (content.role === 'agent') {
+                    const data = content.content?.data
+                    if (data?.type === 'assistant' && data.message?.content) {
+                        const blocks = data.message.content
+                        if (Array.isArray(blocks)) {
+                            const texts = blocks
+                                .filter((b: any) => b.type === 'text')
+                                .map((b: any) => b.text?.trim())
+                                .filter(Boolean)
+                            if (texts.length > 0) {
+                                resultText = texts.join('\n')
+                                break
+                            }
+                        }
+                    }
+                    // simpler agent format
+                    if (typeof data?.message === 'string') {
+                        resultText = data.message
+                        break
+                    }
+                    if (typeof data === 'string') {
+                        resultText = data
+                        break
+                    }
+                }
+            }
+
+            const sessionTitle = session.metadata?.summary?.text || session.metadata?.path || session.id
+            const truncatedResult = resultText
+                ? resultText.length > 4000 ? resultText.slice(0, 4000) + '\n...(truncated)' : resultText
+                : '（无文本输出）'
+
+            const callbackMessage = [
+                `[子 session 任务完成]`,
+                `Session: ${session.id}`,
+                `标题: ${sessionTitle}`,
+                ``,
+                truncatedResult
+            ].join('\n')
+
+            console.log(`[brain-callback] Pushing result from child ${shortId(session.id)} to brain ${shortId(mainSessionId)} (${truncatedResult.length} chars)`)
+
+            await this.sendMessage(mainSessionId, {
+                text: callbackMessage,
+                sentFrom: 'brain-callback' as any,
+            })
+        } catch (error) {
+            console.error(`[brain-callback] Failed to send callback for session ${session.id}:`, error)
+        }
     }
 
     /**

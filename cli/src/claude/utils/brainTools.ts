@@ -3,109 +3,20 @@
  *
  * Provides session orchestration tools for Brain mode.
  * Brain sessions can create, control, and monitor other hapi sessions.
+ *
+ * Uses true async callback: hapi_session_send returns immediately,
+ * and the server pushes results back to the Brain session when
+ * the child session completes (via sendBrainCallbackIfNeeded in syncEngine).
  */
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { ApiClient } from '@/api/api'
 import { logger } from '@/ui/logger'
 
-const EARLY_RETURN_MS = 30_000      // 30s then early return
-const POLL_MAX_WAIT_MS = 150_000    // poll waits up to 150s
-const POLL_INTERVAL_MS = 5_000      // check every 5s
-const STALE_THRESHOLD = 12          // 12 * 5s = 60s without new messages = stale
-
 interface BrainToolsOptions {
     apiClient: ApiClient
     machineId: string
     brainSessionId: string
-}
-
-/**
- * Extract the last assistant text from raw message content objects.
- * Messages from getSessionMessages have { content: unknown } where content
- * is a Claude SDK message object.
- */
-function extractLastAgentText(messages: Array<{ content: unknown }>): string | null {
-    // Walk backwards to find the last assistant message with text
-    for (let i = messages.length - 1; i >= 0; i--) {
-        const msg = messages[i]
-        const content = msg.content as any
-        if (!content) continue
-
-        // Claude SDK format: { type: 'assistant', content: [...blocks] }
-        if (content.type === 'assistant' && Array.isArray(content.content)) {
-            const textBlocks = content.content
-                .filter((b: any) => b.type === 'text')
-                .map((b: any) => b.text)
-            if (textBlocks.length > 0) {
-                return textBlocks.join('\n')
-            }
-        }
-
-        // Simple text message format
-        if (typeof content.text === 'string' && content.role === 'assistant') {
-            return content.text
-        }
-    }
-    return null
-}
-
-async function waitForCompletion(
-    api: ApiClient,
-    sessionId: string,
-    timeoutMs: number
-): Promise<{ completed: boolean; text: string | null; exitReason: string }> {
-    const startTime = Date.now()
-    let lastMessageCount = 0
-    let stuckCount = 0
-
-    while (Date.now() - startTime < timeoutMs) {
-        try {
-            const session = await api.getSession(sessionId)
-
-            // Session went inactive
-            if (!session.active) {
-                const messages = await api.getSessionMessages(sessionId, { limit: 20 })
-                const text = extractLastAgentText(messages)
-                return { completed: true, text, exitReason: 'inactive' }
-            }
-
-            // Session finished thinking
-            if (!session.thinking) {
-                const messages = await api.getSessionMessages(sessionId, { limit: 20 })
-                const text = extractLastAgentText(messages)
-                return { completed: true, text, exitReason: 'done' }
-            }
-
-            // Stale detection: thinking=true but no new messages for 60s
-            const messages = await api.getSessionMessages(sessionId, { limit: 5 })
-            const currentCount = messages.length
-            if (currentCount === lastMessageCount) {
-                stuckCount++
-                if (stuckCount >= STALE_THRESHOLD) {
-                    const allMessages = await api.getSessionMessages(sessionId, { limit: 20 })
-                    const text = extractLastAgentText(allMessages)
-                    return { completed: false, text, exitReason: 'stale' }
-                }
-            } else {
-                stuckCount = 0
-                lastMessageCount = currentCount
-            }
-        } catch (err) {
-            logger.debug('[brain] Error polling session:', err)
-        }
-
-        await new Promise(r => setTimeout(r, POLL_INTERVAL_MS))
-    }
-
-    // Timeout - get latest output
-    try {
-        const messages = await api.getSessionMessages(sessionId, { limit: 20 })
-        const text = extractLastAgentText(messages)
-        return { completed: false, text, exitReason: 'timeout' }
-    } catch {
-        return { completed: false, text: null, exitReason: 'timeout' }
-    }
 }
 
 export function registerBrainTools(
@@ -179,7 +90,7 @@ export function registerBrainTools(
         }
     })
 
-    // ===== 2. hapi_session_send =====
+    // ===== 2. hapi_session_send (async, non-blocking) =====
     const sendSchema: z.ZodTypeAny = z.object({
         sessionId: z.string().describe('目标 session ID'),
         message: z.string().describe('要发送的消息/任务指令'),
@@ -187,43 +98,51 @@ export function registerBrainTools(
 
     mcp.registerTool<any, any>('hapi_session_send', {
         title: 'Send to Session',
-        description: '向指定 session 发送消息。发送后等待最多 30 秒获取初步结果。如果任务未完成，你 MUST 调用 hapi_session_poll 等待最终结果。',
+        description: '向指定 session 发送消息/任务。非阻塞：立即返回，子 session 完成后结果会自动推送到你的对话中。你可以继续处理其他任务。',
         inputSchema: sendSchema,
     }, async (args: { sessionId: string; message: string }) => {
         try {
             // Check if session is thinking first
-            const session = await api.getSession(args.sessionId)
+            let session
+            try {
+                session = await api.getSession(args.sessionId)
+            } catch (err: any) {
+                return {
+                    content: [{
+                        type: 'text' as const,
+                        text: `Session ${args.sessionId} 未找到或无法访问: ${err.message}`,
+                    }],
+                    isError: true,
+                }
+            }
+
             if (session.thinking) {
                 return {
                     content: [{
                         type: 'text' as const,
-                        text: `Session ${args.sessionId} 正在处理上一个任务（thinking=true）。请先调用 hapi_session_poll 等待其完成，然后再发送新消息。`,
+                        text: `Session ${args.sessionId} 正在处理上一个任务（thinking=true）。请稍后再发送。`,
                     }],
                 }
             }
 
-            // Send message
-            await api.sendMessageToSession(args.sessionId, args.message, 'brain')
-
-            // Wait for initial result (earlyReturn after 30s)
-            const result = await waitForCompletion(api, args.sessionId, EARLY_RETURN_MS)
-
-            if (result.completed) {
-                const output = result.text || '（无输出）'
+            if (!session.active) {
                 return {
                     content: [{
                         type: 'text' as const,
-                        text: `Session ${args.sessionId} 任务已完成。\n\n${output}`,
+                        text: `Session ${args.sessionId} 当前不在线（active=false）。请创建新 session 或等待其重新上线。`,
                     }],
                 }
             }
 
-            // earlyReturn - still working
-            const progress = result.text ? `\n\n当前进度：\n${result.text}` : ''
+            // Send message - fire and forget
+            await api.sendMessageToSession(args.sessionId, args.message, 'brain')
+
+            logger.debug(`[brain] Message sent to session ${args.sessionId}, returning immediately (async callback mode)`)
+
             return {
                 content: [{
                     type: 'text' as const,
-                    text: `消息已发送，Session ${args.sessionId} 正在执行中。${progress}\n\n⚠️ [强制] 你 MUST 立即调用 hapi_session_poll(sessionId="${args.sessionId}") 等待最终结果。禁止说"等做完再汇报"然后结束对话——你必须现在就 poll 并等到完成。`,
+                    text: `任务已发送到 Session ${args.sessionId}。\n\n子 session 正在后台执行，完成后结果会自动推送到你的对话中。你可以继续处理其他任务。`,
                 }],
             }
         } catch (err: any) {
@@ -237,54 +156,7 @@ export function registerBrainTools(
         }
     })
 
-    // ===== 3. hapi_session_poll =====
-    const pollSchema: z.ZodTypeAny = z.object({
-        sessionId: z.string().describe('目标 session ID'),
-    })
-
-    mcp.registerTool<any, any>('hapi_session_poll', {
-        title: 'Poll Session',
-        description: '轮询指定 session 的状态，等待任务完成。内部自动等待最多 150 秒。',
-        inputSchema: pollSchema,
-    }, async (args: { sessionId: string }) => {
-        try {
-            const result = await waitForCompletion(api, args.sessionId, POLL_MAX_WAIT_MS)
-
-            if (result.completed || result.exitReason === 'stale') {
-                const output = result.text || '（无输出）'
-                const statusMsg = result.exitReason === 'inactive'
-                    ? '（Session 已停止，可能被中断或崩溃）'
-                    : result.exitReason === 'stale'
-                        ? '（Session 可能已僵死，60秒内无新消息）'
-                        : ''
-                return {
-                    content: [{
-                        type: 'text' as const,
-                        text: `Session ${args.sessionId} 任务已完成。${statusMsg}\n\n${output}`,
-                    }],
-                }
-            }
-
-            // Timeout
-            const progress = result.text ? `\n\n当前进度：\n${result.text}` : ''
-            return {
-                content: [{
-                    type: 'text' as const,
-                    text: `轮询超时（150秒），Session ${args.sessionId} 仍在工作中。${progress}\n\n你可以再次调用 hapi_session_poll 继续等待。`,
-                }],
-            }
-        } catch (err: any) {
-            return {
-                content: [{
-                    type: 'text' as const,
-                    text: `轮询失败: ${err.message || String(err)}`,
-                }],
-                isError: true,
-            }
-        }
-    })
-
-    // ===== 4. hapi_session_list =====
+    // ===== 3. hapi_session_list =====
     const listSchema: z.ZodTypeAny = z.object({})
 
     mcp.registerTool<any, any>('hapi_session_list', {
@@ -331,7 +203,7 @@ export function registerBrainTools(
         }
     })
 
-    // ===== 5. hapi_session_close =====
+    // ===== 4. hapi_session_close =====
     const closeSchema: z.ZodTypeAny = z.object({
         sessionId: z.string().describe('要关闭的 session ID'),
     })
@@ -372,10 +244,9 @@ export function registerBrainTools(
     toolNames.push(
         'hapi_session_create',
         'hapi_session_send',
-        'hapi_session_poll',
         'hapi_session_list',
         'hapi_session_close',
     )
 
-    logger.debug(`[brain] Registered 5 brain tools for session ${brainSessionId}`)
+    logger.debug(`[brain] Registered 4 brain tools (async mode) for session ${brainSessionId}`)
 }
