@@ -287,7 +287,21 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     let currentFastMode = readHookSettingsFastMode(hookSettingsPath); // Restore from settings file (e.g. merged from source settings)
     let currentCustomSystemPrompt: string | undefined = undefined; // Track current custom system prompt
     let currentAppendSystemPrompt: string | undefined = undefined; // Track current append system prompt
-    let currentAllowedTools: string[] | undefined = undefined; // Track current allowed tools
+    let currentAllowedTools: string[] | undefined = sessionSource === 'brain'
+        ? [
+            ...happyServer.toolNames
+                .filter(t => sessionCaller === 'feishu' ? t !== 'change_title' : true)
+                .map(toolName => `mcp__hapi__${toolName}`),
+            'mcp__yoho-memory__recall',
+            'mcp__yoho-memory__remember',
+            'mcp__yoho-memory__get_playbook',
+            'mcp__yoho-memory__learn_playbook',
+            'mcp__yoho-credentials__list_credentials',
+            'mcp__yoho-credentials__get_credential',
+            'mcp__yoho-credentials__set_credential',
+            'mcp__yoho-credentials__delete_credential',
+        ]
+        : undefined; // Track current allowed tools
     let currentDisallowedTools: string[] | undefined = sessionSource === 'openclaw' ? ['AskUserQuestion'] : undefined;
 
     const syncSessionModes = () => {
