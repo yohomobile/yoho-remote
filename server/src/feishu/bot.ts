@@ -7,8 +7,8 @@
  */
 
 import * as lark from '@larksuiteoapi/node-sdk'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
+import { join, basename, extname } from 'node:path'
 import type { SyncEngine, SyncEvent } from '../sync/syncEngine'
 import type { IStore } from '../store/interface'
 import { extractAgentText, isInternalBrainMessage, buildFeishuMessage } from './formatter'
@@ -922,12 +922,60 @@ export class FeishuBot {
 
         if (!reply) return
 
+        // Extract [feishu-file: path] references
+        const mediaRefs: string[] = []
+        const FEISHU_FILE_RE = /\[feishu-file:\s*(.+?)\]/g
+        let fm: RegExpExecArray | null
+        while ((fm = FEISHU_FILE_RE.exec(reply)) !== null) {
+            mediaRefs.push(fm[1].trim())
+        }
+        // Strip file references from text
+        const textReply = reply.replace(/\[feishu-file:\s*.+?\]/g, '').trim()
+
         // Reply to the last user message in this round (if available)
         const replyToMessageId = this.lastUserMessageId.get(chatId)
         this.lastUserMessageId.delete(chatId)
 
-        console.log(`[FeishuBot] Sending summary to ${chatId.slice(0, 12)} (${reply.length} chars, from ${msgs.length} messages${replyToMessageId ? ', reply' : ''})`)
-        await this.sendFeishuPost(chatId, reply, replyToMessageId)
+        // 1. Send text part
+        if (textReply) {
+            console.log(`[FeishuBot] Sending summary to ${chatId.slice(0, 12)} (${textReply.length} chars, from ${msgs.length} messages${replyToMessageId ? ', reply' : ''}${mediaRefs.length ? `, +${mediaRefs.length} media` : ''})`)
+            await this.sendFeishuPost(chatId, textReply, replyToMessageId)
+        }
+
+        // 2. Send media attachments
+        for (const ref of mediaRefs) {
+            try {
+                const filePath = this.resolveFilePath(ref)
+                if (!filePath || !existsSync(filePath)) {
+                    console.warn(`[FeishuBot] Media file not found: ${ref}`)
+                    await this.sendFeishuText(chatId, `[文件未找到: ${basename(ref)}]`)
+                    continue
+                }
+
+                const fileClass = this.classifyFile(filePath)
+
+                if (fileClass === 'image') {
+                    const imageKey = await this.uploadImageToFeishu(filePath)
+                    if (imageKey) {
+                        await this.sendFeishuMedia(chatId, 'image', JSON.stringify({ image_key: imageKey }))
+                    } else {
+                        await this.sendFeishuText(chatId, `[图片上传失败: ${basename(filePath)}]`)
+                    }
+                } else {
+                    const fileType = fileClass === 'video' ? 'mp4' : this.getFeishuFileType(filePath)
+                    const fileKey = await this.uploadFileToFeishu(filePath, fileType)
+                    if (fileKey) {
+                        const msgType = fileClass === 'video' ? 'media' : 'file'
+                        await this.sendFeishuMedia(chatId, msgType, JSON.stringify({ file_key: fileKey, file_name: basename(filePath) }))
+                    } else {
+                        await this.sendFeishuText(chatId, `[文件上传失败: ${basename(filePath)}]`)
+                    }
+                }
+            } catch (err) {
+                console.error(`[FeishuBot] Failed to send media ${ref}:`, err)
+                await this.sendFeishuText(chatId, `[媒体发送失败: ${basename(ref)}]`).catch(() => {})
+            }
+        }
 
         // Clear persisted state after successful send
         this.clearPersistedState(chatId)
@@ -1008,6 +1056,116 @@ export class FeishuBot {
             }
         } catch (err) {
             console.error(`[FeishuBot] sendFeishuPost failed for chat ${chatId.slice(0, 12)}:`, err)
+        }
+    }
+
+    // ========== Feishu media upload helpers ==========
+
+    private static readonly IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'])
+    private static readonly VIDEO_EXTS = new Set(['mp4'])
+    private static readonly FILE_TYPE_MAP: Record<string, string> = {
+        mp4: 'mp4', pdf: 'pdf', doc: 'doc', docx: 'doc',
+        xls: 'xls', xlsx: 'xls', ppt: 'ppt', pptx: 'ppt',
+    }
+
+    private classifyFile(filePath: string): 'image' | 'video' | 'file' {
+        const ext = extname(filePath).toLowerCase().slice(1)
+        if (FeishuBot.IMAGE_EXTS.has(ext)) return 'image'
+        if (FeishuBot.VIDEO_EXTS.has(ext)) return 'video'
+        return 'file'
+    }
+
+    private getFeishuFileType(filePath: string): string {
+        const ext = extname(filePath).toLowerCase().slice(1)
+        return FeishuBot.FILE_TYPE_MAP[ext] || 'stream'
+    }
+
+    private resolveFilePath(ref: string): string | null {
+        if (ref.startsWith('server-uploads/')) {
+            const config = getConfiguration()
+            const relativePath = ref.replace('server-uploads/', '')
+            return join(config.dataDir, 'uploads', relativePath)
+        }
+        if (ref.startsWith('/')) return ref
+        return null
+    }
+
+    private async uploadImageToFeishu(filePath: string): Promise<string | null> {
+        try {
+            const token = await this.getToken()
+            const buffer = readFileSync(filePath)
+            const fileName = basename(filePath)
+
+            const formData = new FormData()
+            formData.append('image_type', 'message')
+            formData.append('image', new Blob([buffer]), fileName)
+
+            const resp = await fetch('https://open.feishu.cn/open-apis/im/v1/images', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` },
+                body: formData,
+            })
+            const data = await resp.json() as { data?: { image_key?: string } }
+            const imageKey = data?.data?.image_key ?? null
+            if (imageKey) {
+                console.log(`[FeishuBot] Uploaded image ${fileName} → ${imageKey}`)
+            } else {
+                console.error(`[FeishuBot] Upload image failed for ${fileName}:`, data)
+            }
+            return imageKey
+        } catch (err) {
+            console.error(`[FeishuBot] uploadImageToFeishu error:`, err)
+            return null
+        }
+    }
+
+    private async uploadFileToFeishu(filePath: string, fileType: string): Promise<string | null> {
+        try {
+            const token = await this.getToken()
+            const buffer = readFileSync(filePath)
+            const fileName = basename(filePath)
+
+            const formData = new FormData()
+            formData.append('file_type', fileType)
+            formData.append('file_name', fileName)
+            formData.append('file', new Blob([buffer]), fileName)
+
+            const resp = await fetch('https://open.feishu.cn/open-apis/im/v1/files', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` },
+                body: formData,
+            })
+            const data = await resp.json() as { data?: { file_key?: string } }
+            const fileKey = data?.data?.file_key ?? null
+            if (fileKey) {
+                console.log(`[FeishuBot] Uploaded file ${fileName} (${fileType}) → ${fileKey}`)
+            } else {
+                console.error(`[FeishuBot] Upload file failed for ${fileName}:`, data)
+            }
+            return fileKey
+        } catch (err) {
+            console.error(`[FeishuBot] uploadFileToFeishu error:`, err)
+            return null
+        }
+    }
+
+    private async sendFeishuMedia(chatId: string, msgType: string, content: string): Promise<void> {
+        try {
+            const token = await this.getToken()
+            await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    receive_id: chatId,
+                    msg_type: msgType,
+                    content,
+                }),
+            })
+        } catch (err) {
+            console.error(`[FeishuBot] sendFeishuMedia failed for chat ${chatId.slice(0, 12)}:`, err)
         }
     }
 
