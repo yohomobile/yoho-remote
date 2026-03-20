@@ -45,9 +45,9 @@ export function registerBrainTools(
         agent: z.enum(['claude', 'codex', 'opencode']).optional().describe('Agent 类型，默认 claude'),
     })
 
-    mcp.registerTool<any, any>('hapi_session_create', {
+    mcp.registerTool<any, any>('session_create', {
         title: 'Create Session',
-        description: '强制创建新的工作 session。如果只想发任务到已有目录，优先使用 hapi_session_find_or_create 来复用空闲 session。',
+        description: '强制创建新的工作 session。如果只想发任务到已有目录，优先使用 session_find_or_create 来复用空闲 session。',
         inputSchema: createSchema,
     }, async (args: { directory: string; machineId?: string; agent?: string }) => {
         try {
@@ -98,7 +98,7 @@ export function registerBrainTools(
         agent: z.enum(['claude', 'codex', 'opencode']).optional().describe('Agent 类型，默认 claude'),
     })
 
-    mcp.registerTool<any, any>('hapi_session_find_or_create', {
+    mcp.registerTool<any, any>('session_find_or_create', {
         title: 'Find or Create Session',
         description: '智能查找可复用的空闲子 session。匹配 directory + 属于当前 Brain，并通过 hint 优先选择上下文相关的 session（基于 brainSummary 匹配）。找不到则创建新 session。推荐优先使用此工具。',
         inputSchema: findOrCreateSchema,
@@ -203,7 +203,7 @@ export function registerBrainTools(
         message: z.string().describe('要发送的消息/任务指令'),
     })
 
-    mcp.registerTool<any, any>('hapi_session_send', {
+    mcp.registerTool<any, any>('session_send', {
         title: 'Send to Session',
         description: '向指定 session 发送消息/任务。非阻塞：立即返回，子 session 完成后结果会自动推送到你的对话中。你可以继续处理其他任务。',
         inputSchema: sendSchema,
@@ -268,7 +268,7 @@ export function registerBrainTools(
         includeOffline: z.boolean().optional().describe('是否包含离线 session，默认 false（只返回在线的）'),
     })
 
-    mcp.registerTool<any, any>('hapi_session_list', {
+    mcp.registerTool<any, any>('session_list', {
         title: 'List Sessions',
         description: '列出 session 及其状态。默认只返回在线 session，传 includeOffline=true 可包含离线 session。',
         inputSchema: listSchema,
@@ -319,7 +319,7 @@ export function registerBrainTools(
         sessionId: z.string().describe('要关闭的 session ID'),
     })
 
-    mcp.registerTool<any, any>('hapi_session_close', {
+    mcp.registerTool<any, any>('session_close', {
         title: 'Close Session',
         description: '关闭指定 session。',
         inputSchema: closeSchema,
@@ -358,7 +358,7 @@ export function registerBrainTools(
         brainSummary: z.string().describe('Brain 写入的任务总结（持久化到 session metadata）'),
     })
 
-    mcp.registerTool<any, any>('hapi_session_update', {
+    mcp.registerTool<any, any>('session_update', {
         title: 'Update Session',
         description: '更新子 session 的元信息。用于写入 brainSummary（任务总结），方便后续复用时识别 session 做过什么。',
         inputSchema: updateSchema,
@@ -389,7 +389,7 @@ export function registerBrainTools(
         sessionId: z.string().describe('要查询的 session ID'),
     })
 
-    mcp.registerTool<any, any>('hapi_session_status', {
+    mcp.registerTool<any, any>('session_status', {
         title: 'Session Status',
         description: '查询 session 的详细状态：在线/执行中/消息数/token 用量/context 使用率。用于判断是否需要 compact。',
         inputSchema: statusSchema,
@@ -436,13 +436,13 @@ export function registerBrainTools(
     })
 
     toolNames.push(
-        'hapi_session_create',
-        'hapi_session_find_or_create',
-        'hapi_session_send',
-        'hapi_session_list',
-        'hapi_session_close',
-        'hapi_session_update',
-        'hapi_session_status',
+        'session_create',
+        'session_find_or_create',
+        'session_send',
+        'session_list',
+        'session_close',
+        'session_update',
+        'session_status',
     )
 
     logger.debug(`[brain] Registered 7 brain tools (async mode) for session ${brainSessionId}`)
