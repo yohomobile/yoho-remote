@@ -341,29 +341,90 @@ export class FeishuBot {
                 }
             }
             if (messageType === 'interactive') {
-                // Extract text from card elements
-                const texts: string[] = []
-                if (content.header?.title?.content) {
-                    texts.push(content.header.title.content)
-                }
-                if (Array.isArray(content.elements)) {
-                    for (const el of content.elements) {
-                        if (el.tag === 'markdown' && el.content) {
-                            texts.push(el.content)
-                        } else if (el.tag === 'div' && el.text?.content) {
-                            texts.push(el.text.content)
-                        } else if (el.tag === 'plain_text' && el.content) {
-                            texts.push(el.content)
-                        }
-                    }
-                }
-                return texts.length > 0 ? texts.join('\n') : '[用户发送了一条卡片消息]'
+                console.log(`[FeishuBot] Interactive card content: ${contentStr.slice(0, 1000)}`)
+                return this.extractCardText(content)
             }
         } catch {
             // If content is not JSON, treat as plain text
             return contentStr
         }
         return null
+    }
+
+    /**
+     * Extract readable text from an interactive card message.
+     * Walks through header and elements to collect all text content.
+     */
+    private extractCardText(card: any): string | null {
+        const texts: string[] = []
+
+        // Header title
+        if (card.header?.title?.content) {
+            texts.push(card.header.title.content)
+        }
+
+        // Elements
+        this.extractCardElementTexts(card.elements, texts)
+
+        // i18n_elements fallback
+        if (texts.length === 0 && card.i18n_elements) {
+            const lang = card.i18n_elements.zh_cn || card.i18n_elements.en_us || Object.values(card.i18n_elements)[0]
+            if (Array.isArray(lang)) {
+                this.extractCardElementTexts(lang, texts)
+            }
+        }
+
+        return texts.length > 0 ? texts.join('\n') : '[用户发送了一条卡片消息]'
+    }
+
+    private extractCardElementTexts(elements: any[] | undefined, texts: string[]): void {
+        if (!Array.isArray(elements)) return
+        for (const el of elements) {
+            if (!el || !el.tag) continue
+            switch (el.tag) {
+                case 'markdown':
+                case 'plain_text':
+                    if (el.content) texts.push(el.content)
+                    break
+                case 'lark_md':
+                    if (el.content) texts.push(el.content)
+                    break
+                case 'div':
+                    // div.text can be plain_text or lark_md
+                    if (el.text?.content) texts.push(el.text.content)
+                    // div.fields
+                    if (Array.isArray(el.fields)) {
+                        for (const field of el.fields) {
+                            if (field.text?.content) texts.push(field.text.content)
+                        }
+                    }
+                    break
+                case 'note':
+                    // note.elements contains text/image items
+                    if (Array.isArray(el.elements)) {
+                        for (const noteEl of el.elements) {
+                            if (noteEl.content) texts.push(noteEl.content)
+                        }
+                    }
+                    break
+                case 'column_set':
+                    // column_set contains columns, each with elements
+                    if (Array.isArray(el.columns)) {
+                        for (const col of el.columns) {
+                            this.extractCardElementTexts(col.elements, texts)
+                        }
+                    }
+                    break
+                case 'action':
+                    // action contains buttons/selects with text
+                    if (Array.isArray(el.actions)) {
+                        for (const action of el.actions) {
+                            if (action.text?.content) texts.push(action.text.content)
+                        }
+                    }
+                    break
+            }
+        }
     }
 
     private async resolveSenderInfo(openId: string): Promise<{ name: string; email: string | null }> {
