@@ -207,6 +207,13 @@ export class PermissionHandler {
     handleToolCall = async (toolName: string, input: unknown, mode: EnhancedMode, options: { signal: AbortSignal }): Promise<PermissionResult> => {
         const isAskUserQuestion = isAskUserQuestionToolName(toolName);
 
+        // Enforce tool whitelist (e.g. Brain mode only allows MCP tools)
+        // If allowedTools is set in the mode, reject any tool not in the list
+        if (mode.allowedTools && mode.allowedTools.length > 0 && !mode.allowedTools.includes(toolName)) {
+            logger.debug(`[permissionHandler] Tool "${toolName}" not in allowedTools whitelist, denying`);
+            return { behavior: 'deny', message: `Tool "${toolName}" is not available in this session.` };
+        }
+
         // Check if tool is explicitly allowed
         // Tools that require user approval (AskUserQuestion, ExitPlanMode) are never auto-allowed
         if (!requiresUserApproval(toolName) && toolName === 'Bash') {
