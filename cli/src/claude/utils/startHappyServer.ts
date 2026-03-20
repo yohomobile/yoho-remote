@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 
 interface StartHappyServerOptions {
     sessionSource?: string
+    sessionCaller?: string
     apiClient?: ApiClient
     machineId?: string
     hapiSessionId?: string
@@ -48,43 +49,46 @@ export async function startHappyServer(client: ApiSessionClient, options?: Start
         version: "1.0.0",
     });
 
-    // Avoid TS instantiation depth issues by widening the schema type.
-    const changeTitleInputSchema: z.ZodTypeAny = z.object({
-        title: z.string().describe('The new title for the chat session'),
-    });
+    const toolNames: string[] = []
 
-    mcp.registerTool<any, any>('change_title', {
-        description: 'Change the title of the current chat session',
-        title: 'Change Chat Title',
-        inputSchema: changeTitleInputSchema,
-    }, async (args: { title: string }) => {
-        const response = await handler(args.title);
-        logger.debug('[hapiMCP] Response:', response);
+    // Feishu Brain sessions don't need change_title (title is set server-side)
+    if (options?.sessionCaller !== 'feishu') {
+        const changeTitleInputSchema: z.ZodTypeAny = z.object({
+            title: z.string().describe('The new title for the chat session'),
+        });
 
-        if (response.success) {
-            return {
-                content: [
-                    {
-                        type: 'text' as const,
-                        text: `Successfully changed chat title to: "${args.title}"`,
-                    },
-                ],
-                isError: false,
-            };
-        } else {
-            return {
-                content: [
-                    {
-                        type: 'text' as const,
-                        text: `Failed to change chat title: ${response.error || 'Unknown error'}`,
-                    },
-                ],
-                isError: true,
-            };
-        }
-    });
+        mcp.registerTool<any, any>('change_title', {
+            description: 'Change the title of the current chat session',
+            title: 'Change Chat Title',
+            inputSchema: changeTitleInputSchema,
+        }, async (args: { title: string }) => {
+            const response = await handler(args.title);
+            logger.debug('[hapiMCP] Response:', response);
 
-    const toolNames = ['change_title']
+            if (response.success) {
+                return {
+                    content: [
+                        {
+                            type: 'text' as const,
+                            text: `Successfully changed chat title to: "${args.title}"`,
+                        },
+                    ],
+                    isError: false,
+                };
+            } else {
+                return {
+                    content: [
+                        {
+                            type: 'text' as const,
+                            text: `Failed to change chat title: ${response.error || 'Unknown error'}`,
+                        },
+                    ],
+                    isError: true,
+                };
+            }
+        });
+        toolNames.push('change_title')
+    }
 
     // Register Brain tools when source is 'brain'
     if (options?.sessionSource === 'brain' && options.apiClient && options.machineId && options.hapiSessionId) {

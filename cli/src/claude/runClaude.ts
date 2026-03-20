@@ -204,6 +204,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     // Start HAPI MCP server
     const happyServer = await startHappyServer(session, {
         sessionSource: sessionSource || undefined,
+        sessionCaller: sessionCaller || undefined,
         apiClient: api,
         machineId,
         hapiSessionId: response.id,
