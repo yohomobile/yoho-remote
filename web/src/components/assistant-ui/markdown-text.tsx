@@ -77,6 +77,22 @@ export function preprocessMarkdown(text: string): string {
         return result.join('\n')
     }
 
+    // Escape lines that look like Markdown link definitions but aren't URLs
+    // e.g. "[Name | id]: some text" would be swallowed by the parser as a link def
+    if (/^\[.+\]:\s/.test(text) || text.includes('\n[')) {
+        const lines = text.split('\n')
+        let changed = false
+        const escaped = lines.map(line => {
+            // Match link definition syntax: [label]: followed by non-URL text
+            if (/^\[([^\]]+)\]:\s/.test(line) && !/^\[[^\]]+\]:\s*https?:\/\//.test(line)) {
+                changed = true
+                return '\\' + line
+            }
+            return line
+        })
+        if (changed) return escaped.join('\n')
+    }
+
     return text
 }
 
