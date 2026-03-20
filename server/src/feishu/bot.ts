@@ -13,6 +13,7 @@ import { extractAgentText, isInternalBrainMessage, buildFeishuMessage } from './
 import { buildFeishuBrainInitPrompt } from '../web/prompts/initPrompt'
 import { selectBestAccount } from '../claude-accounts/accountsService'
 import { getClaudeAccessToken } from '../web/routes/usage'
+import { lookupKeycloakUserByEmail, type KeycloakUserInfo } from './keycloakLookup'
 
 export interface FeishuBotConfig {
     syncEngine: SyncEngine
@@ -25,6 +26,7 @@ interface IncomingMessage {
     text: string
     senderName: string
     senderOpenId: string
+    senderEmail: string | null
     chatType: string
 }
 
@@ -212,8 +214,8 @@ export class FeishuBot {
             }
         }
 
-        // Resolve sender name
-        const senderName = await this.resolveSenderName(senderOpenId)
+        // Resolve sender info (name + email from Feishu Contact API)
+        const { name: senderName, email: senderEmail } = await this.resolveSenderInfo(senderOpenId)
 
         console.log(`[FeishuBot] Message from ${senderName} in ${chatType} ${chatId.slice(0, 12)}...: ${text.slice(0, 100)}`)
 
@@ -230,7 +232,7 @@ export class FeishuBot {
         }
 
         // Add message to buffer
-        state.incoming.push({ text, senderName, senderOpenId, chatType })
+        state.incoming.push({ text, senderName, senderOpenId, senderEmail, chatType })
 
         if (state.busy || state.creating) {
             // Brain is working or session is being created — just buffer, will flush when done
@@ -345,16 +347,20 @@ export class FeishuBot {
         return null
     }
 
-    private async resolveSenderName(openId: string): Promise<string> {
+    private async resolveSenderInfo(openId: string): Promise<{ name: string; email: string | null }> {
         try {
             const token = await this.getToken()
             const resp = await fetch(`https://open.feishu.cn/open-apis/contact/v3/users/${openId}?user_id_type=open_id`, {
                 headers: { Authorization: `Bearer ${token}` }
             })
-            const data = await resp.json() as { data?: { user?: { name?: string } } }
-            return data.data?.user?.name || openId.slice(0, 8)
+            const data = await resp.json() as { data?: { user?: { name?: string; enterprise_email?: string; email?: string } } }
+            const user = data.data?.user
+            return {
+                name: user?.name || openId.slice(0, 8),
+                email: user?.enterprise_email || user?.email || null,
+            }
         } catch {
-            return openId.slice(0, 8)
+            return { name: openId.slice(0, 8), email: null }
         }
     }
 
@@ -755,8 +761,23 @@ export class FeishuBot {
         const profiles: string[] = []
         for (const [openId, msg] of senders) {
             const profile = await this.fetchUserProfile(msg.senderName, openId)
-            if (profile) {
-                profiles.push(`<user-profile sender="${msg.senderName}" openId="${openId}">\n${profile}\n</user-profile>`)
+
+            // If profile doesn't have Keycloak link yet, try to look up and persist
+            const hasKeycloakLink = profile?.includes('keycloakId:')
+            let keycloakSection = ''
+
+            if (!hasKeycloakLink && msg.senderEmail) {
+                const kcUser = await lookupKeycloakUserByEmail(msg.senderEmail)
+                if (kcUser) {
+                    keycloakSection = this.formatKeycloakInfo(kcUser)
+                    this.persistKeycloakLink(msg.senderName, openId, msg.senderEmail, kcUser).catch(() => {})
+                }
+            }
+
+            const fullProfile = [profile, keycloakSection].filter(Boolean).join('\n\n')
+            if (fullProfile) {
+                const emailAttr = msg.senderEmail ? ` email="${msg.senderEmail}"` : ''
+                profiles.push(`<user-profile sender="${msg.senderName}" openId="${openId}"${emailAttr}>\n${fullProfile}\n</user-profile>`)
             }
         }
 
@@ -784,6 +805,49 @@ export class FeishuBot {
             return result.answer
         } catch {
             return null
+        }
+    }
+
+    private formatKeycloakInfo(kcUser: KeycloakUserInfo): string {
+        const lines = ['## Keycloak 账户信息']
+        lines.push(`- keycloakId: ${kcUser.keycloakId}`)
+        lines.push(`- email: ${kcUser.email}`)
+        if (kcUser.firstName || kcUser.lastName) {
+            lines.push(`- 姓名: ${[kcUser.firstName, kcUser.lastName].filter(Boolean).join(' ')}`)
+        }
+        if (kcUser.attributes.jobTitle) {
+            lines.push(`- 职位: ${kcUser.attributes.jobTitle}`)
+        }
+        if (kcUser.attributes.nickname) {
+            lines.push(`- 昵称: ${kcUser.attributes.nickname}`)
+        }
+        return lines.join('\n')
+    }
+
+    private async persistKeycloakLink(
+        senderName: string,
+        openId: string,
+        email: string,
+        kcUser: KeycloakUserInfo,
+    ): Promise<void> {
+        try {
+            const parts = [
+                `飞书用户画像更新 - ${senderName} (${openId}):`,
+                `Keycloak 账户已关联:`,
+                `- keycloakId: ${kcUser.keycloakId}`,
+                `- email: ${email}`,
+            ]
+            if (kcUser.attributes.jobTitle) parts.push(`- 职位: ${kcUser.attributes.jobTitle}`)
+            if (kcUser.attributes.nickname) parts.push(`- 昵称: ${kcUser.attributes.nickname}`)
+
+            await fetch(`${this.YOHO_MEMORY_URL}/remember`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ input: parts.join('\n') }),
+            })
+            console.log(`[FeishuBot] Persisted Keycloak link for ${senderName} (${email})`)
+        } catch {
+            // Silent fail — next message will retry
         }
     }
 
