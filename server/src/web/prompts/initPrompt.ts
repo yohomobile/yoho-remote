@@ -118,7 +118,8 @@ export async function buildBrainInitPrompt(_role: UserRole, options?: InitPrompt
 }
 
 export async function buildFeishuBrainInitPrompt(_role: UserRole, options?: FeishuBrainInitPromptOptions): Promise<string> {
-    const basePrompt = await buildBrainInitPrompt(_role, options)
+    // Feishu Brain is a direct worker, NOT an orchestrator — use normal initPrompt as base
+    const basePrompt = await buildInitPrompt(_role, options)
 
     const lines: string[] = []
     lines.push('')
