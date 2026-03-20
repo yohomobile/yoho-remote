@@ -1,9 +1,13 @@
 /**
  * Feishu message formatter.
  * Converts Brain agent output to Feishu message formats.
+ *
+ * Short plain-text replies → msg_type "text"
+ * Longer / markdown-rich replies → msg_type "interactive" (card with markdown element)
  */
 
-const MAX_TEXT_LENGTH = 4000
+const MAX_CARD_LENGTH = 4000
+const SHORT_TEXT_THRESHOLD = 200
 
 /**
  * Extract text from a SyncEngine message content object.
@@ -65,28 +69,48 @@ export function isInternalBrainMessage(text: string): boolean {
 }
 
 /**
- * Format text for Feishu post message (rich text with Markdown support).
- * Truncates if too long.
+ * Detect whether text contains markdown formatting.
  */
-export function formatForFeishuPost(text: string): object {
-    let finalText = text
-    if (finalText.length > MAX_TEXT_LENGTH) {
-        finalText = finalText.slice(0, MAX_TEXT_LENGTH) + '\n\n...(内容过长已截断，完整内容请在 Hapi Web 查看)'
-    }
-
-    return {
-        zh_cn: {
-            content: [[{ tag: 'text', text: finalText }]]
-        }
-    }
+function hasMarkdownFormatting(text: string): boolean {
+    // Headers, bold, italic, code blocks, lists, links, tables
+    return /^#{1,6}\s|(\*\*|__).+(\*\*|__)|```|^\s*[-*+]\s|^\s*\d+\.\s|\[.+\]\(.+\)|^\|.+\|/m.test(text)
 }
 
 /**
  * Build a Feishu message payload ready for the API.
+ *
+ * - Short plain text (<=200 chars, no markdown) → text message
+ * - Otherwise → interactive card with markdown element
  */
 export function buildFeishuMessage(text: string): { msgType: string; content: string } {
+    const isShort = text.length <= SHORT_TEXT_THRESHOLD
+    const hasMd = hasMarkdownFormatting(text)
+
+    if (isShort && !hasMd) {
+        return {
+            msgType: 'text',
+            content: JSON.stringify({ text }),
+        }
+    }
+
+    // Truncate for card if too long
+    let cardText = text
+    if (cardText.length > MAX_CARD_LENGTH) {
+        cardText = cardText.slice(0, MAX_CARD_LENGTH) + '\n\n...(内容过长已截断)'
+    }
+
+    const card = {
+        config: { wide_screen_mode: true },
+        elements: [
+            {
+                tag: 'markdown',
+                content: cardText,
+            },
+        ],
+    }
+
     return {
-        msgType: 'post',
-        content: JSON.stringify(formatForFeishuPost(text)),
+        msgType: 'interactive',
+        content: JSON.stringify(card),
     }
 }
