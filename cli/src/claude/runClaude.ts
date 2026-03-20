@@ -516,7 +516,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         sessionId: resumeSessionId,
         messageQueue,
         api,
-        allowedTools: sessionSource === 'brain'
+        allowedTools: (sessionSource === 'brain' || sessionSource === 'feishu-brain')
             ? [
                 // Brain mode: whitelist only MCP tools, no built-in tools (Read, Write, Bash, etc.)
                 ...happyServer.toolNames.map(toolName => `mcp__hapi__${toolName}`),

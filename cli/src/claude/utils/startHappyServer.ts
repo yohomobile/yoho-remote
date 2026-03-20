@@ -87,7 +87,7 @@ export async function startHappyServer(client: ApiSessionClient, options?: Start
     const toolNames = ['change_title']
 
     // Register Brain tools when source is 'brain'
-    if (options?.sessionSource === 'brain' && options.apiClient && options.machineId && options.hapiSessionId) {
+    if ((options?.sessionSource === 'brain' || options?.sessionSource === 'feishu-brain') && options.apiClient && options.machineId && options.hapiSessionId) {
         const { registerBrainTools } = await import('./brainTools');
         registerBrainTools(mcp, toolNames, {
             apiClient: options.apiClient,

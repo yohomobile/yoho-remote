@@ -321,7 +321,7 @@ async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserR
             || null
         const source = session?.metadata?.source
         console.log(`[sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}, source=${source}`)
-        const prompt = source === 'brain'
+        const prompt = (source === 'brain' || source === 'feishu-brain')
             ? await buildBrainInitPrompt(role, { projectRoot, userName })
             : await buildInitPrompt(role, { projectRoot, userName })
         if (!prompt.trim()) {
