@@ -27,6 +27,7 @@ export interface FeishuBotConfig {
 
 interface IncomingMessage {
     text: string
+    messageId: string
     senderName: string
     senderOpenId: string
     senderEmail: string | null
@@ -67,6 +68,9 @@ export class FeishuBot {
     private initReady: Map<string, Promise<void>> = new Map()
     // Resolvers for initReady — called when AI finishes processing initPrompt
     private initReadyResolvers: Map<string, () => void> = new Map()
+
+    // Track the last user message ID per chat for reply threading
+    private lastUserMessageId: Map<string, string> = new Map()
 
     // Rebuild rate limiting: chatId -> last rebuild timestamp
     private lastRebuildAt: Map<string, number> = new Map()
@@ -251,7 +255,7 @@ export class FeishuBot {
         }
 
         // Add message to buffer
-        state.incoming.push({ text, senderName, senderOpenId, senderEmail, chatType })
+        state.incoming.push({ text, messageId, senderName, senderOpenId, senderEmail, chatType })
 
         if (state.busy || state.creating) {
             // Brain is working or session is being created — just buffer, will flush when done
@@ -314,6 +318,12 @@ export class FeishuBot {
 
         // Fetch user profiles from yoho-memory for appendSystemPrompt
         const appendSystemPrompt = await this.buildUserProfilePrompt(messages, chatType)
+
+        // Remember the last user message ID for reply threading
+        const lastMsgId = messages[messages.length - 1].messageId
+        if (lastMsgId) {
+            this.lastUserMessageId.set(chatId, lastMsgId)
+        }
 
         console.log(`[FeishuBot] Sending ${messages.length} merged message(s) to session ${sessionId.slice(0, 8)}${appendSystemPrompt ? ' (with user profiles)' : ''}`)
 
@@ -808,8 +818,13 @@ export class FeishuBot {
         }
 
         if (!reply) return
-        console.log(`[FeishuBot] Sending summary to ${chatId.slice(0, 12)} (${reply.length} chars, from ${msgs.length} messages)`)
-        await this.sendFeishuPost(chatId, reply)
+
+        // Reply to the last user message in this round (if available)
+        const replyToMessageId = this.lastUserMessageId.get(chatId)
+        this.lastUserMessageId.delete(chatId)
+
+        console.log(`[FeishuBot] Sending summary to ${chatId.slice(0, 12)} (${reply.length} chars, from ${msgs.length} messages${replyToMessageId ? ', reply' : ''})`)
+        await this.sendFeishuPost(chatId, reply, replyToMessageId)
     }
 
     // ========== Feishu API helpers ==========
@@ -852,21 +867,39 @@ export class FeishuBot {
         }
     }
 
-    private async sendFeishuPost(chatId: string, text: string): Promise<void> {
+    private async sendFeishuPost(chatId: string, text: string, replyToMessageId?: string): Promise<void> {
         try {
             const { msgType, content } = buildFeishuMessage(text)
             const token = await this.getToken()
-            await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`,
-                },
-                body: JSON.stringify({
-                    receive_id: chatId,
-                    msg_type: msgType,
-                    content,
-                }),
+
+            if (replyToMessageId) {
+                // Reply to a specific message
+                await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${replyToMessageId}/reply`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`,
+                    },
+                    body: JSON.stringify({
+                        msg_type: msgType,
+                        content,
+                    }),
+                })
+            } else {
+                // Send as a new message
+                await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`,
+                    },
+                    body: JSON.stringify({
+                        receive_id: chatId,
+                        msg_type: msgType,
+                        content,
+                    }),
+                })
+            }
             })
         } catch (err) {
             console.error(`[FeishuBot] sendFeishuPost failed for chat ${chatId.slice(0, 12)}:`, err)
