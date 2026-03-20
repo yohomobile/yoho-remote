@@ -170,6 +170,14 @@ export async function buildFeishuBrainInitPrompt(_role: UserRole, options?: Feis
     }
 
     lines.push('')
+    lines.push('### 聊天历史')
+    lines.push('')
+    lines.push('系统会在每条消息中自动附带 `<chat-history>` 标签，包含该对话最近的聊天记录（最多 50 条）。')
+    lines.push('- 利用这些上下文理解对话背景、前因后果')
+    lines.push('- 如需查看更早的历史，使用 `chat_messages` MCP 工具，传入 chatId 和 beforeTimestamp 翻页查询')
+    lines.push('- 聊天记录包含所有参与者的消息（不仅是 @你 的）')
+
+    lines.push('')
     lines.push('## 用户灵魂体系')
     lines.push('')
     lines.push('系统会在每条消息中自动附带发送者的已知画像（`<user-profile>` 标签）。')

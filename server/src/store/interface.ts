@@ -441,6 +441,25 @@ export interface IStore {
     touchFeishuChatSession(feishuChatId: string): Promise<boolean>
     updateFeishuChatState(feishuChatId: string, state: Record<string, unknown>): Promise<boolean>
 
+    // === 飞书消息持久化（单聊+群聊） ===
+    saveFeishuChatMessage(data: {
+        chatId: string
+        messageId: string
+        senderOpenId: string
+        senderName: string
+        messageType: string
+        content: string
+    }): Promise<void>
+    getFeishuChatMessages(chatId: string, limit?: number, beforeTs?: number): Promise<Array<{
+        messageId: string
+        senderOpenId: string
+        senderName: string
+        messageType: string
+        content: string
+        createdAt: number
+    }>>
+    cleanOldFeishuChatMessages(olderThanMs: number): Promise<number>
+
     // === 关闭连接 ===
     close(): Promise<void>
 }

@@ -507,6 +507,19 @@ export class PostgresStore implements IStore {
 
             -- Migration: add state JSONB column for runtime state persistence
             ALTER TABLE feishu_chat_sessions ADD COLUMN IF NOT EXISTS state JSONB DEFAULT '{}';
+
+            -- 飞书消息持久化（单聊+群聊）
+            CREATE TABLE IF NOT EXISTS feishu_chat_messages (
+                id SERIAL PRIMARY KEY,
+                chat_id TEXT NOT NULL,
+                message_id TEXT NOT NULL UNIQUE,
+                sender_open_id TEXT NOT NULL,
+                sender_name TEXT NOT NULL,
+                message_type TEXT NOT NULL DEFAULT 'text',
+                content TEXT NOT NULL,
+                created_at BIGINT NOT NULL DEFAULT FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)
+            );
+            CREATE INDEX IF NOT EXISTS idx_fcm_chat_id_created ON feishu_chat_messages(chat_id, created_at DESC);
         `)
     }
 
@@ -3316,5 +3329,60 @@ export class PostgresStore implements IStore {
             [JSON.stringify(state), Date.now(), feishuChatId]
         )
         return (result.rowCount ?? 0) > 0
+    }
+
+    // === 飞书消息持久化（单聊+群聊） ===
+
+    async saveFeishuChatMessage(data: {
+        chatId: string
+        messageId: string
+        senderOpenId: string
+        senderName: string
+        messageType: string
+        content: string
+    }): Promise<void> {
+        await this.pool.query(
+            `INSERT INTO feishu_chat_messages (chat_id, message_id, sender_open_id, sender_name, message_type, content, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (message_id) DO NOTHING`,
+            [data.chatId, data.messageId, data.senderOpenId, data.senderName, data.messageType, data.content, Date.now()]
+        )
+    }
+
+    async getFeishuChatMessages(chatId: string, limit = 50, beforeTs?: number): Promise<Array<{
+        messageId: string
+        senderOpenId: string
+        senderName: string
+        messageType: string
+        content: string
+        createdAt: number
+    }>> {
+        const params: unknown[] = [chatId]
+        let sql = 'SELECT message_id, sender_open_id, sender_name, message_type, content, created_at FROM feishu_chat_messages WHERE chat_id = $1'
+        if (beforeTs) {
+            sql += ' AND created_at < $2'
+            params.push(beforeTs)
+        }
+        sql += ` ORDER BY created_at DESC LIMIT $${params.length + 1}`
+        params.push(limit)
+
+        const result = await this.pool.query(sql, params)
+        return result.rows.map((r: any) => ({
+            messageId: r.message_id,
+            senderOpenId: r.sender_open_id,
+            senderName: r.sender_name,
+            messageType: r.message_type,
+            content: r.content,
+            createdAt: Number(r.created_at),
+        }))
+    }
+
+    async cleanOldFeishuChatMessages(olderThanMs: number): Promise<number> {
+        const cutoff = Date.now() - olderThanMs
+        const result = await this.pool.query(
+            'DELETE FROM feishu_chat_messages WHERE created_at < $1',
+            [cutoff]
+        )
+        return result.rowCount ?? 0
     }
 }

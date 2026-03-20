@@ -226,6 +226,16 @@ export class FeishuBot {
                 }
             }, 5000) // Wait 5s for sessions to reconnect
         }
+
+        // Periodic cleanup: delete messages older than 7 days (run every hour)
+        const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
+        const cleanup = () => {
+            this.store.cleanOldFeishuChatMessages(SEVEN_DAYS_MS)
+                .then(n => { if (n > 0) console.log(`[FeishuBot] Cleaned ${n} old chat messages`) })
+                .catch(err => console.error(`[FeishuBot] Chat message cleanup error:`, err))
+        }
+        cleanup() // Run once at startup
+        setInterval(cleanup, 60 * 60 * 1000) // Then every hour
     }
 
     // ========== State persistence ==========
@@ -273,32 +283,48 @@ export class FeishuBot {
         // Ignore bot's own messages
         if (senderOpenId === this.botOpenId) return
 
-        // Group chat: only respond to @bot messages
-        if (chatType === 'group') {
-            const mentions = message.mentions as Array<{ id: { open_id: string }; key: string }> | undefined
-            const botMentioned = mentions?.some((m: any) => m.id?.open_id === this.botOpenId)
-            if (!botMentioned) return
-        }
+        // Check if bot is mentioned (for group chats)
+        const mentions = message.mentions as Array<{ id: { open_id: string }; key: string }> | undefined
+        const botMentioned = chatType === 'group' && mentions?.some((m: any) => m.id?.open_id === this.botOpenId)
 
-        // Handle image messages: download from Feishu and embed as [Image: ...] reference
+        // Extract message text (needed for both persistence and processing)
         let text: string | null = null
         if (messageType === 'image') {
-            text = await this.handleImageMessage(messageId, message.content, chatId)
+            // Only download image if bot is being addressed (p2p or @bot)
+            if (chatType === 'p2p' || botMentioned) {
+                text = await this.handleImageMessage(messageId, message.content, chatId)
+            } else {
+                text = '[图片]'
+            }
         } else {
             text = this.extractMessageText(messageType, message.content)
         }
+
+        // Resolve sender name for persistence
+        const { name: senderName, email: senderEmail } = await this.resolveSenderInfo(senderOpenId)
+
+        // Persist message to DB (fire-and-forget, all chats)
+        const contentForDb = text?.trim() || `[${messageType}]`
+        this.store.saveFeishuChatMessage({
+            chatId, messageId, senderOpenId, senderName, messageType, content: contentForDb,
+        }).catch(err => console.error(`[FeishuBot] Failed to persist message:`, err))
+
+        // Non-text messages that we can't process: hint and return
         if (!text || !text.trim()) {
-            // For known non-text types, send a friendly hint
             const typeLabels: Record<string, string> = {
                 file: '文件', audio: '语音', video: '视频',
                 sticker: '表情', media: '媒体', share_chat: '群名片', share_user: '个人名片',
             }
-            if (typeLabels[messageType]) {
+            // Only send hint if bot is being addressed
+            if (typeLabels[messageType] && (chatType === 'p2p' || botMentioned)) {
                 console.log(`[FeishuBot] Unsupported message type "${messageType}" from ${senderOpenId.slice(0, 8)} in ${chatId.slice(0, 12)}`)
                 await this.sendFeishuText(chatId, `暂不支持${typeLabels[messageType]}消息，请用文字描述你的问题。`)
             }
             return
         }
+
+        // Group chat: only respond to @bot messages (but all messages already persisted above)
+        if (chatType === 'group' && !botMentioned) return
 
         // Group chat: strip @bot mention placeholder from text
         if (chatType === 'group' && message.mentions) {
@@ -308,9 +334,6 @@ export class FeishuBot {
                 }
             }
         }
-
-        // Resolve sender info (name + email from Feishu Contact API)
-        const { name: senderName, email: senderEmail } = await this.resolveSenderInfo(senderOpenId)
 
         console.log(`[FeishuBot] Message from ${senderName} in ${chatType} ${chatId.slice(0, 12)}...: ${text.slice(0, 100)}`)
 
@@ -389,7 +412,21 @@ export class FeishuBot {
         const combined = formattedParts.join('\n')
 
         // Fetch user profiles from yoho-memory for appendSystemPrompt
-        const appendSystemPrompt = await this.buildUserProfilePrompt(messages, chatType)
+        let appendSystemPrompt = await this.buildUserProfilePrompt(messages, chatType)
+
+        // Inject recent chat history as context
+        try {
+            const recentMessages = await this.store.getFeishuChatMessages(chatId, 50)
+            if (recentMessages.length > 0) {
+                const contextLines = recentMessages.reverse().map(m =>
+                    `[${new Date(m.createdAt).toLocaleTimeString('zh-CN', { hour12: false })}] ${m.senderName}: ${m.content}`
+                )
+                const chatContext = `<chat-history>\n以下是该${chatType === 'group' ? '群' : '对话'}最近的聊天记录（最新在最后），帮助你了解对话背景：\n${contextLines.join('\n')}\n</chat-history>`
+                appendSystemPrompt = [appendSystemPrompt, chatContext].filter(Boolean).join('\n\n')
+            }
+        } catch (err) {
+            console.error(`[FeishuBot] Failed to fetch chat history for context:`, err)
+        }
 
         // Remember the last user message ID for reply threading
         const lastMsgId = messages[messages.length - 1].messageId

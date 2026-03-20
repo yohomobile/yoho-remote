@@ -341,6 +341,31 @@ export class ApiClient {
         return response.data
     }
 
+    async getFeishuChatMessages(chatId: string, limit?: number, before?: number): Promise<Array<{
+        messageId: string
+        senderOpenId: string
+        senderName: string
+        messageType: string
+        content: string
+        createdAt: number
+    }>> {
+        const params = new URLSearchParams({ chatId })
+        if (limit) params.set('limit', String(limit))
+        if (before) params.set('before', String(before))
+
+        const response = await axios.get(
+            `${configuration.serverUrl}/cli/feishu/chat-messages?${params}`,
+            {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 15_000
+            }
+        )
+        return response.data.messages
+    }
+
     /**
      * 获取当前活跃的 Claude 账号
      * 如果没有配置多账号，返回 null

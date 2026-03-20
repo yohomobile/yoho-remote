@@ -435,6 +435,45 @@ export function registerBrainTools(
         }
     })
 
+    // ===== 8. hapi_chat_messages =====
+    const chatMessagesSchema: z.ZodTypeAny = z.object({
+        chatId: z.string().describe('飞书 chat_id（群聊或单聊）'),
+        limit: z.number().optional().describe('返回条数，默认 50，最大 200'),
+        beforeTimestamp: z.number().optional().describe('只返回此时间戳之前的消息（毫秒），用于翻页'),
+    })
+
+    mcp.registerTool<any, any>('chat_messages', {
+        title: 'Chat Messages',
+        description: '查询飞书聊天的历史消息记录（单聊或群聊）。返回持久化的消息列表，按时间倒序。可用于了解对话上下文、查找之前讨论的内容。',
+        inputSchema: chatMessagesSchema,
+    }, async (args: { chatId: string; limit?: number; beforeTimestamp?: number }) => {
+        try {
+            const limit = Math.min(args.limit || 50, 200)
+            const messages = await api.getFeishuChatMessages(args.chatId, limit, args.beforeTimestamp)
+
+            if (messages.length === 0) {
+                return {
+                    content: [{ type: 'text' as const, text: '没有找到消息记录。' }],
+                }
+            }
+
+            const lines = messages.reverse().map((m: any) =>
+                `[${new Date(m.createdAt).toLocaleTimeString('zh-CN', { hour12: false })}] ${m.senderName}: ${m.content}`
+            )
+            return {
+                content: [{
+                    type: 'text' as const,
+                    text: `共 ${messages.length} 条消息：\n${lines.join('\n')}`,
+                }],
+            }
+        } catch (err: any) {
+            return {
+                content: [{ type: 'text' as const, text: `查询失败: ${err.message || String(err)}` }],
+                isError: true,
+            }
+        }
+    })
+
     toolNames.push(
         'session_create',
         'session_find_or_create',
@@ -443,7 +482,8 @@ export function registerBrainTools(
         'session_close',
         'session_update',
         'session_status',
+        'chat_messages',
     )
 
-    logger.debug(`[brain] Registered 7 brain tools (async mode) for session ${brainSessionId}`)
+    logger.debug(`[brain] Registered 8 brain tools (async mode) for session ${brainSessionId}`)
 }

@@ -83,7 +83,8 @@ function resolveMachineForNamespace(
 
 export function createCliRoutes(
     getSyncEngine: () => SyncEngine | null,
-    getSseManager?: () => SSEManager | null
+    getSseManager?: () => SSEManager | null,
+    store?: import('../../store/interface').IStore,
 ): Hono<CliEnv> {
     const app = new Hono<CliEnv>()
 
@@ -262,6 +263,24 @@ export function createCliRoutes(
         } catch (error) {
             console.error('[cli/server-uploads] read error:', error)
             return c.json({ error: 'Failed to read file' }, 500)
+        }
+    })
+
+    // Feishu chat messages: query persisted messages for a chat
+    app.get('/feishu/chat-messages', async (c) => {
+        if (!store) return c.json({ error: 'Store not available' }, 503)
+        const chatId = c.req.query('chatId')
+        if (!chatId) {
+            return c.json({ error: 'chatId is required' }, 400)
+        }
+        const limit = Math.min(Number(c.req.query('limit') || '50'), 200)
+        const before = c.req.query('before') ? Number(c.req.query('before')) : undefined
+
+        try {
+            const messages = await store.getFeishuChatMessages(chatId, limit, before)
+            return c.json({ messages })
+        } catch (err: any) {
+            return c.json({ error: err.message || 'Failed to query messages' }, 500)
         }
     })
 
