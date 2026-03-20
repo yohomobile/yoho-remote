@@ -435,10 +435,11 @@ export interface IStore {
         feishuChatName?: string | null
     }): Promise<{ feishuChatId: string; sessionId: string }>
     getFeishuChatSession(feishuChatId: string): Promise<{ feishuChatId: string; feishuChatType: string; sessionId: string; namespace: string; status: string; feishuChatName: string | null; createdAt: number; updatedAt: number; lastMessageAt: number | null } | null>
-    getActiveFeishuChatSessions(): Promise<Array<{ feishuChatId: string; feishuChatType: string; sessionId: string; namespace: string; feishuChatName: string | null }>>
+    getActiveFeishuChatSessions(): Promise<Array<{ feishuChatId: string; feishuChatType: string; sessionId: string; namespace: string; feishuChatName: string | null; state: Record<string, unknown> | null }>>
     updateFeishuChatSession(feishuChatId: string, sessionId: string, status: string): Promise<boolean>
     updateFeishuChatSessionStatus(feishuChatId: string, status: string): Promise<boolean>
     touchFeishuChatSession(feishuChatId: string): Promise<boolean>
+    updateFeishuChatState(feishuChatId: string, state: Record<string, unknown>): Promise<boolean>
 
     // === 关闭连接 ===
     close(): Promise<void>

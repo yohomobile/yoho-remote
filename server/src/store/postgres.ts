@@ -504,6 +504,9 @@ export class PostgresStore implements IStore {
             );
             CREATE INDEX IF NOT EXISTS idx_feishu_chat_sessions_session ON feishu_chat_sessions(session_id);
             CREATE INDEX IF NOT EXISTS idx_feishu_chat_sessions_status ON feishu_chat_sessions(status);
+
+            -- Migration: add state JSONB column for runtime state persistence
+            ALTER TABLE feishu_chat_sessions ADD COLUMN IF NOT EXISTS state JSONB DEFAULT '{}';
         `)
     }
 
@@ -3269,9 +3272,9 @@ export class PostgresStore implements IStore {
         }
     }
 
-    async getActiveFeishuChatSessions(): Promise<Array<{ feishuChatId: string; feishuChatType: string; sessionId: string; namespace: string; feishuChatName: string | null }>> {
+    async getActiveFeishuChatSessions(): Promise<Array<{ feishuChatId: string; feishuChatType: string; sessionId: string; namespace: string; feishuChatName: string | null; state: Record<string, unknown> | null }>> {
         const result = await this.pool.query(
-            "SELECT feishu_chat_id, feishu_chat_type, session_id, namespace, feishu_chat_name FROM feishu_chat_sessions WHERE status = 'active'"
+            "SELECT feishu_chat_id, feishu_chat_type, session_id, namespace, feishu_chat_name, state FROM feishu_chat_sessions WHERE status = 'active'"
         )
         return result.rows.map((row: any) => ({
             feishuChatId: row.feishu_chat_id,
@@ -3279,6 +3282,7 @@ export class PostgresStore implements IStore {
             sessionId: row.session_id,
             namespace: row.namespace,
             feishuChatName: row.feishu_chat_name,
+            state: row.state || null,
         }))
     }
 
@@ -3302,6 +3306,14 @@ export class PostgresStore implements IStore {
         const result = await this.pool.query(
             'UPDATE feishu_chat_sessions SET last_message_at = $1, updated_at = $1 WHERE feishu_chat_id = $2',
             [Date.now(), feishuChatId]
+        )
+        return (result.rowCount ?? 0) > 0
+    }
+
+    async updateFeishuChatState(feishuChatId: string, state: Record<string, unknown>): Promise<boolean> {
+        const result = await this.pool.query(
+            'UPDATE feishu_chat_sessions SET state = $1, updated_at = $2 WHERE feishu_chat_id = $3',
+            [JSON.stringify(state), Date.now(), feishuChatId]
         )
         return (result.rowCount ?? 0) > 0
     }

@@ -178,11 +178,83 @@ export class FeishuBot {
         this.chatIdToSessionId.clear()
         this.chatIdToChatType.clear()
 
+        const chatsToRecover: string[] = []
+
         for (const m of mappings) {
             this.sessionToChatId.set(m.sessionId, m.feishuChatId)
             this.chatIdToSessionId.set(m.feishuChatId, m.sessionId)
             this.chatIdToChatType.set(m.feishuChatId, m.feishuChatType)
+
+            // Restore persisted state from DB
+            const s = m.state as { agentMessages?: string[]; lastUserMessageId?: string | null; busy?: boolean } | null
+            if (s && (s.agentMessages?.length || s.lastUserMessageId || s.busy)) {
+                if (s.agentMessages?.length) {
+                    this.agentMessages.set(m.feishuChatId, s.agentMessages)
+                }
+                if (s.lastUserMessageId) {
+                    this.lastUserMessageId.set(m.feishuChatId, s.lastUserMessageId)
+                }
+                if (s.busy) {
+                    // Create a chatState so handleSyncEvent can find it
+                    this.chatStates.set(m.feishuChatId, {
+                        incoming: [], debounceTimer: null, busy: true, creating: false,
+                    })
+                    chatsToRecover.push(m.feishuChatId)
+                }
+                console.log(`[FeishuBot] Restored state for chat ${m.feishuChatId.slice(0, 12)}: ${s.agentMessages?.length || 0} agentMsgs, busy=${s.busy}`)
+            }
         }
+
+        // For chats that were busy before restart, check if Brain already finished
+        // (i.e. session is no longer thinking). If so, send the summary now.
+        if (chatsToRecover.length > 0) {
+            setTimeout(() => {
+                for (const chatId of chatsToRecover) {
+                    const sessionId = this.chatIdToSessionId.get(chatId)
+                    if (!sessionId) continue
+                    const session = this.syncEngine.getSession(sessionId)
+                    // If session is no longer thinking, Brain finished during our downtime
+                    if (session && !session.thinking) {
+                        console.log(`[FeishuBot] Recovering: Brain already done for chat ${chatId.slice(0, 12)}, sending summary`)
+                        this.sendFeishuSummary(chatId).catch(err => {
+                            console.error(`[FeishuBot] Recovery sendFeishuSummary error for ${chatId.slice(0, 12)}:`, err)
+                        })
+                        const state = this.chatStates.get(chatId)
+                        if (state) state.busy = false
+                    }
+                    // If still thinking, the normal handleSyncEvent flow will pick it up
+                }
+            }, 5000) // Wait 5s for sessions to reconnect
+        }
+    }
+
+    // ========== State persistence ==========
+
+    /**
+     * Persist current chat state to DB so it survives server restarts.
+     * Stores agentMessages, lastUserMessageId, and busy flag.
+     */
+    private persistChatState(chatId: string): void {
+        const state = this.chatStates.get(chatId)
+        const agentMsgs = this.agentMessages.get(chatId) || []
+        const lastMsgId = this.lastUserMessageId.get(chatId) || null
+        const persisted = {
+            agentMessages: agentMsgs,
+            lastUserMessageId: lastMsgId,
+            busy: state?.busy || false,
+        }
+        this.store.updateFeishuChatState(chatId, persisted).catch(err => {
+            console.error(`[FeishuBot] persistChatState failed for ${chatId.slice(0, 12)}:`, err)
+        })
+    }
+
+    /**
+     * Clear persisted state (after summary sent or init processed).
+     */
+    private clearPersistedState(chatId: string): void {
+        this.store.updateFeishuChatState(chatId, {}).catch(err => {
+            console.error(`[FeishuBot] clearPersistedState failed for ${chatId.slice(0, 12)}:`, err)
+        })
     }
 
     // ========== Feishu message handling ==========
@@ -329,6 +401,9 @@ export class FeishuBot {
 
         // Mark busy before sending
         state.busy = true
+
+        // Persist state: busy + lastUserMessageId (survives server restart)
+        this.persistChatState(chatId)
 
         // Send to Brain session
         await this.syncEngine.sendMessage(sessionId, {
@@ -778,6 +853,9 @@ export class FeishuBot {
             const msgs = this.agentMessages.get(chatId) || []
             msgs.push(text)
             this.agentMessages.set(chatId, msgs)
+
+            // Persist agentMessages so they survive server restart
+            this.persistChatState(chatId)
         }
 
         // Detect "task complete": wasThinking=true + thinking=false
@@ -795,6 +873,7 @@ export class FeishuBot {
                     this.initReadyResolvers.delete(chatId)
                     // Clear any agent messages from initPrompt processing (don't send to Feishu)
                     this.agentMessages.delete(chatId)
+                    this.clearPersistedState(chatId)
                     return
                 }
 
@@ -849,6 +928,9 @@ export class FeishuBot {
 
         console.log(`[FeishuBot] Sending summary to ${chatId.slice(0, 12)} (${reply.length} chars, from ${msgs.length} messages${replyToMessageId ? ', reply' : ''})`)
         await this.sendFeishuPost(chatId, reply, replyToMessageId)
+
+        // Clear persisted state after successful send
+        this.clearPersistedState(chatId)
     }
 
     // ========== Feishu API helpers ==========
