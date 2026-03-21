@@ -427,21 +427,7 @@ export class FeishuBot {
         const combined = formattedParts.join('\n')
 
         // Fetch user profiles from yoho-memory for appendSystemPrompt
-        let appendSystemPrompt = await this.buildUserProfilePrompt(messages, chatType)
-
-        // Inject recent chat history as context
-        try {
-            const recentMessages = await this.store.getFeishuChatMessages(chatId, 50)
-            if (recentMessages.length > 0) {
-                const contextLines = recentMessages.reverse().map(m =>
-                    `[${new Date(m.createdAt).toLocaleTimeString('zh-CN', { hour12: false })}] ${m.senderName}: ${m.content}`
-                )
-                const chatContext = `<chat-history>\n以下是该${chatType === 'group' ? '群' : '对话'}最近的聊天记录（最新在最后），帮助你了解对话背景：\n${contextLines.join('\n')}\n</chat-history>`
-                appendSystemPrompt = [appendSystemPrompt, chatContext].filter(Boolean).join('\n\n')
-            }
-        } catch (err) {
-            console.error(`[FeishuBot] Failed to fetch chat history for context:`, err)
-        }
+        const appendSystemPrompt = await this.buildUserProfilePrompt(messages, chatType)
 
         // Remember the last user message ID for reply threading
         const lastMsgId = messages[messages.length - 1].messageId
