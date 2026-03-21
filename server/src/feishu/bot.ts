@@ -1114,6 +1114,13 @@ export class FeishuBot {
             const relativePath = ref.replace('server-uploads/', '')
             return join(config.dataDir, 'uploads', relativePath)
         }
+        // Handle absolute paths that contain server-uploads/ (agent may prepend working dir)
+        const suIdx = ref.indexOf('server-uploads/')
+        if (suIdx > 0) {
+            const config = getConfiguration()
+            const relativePath = ref.slice(suIdx + 'server-uploads/'.length)
+            return join(config.dataDir, 'uploads', relativePath)
+        }
         if (ref.startsWith('/')) return ref
         return null
     }
