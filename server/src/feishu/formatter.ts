@@ -83,17 +83,7 @@ function hasMarkdownFormatting(text: string): boolean {
  * - Otherwise → interactive card with markdown element
  */
 export function buildFeishuMessage(text: string): { msgType: string; content: string } {
-    const isShort = text.length <= SHORT_TEXT_THRESHOLD
-    const hasMd = hasMarkdownFormatting(text)
-
-    if (isShort && !hasMd) {
-        return {
-            msgType: 'text',
-            content: JSON.stringify({ text }),
-        }
-    }
-
-    // Truncate for card if too long
+    // Always use interactive card with markdown for consistent rendering
     let cardText = text
     if (cardText.length > MAX_CARD_LENGTH) {
         cardText = cardText.slice(0, MAX_CARD_LENGTH) + '\n\n...(内容过长已截断)'
