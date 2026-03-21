@@ -296,6 +296,12 @@ export class FeishuBot {
             } else {
                 text = '[图片]'
             }
+        } else if (messageType === 'file') {
+            if (chatType === 'p2p' || botMentioned) {
+                text = await this.handleFileMessage(messageId, message.content, chatId)
+            } else {
+                text = '[文件]'
+            }
         } else {
             text = this.extractMessageText(messageType, message.content)
         }
@@ -587,6 +593,52 @@ export class FeishuBot {
             return `[Image: ${serverPath}]`
         } catch (err) {
             console.error('[FeishuBot] handleImageMessage failed:', err)
+            return null
+        }
+    }
+
+    /**
+     * Download a Feishu file and save to server-uploads.
+     * Returns text like "[File: server-uploads/{dir}/{filename}]" or null on failure.
+     */
+    private async handleFileMessage(messageId: string, contentStr: string, chatId: string): Promise<string | null> {
+        try {
+            const content = JSON.parse(contentStr)
+            const fileKey = content.file_key as string
+            const fileName = content.file_name as string
+            if (!fileKey) {
+                console.error('[FeishuBot] File message missing file_key')
+                return null
+            }
+
+            const sessionId = this.chatIdToSessionId.get(chatId)
+            const token = await this.getToken()
+            const resp = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=file`, {
+                headers: { Authorization: `Bearer ${token}` }
+            })
+            if (!resp.ok) {
+                console.error(`[FeishuBot] Failed to download file: ${resp.status} ${resp.statusText}`)
+                return null
+            }
+
+            const arrayBuffer = await resp.arrayBuffer()
+            const buffer = Buffer.from(arrayBuffer)
+
+            const safeName = fileName || `feishu-${fileKey.slice(0, 16)}`
+            const uploadSessionId = sessionId || 'feishu-files'
+            const config = getConfiguration()
+            const uploadDir = join(config.dataDir, 'uploads', uploadSessionId)
+            if (!existsSync(uploadDir)) {
+                mkdirSync(uploadDir, { recursive: true })
+            }
+            writeFileSync(join(uploadDir, safeName), buffer)
+
+            const serverPath = `server-uploads/${uploadSessionId}/${safeName}`
+            console.log(`[FeishuBot] Downloaded file: ${serverPath} (${buffer.length} bytes)`)
+
+            return `[File: ${serverPath}]`
+        } catch (err) {
+            console.error('[FeishuBot] handleFileMessage failed:', err)
             return null
         }
     }
