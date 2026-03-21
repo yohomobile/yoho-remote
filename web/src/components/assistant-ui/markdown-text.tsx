@@ -11,6 +11,7 @@ import { SyntaxHighlighter } from '@/components/assistant-ui/shiki-highlighter'
 import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
 import { CopyIcon, CheckIcon } from '@/components/icons'
 import { useHappyChatContextSafe } from '@/components/AssistantChat/context'
+import { ImageViewer as ImageViewerComponent } from '@/components/ImageViewer'
 
 export const MARKDOWN_PLUGINS = [remarkGfm]
 
@@ -31,7 +32,36 @@ function isCodeBlockBalanced(text: string): boolean {
 
 // Preprocess markdown to handle incomplete code blocks and protect tree structures
 // This fixes issues when streaming splits code blocks across multiple messages
+// Convert server-uploads paths to /api/server-uploads/ URLs
+function toServerUploadsUrl(path: string): string {
+    if (path.startsWith('server-uploads/')) {
+        return `/api/${path}`
+    }
+    const suIdx = path.indexOf('server-uploads/')
+    if (suIdx >= 0) {
+        return `/api/${path.slice(suIdx)}`
+    }
+    return path
+}
+
+// Image extensions for classifying feishu-file references
+const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'heic', 'heif'])
+
 export function preprocessMarkdown(text: string): string {
+    // Convert [Image: path] and [feishu-file: path] to markdown image/link syntax
+    if (/\[(Image|feishu-file):\s*[^\]]+\]/.test(text)) {
+        text = text.replace(/\[(Image|feishu-file):\s*([^\]]+)\]/g, (_match, tag, path) => {
+            const trimmed = path.trim()
+            const ext = trimmed.split('.').pop()?.toLowerCase() ?? ''
+            const url = toServerUploadsUrl(trimmed)
+            if (tag === 'Image' || IMAGE_EXTS.has(ext)) {
+                return `![image](${url})`
+            }
+            const filename = trimmed.split('/').pop() ?? trimmed
+            return `[${filename}](${url})`
+        })
+    }
+
     // If text has tree structure characters and code blocks are not balanced,
     // close the unclosed code block
     if (hasTreeStructure(text) && !isCodeBlockBalanced(text)) {
@@ -673,6 +703,10 @@ function Em(props: ComponentPropsWithoutRef<'em'>) {
 }
 
 function Image(props: ComponentPropsWithoutRef<'img'>) {
+    // Use ImageViewer for server-uploads images (adds token auth + click-to-zoom)
+    if (props.src?.includes('server-uploads/')) {
+        return <ImageViewerComponent src={props.src} alt={props.alt} />
+    }
     return <img {...props} className={cn('aui-md-img max-w-full rounded', props.className)} />
 }
 
