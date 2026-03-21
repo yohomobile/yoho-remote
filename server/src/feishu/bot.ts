@@ -878,19 +878,16 @@ export class FeishuBot {
                 return '[合并转发]'
             }
 
-            const parts: string[] = [`[合并转发 ${subMessages.length}条]:`]
+            const parts: string[] = []
             for (const msg of subMessages.slice(0, 20)) {
                 const type = msg.msg_type || 'text'
                 const contentStr = msg.body?.content || '{}'
                 const text = this.extractMessageText(type, contentStr)
-                if (text) parts.push(`  - ${text}`)
-            }
-            if (subMessages.length > 20) {
-                parts.push(`  ... 共 ${subMessages.length} 条消息`)
+                if (text) parts.push(text)
             }
 
             console.log(`[FeishuBot] merge_forward: ${subMessages.length} sub-messages extracted`)
-            return parts.join('\n')
+            return parts.join('\n') || '[合并转发]'
         } catch (err) {
             console.error('[FeishuBot] handleMergeForwardMessage failed:', err)
             return '[合并转发]'
