@@ -314,6 +314,12 @@ export class FeishuBot {
             text = this.extractMessageText(messageType, message.content)
         }
 
+        // For non-text/audio types, append a guide so the AI proactively acts on the content
+        const noGuideTypes = new Set(['text', 'audio'])
+        if (text && !noGuideTypes.has(messageType)) {
+            text = `${text}\n\n请根据以上内容，理解用户意图并推进。`
+        }
+
         // Resolve sender name for persistence
         const { name: senderName, email: senderEmail } = await this.resolveSenderInfo(senderOpenId)
 
