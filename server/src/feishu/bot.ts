@@ -79,6 +79,9 @@ export class FeishuBot {
     // Track the last user message ID per chat for reply threading
     private lastUserMessageId: Map<string, string> = new Map()
 
+    // Track sender open_ids for the current round (group chats: @ them in reply)
+    private lastSenderOpenIds: Map<string, Set<string>> = new Map()
+
     // Rebuild rate limiting: chatId -> last rebuild timestamp
     private lastRebuildAt: Map<string, number> = new Map()
     private readonly REBUILD_COOLDOWN_MS = 30_000
@@ -481,6 +484,12 @@ export class FeishuBot {
         const lastMsgId = messages[messages.length - 1].messageId
         if (lastMsgId) {
             this.lastUserMessageId.set(chatId, lastMsgId)
+        }
+
+        // Remember sender openIds for @ mention in reply (group chats only)
+        if (chatType === 'group') {
+            const senderIds = new Set(messages.map(m => m.senderOpenId))
+            this.lastSenderOpenIds.set(chatId, senderIds)
         }
 
         console.log(`[FeishuBot] Sending ${messages.length} merged message(s) to session ${sessionId.slice(0, 8)}${appendSystemPrompt ? ' (with user profiles)' : ''}`)
@@ -1305,6 +1314,7 @@ export class FeishuBot {
             if (!cleanText) {
                 console.log(`[FeishuBot] K1 chose [silent] for ${chatId.slice(0, 12)}, skipping reply`)
                 this.lastUserMessageId.delete(chatId)
+                this.lastSenderOpenIds.delete(chatId)
                 this.clearPersistedState(chatId)
                 return
             }
@@ -1330,10 +1340,25 @@ export class FeishuBot {
         const replyToMessageId = this.lastUserMessageId.get(chatId)
         this.lastUserMessageId.delete(chatId)
 
+        // Get sender openIds for @ mention (group chats)
+        const senderOpenIds = this.lastSenderOpenIds.get(chatId)
+        this.lastSenderOpenIds.delete(chatId)
+
         // 1. Send text part
         if (textReply) {
             console.log(`[FeishuBot] Sending summary to ${chatId.slice(0, 12)} (${textReply.length} chars, from ${msgs.length} messages${replyToMessageId ? ', reply' : ''}${mediaRefs.length ? `, +${mediaRefs.length} media` : ''})`)
             await this.sendFeishuPost(chatId, textReply, replyToMessageId)
+
+            // Group chat: send a follow-up @ notification so senders get pinged
+            if (senderOpenIds && senderOpenIds.size > 0) {
+                const atTags = [...senderOpenIds]
+                    .filter(id => id !== this.botOpenId)
+                    .map(id => `<at id="${id}"></at>`)
+                    .join(' ')
+                if (atTags) {
+                    await this.sendFeishuText(chatId, atTags)
+                }
+            }
         }
 
         // 2. Send media attachments
