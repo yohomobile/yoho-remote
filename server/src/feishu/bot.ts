@@ -1353,7 +1353,7 @@ export class FeishuBot {
             if (senderOpenIds && senderOpenIds.size > 0) {
                 const atTags = [...senderOpenIds]
                     .filter(id => id !== this.botOpenId)
-                    .map(id => `<at id="${id}"></at>`)
+                    .map(id => `<at user_id="${id}"></at>`)
                     .join(' ')
                 if (atTags) {
                     await this.sendFeishuText(chatId, atTags)
