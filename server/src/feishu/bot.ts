@@ -290,25 +290,26 @@ export class FeishuBot {
 
         // Extract message text (needed for both persistence and processing)
         let text: string | null = null
+        // Types that require downloading media (only when bot is being addressed)
+        const addressed = chatType === 'p2p' || botMentioned
         if (messageType === 'image') {
-            // Only download image if bot is being addressed (p2p or @bot)
-            if (chatType === 'p2p' || botMentioned) {
-                text = await this.handleImageMessage(messageId, message.content, chatId)
-            } else {
-                text = '[图片]'
-            }
+            text = addressed
+                ? await this.handleImageMessage(messageId, message.content, chatId)
+                : '[图片]'
         } else if (messageType === 'file') {
-            if (chatType === 'p2p' || botMentioned) {
-                text = await this.handleFileMessage(messageId, message.content, chatId)
-            } else {
-                text = '[文件]'
-            }
+            text = addressed
+                ? await this.handleFileMessage(messageId, message.content, chatId)
+                : '[文件]'
         } else if (messageType === 'audio') {
-            if (chatType === 'p2p' || botMentioned) {
-                text = await this.handleAudioMessage(messageId, message.content)
-            } else {
-                text = '[语音]'
-            }
+            text = addressed
+                ? await this.handleAudioMessage(messageId, message.content)
+                : '[语音]'
+        } else if (messageType === 'media') {
+            text = addressed
+                ? await this.handleMediaMessage(messageId, message.content, chatId)
+                : '[视频]'
+        } else if (messageType === 'merge_forward') {
+            text = this.extractMergeForwardText(data)
         } else {
             text = this.extractMessageText(messageType, message.content)
         }
@@ -324,14 +325,9 @@ export class FeishuBot {
 
         // Non-text messages that we can't process: hint and return
         if (!text || !text.trim()) {
-            const typeLabels: Record<string, string> = {
-                file: '文件', video: '视频',
-                sticker: '表情', media: '媒体', share_chat: '群名片', share_user: '个人名片',
-            }
-            // Only send hint if bot is being addressed
-            if (typeLabels[messageType] && (chatType === 'p2p' || botMentioned)) {
-                console.log(`[FeishuBot] Unsupported message type "${messageType}" from ${senderOpenId.slice(0, 8)} in ${chatId.slice(0, 12)}`)
-                await this.sendFeishuText(chatId, `暂不支持${typeLabels[messageType]}消息，请用文字描述你的问题。`)
+            // Only hint for truly unknown types (most types are now handled above)
+            if (addressed) {
+                console.log(`[FeishuBot] Unhandled message type "${messageType}" from ${senderOpenId.slice(0, 8)} in ${chatId.slice(0, 12)}`)
             }
             return
         }
@@ -472,37 +468,100 @@ export class FeishuBot {
     private extractMessageText(messageType: string, contentStr: string): string | null {
         try {
             const content = JSON.parse(contentStr)
-            if (messageType === 'text') {
-                return content.text as string || null
-            }
-            if (messageType === 'post') {
-                // Extract text from post (rich text) message
-                const zhContent = content.zh_cn?.content || content.en_us?.content || content.content
-                if (Array.isArray(zhContent)) {
-                    const texts: string[] = []
-                    for (const paragraph of zhContent) {
-                        if (Array.isArray(paragraph)) {
-                            for (const element of paragraph) {
-                                if (element.tag === 'text' && element.text) {
-                                    texts.push(element.text)
-                                } else if (element.tag === 'a' && element.text) {
-                                    texts.push(element.text)
-                                }
-                            }
+            switch (messageType) {
+                case 'text':
+                    return content.text as string || null
+
+                case 'post': {
+                    // Extract text from post (rich text) message, including image/media references
+                    const locale = content.zh_cn || content.en_us || content
+                    const title = locale.title as string | undefined
+                    const paragraphs = locale.content
+                    if (!Array.isArray(paragraphs)) return title || null
+                    const parts: string[] = []
+                    if (title) parts.push(title)
+                    for (const paragraph of paragraphs) {
+                        if (!Array.isArray(paragraph)) continue
+                        const lineTexts: string[] = []
+                        for (const el of paragraph) {
+                            if (el.tag === 'text' && el.text) lineTexts.push(el.text)
+                            else if (el.tag === 'a' && el.text) lineTexts.push(`${el.text}(${el.href || ''})`)
+                            else if (el.tag === 'at' && el.user_name) lineTexts.push(`@${el.user_name}`)
+                            else if (el.tag === 'img' && el.image_key) lineTexts.push(`[图片: ${el.image_key}]`)
+                            else if (el.tag === 'media' && el.file_key) lineTexts.push(`[视频: ${el.file_key}]`)
                         }
+                        if (lineTexts.length > 0) parts.push(lineTexts.join(''))
                     }
-                    return texts.join('') || null
+                    return parts.join('\n') || null
                 }
-            }
-            if (messageType === 'interactive') {
-                console.log(`[FeishuBot] Interactive card content: ${contentStr.slice(0, 1000)}`)
-                return this.extractCardText(content)
+
+                case 'interactive':
+                    return this.extractCardText(content)
+
+                case 'sticker':
+                    return '[表情包]'
+
+                case 'location': {
+                    const name = content.name as string || ''
+                    const addr = content.address as string || ''
+                    const lat = content.latitude as string || ''
+                    const lng = content.longitude as string || ''
+                    const locParts = [name, addr].filter(Boolean).join(', ')
+                    const coords = lat && lng ? ` (${lat}, ${lng})` : ''
+                    return `[位置] ${locParts}${coords}` || '[位置]'
+                }
+
+                case 'share_chat': {
+                    const chatId = content.chat_id as string || ''
+                    return `[分享群聊: ${chatId}]`
+                }
+
+                case 'share_user': {
+                    const userId = content.user_id as string || ''
+                    return `[分享用户: ${userId}]`
+                }
+
+                case 'merge_forward': {
+                    // Merge forward contains a list of sub-messages
+                    // content structure: not standard JSON — the real messages are in message.body.messages
+                    // At the extractMessageText level we just return a placeholder;
+                    // actual handling is done in handleMergeForwardMessage
+                    return null
+                }
+
+                case 'hongbao':
+                    return '[红包]'
+
+                case 'share_calendar_event':
+                    return '[日程分享]'
+
+                case 'video_chat': {
+                    const topic = content.topic as string || ''
+                    return topic ? `[视频会议: ${topic}]` : '[视频会议]'
+                }
+
+                case 'todo': {
+                    const taskContent = content.task_content as string || content.content as string || ''
+                    return taskContent ? `[任务] ${taskContent}` : '[任务]'
+                }
+
+                case 'vote':
+                    return '[投票]'
+
+                case 'system': {
+                    // System messages (member join/leave, etc.)
+                    const sysType = content.type as string || ''
+                    const sysText = content.text as string || ''
+                    return sysText ? `[系统消息] ${sysText}` : `[系统消息: ${sysType}]`
+                }
+
+                default:
+                    return null
             }
         } catch {
             // If content is not JSON, treat as plain text
             return contentStr
         }
-        return null
     }
 
     /**
@@ -733,6 +792,84 @@ export class FeishuBot {
             // Clean up temp files
             try { if (opusPath) unlinkSync(opusPath) } catch {}
             try { if (pcmPath) unlinkSync(pcmPath) } catch {}
+        }
+    }
+
+    /**
+     * Handle media (video) message: download and save to server-uploads.
+     */
+    private async handleMediaMessage(messageId: string, contentStr: string, chatId: string): Promise<string | null> {
+        try {
+            const content = JSON.parse(contentStr)
+            const fileKey = content.file_key as string
+            const fileName = content.file_name as string || `video-${Date.now()}.mp4`
+            if (!fileKey) {
+                console.error('[FeishuBot] Media message missing file_key')
+                return null
+            }
+
+            const sessionId = this.chatIdToSessionId.get(chatId)
+            const token = await this.getToken()
+            const resp = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=file`, {
+                headers: { Authorization: `Bearer ${token}` }
+            })
+            if (!resp.ok) {
+                console.error(`[FeishuBot] Failed to download media: ${resp.status} ${resp.statusText}`)
+                return null
+            }
+
+            const arrayBuffer = await resp.arrayBuffer()
+            const buffer = Buffer.from(arrayBuffer)
+
+            const safeName = fileName || `feishu-video-${fileKey.slice(0, 16)}.mp4`
+            const uploadSessionId = sessionId || 'feishu-media'
+            const config = getConfiguration()
+            const uploadDir = join(config.dataDir, 'uploads', uploadSessionId)
+            if (!existsSync(uploadDir)) {
+                mkdirSync(uploadDir, { recursive: true })
+            }
+            writeFileSync(join(uploadDir, safeName), buffer)
+
+            const serverPath = `server-uploads/${uploadSessionId}/${safeName}`
+            console.log(`[FeishuBot] Downloaded media: ${serverPath} (${buffer.length} bytes)`)
+
+            return `[视频: ${serverPath}]`
+        } catch (err) {
+            console.error('[FeishuBot] handleMediaMessage failed:', err)
+            return null
+        }
+    }
+
+    /**
+     * Handle merge_forward: extract sub-message texts from the forward body.
+     * Feishu delivers merge_forward with message.body.messages array.
+     */
+    private extractMergeForwardText(data: any): string | null {
+        try {
+            const body = data?.message?.body
+            const messages = body?.messages as Array<{
+                message_type?: string
+                content?: string
+                sender_id?: string
+            }> | undefined
+
+            if (!messages || messages.length === 0) {
+                return '[合并转发]'
+            }
+
+            const parts: string[] = ['[合并转发]:']
+            for (const msg of messages.slice(0, 20)) { // Cap at 20 to avoid huge payloads
+                const type = msg.message_type || 'text'
+                const text = this.extractMessageText(type, msg.content || '{}')
+                if (text) parts.push(`  - ${text}`)
+            }
+            if (messages.length > 20) {
+                parts.push(`  ... 共 ${messages.length} 条消息`)
+            }
+            return parts.join('\n')
+        } catch (err) {
+            console.error('[FeishuBot] extractMergeForwardText failed:', err)
+            return '[合并转发]'
         }
     }
 
