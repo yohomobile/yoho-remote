@@ -1450,9 +1450,10 @@ export class FeishuBot {
             const { msgType, content } = buildFeishuMessage(text, atIds)
             const token = await this.getToken()
 
+            let resp: Response
             if (replyToMessageId) {
                 // Reply to a specific message
-                await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${replyToMessageId}/reply`, {
+                resp = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${replyToMessageId}/reply`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1465,7 +1466,7 @@ export class FeishuBot {
                 })
             } else {
                 // Send as a new message
-                await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id', {
+                resp = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1477,6 +1478,12 @@ export class FeishuBot {
                         content,
                     }),
                 })
+            }
+
+            // Check API response for errors
+            const result = await resp.json() as Record<string, unknown>
+            if (result.code !== 0) {
+                console.error(`[FeishuBot] sendFeishuPost API error for ${chatId.slice(0, 12)}: code=${result.code}, msg=${result.msg}`)
             }
         } catch (err) {
             console.error(`[FeishuBot] sendFeishuPost failed for chat ${chatId.slice(0, 12)}:`, err)
