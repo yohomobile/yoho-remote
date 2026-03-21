@@ -7,8 +7,10 @@
  */
 
 import * as lark from '@larksuiteoapi/node-sdk'
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from 'node:fs'
 import { join, basename, extname } from 'node:path'
+import { execSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
 import type { SyncEngine, SyncEvent } from '../sync/syncEngine'
 import type { IStore } from '../store/interface'
 import { extractAgentText, isInternalBrainMessage, buildFeishuMessage } from './formatter'
@@ -649,9 +651,11 @@ export class FeishuBot {
     }
 
     /**
-     * Handle audio message: download from Feishu, call Feishu ASR API, return transcribed text.
+     * Handle audio message: download opus from Feishu, convert to PCM via ffmpeg, call Feishu ASR API.
      */
     private async handleAudioMessage(messageId: string, contentStr: string): Promise<string | null> {
+        let opusPath = ''
+        let pcmPath = ''
         try {
             const content = JSON.parse(contentStr)
             const fileKey = content.file_key as string
@@ -672,10 +676,21 @@ export class FeishuBot {
             }
 
             const arrayBuffer = await downloadResp.arrayBuffer()
-            const audioBase64 = Buffer.from(arrayBuffer).toString('base64')
-            console.log(`[FeishuBot] Downloaded audio: ${arrayBuffer.byteLength} bytes`)
+            const buffer = Buffer.from(arrayBuffer)
+            console.log(`[FeishuBot] Downloaded audio: ${buffer.length} bytes`)
 
-            // 2. Call Feishu Speech-to-Text (ASR) API
+            // 2. Convert opus to 16kHz mono PCM via ffmpeg
+            const ts = Date.now()
+            opusPath = join(tmpdir(), `feishu-audio-${ts}.opus`)
+            pcmPath = join(tmpdir(), `feishu-audio-${ts}.pcm`)
+            writeFileSync(opusPath, buffer)
+            execSync(`ffmpeg -y -i "${opusPath}" -ar 16000 -ac 1 -f s16le "${pcmPath}"`, { timeout: 10000 })
+            const pcmBuffer = readFileSync(pcmPath)
+            const pcmBase64 = pcmBuffer.toString('base64')
+            console.log(`[FeishuBot] Converted to PCM: ${pcmBuffer.length} bytes`)
+
+            // 3. Call Feishu Speech-to-Text (ASR) API
+            const fileId = `feishu${ts.toString().slice(-12)}`
             const asrResp = await fetch('https://open.feishu.cn/open-apis/speech_to_text/v1/speech/file_recognize', {
                 method: 'POST',
                 headers: {
@@ -683,12 +698,11 @@ export class FeishuBot {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    speech: {
-                        speech: audioBase64,
-                    },
+                    speech: { speech: pcmBase64 },
                     config: {
-                        engine_type: 'OPUS_RECOGNIZER',
-                        format: 'opus',
+                        file_id: fileId,
+                        format: 'pcm',
+                        engine_type: '16k_auto',
                     },
                 }),
             })
@@ -715,6 +729,10 @@ export class FeishuBot {
         } catch (err) {
             console.error('[FeishuBot] handleAudioMessage failed:', err)
             return null
+        } finally {
+            // Clean up temp files
+            try { if (opusPath) unlinkSync(opusPath) } catch {}
+            try { if (pcmPath) unlinkSync(pcmPath) } catch {}
         }
     }
 
