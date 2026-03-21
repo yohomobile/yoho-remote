@@ -104,7 +104,6 @@ export function extractAgentText(content: unknown): string | null {
         }
 
         // Codex format
-        const contentType = (innerContent as Record<string, unknown>).type as string
         if (contentType === 'codex' && data?.type === 'message' && typeof data.message === 'string') {
             return data.message
         }
