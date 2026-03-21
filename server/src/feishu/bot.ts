@@ -121,15 +121,11 @@ export class FeishuBot {
         await this.loadMappings()
 
         // 3. Set up Feishu event dispatcher
-        const eventDispatcher = new lark.EventDispatcher({})
-        console.log('[FeishuBot] EventDispatcher created, registering im.message.receive_v1...')
-        eventDispatcher.register({
+        const eventDispatcher = new lark.EventDispatcher({}).register({
             'im.message.receive_v1': (data: any) => {
-                console.log('[FeishuBot] >>> RAW EVENT DATA:', JSON.stringify(data, null, 2))
                 this.handleMessageEvent(data).catch(err => {
                     console.error('[FeishuBot] handleMessageEvent error:', err)
                 })
-                // Return empty object to acknowledge the event
                 return {}
             }
         })
@@ -138,9 +134,8 @@ export class FeishuBot {
         this.wsClient = new lark.WSClient({
             appId: this.appId,
             appSecret: this.appSecret,
-            loggerLevel: lark.LoggerLevel.debug,
+            loggerLevel: lark.LoggerLevel.warn,
         })
-        console.log('[FeishuBot] Starting WebSocket client...')
         await this.wsClient.start({ eventDispatcher })
         console.log('[FeishuBot] WebSocket client started')
 
@@ -274,24 +269,15 @@ export class FeishuBot {
     // ========== Feishu message handling ==========
 
     private async handleMessageEvent(data: any): Promise<void> {
-        console.log('[FeishuBot] handleMessageEvent called, data keys:', data ? Object.keys(data) : 'null')
-        console.log('[FeishuBot] handleMessageEvent data.message?', !!data?.message, 'data.sender?', !!data?.sender, 'data.event?', !!data?.event)
-        if (data?.event) {
-            console.log('[FeishuBot] data.event keys:', Object.keys(data.event), 'message_type:', data.event?.message?.message_type)
-        }
         const message = data?.message
         const sender = data?.sender
-        if (!message || !sender) {
-            console.log('[FeishuBot] handleMessageEvent: missing message or sender, returning. message_type from event:', data?.event?.message?.message_type)
-            return
-        }
+        if (!message || !sender) return
 
         const chatId = message.chat_id as string
         const chatType = message.chat_type as string // 'p2p' or 'group'
         const messageId = message.message_id as string
         const senderOpenId = sender.sender_id?.open_id as string
         const messageType = message.message_type as string
-        console.log(`[FeishuBot] messageType=${messageType}, chatType=${chatType}, senderOpenId=${senderOpenId?.slice(0, 12)}, content=${(message.content as string)?.slice(0, 100)}`)
 
         // Ignore bot's own messages
         if (senderOpenId === this.botOpenId) return
@@ -316,14 +302,11 @@ export class FeishuBot {
                 text = '[文件]'
             }
         } else if (messageType === 'audio') {
-            // 飞书语音消息自带识别文本 recognition 字段
-            try {
-                const content = JSON.parse(message.content)
-                const recognition = content.recognition as string
-                if (recognition?.trim()) {
-                    text = `[语音] ${recognition.trim()}`
-                }
-            } catch { /* ignore parse error */ }
+            if (chatType === 'p2p' || botMentioned) {
+                text = await this.handleAudioMessage(messageId, message.content)
+            } else {
+                text = '[语音]'
+            }
         } else {
             text = this.extractMessageText(messageType, message.content)
         }
@@ -661,6 +644,76 @@ export class FeishuBot {
             return `[File: ${serverPath}]`
         } catch (err) {
             console.error('[FeishuBot] handleFileMessage failed:', err)
+            return null
+        }
+    }
+
+    /**
+     * Handle audio message: download from Feishu, call Feishu ASR API, return transcribed text.
+     */
+    private async handleAudioMessage(messageId: string, contentStr: string): Promise<string | null> {
+        try {
+            const content = JSON.parse(contentStr)
+            const fileKey = content.file_key as string
+            if (!fileKey) {
+                console.error('[FeishuBot] Audio message missing file_key')
+                return null
+            }
+
+            // 1. Download audio file from Feishu
+            const token = await this.getToken()
+            const downloadResp = await fetch(
+                `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=file`,
+                { headers: { Authorization: `Bearer ${token}` } }
+            )
+            if (!downloadResp.ok) {
+                console.error(`[FeishuBot] Failed to download audio: ${downloadResp.status} ${downloadResp.statusText}`)
+                return null
+            }
+
+            const arrayBuffer = await downloadResp.arrayBuffer()
+            const audioBase64 = Buffer.from(arrayBuffer).toString('base64')
+            console.log(`[FeishuBot] Downloaded audio: ${arrayBuffer.byteLength} bytes`)
+
+            // 2. Call Feishu Speech-to-Text (ASR) API
+            const asrResp = await fetch('https://open.feishu.cn/open-apis/speech_to_text/v1/speech/file_recognize', {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    speech: {
+                        speech: audioBase64,
+                    },
+                    config: {
+                        engine_type: 'OPUS_RECOGNIZER',
+                        format: 'opus',
+                    },
+                }),
+            })
+
+            const asrData = await asrResp.json() as {
+                code?: number
+                msg?: string
+                data?: { recognition_text?: string }
+            }
+
+            if (asrData.code !== 0) {
+                console.error(`[FeishuBot] ASR failed: code=${asrData.code} msg=${asrData.msg}`)
+                return null
+            }
+
+            const recognitionText = asrData.data?.recognition_text?.trim()
+            if (!recognitionText) {
+                console.log('[FeishuBot] ASR returned empty text')
+                return null
+            }
+
+            console.log(`[FeishuBot] ASR result: ${recognitionText.slice(0, 100)}`)
+            return `[语音] ${recognitionText}`
+        } catch (err) {
+            console.error('[FeishuBot] handleAudioMessage failed:', err)
             return null
         }
     }
