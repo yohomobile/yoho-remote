@@ -302,7 +302,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
             'mcp__yoho-credentials__delete_credential',
         ]
         : undefined; // Track current allowed tools
-    let currentDisallowedTools: string[] | undefined = sessionSource === 'openclaw' ? ['AskUserQuestion'] : undefined;
+    let currentDisallowedTools: string[] | undefined = (sessionSource === 'openclaw' || sessionSource === 'brain') ? ['AskUserQuestion'] : undefined;
 
     const syncSessionModes = () => {
         const sessionInstance = currentSessionRef.current;
