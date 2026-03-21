@@ -1329,9 +1329,18 @@ export class FeishuBot {
             mediaRefs.push(fm[1].trim())
         }
 
-        // Strip file references, <feishu-reply> tags, and [silent] markers from text
+        // Extract [at: openId] references from K1's output
+        const explicitAtIds: string[] = []
+        const AT_RE = /\[at:\s*(ou_[a-zA-Z0-9]+)\]/g
+        let atMatch: RegExpExecArray | null
+        while ((atMatch = AT_RE.exec(allText)) !== null) {
+            explicitAtIds.push(atMatch[1])
+        }
+
+        // Strip file references, at references, <feishu-reply> tags, and [silent] markers from text
         const textReply = allText
             .replace(/\[feishu-file:\s*.+?\]/g, '')
+            .replace(/\[at:\s*ou_[a-zA-Z0-9]+\]/g, '')
             .replace(/<\/?feishu-reply>/g, '')
             .replace(/\[silent\]/g, '')
             .trim()
@@ -1340,7 +1349,7 @@ export class FeishuBot {
         const replyToMessageId = this.lastUserMessageId.get(chatId)
         this.lastUserMessageId.delete(chatId)
 
-        // Get sender openIds for @ mention (group chats)
+        // Get sender openIds for @ mention fallback (group chats)
         const senderOpenIds = this.lastSenderOpenIds.get(chatId)
         this.lastSenderOpenIds.delete(chatId)
 
@@ -1349,15 +1358,17 @@ export class FeishuBot {
             console.log(`[FeishuBot] Sending summary to ${chatId.slice(0, 12)} (${textReply.length} chars, from ${msgs.length} messages${replyToMessageId ? ', reply' : ''}${mediaRefs.length ? `, +${mediaRefs.length} media` : ''})`)
             await this.sendFeishuPost(chatId, textReply, replyToMessageId)
 
-            // Group chat: send a follow-up @ notification so senders get pinged
-            if (senderOpenIds && senderOpenIds.size > 0) {
-                const atTags = [...senderOpenIds]
-                    .filter(id => id !== this.botOpenId)
-                    .map(id => `<at user_id="${id}"></at>`)
-                    .join(' ')
-                if (atTags) {
-                    await this.sendFeishuText(chatId, atTags)
-                }
+            // Group chat: send @ notification
+            // Priority: K1's explicit [at: openId] > fallback to all senders
+            const atIds = explicitAtIds.length > 0
+                ? explicitAtIds
+                : senderOpenIds ? [...senderOpenIds] : []
+            const atTags = atIds
+                .filter(id => id !== this.botOpenId)
+                .map(id => `<at user_id="${id}"></at>`)
+                .join(' ')
+            if (atTags) {
+                await this.sendFeishuText(chatId, atTags)
             }
         }
 
