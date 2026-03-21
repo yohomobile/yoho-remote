@@ -79,6 +79,11 @@ export function extractAgentText(content: unknown): string | null {
         return innerContent
     }
     if (innerContent && typeof innerContent === 'object') {
+        // Skip system event messages (account rotation, errors, status updates)
+        // These have { type: 'event', data: { type: 'message', message: '...' } }
+        const contentType = (innerContent as Record<string, unknown>).type as string | undefined
+        if (contentType === 'event') return null
+
         const data = innerContent.data as Record<string, unknown> | undefined
 
         // Claude Code agent format: { type: 'assistant', message: { content: [{ type: 'text', text: '...' }] } }

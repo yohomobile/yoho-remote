@@ -268,7 +268,7 @@ export async function claudeRemote(opts: {
                 if (resultMsg.is_error && /hit your limit|hit.your.limit/i.test(resultText)) {
                     throw new HitLimitError(resultText);
                 }
-                if (resultMsg.is_error && /does not have access/i.test(resultText)) {
+                if (resultMsg.is_error && /does not have access|authentication.*(?:failed|error|invalid)|Failed to authenticate|\b401\b|Invalid.*credentials/i.test(resultText)) {
                     throw new Error(resultText);
                 }
 
