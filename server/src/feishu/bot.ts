@@ -302,6 +302,15 @@ export class FeishuBot {
             } else {
                 text = '[文件]'
             }
+        } else if (messageType === 'audio') {
+            // 飞书语音消息自带识别文本 recognition 字段
+            try {
+                const content = JSON.parse(message.content)
+                const recognition = content.recognition as string
+                if (recognition?.trim()) {
+                    text = `[语音] ${recognition.trim()}`
+                }
+            } catch { /* ignore parse error */ }
         } else {
             text = this.extractMessageText(messageType, message.content)
         }
@@ -318,7 +327,7 @@ export class FeishuBot {
         // Non-text messages that we can't process: hint and return
         if (!text || !text.trim()) {
             const typeLabels: Record<string, string> = {
-                file: '文件', audio: '语音', video: '视频',
+                file: '文件', video: '视频',
                 sticker: '表情', media: '媒体', share_chat: '群名片', share_user: '个人名片',
             }
             // Only send hint if bot is being addressed
