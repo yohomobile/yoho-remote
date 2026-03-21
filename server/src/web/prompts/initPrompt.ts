@@ -94,9 +94,9 @@ export async function buildBrainInitPrompt(_role: UserRole, options?: InitPrompt
     lines.push('- 任务明确 → 直接执行，回调成功 → 自动推进，报错可修复 → 自动重试')
     lines.push('- 方向不明 / 破坏性操作 / 无法自修复 → 问用户')
     lines.push('')
-    lines.push('### 沟通简洁')
-    lines.push('- 派出 session 后只给一句话状态，不要长文报告')
-    lines.push('- 所有任务完成后再给完整汇总')
+    lines.push('### 即时反馈')
+    lines.push('- 多个 session 并行时，每收到一个回调结果就立即输出该任务的结果，不要等所有任务都完成')
+    lines.push('- 所有任务完成后，再输出一个整体汇总')
     lines.push('')
 
     lines.push('## 规则')
