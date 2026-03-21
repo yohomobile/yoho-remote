@@ -10,6 +10,11 @@ function buildImageUrl(path: string, sessionId: string): string {
     if (path.startsWith('server-uploads/')) {
         return `/api/${path}`
     }
+    // Handle absolute paths containing server-uploads/ (e.g. from feishu-file tags)
+    const suIdx = path.indexOf('server-uploads/')
+    if (suIdx >= 0) {
+        return `/api/${path.slice(suIdx)}`
+    }
     // The image is stored in .hapi/uploads/ directory on the CLI side
     // We need to fetch it through the session file read API
     const encodedPath = encodeURIComponent(path)
@@ -17,6 +22,14 @@ function buildImageUrl(path: string, sessionId: string): string {
 }
 
 function buildFileUrl(path: string, sessionId: string): string {
+    // Handle server-uploads paths
+    if (path.startsWith('server-uploads/')) {
+        return `/api/${path}?download=true`
+    }
+    const suIdx = path.indexOf('server-uploads/')
+    if (suIdx >= 0) {
+        return `/api/${path.slice(suIdx)}?download=true`
+    }
     const encodedPath = encodeURIComponent(path)
     return `/api/sessions/${encodeURIComponent(sessionId)}/file?path=${encodedPath}&raw=true&download=true`
 }

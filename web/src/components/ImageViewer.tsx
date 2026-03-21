@@ -163,8 +163,8 @@ export function ImageViewer({ src, alt = 'Image', className = '' }: ImageViewerP
     )
 }
 
-// Parse text for [Image: path] patterns and return structured content
-const ATTACHMENT_PATTERN = /\[(Image|File):\s*([^\]]+)\]/g
+// Parse text for [Image: path], [File: path], [feishu-file: path] patterns and return structured content
+const ATTACHMENT_PATTERN = /\[(Image|File|feishu-file):\s*([^\]]+)\]/g
 
 export function parseImagesFromText(text: string): Array<{ type: 'text' | 'image'; content: string }> {
     const imagePattern = /\[Image:\s*([^\]]+)\]/g
@@ -225,6 +225,14 @@ export function parseAttachmentsFromText(text: string): { textParts: string[]; i
         const refValue = match[2]?.trim()
         if (refType === 'image' && refValue) {
             images.push(refValue)
+        } else if (refType === 'feishu-file' && refValue) {
+            // Classify by extension
+            const ext = refValue.split('.').pop()?.toLowerCase() ?? ''
+            if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'heic', 'heif'].includes(ext)) {
+                images.push(refValue)
+            } else {
+                files.push(refValue)
+            }
         } else if (refType === 'file' && refValue) {
             files.push(refValue)
         }
