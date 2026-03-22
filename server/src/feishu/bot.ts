@@ -184,7 +184,7 @@ export class FeishuBot {
 
         // Persist any remaining agentMessages
         for (const chatId of this.agentMessages.keys()) {
-            this.persistChatState(chatId)
+            await this.persistChatState(chatId)
         }
 
         this.agentMessages.clear()
@@ -272,7 +272,7 @@ export class FeishuBot {
      * Persist current chat state to DB so it survives server restarts.
      * Stores agentMessages, lastUserMessageId, and busy flag.
      */
-    private persistChatState(chatId: string): void {
+    private async persistChatState(chatId: string): Promise<void> {
         const state = this.chatStates.get(chatId)
         const agentMsgs = this.agentMessages.get(chatId) || []
         const lastMsgId = this.lastUserMessageId.get(chatId) || null
@@ -281,18 +281,22 @@ export class FeishuBot {
             lastUserMessageId: lastMsgId,
             busy: state?.busy || false,
         }
-        this.store.updateFeishuChatState(chatId, persisted).catch(err => {
+        try {
+            await this.store.updateFeishuChatState(chatId, persisted)
+        } catch (err) {
             console.error(`[FeishuBot] persistChatState failed for ${chatId.slice(0, 12)}:`, err)
-        })
+        }
     }
 
     /**
      * Clear persisted state (after summary sent or init processed).
      */
-    private clearPersistedState(chatId: string): void {
-        this.store.updateFeishuChatState(chatId, {}).catch(err => {
+    private async clearPersistedState(chatId: string): Promise<void> {
+        try {
+            await this.store.updateFeishuChatState(chatId, {})
+        } catch (err) {
             console.error(`[FeishuBot] clearPersistedState failed for ${chatId.slice(0, 12)}:`, err)
-        })
+        }
     }
 
     // ========== Feishu message handling ==========
@@ -1335,7 +1339,7 @@ export class FeishuBot {
                 console.log(`[FeishuBot] K1 chose [silent] for ${chatId.slice(0, 12)}, skipping reply`)
                 this.lastUserMessageId.delete(chatId)
                 this.lastSenderOpenIds.delete(chatId)
-                this.clearPersistedState(chatId)
+                await this.clearPersistedState(chatId)
                 return
             }
             // If there's text alongside [silent], send the text part (K1 might have mixed output)
@@ -1442,7 +1446,7 @@ export class FeishuBot {
         }
 
         // Clear persisted state after successful send
-        this.clearPersistedState(chatId)
+        await this.clearPersistedState(chatId)
     }
 
     // ========== Feishu API helpers ==========
