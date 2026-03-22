@@ -127,30 +127,40 @@ export async function claudeRemote(opts: {
     // Prepare SDK options
     let mode = initial.mode;
 
-    // When allowedTools is set (e.g. Brain sessions), we must NOT pass bypassPermissions
-    // to the Claude Code process. If we do, Claude Code may skip the --permission-prompt-tool
-    // stdio callback after auto-compact, allowing the AI to use tools outside the whitelist.
-    // Instead, we pass 'default' so Claude Code always asks us, and our permissionHandler
-    // enforces both the whitelist AND the bypass logic for whitelisted tools.
-    const hasToolRestrictions = (initial.mode.allowedTools && initial.mode.allowedTools.length > 0) || opts.allowedTools.length > 0;
-    const effectivePermissionMode = hasToolRestrictions && initial.mode.permissionMode === 'bypassPermissions'
-        ? 'default'
-        : initial.mode.permissionMode;
-    if (effectivePermissionMode !== initial.mode.permissionMode) {
-        logger.debug(`[claudeRemote] Downgraded permissionMode from '${initial.mode.permissionMode}' to '${effectivePermissionMode}' because allowedTools is set — our permissionHandler will enforce bypass internally`);
+    // All Claude Code built-in tools (non-MCP). Used to build disallowedTools for restricted sessions.
+    const BUILTIN_TOOLS = [
+        'Task', 'TaskOutput', 'Bash', 'Glob', 'Grep', 'ExitPlanMode', 'Read', 'Edit', 'Write',
+        'NotebookEdit', 'WebFetch', 'TodoWrite', 'WebSearch', 'TaskStop', 'AskUserQuestion',
+        'Skill', 'EnterPlanMode',
+    ];
+
+    // When allowedTools is set (e.g. Brain sessions), we use --disallowedTools to block all
+    // built-in tools that are NOT in the whitelist. This is the only reliable way to prevent
+    // Claude Code from auto-allowing tools (e.g. Read for files within cwd) without going
+    // through our canCallTool callback. --allowedTools only filters MCP/API tools, not built-ins.
+    // We always pass bypassPermissions so whitelisted tools (MCP) execute without permission prompts.
+    const allAllowedTools = initial.mode.allowedTools ? initial.mode.allowedTools.concat(opts.allowedTools) : opts.allowedTools;
+    const hasToolRestrictions = allAllowedTools.length > 0;
+    let effectiveDisallowedTools = initial.mode.disallowedTools ?? [];
+    if (hasToolRestrictions) {
+        // Block all built-in tools not explicitly allowed
+        const allowedSet = new Set(allAllowedTools);
+        const builtinToBlock = BUILTIN_TOOLS.filter(t => !allowedSet.has(t));
+        effectiveDisallowedTools = [...new Set([...effectiveDisallowedTools, ...builtinToBlock])];
+        logger.debug(`[claudeRemote] Tool restrictions active — disallowing built-in tools: ${builtinToBlock.join(', ')}`);
     }
 
     const sdkOptions: Options = {
         cwd: opts.path,
         resume: startFrom ?? undefined,
         mcpServers: opts.mcpServers,
-        permissionMode: effectivePermissionMode,
+        permissionMode: initial.mode.permissionMode,
         model: initial.mode.model,
         fallbackModel: initial.mode.fallbackModel,
         customSystemPrompt: initial.mode.customSystemPrompt ? initial.mode.customSystemPrompt + '\n\n' + systemPrompt : undefined,
         appendSystemPrompt: initial.mode.appendSystemPrompt ? initial.mode.appendSystemPrompt + '\n\n' + systemPrompt : systemPrompt,
-        allowedTools: initial.mode.allowedTools ? initial.mode.allowedTools.concat(opts.allowedTools) : opts.allowedTools,
-        disallowedTools: initial.mode.disallowedTools,
+        allowedTools: allAllowedTools,
+        disallowedTools: effectiveDisallowedTools.length > 0 ? effectiveDisallowedTools : undefined,
         canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal }) => opts.canCallTool(toolName, input, mode, options),
         abort: opts.signal,
         pathToClaudeCodeExecutable: 'claude',
