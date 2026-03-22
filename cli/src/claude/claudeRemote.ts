@@ -126,11 +126,25 @@ export async function claudeRemote(opts: {
 
     // Prepare SDK options
     let mode = initial.mode;
+
+    // When allowedTools is set (e.g. Brain sessions), we must NOT pass bypassPermissions
+    // to the Claude Code process. If we do, Claude Code may skip the --permission-prompt-tool
+    // stdio callback after auto-compact, allowing the AI to use tools outside the whitelist.
+    // Instead, we pass 'default' so Claude Code always asks us, and our permissionHandler
+    // enforces both the whitelist AND the bypass logic for whitelisted tools.
+    const hasToolRestrictions = (initial.mode.allowedTools && initial.mode.allowedTools.length > 0) || opts.allowedTools.length > 0;
+    const effectivePermissionMode = hasToolRestrictions && initial.mode.permissionMode === 'bypassPermissions'
+        ? 'default'
+        : initial.mode.permissionMode;
+    if (effectivePermissionMode !== initial.mode.permissionMode) {
+        logger.debug(`[claudeRemote] Downgraded permissionMode from '${initial.mode.permissionMode}' to '${effectivePermissionMode}' because allowedTools is set — our permissionHandler will enforce bypass internally`);
+    }
+
     const sdkOptions: Options = {
         cwd: opts.path,
         resume: startFrom ?? undefined,
         mcpServers: opts.mcpServers,
-        permissionMode: initial.mode.permissionMode,
+        permissionMode: effectivePermissionMode,
         model: initial.mode.model,
         fallbackModel: initial.mode.fallbackModel,
         customSystemPrompt: initial.mode.customSystemPrompt ? initial.mode.customSystemPrompt + '\n\n' + systemPrompt : undefined,
