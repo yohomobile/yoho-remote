@@ -212,6 +212,9 @@ export class FeishuBot {
                         incoming: [], debounceTimer: null, passiveDebounceTimer: null, busy: true, creating: false,
                     })
                     chatsToRecover.push(m.feishuChatId)
+                } else if (s.agentMessages?.length) {
+                    // busy=false but agentMessages still present → summary wasn't sent before restart
+                    chatsToRecover.push(m.feishuChatId)
                 }
                 console.log(`[FeishuBot] Restored state for chat ${m.feishuChatId.slice(0, 12)}: ${s.agentMessages?.length || 0} agentMsgs, busy=${s.busy}`)
             }
@@ -1278,12 +1281,12 @@ export class FeishuBot {
                     return
                 }
 
-                if (!state) return
-
                 // Brain finished or was aborted — send accumulated messages if any
                 this.sendFeishuSummary(chatId).catch(err => {
                     console.error(`[FeishuBot] sendFeishuSummary error for ${chatId.slice(0, 12)}:`, err)
                 })
+
+                if (!state) return
 
                 // Mark not busy and flush pending user messages
                 state.busy = false
