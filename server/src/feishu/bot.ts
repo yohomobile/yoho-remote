@@ -1309,8 +1309,11 @@ export class FeishuBot {
         if (!msgs || msgs.length === 0) return
         this.agentMessages.delete(chatId)
 
+        // Deduplicate consecutive identical messages (Brain sometimes repeats across turns)
+        const deduped = msgs.filter((m, i) => i === 0 || m !== msgs[i - 1])
+
         // Use all agent messages as the reply (raw output)
-        const allText = msgs.join('\n')
+        const allText = deduped.join('\n')
 
         // Detect [silent] — K1 decided not to reply (passive listening mode)
         if (allText.trim() === '[silent]' || allText.includes('[silent]')) {
@@ -1333,13 +1336,14 @@ export class FeishuBot {
             mediaRefs.push(fm[1].trim())
         }
 
-        // Extract [at: openId] references from K1's output
-        const explicitAtIds: string[] = []
+        // Extract [at: openId] references from K1's output (deduplicated)
+        const explicitAtSet = new Set<string>()
         const AT_RE = /\[at:\s*(ou_[a-zA-Z0-9]+)\]/g
         let atMatch: RegExpExecArray | null
         while ((atMatch = AT_RE.exec(allText)) !== null) {
-            explicitAtIds.push(atMatch[1])
+            explicitAtSet.add(atMatch[1])
         }
+        const explicitAtIds = [...explicitAtSet]
 
         // Strip file references, at references, <feishu-reply> tags, and [silent] markers from text
         const textReply = allText
