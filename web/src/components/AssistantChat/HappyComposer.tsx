@@ -333,6 +333,8 @@ export function HappyComposer(props: {
     const MAX_IMAGES = 5
     const MAX_FILES = 5
     const MAX_IMAGE_BYTES = 100 * 1024 * 1024
+    // Claude API base64 limit is ~5MB; keep under 3.5MB raw to be safe
+    const MAX_BASE64_BYTES = 3.5 * 1024 * 1024
     const MAX_FILE_BYTES = 100 * 1024 * 1024
 
     const showResumeOverlay = !active && Boolean(onRequestResume)
@@ -976,6 +978,62 @@ export function HappyComposer(props: {
         fileInputRef.current?.click()
     }, [])
 
+    const compressImage = useCallback(async (file: File, maxBytes: number): Promise<{ dataUrl: string; base64: string; mimeType: string }> => {
+        // Read original file
+        const reader = new FileReader()
+        const originalUrl = await new Promise<string>((resolve, reject) => {
+            reader.onload = () => resolve(reader.result as string)
+            reader.onerror = reject
+            reader.readAsDataURL(file)
+        })
+
+        const originalBase64 = originalUrl.split(',')[1]
+        // If already under limit, return as-is
+        if (originalBase64.length <= maxBytes) {
+            return { dataUrl: originalUrl, base64: originalBase64, mimeType: file.type || 'image/png' }
+        }
+
+        // Load into an Image to get dimensions
+        const img = new Image()
+        const imgLoaded = new Promise<void>((resolve, reject) => {
+            img.onload = () => resolve()
+            img.onerror = reject
+        })
+        img.src = originalUrl
+        await imgLoaded
+
+        // Iteratively scale down and reduce quality until under limit
+        let scale = 1
+        const MAX_DIM = 2048
+        // If image is very large, start by capping dimensions
+        if (img.width > MAX_DIM || img.height > MAX_DIM) {
+            scale = MAX_DIM / Math.max(img.width, img.height)
+        }
+
+        let quality = 0.85
+        let resultBase64 = originalBase64
+        let resultDataUrl = originalUrl
+
+        for (let attempt = 0; attempt < 6; attempt++) {
+            const canvas = document.createElement('canvas')
+            canvas.width = Math.round(img.width * scale)
+            canvas.height = Math.round(img.height * scale)
+            const ctx = canvas.getContext('2d')!
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+
+            resultDataUrl = canvas.toDataURL('image/jpeg', quality)
+            resultBase64 = resultDataUrl.split(',')[1]
+
+            if (resultBase64.length <= maxBytes) break
+
+            // Reduce quality and scale for next attempt
+            quality = Math.max(0.3, quality - 0.15)
+            scale = Math.max(0.2, scale * 0.7)
+        }
+
+        return { dataUrl: resultDataUrl, base64: resultBase64, mimeType: 'image/jpeg' }
+    }, [])
+
     const uploadImageFile = useCallback(async (file: File) => {
         // Check max images limit
         if (uploadedImages.length >= MAX_IMAGES) {
@@ -1002,20 +1060,8 @@ export function HappyComposer(props: {
         haptic('light')
 
         try {
-            // Read file as base64 and create preview URL
-            const reader = new FileReader()
-            const dataUrlPromise = new Promise<string>((resolve, reject) => {
-                reader.onload = () => {
-                    resolve(reader.result as string)
-                }
-                reader.onerror = reject
-            })
-            reader.readAsDataURL(file)
-            const dataUrl = await dataUrlPromise
-
-            // Extract base64 content (remove data URL prefix)
-            const base64Content = dataUrl.split(',')[1]
-            const mimeType = file.type || 'application/octet-stream'
+            // Compress image to fit Claude API base64 limit
+            const { dataUrl, base64: base64Content, mimeType } = await compressImage(file, MAX_BASE64_BYTES)
             const filename = file.name || 'pasted-image.png'
 
             // Upload to server
@@ -1035,7 +1081,7 @@ export function HappyComposer(props: {
         } finally {
             setIsUploadingImage(false)
         }
-    }, [apiClient, sessionId, uploadedImages.length, haptic, MAX_IMAGE_BYTES])
+    }, [apiClient, sessionId, uploadedImages.length, haptic, MAX_IMAGE_BYTES, MAX_BASE64_BYTES, compressImage])
 
     const handleImageChange = useCallback(async (e: ReactChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]

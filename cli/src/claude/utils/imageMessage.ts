@@ -157,14 +157,24 @@ export async function buildMessageContent(
             const base64Data = imageData.toString('base64')
             const mimeType = getMimeType(imagePath)
 
-            contentBlocks.push({
-                type: 'image',
-                source: {
-                    type: 'base64',
-                    media_type: mimeType,
-                    data: base64Data
-                }
-            })
+            // Claude API limit: base64 must be under ~5MB
+            const MAX_BASE64_SIZE = 4.5 * 1024 * 1024
+            if (base64Data.length > MAX_BASE64_SIZE) {
+                logger.debug(`[imageMessage] Image too large for API: ${imagePath} (${(base64Data.length / 1024 / 1024).toFixed(1)}MB base64, limit ${(MAX_BASE64_SIZE / 1024 / 1024).toFixed(1)}MB). Replacing with text description.`)
+                contentBlocks.push({
+                    type: 'text',
+                    text: `[Image too large to display: ${imagePath} (${(imageData.length / 1024 / 1024).toFixed(1)}MB). Please ask the user to send a smaller image.]`
+                })
+            } else {
+                contentBlocks.push({
+                    type: 'image',
+                    source: {
+                        type: 'base64',
+                        media_type: mimeType,
+                        data: base64Data
+                    }
+                })
+            }
 
             logger.debug(`[imageMessage] Loaded image: ${imagePath} (${mimeType}, ${base64Data.length} bytes)`)
         } catch (error) {
