@@ -24,7 +24,7 @@ async function getFeishuToken(): Promise<string> {
 }
 
 async function testE2E() {
-    const text = '好的，收到！'
+    const text = '这个问题我查了一下，原因是飞书的 Webhook 回调超时了，默认只有三秒的响应窗口。我们的处理逻辑太重，来不及在三秒内返回。建议改成异步处理：先立即返回200，然后把消息丢到队列里慢慢处理。这样既不会超时，也不会丢消息。我现在就改一下，大概十分钟搞定。'
 
     // Step 1: MiniMax TTS
     console.log(`[1/4] TTS: "${text}"`)
@@ -39,7 +39,7 @@ async function testE2E() {
             model: 'speech-2.8-hd',
             text,
             stream: false,
-            voice_setting: { voice_id: 'Chinese (Mandarin)_Lyrical_Voice', speed: 1 },
+            voice_setting: { voice_id: 'English_magnetic_voiced_man', speed: 1 },
             audio_setting: { sample_rate: 16000, format: 'mp3' },
         }),
     })

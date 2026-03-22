@@ -9,7 +9,7 @@ import { tmpdir } from 'os'
 
 const MINIMAX_URL = 'https://api.minimax.io/v1/t2a_v2'
 const MINIMAX_MODEL = 'speech-2.8-hd'
-const MINIMAX_VOICE_ID = 'Chinese (Mandarin)_Wise_Women'
+const MINIMAX_VOICE_ID = 'Chinese (Mandarin)_Reliable_Executive'
 
 let minimaxApiKey: string | null = null
 
