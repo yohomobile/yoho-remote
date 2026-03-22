@@ -117,24 +117,6 @@ function AttachmentIcon() {
     )
 }
 
-function KeyIcon() {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
-            <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
-        </svg>
-    )
-}
-
 function AbortIcon(props: { spinning: boolean }) {
     if (props.spinning) {
         return (
@@ -237,9 +219,6 @@ export function ComposerButtons(props: {
     onOptimizeSend?: () => void
     hasAttachments?: boolean
     onSendWithAttachments?: () => void
-    showYohoCredentialButton?: boolean
-    yohoCredentialDisabled?: boolean
-    onYohoCredentialClick?: () => void
 }) {
     return (
         <div className="flex items-center justify-between px-2 pb-2">
@@ -291,19 +270,6 @@ export function ComposerButtons(props: {
                         onClick={props.onFileClick}
                     >
                         <AttachmentIcon />
-                    </button>
-                ) : null}
-
-                {props.showYohoCredentialButton ? (
-                    <button
-                        type="button"
-                        aria-label="Yoho credentials"
-                        title="Yoho credentials"
-                        disabled={props.yohoCredentialDisabled ?? props.controlsDisabled}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
-                        onClick={props.onYohoCredentialClick}
-                    >
-                        <KeyIcon />
                     </button>
                 ) : null}
 

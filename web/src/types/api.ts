@@ -427,24 +427,3 @@ export type BroadcastResponse = {
     }
 }
 
-// Yoho Credentials 相关类型
-export type YohoCredentialFile = {
-    type: string
-    name: string
-    fullPath: string
-    relativePath: string
-    displayName: string
-}
-
-export type YohoCredentialsResponse = {
-    success: boolean
-    files?: YohoCredentialFile[]
-    availableTypes?: string[]
-    error?: string
-}
-
-export type YohoCredentialTypesResponse = {
-    success: boolean
-    types?: string[]
-    rootPath?: string
-}

@@ -1067,38 +1067,6 @@ export class ApiClient {
         return await this.request('/api/claude-accounts/usage')
     }
 
-    // ==================== Yoho Credentials ====================
-
-    async searchYohoCredentials(filters?: {
-        name?: string
-        limit?: number
-    }): Promise<{
-        success: boolean
-        files?: Array<{
-            type: string
-            name: string
-            fullPath: string
-            relativePath: string
-            displayName: string
-        }>
-        availableTypes?: string[]
-        error?: string
-    }> {
-        const params = new URLSearchParams()
-        if (filters?.name) params.set('name', filters.name)
-        if (filters?.limit) params.set('limit', String(filters.limit))
-
-        const qs = params.toString()
-        return await this.request(`/api/yoho-credentials${qs ? `?${qs}` : ''}`)
-    }
-
-    async getYohoCredentialTypes(): Promise<{
-        success: boolean
-        types?: string[]
-        rootPath?: string
-    }> {
-        return await this.request('/api/yoho-credentials/types')
-    }
 }
 
 // Types for Claude Accounts
