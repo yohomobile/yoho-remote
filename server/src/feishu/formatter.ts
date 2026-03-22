@@ -53,6 +53,11 @@ export function extractAgentText(content: unknown): string | null {
             }
         }
 
+        // Result format: { type: 'output', data: { type: 'result', result: '...' } }
+        if (data?.type === 'result' && typeof data.result === 'string') {
+            return data.result
+        }
+
         // Simple text format
         if (typeof data?.type === 'string' && data.type === 'message' && typeof data.message === 'string') {
             return data.message
