@@ -16,7 +16,7 @@ import type { IStore } from '../store/interface'
 import { extractAgentText, isInternalBrainMessage, buildFeishuMessage } from './formatter'
 import { textToSpeech } from './tts'
 import { enrichTextWithDocContent } from './docFetcher'
-import { buildFeishuBrainInitPrompt } from '../web/prompts/initPrompt'
+import { buildFeishuBrainInitPrompt, buildFeishuVijnaptiInitPrompt } from '../web/prompts/initPrompt'
 import { selectBestAccount } from '../claude-accounts/accountsService'
 import { getClaudeAccessToken } from '../web/routes/usage'
 import { lookupKeycloakUserByEmail, type KeycloakUserInfo } from './keycloakLookup'
@@ -1170,11 +1170,16 @@ export class FeishuBot {
 
             // Send feishu-specific Brain initPrompt
             // Only set userName for p2p chats (group chats have multiple users)
-            const prompt = await buildFeishuBrainInitPrompt('developer', {
+            // Use vijnapti prompt for groups with "唯识" in name
+            const isVijnaptiGroup = chatType === 'group' && chatName?.includes('唯识')
+            const promptOptions = {
                 feishuChatType: chatType as 'p2p' | 'group',
                 feishuChatName: chatName,
                 ...(chatType === 'p2p' && senderName ? { userName: senderName } : {}),
-            })
+            }
+            const prompt = isVijnaptiGroup
+                ? await buildFeishuVijnaptiInitPrompt('developer', promptOptions)
+                : await buildFeishuBrainInitPrompt('developer', promptOptions)
 
             await this.syncEngine.sendMessage(sessionId, {
                 text: prompt,
