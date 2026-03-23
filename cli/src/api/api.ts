@@ -220,17 +220,35 @@ export class ApiClient {
     }
 
     async sendMessageToSession(sessionId: string, text: string, sentFrom?: string): Promise<void> {
-        await axios.post(
-            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/messages`,
-            { text, sentFrom },
-            {
-                headers: {
-                    Authorization: `Bearer ${this.token}`,
-                    'Content-Type': 'application/json'
-                },
-                timeout: 15_000
+        // Retry up to 3 times with exponential backoff for transient failures
+        let lastError: Error | null = null
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                await axios.post(
+                    `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/messages`,
+                    { text, sentFrom },
+                    {
+                        headers: {
+                            Authorization: `Bearer ${this.token}`,
+                            'Content-Type': 'application/json'
+                        },
+                        timeout: 30_000
+                    }
+                )
+                return
+            } catch (e: any) {
+                lastError = e
+                // Don't retry on 4xx client errors (except 408/429)
+                const status = e?.response?.status
+                if (status && status >= 400 && status < 500 && status !== 408 && status !== 429) {
+                    throw e
+                }
+                if (attempt < 2) {
+                    await new Promise(r => setTimeout(r, (attempt + 1) * 1000))
+                }
             }
-        )
+        }
+        throw lastError
     }
 
     // ===== Brain tools API methods =====

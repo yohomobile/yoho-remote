@@ -450,8 +450,8 @@ export class FeishuBot {
         // Guard: if session is being created, don't flush yet (messages stay in buffer)
         if (state.creating) return
 
-        // Take all buffered messages and clear
-        const messages = state.incoming.splice(0)
+        // Snapshot buffered messages (keep in buffer until send succeeds)
+        const messages = [...state.incoming]
         if (state.debounceTimer) {
             clearTimeout(state.debounceTimer)
             state.debounceTimer = null
@@ -533,6 +533,9 @@ export class FeishuBot {
                 ...(appendSystemPrompt ? { appendSystemPrompt } : {}),
             }
         })
+
+        // Clear buffer only after successful send (prevents message loss on failure)
+        state.incoming.splice(0, messages.length)
     }
 
     private extractMessageText(messageType: string, contentStr: string): string | null {

@@ -902,10 +902,12 @@ export class SyncEngine {
                 return
             }
 
-            // Check Brain session exists and is active
+            // Check Brain session exists
             const brainSession = this.getSession(mainSessionId)
             if (!brainSession) {
-                console.log(`[brain-callback] Brain session ${mainSessionId} not found, skipping`)
+                console.warn(`[brain-callback] Brain session ${mainSessionId} not found, will retry`)
+                // Brain may be temporarily offline (restarting, etc.) - retry with delay
+                await this.retryBrainCallback(session, mainSessionId, 'brain session not found')
                 return
             }
 
@@ -999,13 +1001,49 @@ export class SyncEngine {
 
             console.log(`[brain-callback] Pushing result from child ${shortId(session.id)} to brain ${shortId(mainSessionId)} (${truncatedResult.length} chars)`)
 
-            await this.sendMessage(mainSessionId, {
-                text: callbackMessage,
-                sentFrom: 'brain-callback',
-            })
+            // Retry sendMessage up to 3 times with exponential backoff
+            let lastError: Error | null = null
+            for (let attempt = 0; attempt < 3; attempt++) {
+                try {
+                    await this.sendMessage(mainSessionId, {
+                        text: callbackMessage,
+                        sentFrom: 'brain-callback',
+                    })
+                    return // success
+                } catch (e) {
+                    lastError = e as Error
+                    if (attempt < 2) {
+                        const delay = (attempt + 1) * 2000 // 2s, 4s
+                        console.warn(`[brain-callback] Send failed (attempt ${attempt + 1}/3), retrying in ${delay}ms:`, (e as Error).message)
+                        await new Promise(r => setTimeout(r, delay))
+                    }
+                }
+            }
+            console.error(`[brain-callback] Failed to send callback for session ${session.id} after 3 attempts:`, lastError)
         } catch (error) {
             console.error(`[brain-callback] Failed to send callback for session ${session.id}:`, error)
         }
+    }
+
+    /**
+     * Retry brain callback with delay - used when Brain session is temporarily unavailable
+     */
+    private async retryBrainCallback(childSession: Session, mainSessionId: string, reason: string): Promise<void> {
+        const MAX_RETRIES = 5
+        const RETRY_DELAYS = [5_000, 10_000, 30_000, 60_000, 120_000] // 5s, 10s, 30s, 1m, 2m
+
+        for (let i = 0; i < MAX_RETRIES; i++) {
+            await new Promise(r => setTimeout(r, RETRY_DELAYS[i]))
+            const brainSession = this.getSession(mainSessionId)
+            if (brainSession) {
+                console.log(`[brain-callback] Brain session ${shortId(mainSessionId)} came back online (retry ${i + 1}), re-sending callback`)
+                // Re-invoke the full callback logic
+                await this.sendBrainCallbackIfNeeded(childSession)
+                return
+            }
+            console.log(`[brain-callback] Brain session ${shortId(mainSessionId)} still offline (retry ${i + 1}/${MAX_RETRIES}, reason: ${reason})`)
+        }
+        console.error(`[brain-callback] Gave up waiting for brain session ${shortId(mainSessionId)} after ${MAX_RETRIES} retries. Child session: ${shortId(childSession.id)}`)
     }
 
     /**

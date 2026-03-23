@@ -118,6 +118,8 @@ export function registerBrainTools(
                 if (s.metadata.machineId !== targetMachineId) return false
                 if (!s.active) return false
                 if (s.thinking) return false
+                // Don't reuse sessions with pending permission requests
+                if (s.pendingRequestsCount > 0) return false
                 return true
             })
 

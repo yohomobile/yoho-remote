@@ -314,32 +314,44 @@ async function waitForSessionInactive(engine: SyncEngine, sessionId: string, tim
 }
 
 async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null): Promise<void> {
-    try {
-        const session = engine.getSession(sessionId)
-        const projectRoot = session?.metadata?.path?.trim()
-            || session?.metadata?.worktree?.basePath?.trim()
-            || null
-        const source = session?.metadata?.source
-        console.log(`[sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}, source=${source}`)
-        const isVijnapti = source === 'brain' && projectRoot?.includes('vijnapti-workspace')
-        const prompt = isVijnapti
-            ? await buildVijnaptiInitPrompt(role, { projectRoot, userName })
-            : source === 'brain'
-                ? await buildBrainInitPrompt(role, { projectRoot, userName })
-                : await buildInitPrompt(role, { projectRoot, userName })
-        if (!prompt.trim()) {
-            console.warn(`[sendInitPrompt] Empty prompt for session ${sessionId}, skipping`)
-            return
-        }
-        console.log(`[sendInitPrompt] Sending prompt to session ${sessionId}, length=${prompt.length}`)
-        await engine.sendMessage(sessionId, {
-            text: prompt,
-            sentFrom: 'webapp'
-        })
-        console.log(`[sendInitPrompt] Successfully sent init prompt to session ${sessionId}`)
-    } catch (err) {
-        console.error(`[sendInitPrompt] Failed for session ${sessionId}:`, err)
+    const session = engine.getSession(sessionId)
+    const projectRoot = session?.metadata?.path?.trim()
+        || session?.metadata?.worktree?.basePath?.trim()
+        || null
+    const source = session?.metadata?.source
+    console.log(`[sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}, source=${source}`)
+    const isVijnapti = source === 'brain' && projectRoot?.includes('vijnapti-workspace')
+    const prompt = isVijnapti
+        ? await buildVijnaptiInitPrompt(role, { projectRoot, userName })
+        : source === 'brain'
+            ? await buildBrainInitPrompt(role, { projectRoot, userName })
+            : await buildInitPrompt(role, { projectRoot, userName })
+    if (!prompt.trim()) {
+        console.warn(`[sendInitPrompt] Empty prompt for session ${sessionId}, skipping`)
+        return
     }
+
+    // Retry up to 3 times with backoff
+    let lastError: Error | null = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            console.log(`[sendInitPrompt] Sending prompt to session ${sessionId}, length=${prompt.length}${attempt > 0 ? ` (attempt ${attempt + 1})` : ''}`)
+            await engine.sendMessage(sessionId, {
+                text: prompt,
+                sentFrom: 'webapp'
+            })
+            console.log(`[sendInitPrompt] Successfully sent init prompt to session ${sessionId}`)
+            return
+        } catch (err) {
+            lastError = err as Error
+            if (attempt < 2) {
+                const delay = (attempt + 1) * 2000
+                console.warn(`[sendInitPrompt] Failed attempt ${attempt + 1}/3 for session ${sessionId}, retrying in ${delay}ms:`, (err as Error).message)
+                await new Promise(r => setTimeout(r, delay))
+            }
+        }
+    }
+    console.error(`[sendInitPrompt] Failed for session ${sessionId} after 3 attempts:`, lastError)
 }
 
 async function sendInitPromptAfterOnline(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null): Promise<void> {
