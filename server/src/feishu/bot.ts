@@ -83,6 +83,9 @@ export class FeishuBot {
     // Track sender open_ids for the current round (group chats: @ them in reply)
     private lastSenderOpenIds: Map<string, Set<string>> = new Map()
 
+    // Track whether the last batch of messages for a chat was passive-only (no @bot)
+    private lastBatchPassive: Map<string, boolean> = new Map()
+
     // Rebuild rate limiting: chatId -> last rebuild timestamp
     private lastRebuildAt: Map<string, number> = new Map()
     private readonly REBUILD_COOLDOWN_MS = 30_000
@@ -512,6 +515,9 @@ export class FeishuBot {
             const senderIds = new Set(messages.map(m => m.senderOpenId))
             this.lastSenderOpenIds.set(chatId, senderIds)
         }
+
+        // Track if this batch is passive-only (for [silent] detection in reply)
+        this.lastBatchPassive.set(chatId, chatType === 'group' && hasPassive && !hasAddressed)
 
         console.log(`[FeishuBot] Sending ${messages.length} merged message(s) to session ${sessionId.slice(0, 8)}${appendSystemPrompt ? ' (with user profiles)' : ''}`)
 
@@ -1351,14 +1357,20 @@ export class FeishuBot {
         // Use all agent messages as the reply (raw output)
         const allText = substantive.join('\n')
 
-        // Detect [silent] — K1 decided not to reply (passive listening mode)
-        // Any output containing [silent] is treated as "don't send", even if mixed with other text (inner monologue)
+        // Detect [silent] — K1 decided not to reply (passive listening mode only)
+        // Only honor [silent] for passive batches; for addressed (@bot) messages, strip the marker and send anyway
+        const isPassiveBatch = this.lastBatchPassive.get(chatId) ?? false
+        this.lastBatchPassive.delete(chatId)
         if (allText.includes('[silent]')) {
-            console.log(`[FeishuBot] K1 chose [silent] for ${chatId.slice(0, 12)}, skipping reply`)
-            this.lastUserMessageId.delete(chatId)
-            this.lastSenderOpenIds.delete(chatId)
-            await this.clearPersistedState(chatId)
-            return
+            if (isPassiveBatch) {
+                console.log(`[FeishuBot] K1 chose [silent] for ${chatId.slice(0, 12)}, skipping reply`)
+                this.lastUserMessageId.delete(chatId)
+                this.lastSenderOpenIds.delete(chatId)
+                await this.clearPersistedState(chatId)
+                return
+            }
+            // Addressed mode: K1 shouldn't use [silent], log warning but continue sending
+            console.warn(`[FeishuBot] K1 used [silent] in addressed mode for ${chatId.slice(0, 12)}, ignoring marker`)
         }
 
         // Extract [feishu-file: path] references from anywhere in the text
