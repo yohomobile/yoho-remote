@@ -1352,16 +1352,13 @@ export class FeishuBot {
         const allText = substantive.join('\n')
 
         // Detect [silent] — K1 decided not to reply (passive listening mode)
-        if (allText.trim() === '[silent]' || allText.includes('[silent]')) {
-            const cleanText = allText.replace(/\[silent\]/g, '').trim()
-            if (!cleanText) {
-                console.log(`[FeishuBot] K1 chose [silent] for ${chatId.slice(0, 12)}, skipping reply`)
-                this.lastUserMessageId.delete(chatId)
-                this.lastSenderOpenIds.delete(chatId)
-                await this.clearPersistedState(chatId)
-                return
-            }
-            // If there's text alongside [silent], send the text part (K1 might have mixed output)
+        // Any output containing [silent] is treated as "don't send", even if mixed with other text (inner monologue)
+        if (allText.includes('[silent]')) {
+            console.log(`[FeishuBot] K1 chose [silent] for ${chatId.slice(0, 12)}, skipping reply`)
+            this.lastUserMessageId.delete(chatId)
+            this.lastSenderOpenIds.delete(chatId)
+            await this.clearPersistedState(chatId)
+            return
         }
 
         // Extract [feishu-file: path] references from anywhere in the text
