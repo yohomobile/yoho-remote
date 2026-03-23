@@ -682,13 +682,17 @@ export class SyncEngine {
     } | null> {
         const messages = await this.store.getMessages(sessionId, 30)
 
+        // IMPORTANT: result message usage is CUMULATIVE (all steps in the query() call summed),
+        // while assistant message usage is PER-STEP (single API request).
+        // For contextSize calculation we MUST use assistant message usage (per-step),
+        // because it reflects the actual current context window usage.
+        // We do two passes: first look for assistant message, then fallback to result.
+
+        // Pass 1: find last assistant message with usage (per-step, accurate for contextSize)
         for (let i = messages.length - 1; i >= 0; i--) {
             const content = messages[i].content as any
             if (!content || content.role !== 'agent') continue
-
             const data = content.content?.data
-
-            // assistant message: usage is on data.message.usage (same as frontend)
             if (data?.type === 'assistant') {
                 const usage = data.message?.usage
                 if (usage && typeof usage.input_tokens === 'number') {
@@ -704,8 +708,13 @@ export class SyncEngine {
                     }
                 }
             }
+        }
 
-            // fallback: result message usage
+        // Pass 2: fallback to result message (cumulative usage — contextSize less accurate)
+        for (let i = messages.length - 1; i >= 0; i--) {
+            const content = messages[i].content as any
+            if (!content || content.role !== 'agent') continue
+            const data = content.content?.data
             if (data?.type === 'result' && data.usage) {
                 const inputTokens = data.usage.input_tokens ?? 0
                 const cacheRead = data.usage.cache_read_input_tokens ?? 0
@@ -942,16 +951,15 @@ export class SyncEngine {
             // Get the last few messages from child session to extract result + usage
             const messages = await this.store.getMessages(session.id, 30)
             let resultText: string | null = null
+
+            // Extract usage: prefer assistant message (per-step) over result message (cumulative)
+            // Result message usage is cumulative across all steps and would inflate contextSize.
             let lastUsage: { input_tokens: number; output_tokens: number; contextSize: number } | null = null
             for (let i = messages.length - 1; i >= 0; i--) {
                 const content = messages[i].content as any
-                if (!content) continue
-                if (content.role !== 'agent') continue
-
+                if (!content || content.role !== 'agent') continue
                 const data = content.content?.data
-
-                // Extract usage from assistant messages first (matches frontend formula)
-                if (!lastUsage && data?.type === 'assistant') {
+                if (data?.type === 'assistant') {
                     const usage = data.message?.usage
                     if (usage && typeof usage.input_tokens === 'number') {
                         const inputTokens = usage.input_tokens ?? 0
@@ -962,22 +970,35 @@ export class SyncEngine {
                             output_tokens: usage.output_tokens ?? 0,
                             contextSize: cacheCreation + cacheRead + inputTokens,
                         }
+                        break
                     }
                 }
-
-                // Fallback: extract usage from result messages
-                if (!lastUsage && data?.type === 'result' && data.usage) {
-                    const inputTokens = data.usage.input_tokens ?? 0
-                    const cacheRead = data.usage.cache_read_input_tokens ?? 0
-                    const cacheCreation = data.usage.cache_creation_input_tokens ?? 0
-                    lastUsage = {
-                        input_tokens: inputTokens,
-                        output_tokens: data.usage.output_tokens ?? 0,
-                        contextSize: cacheCreation + cacheRead + inputTokens,
+            }
+            if (!lastUsage) {
+                for (let i = messages.length - 1; i >= 0; i--) {
+                    const content = messages[i].content as any
+                    if (!content || content.role !== 'agent') continue
+                    const data = content.content?.data
+                    if (data?.type === 'result' && data.usage) {
+                        const inputTokens = data.usage.input_tokens ?? 0
+                        const cacheRead = data.usage.cache_read_input_tokens ?? 0
+                        const cacheCreation = data.usage.cache_creation_input_tokens ?? 0
+                        lastUsage = {
+                            input_tokens: inputTokens,
+                            output_tokens: data.usage.output_tokens ?? 0,
+                            contextSize: cacheCreation + cacheRead + inputTokens,
+                        }
+                        break
                     }
                 }
+            }
 
-                // Extract result text from assistant messages
+            // Extract result text from messages
+            for (let i = messages.length - 1; i >= 0; i--) {
+                const content = messages[i].content as any
+                if (!content || content.role !== 'agent') continue
+                const data = content.content?.data
+
                 if (!resultText) {
                     if (data?.type === 'assistant' && data.message?.content) {
                         const blocks = data.message.content
@@ -999,7 +1020,7 @@ export class SyncEngine {
                     }
                 }
 
-                if (resultText && lastUsage) break
+                if (resultText) break
             }
 
             const sessionTitle = session.metadata?.summary?.text || session.metadata?.path || session.id
