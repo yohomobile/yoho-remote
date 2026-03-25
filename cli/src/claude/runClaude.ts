@@ -552,13 +552,13 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
             },
             'yoho-memory': {
                 command: 'bun',
-                args: ['run', '/home/guang/happy/yoho-memory/src/mcp/stdio.ts'],
-                cwd: '/home/guang/happy/yoho-memory',
+                args: ['run', `${process.env.HOME}/happy/yoho-memory/src/mcp/stdio.ts`],
+                cwd: `${process.env.HOME}/happy/yoho-memory`,
             },
             'yoho-credentials': {
                 command: 'bun',
-                args: ['run', '/home/guang/happy/yoho-task-v2/mcp/credentials-server/index.ts'],
-                cwd: '/home/guang/happy/yoho-task-v2/mcp/credentials-server',
+                args: ['run', `${process.env.HOME}/happy/yoho-task-v2/mcp/credentials-server/index.ts`],
+                cwd: `${process.env.HOME}/happy/yoho-task-v2/mcp/credentials-server`,
             },
         },
         session,
