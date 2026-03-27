@@ -13,7 +13,7 @@ import { execSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import type { SyncEngine, SyncEvent } from '../sync/syncEngine'
 import type { IStore } from '../store/interface'
-import { extractAgentText, isInternalBrainMessage, buildFeishuMessage } from './formatter'
+import { extractAgentText, extractAgentMessageMeta, isInternalBrainMessage, buildFeishuMessage } from './formatter'
 import { textToSpeech } from './tts'
 import { enrichTextWithDocContent } from './docFetcher'
 import { buildFeishuBrainInitPrompt, buildFeishuVijnaptiInitPrompt } from '../web/prompts/initPrompt'
@@ -71,6 +71,8 @@ export class FeishuBot {
 
     // Accumulate agent messages per chatId, send summary when task completes
     private agentMessages: Map<string, string[]> = new Map()
+    // Track which message IDs contributed text to agentMessages (for removing thinking text when tool_use follows)
+    private agentMessageIds: Map<string, { messageId: string; index: number }[]> = new Map()
 
     // Promise that resolves when session init (initPrompt) is fully processed (AI replied)
     private initReady: Map<string, Promise<void>> = new Map()
@@ -191,6 +193,7 @@ export class FeishuBot {
         }
 
         this.agentMessages.clear()
+        this.agentMessageIds.clear()
         this.initReady.clear()
         this.initReadyResolvers.clear()
         this.chatStates.clear()
@@ -1348,6 +1351,36 @@ export class FeishuBot {
             const chatId = this.sessionToChatId.get(event.sessionId)
             if (!chatId) return
 
+            // Check if this event contains tool_use — if so, remove any text
+            // previously accumulated from the same Claude message ID (it was "thinking" text)
+            const meta = extractAgentMessageMeta(event.message.content)
+            if (meta?.hasToolUse) {
+                const trackers = this.agentMessageIds.get(chatId)
+                if (trackers) {
+                    // Find indices of text entries from the same message ID and remove them
+                    const toRemove = trackers
+                        .filter(t => t.messageId === meta.messageId)
+                        .map(t => t.index)
+                        .sort((a, b) => b - a)  // reverse order for safe splice
+                    if (toRemove.length > 0) {
+                        const msgs = this.agentMessages.get(chatId)
+                        if (msgs) {
+                            for (const idx of toRemove) {
+                                if (idx < msgs.length) msgs.splice(idx, 1)
+                            }
+                        }
+                        // Remove trackers for this message ID and re-index remaining ones
+                        const remaining = trackers.filter(t => t.messageId !== meta.messageId)
+                        // Re-compute indices after removals
+                        this.agentMessageIds.set(chatId, remaining.map(t => ({
+                            messageId: t.messageId,
+                            index: t.index - toRemove.filter(r => r < t.index).length
+                        })))
+                    }
+                }
+                return  // tool_use events don't produce text, skip
+            }
+
             const text = extractAgentText(event.message.content)
             if (!text) return
             if (isInternalBrainMessage(text)) return
@@ -1355,6 +1388,13 @@ export class FeishuBot {
             const msgs = this.agentMessages.get(chatId) || []
             msgs.push(text)
             this.agentMessages.set(chatId, msgs)
+
+            // Track which message ID contributed this text (for thinking text removal)
+            if (meta?.messageId) {
+                const trackers = this.agentMessageIds.get(chatId) || []
+                trackers.push({ messageId: meta.messageId, index: msgs.length - 1 })
+                this.agentMessageIds.set(chatId, trackers)
+            }
 
             // Persist agentMessages so they survive server restart
             this.persistChatState(chatId)
@@ -1384,6 +1424,7 @@ export class FeishuBot {
                     this.initReadyResolvers.delete(chatId)
                     // Clear any agent messages from initPrompt processing (don't send to Feishu)
                     this.agentMessages.delete(chatId)
+                    this.agentMessageIds.delete(chatId)
                     this.clearPersistedState(chatId)
                     return
                 }
@@ -1415,6 +1456,7 @@ export class FeishuBot {
         const msgs = this.agentMessages.get(chatId)
         if (!msgs || msgs.length === 0) return
         this.agentMessages.delete(chatId)
+        this.agentMessageIds.delete(chatId)
 
         // Deduplicate consecutive identical messages (Brain sometimes repeats across turns)
         const deduped = msgs.filter((m, i) => i === 0 || m !== msgs[i - 1])

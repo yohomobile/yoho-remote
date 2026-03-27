@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 export PATH="$HOME/.bun/bin:$PATH"
 
 SERVER_EXE="cli/dist-exe/bun-linux-x64/yoho-remote-server"
-DAEMON_EXE="cli/dist-exe/bun-linux-x64/hapi-daemon"
+DAEMON_EXE="cli/dist-exe/bun-linux-x64/yoho-remote-daemon"
 
 # 解析参数
 BUILD_DAEMON=false

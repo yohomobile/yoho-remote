@@ -22,6 +22,27 @@ type PostParagraph = PostTag[]
  * Extract text from a SyncEngine message content object.
  * Only extracts agent/assistant role messages.
  */
+/**
+ * Extract the Claude message ID and whether the content block contains tool_use.
+ * Used to detect "thinking text" that precedes tool calls.
+ */
+export function extractAgentMessageMeta(content: unknown): { messageId: string; hasToolUse: boolean } | null {
+    if (!content || typeof content !== 'object') return null
+    const record = content as Record<string, unknown>
+    const role = record.role as string | undefined
+    if (role !== 'agent' && role !== 'assistant') return null
+    const innerContent = record.content as Record<string, unknown> | string | null
+    if (!innerContent || typeof innerContent !== 'object') return null
+    const data = (innerContent as Record<string, unknown>).data as Record<string, unknown> | undefined
+    if (data?.type !== 'assistant' || !data.message) return null
+    const message = data.message as Record<string, unknown>
+    const messageId = message.id as string | undefined
+    if (!messageId) return null
+    const blocks = message.content as Array<Record<string, unknown>> | undefined
+    const hasToolUse = Array.isArray(blocks) && blocks.some(b => b.type === 'tool_use')
+    return { messageId, hasToolUse }
+}
+
 export function extractAgentText(content: unknown): string | null {
     if (!content || typeof content !== 'object') return null
     const record = content as Record<string, unknown>
