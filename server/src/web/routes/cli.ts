@@ -452,7 +452,8 @@ export function createCliRoutes(
     // Claude 多账号：智能选择最优账号（负载平衡）
     app.get('/claude-accounts/select-best', async (c) => {
         try {
-            const selection = await selectBestAccount()
+            const excludeConfigDir = c.req.query('excludeConfigDir')
+            const selection = await selectBestAccount(excludeConfigDir)
             if (!selection) {
                 const migrated = await migrateDefaultAccount()
                 if (migrated) {

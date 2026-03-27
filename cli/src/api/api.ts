@@ -419,8 +419,12 @@ export class ApiClient {
      * 基于所有账号的实时 usage 数据选择最空闲的账号
      * 如果 select-best 端点不存在（旧版 server），fallback 到 getActiveClaudeAccount
      */
-    async selectBestClaudeAccount(): Promise<ClaudeAccount | null> {
+    async selectBestClaudeAccount(excludeConfigDir?: string): Promise<ClaudeAccount | null> {
         try {
+            const params: Record<string, string> = {}
+            if (excludeConfigDir) {
+                params.excludeConfigDir = excludeConfigDir
+            }
             const response = await axios.get(
                 `${configuration.serverUrl}/cli/claude-accounts/select-best`,
                 {
@@ -428,6 +432,7 @@ export class ApiClient {
                         Authorization: `Bearer ${this.token}`,
                         'Content-Type': 'application/json'
                     },
+                    params,
                     timeout: 15_000
                 }
             )

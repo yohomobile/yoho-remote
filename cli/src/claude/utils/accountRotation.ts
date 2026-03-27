@@ -35,7 +35,7 @@ export async function rotateAccount(opts: {
     claudeSessionId: string | null
     workingDirectory: string
 }): Promise<AccountRotationResult> {
-    const newAccount = await opts.api.selectBestClaudeAccount()
+    const newAccount = await opts.api.selectBestClaudeAccount(opts.currentConfigDir)
     if (!newAccount) {
         return { success: false, reason: 'no_accounts_available' }
     }

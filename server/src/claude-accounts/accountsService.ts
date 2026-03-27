@@ -368,10 +368,10 @@ function getWeightedRemaining(utilization: number, weight: number): number {
  * 4. 排除已超过阈值的账号（如果所有都超限，选最低的）
  * 5. 无 usage 数据的账号 utilization 视为 0.5
  */
-export async function selectBestAccount(): Promise<AccountSelectionResult | null> {
+export async function selectBestAccount(excludeConfigDir?: string): Promise<AccountSelectionResult | null> {
     const config = await readAccountsConfig()
 
-    const candidates = config.accounts.filter(a => a.autoRotate)
+    const candidates = config.accounts.filter(a => a.autoRotate && (!excludeConfigDir || a.configDir !== excludeConfigDir))
     if (candidates.length === 0) {
         const active = config.accounts.find(a => a.id === config.activeAccountId)
         if (active) {

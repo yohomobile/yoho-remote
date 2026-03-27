@@ -87,7 +87,8 @@ export function createClaudeAccountsRoutes(): Hono<WebAppEnv> {
     // 智能选择最优账号（负载平衡，供 CLI session 启动时调用）
     app.get('/claude-accounts/select-best', async (c) => {
         try {
-            const selection = await selectBestAccount()
+            const excludeConfigDir = c.req.query('excludeConfigDir')
+            const selection = await selectBestAccount(excludeConfigDir)
             if (!selection) {
                 // fallback: 尝试迁移默认账号
                 const migrated = await migrateDefaultAccount()
