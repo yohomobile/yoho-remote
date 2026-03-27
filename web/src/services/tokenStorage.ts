@@ -4,10 +4,10 @@
  * Falls back to localStorage if IndexedDB is unavailable
  */
 
-const DB_NAME = 'hapi-auth'
+const DB_NAME = 'yr-auth'
 const DB_VERSION = 1
 const STORE_NAME = 'tokens'
-const LOCAL_STORAGE_KEY = 'hapi-auth-tokens'
+const LOCAL_STORAGE_KEY = 'yr-auth-tokens'
 
 // Check if IndexedDB is available
 let indexedDBAvailable = true

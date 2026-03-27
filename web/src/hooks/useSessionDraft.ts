@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 
-const STORAGE_KEY = 'hapi:sessionDrafts'
+const STORAGE_KEY = 'yr:sessionDrafts'
 const MAX_DRAFTS = 50
 
 type DraftsData = Record<string, string>

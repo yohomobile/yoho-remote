@@ -78,7 +78,7 @@ export class NimBackend implements AgentBackend {
                     'Authorization': `Bearer ${NIM_API_KEY}`,
                     'Content-Type': 'application/json',
                     'Accept': 'text/event-stream',
-                    'User-Agent': 'hapi-cli/nim'
+                    'User-Agent': 'yoho-remote/nim'
                 },
                 body: JSON.stringify({
                     model: this.model,

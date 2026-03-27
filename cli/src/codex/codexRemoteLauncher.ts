@@ -482,7 +482,7 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
     const happyServer = await startHappyServer(session.client);
     const bridgeCommand = getHappyCliCommand(['mcp', '--url', happyServer.url]);
     const mcpServers = {
-        hapi: {
+        yoho_remote: {
             command: bridgeCommand.command,
             args: bridgeCommand.args
         }

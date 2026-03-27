@@ -133,7 +133,7 @@ function getSourceTag(session: SessionSummary): { label: string; color: string }
     const source = session.metadata?.source?.trim()
     if (!source) return null
     // Machine/automation session tags
-    if (source.startsWith('hapi_repair')) {
+    if (source.includes('_repair')) {
         return { label: '🤖 Auto Repair', color: 'bg-purple-500/15 text-purple-600' }
     }
     if (source === 'brain') {

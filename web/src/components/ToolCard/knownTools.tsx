@@ -4,7 +4,7 @@ import { BulbIcon, ClipboardIcon, EyeIcon, FileDiffIcon, GlobeIcon, PuzzleIcon, 
 import { basename, resolveDisplayPath } from '@/components/ToolCard/path'
 
 const DEFAULT_ICON_CLASS = 'h-3.5 w-3.5'
-// Tool presentation registry for `hapi/web` (aligned with `hapi-app`).
+// Tool presentation registry for `yoho-remote/web` (aligned with `yoho-remote-app`).
 
 export type ToolPresentation = {
     icon: ReactNode

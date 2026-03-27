@@ -25,7 +25,7 @@ export function registerKillSessionHandler(
         // should optimistically assume the session is dead.
         return {
             success: true,
-            message: 'Killing hapi CLI process'
+            message: 'Killing CLI process'
         };
     });
 }

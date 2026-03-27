@@ -287,7 +287,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         ? [
             ...happyServer.toolNames
                 .filter(t => sessionCaller === 'feishu' ? t !== 'change_title' : true)
-                .map(toolName => `mcp__hapi__${toolName}`),
+                .map(toolName => `mcp__yoho_remote__${toolName}`),
             'mcp__yoho-memory__recall',
             'mcp__yoho-memory__remember',
             'mcp__yoho-memory__get_playbook',
@@ -523,7 +523,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 // Feishu sessions: exclude change_title (title is set server-side)
                 ...happyServer.toolNames
                     .filter(t => sessionCaller === 'feishu' ? t !== 'change_title' : true)
-                    .map(toolName => `mcp__hapi__${toolName}`),
+                    .map(toolName => `mcp__yoho_remote__${toolName}`),
                 'mcp__yoho-memory__recall',
                 'mcp__yoho-memory__remember',
                 'mcp__yoho-memory__get_playbook',
@@ -533,7 +533,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 'mcp__yoho-credentials__set_credential',
                 'mcp__yoho-credentials__delete_credential',
             ]
-            : happyServer.toolNames.map(toolName => `mcp__hapi__${toolName}`),
+            : happyServer.toolNames.map(toolName => `mcp__yoho_remote__${toolName}`),
         onModeChange: (newMode) => {
             session.sendSessionEvent({ type: 'switch', mode: newMode });
             session.updateAgentState((currentState) => ({
@@ -546,7 +546,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
             syncSessionModes();
         },
         mcpServers: {
-            'hapi': {
+            'yoho_remote': {
                 type: 'http' as const,
                 url: happyServer.url,
             },

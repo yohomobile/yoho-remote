@@ -99,7 +99,7 @@ Always explain your reasoning and approach.`;
                     'Authorization': `Bearer ${this.apiKey}`,
                     'Content-Type': 'application/json',
                     'HTTP-Referer': 'https://yoho.run',
-                    'X-Title': 'HAPI OpenRouter'
+                    'X-Title': 'Yoho Remote OpenRouter'
                 },
                 body: JSON.stringify({
                     model: session.model,

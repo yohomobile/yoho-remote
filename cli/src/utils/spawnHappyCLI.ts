@@ -1,27 +1,8 @@
 /**
- * Cross-platform HAPI CLI spawning utility
+ * Cross-platform CLI spawning utility
  *
- * ## Background
- *
- * HAPI CLI runs in two modes:
- * 1. **Compiled binary**: A single executable built with `bun build --compile`
- * 2. **Development mode**: Running TypeScript directly via `bun`
- *
- * ## Execution Modes
- *
- * **Compiled Binary (Production):**
- * - The executable is self-contained and runs directly
- * - `process.execPath` points to the compiled binary itself
- * - No additional entrypoint needed - just pass args to `process.execPath`
- *
- * **Development Mode:**
- * - Running via `bun src/index.ts`
- * - Spawn child processes using the same runtime with `src/index.ts` entrypoint
- *
- * ## Cross-Platform Support
- *
- * This utility handles spawning HAPI CLI subprocesses (for daemon processes)
- * in a cross-platform way, detecting the current runtime mode and using
+ * Handles spawning CLI subprocesses (for daemon processes) in a cross-platform way,
+ * detecting the current runtime mode (compiled binary vs development) and using
  * the appropriate command and arguments.
  */
 
@@ -32,28 +13,29 @@ import { logger } from '@/ui/logger';
 import { existsSync } from 'node:fs';
 
 /**
- * Check if we're running as a standalone daemon/server executable (not the main hapi CLI)
+ * Check if we're running as a standalone daemon/server executable (not the main CLI)
  */
 function isStandaloneExecutable(): boolean {
   const execName = basename(process.execPath);
-  return execName === 'hapi-daemon' || execName === 'hapi-daemon.exe' ||
-         execName === 'hapi-server' || execName === 'hapi-server.exe';
+  return execName === 'yoho-remote-daemon' || execName === 'yoho-remote-daemon.exe' ||
+         execName === 'yoho-remote-server' || execName === 'yoho-remote-server.exe';
 }
 
 /**
- * Get the path to the main hapi executable when running as standalone daemon/server
+ * Get the path to the main CLI executable when running as standalone daemon/server.
+ * Looks for 'hapi' binary in the same directory as the current executable.
  */
-function getMainHapiExecutable(): string | null {
+function getMainCliExecutable(): string | null {
   if (!isStandaloneExecutable()) {
     return null;
   }
 
   const execDir = dirname(process.execPath);
   const isWindows = process.platform === 'win32';
-  const hapiExe = join(execDir, isWindows ? 'hapi.exe' : 'hapi');
+  const cliExe = join(execDir, isWindows ? 'hapi.exe' : 'hapi');
 
-  if (existsSync(hapiExe)) {
-    return hapiExe;
+  if (existsSync(cliExe)) {
+    return cliExe;
   }
 
   return null;
@@ -80,12 +62,12 @@ export function getHappyCliCommand(args: string[]): HappyCliCommand {
   // Compiled binary mode: just use the executable directly
   if (isBunCompiled()) {
     // Check if we're running as standalone daemon/server
-    // In that case, we need to use the main hapi executable for spawning sessions
-    const mainHapi = getMainHapiExecutable();
-    if (mainHapi) {
-      logger.debug(`[SPAWN HAPI CLI] Using main hapi executable: ${mainHapi}`);
+    // In that case, we need to use the main CLI executable for spawning sessions
+    const mainCli = getMainCliExecutable();
+    if (mainCli) {
+      logger.debug(`[SPAWN CLI] Using main executable: ${mainCli}`);
       return {
-        command: mainHapi,
+        command: mainCli,
         args
       };
     }
@@ -124,13 +106,8 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
   } else {
     directory = process.cwd()
   }
-  // Note: We're executing the current runtime with the calculated entrypoint path below,
-  // bypassing the 'hapi' wrapper that would normally be found in the shell's PATH.
-  // However, we log it as 'hapi' here because other engineers are typically looking
-  // for when "hapi" was started and don't care about the underlying node process
-  // details and flags we use to achieve the same result.
-  const fullCommand = `hapi ${args.join(' ')}`;
-  logger.debug(`[SPAWN HAPI CLI] Spawning: ${fullCommand} in ${directory}`);
+  const fullCommand = `cli ${args.join(' ')}`;
+  logger.debug(`[SPAWN CLI] Spawning: ${fullCommand} in ${directory}`);
   
   const { command: spawnCommand, args: spawnArgs } = getHappyCliCommand(args);
 
@@ -139,7 +116,7 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
     const entrypoint = spawnArgs.find((arg) => arg.endsWith('index.ts'));
     if (entrypoint && !existsSync(entrypoint)) {
       const errorMessage = `Entrypoint ${entrypoint} does not exist`;
-      logger.debug(`[SPAWN HAPI CLI] ${errorMessage}`);
+      logger.debug(`[SPAWN CLI] ${errorMessage}`);
       throw new Error(errorMessage);
     }
   }

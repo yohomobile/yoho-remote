@@ -1231,6 +1231,61 @@ export class FeishuBot {
         })
     }
 
+    /**
+     * Try to resume a dead brain session by spawning a new CLI process
+     * that reuses the same hapi session ID and Claude conversation.
+     */
+    private async resumeBrainSession(oldSessionId: string, claudeSessionId: string): Promise<boolean> {
+        try {
+            const namespace = 'default'
+            const machines = this.syncEngine.getOnlineMachinesByNamespace(namespace)
+            if (machines.length === 0) return false
+
+            const NCU_MACHINE_ID = 'e16b3653-ad9f-46a7-89fd-48a3d576cccb'
+            const machine = machines.find(m => m.id === NCU_MACHINE_ID) || machines[0]
+            const homeDir = (machine.metadata as Record<string, unknown>)?.homeDir as string || '/tmp'
+            const brainDirectory = `${homeDir}/.hapi/brain-workspace`
+
+            let claudeToken: string | undefined
+            try {
+                const selection = await selectBestAccount()
+                if (selection?.account?.configDir) {
+                    claudeToken = await getClaudeAccessToken(selection.account.configDir) ?? undefined
+                }
+            } catch { /* ignore */ }
+            if (!claudeToken) return false
+
+            const result = await this.syncEngine.spawnSession(
+                machine.id,
+                brainDirectory,
+                'claude',
+                true,  // yolo
+                'simple',
+                undefined,
+                {
+                    sessionId: oldSessionId,           // reuse hapi session ID
+                    resumeSessionId: claudeSessionId,  // resume Claude conversation
+                    source: 'brain',
+                    permissionMode: 'bypassPermissions',
+                    token: claudeToken,
+                    caller: 'feishu',
+                }
+            )
+
+            if (result.type !== 'success') {
+                console.warn(`[FeishuBot] resumeBrainSession spawn failed: ${result.message}`)
+                return false
+            }
+
+            // Wait for session to come back online
+            const online = await this.waitForSessionOnline(oldSessionId, 30_000)
+            return online
+        } catch (err) {
+            console.error(`[FeishuBot] resumeBrainSession failed:`, err)
+            return false
+        }
+    }
+
     private async rebuildSession(chatId: string, chatType: string, senderName?: string): Promise<string | null> {
         // Rate limiting
         const lastRebuild = this.lastRebuildAt.get(chatId) || 0
@@ -1240,11 +1295,32 @@ export class FeishuBot {
         }
         this.lastRebuildAt.set(chatId, Date.now())
 
+        const oldSessionId = this.chatIdToSessionId.get(chatId)
+
+        // Try to resume the old session first (preserves conversation context)
+        if (oldSessionId) {
+            const oldSession = this.syncEngine.getSession(oldSessionId)
+            const claudeSessionId = (oldSession?.metadata as Record<string, unknown>)?.claudeSessionId as string | undefined
+
+            if (claudeSessionId) {
+                console.log(`[FeishuBot] Attempting resume for chat ${chatId.slice(0, 12)}, session ${oldSessionId.slice(0, 8)}`)
+                await this.store.updateFeishuChatSessionStatus(chatId, 'resuming')
+
+                const resumed = await this.resumeBrainSession(oldSessionId, claudeSessionId)
+                if (resumed) {
+                    console.log(`[FeishuBot] Resumed session ${oldSessionId.slice(0, 8)} for chat ${chatId.slice(0, 12)}`)
+                    await this.store.updateFeishuChatSessionStatus(chatId, 'active')
+                    return oldSessionId
+                }
+                console.warn(`[FeishuBot] Resume failed for chat ${chatId.slice(0, 12)}, falling back to new session`)
+            }
+        }
+
+        // Resume failed or no claudeSessionId — fall back to creating a brand new session
         console.log(`[FeishuBot] Rebuilding session for chat ${chatId.slice(0, 12)}`)
         await this.store.updateFeishuChatSessionStatus(chatId, 'rebuilding')
 
         // Remove old mapping from memory
-        const oldSessionId = this.chatIdToSessionId.get(chatId)
         if (oldSessionId) {
             this.sessionToChatId.delete(oldSessionId)
         }
@@ -1262,6 +1338,66 @@ export class FeishuBot {
         }
 
         return newSessionId
+    }
+
+    private async resumeBrainSession(oldSessionId: string, claudeSessionId: string): Promise<boolean> {
+        try {
+            const namespace = 'default'
+            const machines = this.syncEngine.getOnlineMachinesByNamespace(namespace)
+            if (machines.length === 0) {
+                console.error('[FeishuBot] No online machines available for resume')
+                return false
+            }
+
+            const NCU_MACHINE_ID = 'e16b3653-ad9f-46a7-89fd-48a3d576cccb'
+            const machine = machines.find(m => m.id === NCU_MACHINE_ID) || machines[0]
+            const homeDir = (machine.metadata as Record<string, unknown>)?.homeDir as string || '/tmp'
+            const brainDirectory = `${homeDir}/.hapi/brain-workspace`
+
+            // Get fresh Claude OAuth token
+            let claudeToken: string | undefined
+            try {
+                const selection = await selectBestAccount()
+                if (selection?.account?.configDir) {
+                    const token = await getClaudeAccessToken(selection.account.configDir)
+                    if (token) claudeToken = token
+                }
+            } catch { /* ignore */ }
+
+            if (!claudeToken) {
+                console.error('[FeishuBot] No valid Claude token for resume')
+                return false
+            }
+
+            const result = await this.syncEngine.spawnSession(
+                machine.id,
+                brainDirectory,
+                'claude',
+                true,  // yolo
+                'simple',
+                undefined,
+                {
+                    sessionId: oldSessionId,           // reuse the same hapi session ID
+                    resumeSessionId: claudeSessionId,  // resume the Claude conversation
+                    source: 'brain',
+                    permissionMode: 'bypassPermissions',
+                    token: claudeToken,
+                    caller: 'feishu',
+                }
+            )
+
+            if (result.type !== 'success') {
+                console.error(`[FeishuBot] Resume spawn failed: ${result.message}`)
+                return false
+            }
+
+            // Wait for the resumed session to come online
+            const online = await this.waitForSessionOnline(oldSessionId, 30_000)
+            return online
+        } catch (err) {
+            console.error('[FeishuBot] resumeBrainSession error:', err)
+            return false
+        }
     }
 
     // ========== SyncEngine event handling (Brain -> Feishu) ==========

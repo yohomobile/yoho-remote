@@ -1,5 +1,5 @@
-const AI_SUGGESTIONS_ENABLED_KEY = 'hapi-ai-suggestions-enabled'
-const AI_SUGGESTIONS_EVENT = 'hapi-ai-suggestions-changed'
+const AI_SUGGESTIONS_ENABLED_KEY = 'yr-ai-suggestions-enabled'
+const AI_SUGGESTIONS_EVENT = 'yr-ai-suggestions-changed'
 
 export function getAiSuggestionsEnabled(): boolean {
     if (typeof window === 'undefined') {

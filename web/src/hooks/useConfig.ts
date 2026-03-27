@@ -6,7 +6,7 @@ import { useMemo } from 'react'
 export function useConfig() {
     const baseUrl = useMemo(() => {
         // Check for stored server URL first
-        const stored = localStorage.getItem('hapi_server_url')
+        const stored = localStorage.getItem('yr_server_url')
         if (stored) {
             try {
                 const url = new URL(stored)

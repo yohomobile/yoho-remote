@@ -243,7 +243,7 @@ function normalizeAgentRecord(
         const data = isObject(content.data) ? content.data : null
         if (!data || typeof data.type !== 'string') return null
 
-        // Skip meta/compact-summary messages (parity with hapi-app)
+        // Skip meta/compact-summary messages (parity with yoho-remote-app)
         if (data.isMeta) return null
         if (data.isCompactSummary) return null
 

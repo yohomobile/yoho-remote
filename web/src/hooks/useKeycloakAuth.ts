@@ -1,5 +1,5 @@
 /**
- * Keycloak authentication hook for hapi web client
+ * Keycloak authentication hook for yoho-remote web client
  * Replaces the legacy useAuth + useAuthSource hooks with SSO-based authentication
  */
 

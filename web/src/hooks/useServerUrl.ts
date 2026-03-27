@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 
-const SERVER_URL_KEY = 'hapi_server_url'
+const SERVER_URL_KEY = 'yr_server_url'
 
 export type ServerUrlResult =
     | { ok: true; value: string }

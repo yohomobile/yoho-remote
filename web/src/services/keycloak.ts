@@ -1,5 +1,5 @@
 /**
- * Keycloak authentication service for hapi web client
+ * Keycloak authentication service for yoho-remote web client
  * Handles OAuth2/OIDC login flow with token storage and refresh
  *
  * Uses IndexedDB for token storage to support Service Worker access in PWA mode

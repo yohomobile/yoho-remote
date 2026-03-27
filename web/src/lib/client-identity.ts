@@ -10,7 +10,7 @@ function generateClientId(): string {
 
 // 获取或创建客户端ID
 export function getClientId(): string {
-    const key = 'hapi_client_id'
+    const key = 'yr_client_id'
     let clientId = localStorage.getItem(key)
     if (!clientId) {
         clientId = generateClientId()
@@ -53,5 +53,5 @@ export function getDeviceType(): string {
 
 // 获取存储的邮箱
 export function getStoredEmail(): string | null {
-    return localStorage.getItem('hapi_email')
+    return localStorage.getItem('yr_email')
 }

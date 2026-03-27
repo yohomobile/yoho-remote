@@ -25,7 +25,7 @@ interface SpawnPrefs {
 
 function getSpawnPrefsKey(userEmail: string | null): string {
     const suffix = userEmail ? `:${userEmail}` : ''
-    return `hapi:lastSpawnPrefs${suffix}`
+    return `yr:lastSpawnPrefs${suffix}`
 }
 
 function loadSpawnPrefs(userEmail: string | null): SpawnPrefs {

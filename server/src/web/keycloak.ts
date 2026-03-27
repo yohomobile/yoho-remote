@@ -54,6 +54,8 @@ export interface KeycloakTokenPayload {
  */
 export async function verifyKeycloakToken(token: string): Promise<KeycloakTokenPayload> {
     const jwks = getJwksClient();
+    // Token is exchanged via public url, so issuer matches KEYCLOAK_URL
+    // internalUrl is only used for JWKS key fetching (no session context needed)
     const issuer = `${KEYCLOAK_CONFIG.url}/realms/${KEYCLOAK_CONFIG.realm}`;
 
     const { payload } = await jose.jwtVerify(token, jwks, {
@@ -81,7 +83,9 @@ export async function exchangeCodeForToken(code: string, redirectUri: string): P
     expires_in: number;
     token_type: string;
 }> {
-    const tokenUrl = `${KEYCLOAK_CONFIG.internalUrl}/realms/${KEYCLOAK_CONFIG.realm}/protocol/openid-connect/token`;
+    // Use public url for code exchange — the authorization code was issued under the public domain's session,
+    // so it must be exchanged at the same domain. Using internalUrl would fail with "Code not valid".
+    const tokenUrl = `${KEYCLOAK_CONFIG.url}/realms/${KEYCLOAK_CONFIG.realm}/protocol/openid-connect/token`;
 
     const response = await fetch(tokenUrl, {
         method: 'POST',
@@ -120,7 +124,8 @@ export async function refreshKeycloakToken(refreshToken: string): Promise<{
     expires_in: number;
     token_type: string;
 }> {
-    const tokenUrl = `${KEYCLOAK_CONFIG.internalUrl}/realms/${KEYCLOAK_CONFIG.realm}/protocol/openid-connect/token`;
+    // Use public url — refresh token was issued under the public domain's session
+    const tokenUrl = `${KEYCLOAK_CONFIG.url}/realms/${KEYCLOAK_CONFIG.realm}/protocol/openid-connect/token`;
 
     const response = await fetch(tokenUrl, {
         method: 'POST',

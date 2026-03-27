@@ -20,7 +20,7 @@ import { isAccountExhaustedError, rotateAccount } from "./utils/accountRotation"
 
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
 const MAX_ACCOUNT_ROTATIONS = 3;
-const TITLE_INSTRUCTION = 'Based on this message, call mcp__hapi__change_title to change chat session title that would represent the current task. If chat idea would change dramatically - call this function again to update the title.';
+const TITLE_INSTRUCTION = 'Based on this message, call mcp__yoho_remote__change_title to change chat session title that would represent the current task. If chat idea would change dramatically - call this function again to update the title.';
 
 function isInitPromptMessage(message: string): boolean {
     return message.trimStart().startsWith(INIT_PROMPT_PREFIX);
@@ -482,7 +482,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 if (errorStack) {
                     logger.debug('[remote]: stack trace:', errorStack);
                 }
-                console.error('[HAPI] Process error:', errorMessage);
+                console.error('[YohoRemote] Process error:', errorMessage);
 
                 // Handle thinking timeout - restart the process with auto-continue
                 if (!exitReason && e instanceof ThinkingTimeoutError) {

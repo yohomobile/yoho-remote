@@ -467,7 +467,7 @@ export class CodexMcpClient {
 
     constructor() {
         this.client = new Client(
-            { name: 'hapi-codex-client', version: '1.0.0' },
+            { name: 'yoho-remote-codex-client', version: '1.0.0' },
             { capabilities: { elicitation: {} } }
         );
 

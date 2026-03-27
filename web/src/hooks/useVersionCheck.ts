@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 
-const CACHED_VERSION_KEY = 'hapi-cached-version'
+const CACHED_VERSION_KEY = 'yr-cached-version'
 
 /**
  * 共享的应用刷新函数

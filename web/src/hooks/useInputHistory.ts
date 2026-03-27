@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react'
 
-const STORAGE_KEY = 'hapi:inputHistory'
+const STORAGE_KEY = 'yr:inputHistory'
 const MAX_HISTORY = 50
 
 type HistoryData = string[]

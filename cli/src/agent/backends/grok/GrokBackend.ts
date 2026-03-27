@@ -152,7 +152,7 @@ Be concise, accurate, and helpful.`
                     'Authorization': `Bearer ${GROK_API_KEY}`,
                     'Content-Type': 'application/json',
                     'Accept': 'text/event-stream',
-                    'User-Agent': 'hapi-cli/grok'
+                    'User-Agent': 'yoho-remote/grok'
                 },
                 body: JSON.stringify({
                     model: this.model,

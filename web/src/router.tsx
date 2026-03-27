@@ -363,7 +363,7 @@ function SessionPage() {
             const flavor = session?.metadata?.flavor ?? 'claude'
             if (flavor === 'claude' && api && sessionId) {
                 const newFastMode = !session?.fastMode
-                localStorage.setItem('hapi-fast-mode', String(newFastMode))
+                localStorage.setItem('yr-fast-mode', String(newFastMode))
                 api.setFastMode(sessionId, newFastMode).catch(console.error)
             }
             return

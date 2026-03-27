@@ -84,7 +84,7 @@ export class AcpSdkBackend implements AgentBackend {
                             terminal: false
                         },
                         clientInfo: {
-                            name: 'hapi',
+                            name: 'yoho-remote',
                             version: packageJson.version
                         }
                     }),

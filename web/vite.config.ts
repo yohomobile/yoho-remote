@@ -95,7 +95,7 @@ export default defineConfig({
     },
     server: {
         host: true,
-        allowedHosts: ['hapidev.weishu.me'],
+        allowedHosts: ['hapidev.weishu.me', 'remote.yohomobile.com'],
         proxy: {
             '/api': {
                 target: 'http://127.0.0.1:3006',

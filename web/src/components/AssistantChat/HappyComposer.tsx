@@ -356,7 +356,7 @@ export function HappyComposer(props: {
     const [isOptimizing, setIsOptimizing] = useState(false)
     const [autoOptimize, setAutoOptimize] = useState(() => {
         if (typeof window !== 'undefined') {
-            return localStorage.getItem('hapi-auto-optimize') === 'true'
+            return localStorage.getItem('yr-auto-optimize') === 'true'
         }
         return false
     })
@@ -404,10 +404,10 @@ export function HappyComposer(props: {
             if (currentText) {
                 // 使用 localStorage 直接保存，因为 setDraft 可能还指向旧的 sessionId
                 try {
-                    const stored = localStorage.getItem('hapi:sessionDrafts')
+                    const stored = localStorage.getItem('yr:sessionDrafts')
                     const data = stored ? JSON.parse(stored) : {}
                     data[prevSessionIdRef.current] = composerText
-                    localStorage.setItem('hapi:sessionDrafts', JSON.stringify(data))
+                    localStorage.setItem('yr:sessionDrafts', JSON.stringify(data))
                 } catch {
                     // Ignore
                 }
@@ -453,7 +453,7 @@ export function HappyComposer(props: {
         if (!isClaude || !active || !onFastModeChange) return
         if (fastModeSyncedRef.current) return
         fastModeSyncedRef.current = true
-        const stored = localStorage.getItem('hapi-fast-mode')
+        const stored = localStorage.getItem('yr-fast-mode')
         if (stored === 'true' && !serverFastMode) {
             onFastModeChange(true)
         } else if (stored === 'false' && serverFastMode) {
@@ -950,21 +950,21 @@ export function HappyComposer(props: {
         if (!onFastModeChange) return
         const newValue = !fastMode
         setOptimisticFastMode(newValue)
-        localStorage.setItem('hapi-fast-mode', String(newValue))
+        localStorage.setItem('yr-fast-mode', String(newValue))
         haptic('light')
         try {
             await onFastModeChange(newValue)
         } catch {
             // Revert optimistic state on failure
             setOptimisticFastMode(null)
-            localStorage.setItem('hapi-fast-mode', String(!newValue))
+            localStorage.setItem('yr-fast-mode', String(!newValue))
         }
     }, [onFastModeChange, fastMode, haptic])
 
     const handleAutoOptimizeToggle = useCallback(() => {
         setAutoOptimize(prev => {
             const newValue = !prev
-            localStorage.setItem('hapi-auto-optimize', String(newValue))
+            localStorage.setItem('yr-auto-optimize', String(newValue))
             return newValue
         })
         haptic('light')

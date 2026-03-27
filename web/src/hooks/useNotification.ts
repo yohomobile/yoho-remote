@@ -5,9 +5,9 @@ import { getTelegramWebApp } from './useTelegram'
 import { getClientId } from '@/lib/client-identity'
 import type { ApiClient } from '@/api/client'
 
-const NOTIFICATION_PERMISSION_KEY = 'hapi-notification-enabled'
-const PENDING_NOTIFICATION_KEY = 'hapi-pending-notification'
-const PUSH_SUBSCRIPTION_KEY = 'hapi-push-subscription-endpoint'
+const NOTIFICATION_PERMISSION_KEY = 'yr-notification-enabled'
+const PENDING_NOTIFICATION_KEY = 'yr-pending-notification'
+const PUSH_SUBSCRIPTION_KEY = 'yr-push-subscription-endpoint'
 
 export type PendingNotification = {
     sessionId: string

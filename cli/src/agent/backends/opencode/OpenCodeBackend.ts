@@ -105,7 +105,7 @@ export class OpenCodeBackend implements AgentBackend {
                         terminal: false
                     },
                     clientInfo: {
-                        name: 'hapi',
+                        name: 'yoho-remote',
                         version: packageJson.version
                     }
                 }),
