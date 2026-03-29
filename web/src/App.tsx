@@ -44,6 +44,13 @@ export function App() {
         dismissUpdate()
     }, [dismissUpdate])
 
+    // Current org state (must be before any conditional returns)
+    const [currentOrgId, setCurrentOrgIdState] = useState<string | null>(() => getStoredOrgId())
+    const setCurrentOrgId = useCallback((id: string | null) => {
+        setCurrentOrgIdState(id)
+        setStoredOrgId(id)
+    }, [])
+
     // Subscribe to Web Push notifications when authenticated
     useWebPushSubscription(api)
     const goBack = useAppGoBack()
@@ -398,12 +405,6 @@ export function App() {
             </div>
         )
     }
-
-    const [currentOrgId, setCurrentOrgIdState] = useState<string | null>(() => getStoredOrgId())
-    const setCurrentOrgId = useCallback((id: string | null) => {
-        setCurrentOrgIdState(id)
-        setStoredOrgId(id)
-    }, [])
 
     return (
         <AppContextProvider value={{ api, token: token ?? '', userEmail: user?.email ?? null, currentOrgId, setCurrentOrgId }}>
