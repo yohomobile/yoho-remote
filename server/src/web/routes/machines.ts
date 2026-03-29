@@ -19,6 +19,8 @@ const spawnBodySchema = z.object({
     opencodeModel: z.string().min(1).optional(),
     opencodeVariant: z.string().min(1).optional(),
     codexModel: z.string().min(1).optional(),
+    droidModel: z.string().min(1).optional(),
+    droidReasoningEffort: z.string().min(1).optional(),
     modelReasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
     source: z.string().min(1).max(100).optional()
 })
@@ -148,7 +150,7 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
             parsed.data.yolo,
             parsed.data.sessionType,
             parsed.data.worktreeName,
-            { claudeSettingsType: parsed.data.claudeSettingsType, claudeAgent: parsed.data.claudeAgent, opencodeModel: parsed.data.opencodeModel, opencodeVariant: parsed.data.opencodeVariant, codexModel: parsed.data.codexModel, modelMode, modelReasoningEffort: parsed.data.modelReasoningEffort, source }
+            { claudeSettingsType: parsed.data.claudeSettingsType, claudeAgent: parsed.data.claudeAgent, opencodeModel: parsed.data.opencodeModel, opencodeVariant: parsed.data.opencodeVariant, codexModel: parsed.data.codexModel, droidModel: parsed.data.droidModel, droidReasoningEffort: parsed.data.droidReasoningEffort, modelMode, modelReasoningEffort: parsed.data.modelReasoningEffort, source }
         )
 
         // 如果 spawn 成功，等 session online 后设置 createdBy 并发送初始化 prompt

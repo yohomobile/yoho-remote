@@ -1666,6 +1666,8 @@ export class SyncEngine {
             codexModel?: string
             opencodeModel?: string
             opencodeVariant?: string
+            droidModel?: string
+            droidReasoningEffort?: string
             permissionMode?: Session['permissionMode']
             modelMode?: Session['modelMode']
             modelReasoningEffort?: Session['modelReasoningEffort']
@@ -1693,6 +1695,8 @@ export class SyncEngine {
                     codexModel: options?.codexModel,
                     opencodeModel: options?.opencodeModel,
                     opencodeVariant: options?.opencodeVariant,
+                    droidModel: options?.droidModel,
+                    droidReasoningEffort: options?.droidReasoningEffort,
                     permissionMode: options?.permissionMode,
                     modelMode: options?.modelMode,
                     modelReasoningEffort: options?.modelReasoningEffort,

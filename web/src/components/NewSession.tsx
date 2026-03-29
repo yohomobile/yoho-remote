@@ -21,6 +21,8 @@ interface SpawnPrefs {
     claudeAgent?: string
     opencodeModel?: string
     codexReasoningEffort?: 'medium' | 'high' | 'xhigh'
+    droidModel?: string
+    droidReasoningEffort?: string
 }
 
 function getSpawnPrefsKey(userEmail: string | null): string {
@@ -53,6 +55,27 @@ const CODEX_REASONING_EFFORTS = [
     { value: 'medium' as const, label: 'Medium (默认)' },
     { value: 'high' as const, label: 'High (更强推理)' },
     { value: 'xhigh' as const, label: 'X-High (最强推理)' },
+]
+
+// Droid supported models (from `droid exec --help`)
+const DROID_MODELS: { value: string; label: string; reasoningEfforts: string[]; defaultEffort: string }[] = [
+    { value: 'claude-opus-4-6', label: 'Claude Opus 4.6', reasoningEfforts: ['off', 'low', 'medium', 'high', 'max'], defaultEffort: 'high' },
+    { value: 'claude-opus-4-6-fast', label: 'Claude Opus 4.6 Fast', reasoningEfforts: ['off', 'low', 'medium', 'high', 'max'], defaultEffort: 'high' },
+    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', reasoningEfforts: ['off', 'low', 'medium', 'high', 'max'], defaultEffort: 'high' },
+    { value: 'claude-opus-4-5-20251101', label: 'Claude Opus 4.5', reasoningEfforts: ['off', 'low', 'medium', 'high'], defaultEffort: 'off' },
+    { value: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5', reasoningEfforts: ['off', 'low', 'medium', 'high'], defaultEffort: 'off' },
+    { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', reasoningEfforts: ['off', 'low', 'medium', 'high'], defaultEffort: 'off' },
+    { value: 'gpt-5.4', label: 'GPT-5.4', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], defaultEffort: 'medium' },
+    { value: 'gpt-5.4-fast', label: 'GPT-5.4 Fast', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], defaultEffort: 'medium' },
+    { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], defaultEffort: 'high' },
+    { value: 'gpt-5.2', label: 'GPT-5.2', reasoningEfforts: ['off', 'low', 'medium', 'high', 'xhigh'], defaultEffort: 'low' },
+    { value: 'gpt-5.2-codex', label: 'GPT-5.2-Codex', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], defaultEffort: 'medium' },
+    { value: 'gpt-5.3-codex', label: 'GPT-5.3-Codex', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], defaultEffort: 'medium' },
+    { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro', reasoningEfforts: ['low', 'medium', 'high'], defaultEffort: 'high' },
+    { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash', reasoningEfforts: ['minimal', 'low', 'medium', 'high'], defaultEffort: 'high' },
+    { value: 'glm-5', label: 'GLM-5', reasoningEfforts: ['none'], defaultEffort: 'none' },
+    { value: 'kimi-k2.5', label: 'Kimi K2.5', reasoningEfforts: ['none'], defaultEffort: 'none' },
+    { value: 'minimax-m2.5', label: 'MiniMax M2.5', reasoningEfforts: ['low', 'medium', 'high'], defaultEffort: 'high' },
 ]
 
 // OpenCode supported models - using OpenCode's native model ID format
@@ -182,6 +205,8 @@ export function NewSession(props: {
     const [claudeAgent, setClaudeAgent] = useState(savedPrefs.claudeAgent ?? '')
     const [opencodeModel, setOpencodeModel] = useState(savedPrefs.opencodeModel ?? OPENCODE_MODELS[0].value)
     const [codexReasoningEffort, setCodexReasoningEffort] = useState<'medium' | 'high' | 'xhigh'>(savedPrefs.codexReasoningEffort ?? 'medium')
+    const [droidModel, setDroidModel] = useState(savedPrefs.droidModel ?? DROID_MODELS[0].value)
+    const [droidReasoningEffort, setDroidReasoningEffort] = useState(savedPrefs.droidReasoningEffort ?? DROID_MODELS[0].defaultEffort)
     const [error, setError] = useState<string | null>(null)
     const [isCustomPath, setIsCustomPath] = useState(false)
     const [spawnLogs, setSpawnLogs] = useState<SpawnLogEntry[]>([])
@@ -264,6 +289,20 @@ export function NewSession(props: {
         setProjectPath(projects[0].path)
     }, [machineId, projects])
 
+    // Droid: get available reasoning efforts for the selected model
+    const selectedDroidModel = useMemo(
+        () => DROID_MODELS.find(m => m.value === droidModel) ?? DROID_MODELS[0],
+        [droidModel]
+    )
+
+    const handleDroidModelChange = useCallback((newModel: string) => {
+        setDroidModel(newModel)
+        const model = DROID_MODELS.find(m => m.value === newModel)
+        if (model) {
+            setDroidReasoningEffort(model.defaultEffort)
+        }
+    }, [])
+
     const handleMachineChange = useCallback((newMachineId: string) => {
         setMachineId(newMachineId)
         setInitialProjectRestored(true) // 手动切换机器时不再尝试恢复旧项目
@@ -295,6 +334,8 @@ export function NewSession(props: {
                 opencodeModel: agent === 'opencode' ? opencodeModel : undefined,
                 codexModel: agent === 'codex' ? CODEX_MODEL : undefined,
                 modelReasoningEffort: agent === 'codex' ? codexReasoningEffort : undefined,
+                droidModel: agent === 'droid' ? droidModel : undefined,
+                droidReasoningEffort: agent === 'droid' ? droidReasoningEffort : undefined,
             })
 
             // Update logs from server response
@@ -312,6 +353,8 @@ export function NewSession(props: {
                     claudeAgent: claudeAgent.trim() || undefined,
                     opencodeModel,
                     codexReasoningEffort,
+                    droidModel,
+                    droidReasoningEffort,
                 })
                 haptic.notification('success')
                 props.onSuccess(result.sessionId)
@@ -507,6 +550,46 @@ export function NewSession(props: {
                     <div className="text-[11px] text-[var(--app-hint)]">
                         Codex 固定使用 GPT-5.3，可选择推理强度。
                     </div>
+                </div>
+            ) : null}
+
+            {/* Droid Model + Reasoning Effort Selector */}
+            {agent === 'droid' ? (
+                <div className="flex flex-col gap-1.5 px-3 pb-3">
+                    <label className="text-xs font-medium text-[var(--app-hint)]">
+                        Model (Droid)
+                    </label>
+                    <select
+                        value={droidModel}
+                        onChange={(e) => handleDroidModelChange(e.target.value)}
+                        disabled={isFormDisabled}
+                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                    >
+                        {DROID_MODELS.map((model) => (
+                            <option key={model.value} value={model.value}>
+                                {model.label}
+                            </option>
+                        ))}
+                    </select>
+                    {selectedDroidModel.reasoningEfforts.length > 1 && (
+                        <>
+                            <label className="text-xs font-medium text-[var(--app-hint)] mt-1.5">
+                                Reasoning Effort
+                            </label>
+                            <select
+                                value={droidReasoningEffort}
+                                onChange={(e) => setDroidReasoningEffort(e.target.value)}
+                                disabled={isFormDisabled}
+                                className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                            >
+                                {selectedDroidModel.reasoningEfforts.map((effort) => (
+                                    <option key={effort} value={effort}>
+                                        {effort}{effort === selectedDroidModel.defaultEffort ? ' (default)' : ''}
+                                    </option>
+                                ))}
+                            </select>
+                        </>
+                    )}
                 </div>
             ) : null}
 

@@ -545,11 +545,13 @@ export class ApiClient {
         claudeAgent?: string,
         opencodeModel?: string,
         codexModel?: string,
-        modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
+        modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh',
+        droidModel?: string,
+        droidReasoningEffort?: string
     ): Promise<SpawnResponse> {
         return await this.request<SpawnResponse>(`/api/machines/${encodeURIComponent(machineId)}/spawn`, {
             method: 'POST',
-            body: JSON.stringify({ directory, agent, yolo, sessionType, worktreeName, claudeSettingsType, claudeAgent, opencodeModel, codexModel, modelReasoningEffort, source: 'webapp' })
+            body: JSON.stringify({ directory, agent, yolo, sessionType, worktreeName, claudeSettingsType, claudeAgent, opencodeModel, codexModel, modelReasoningEffort, droidModel, droidReasoningEffort, source: 'webapp' })
         })
     }
 

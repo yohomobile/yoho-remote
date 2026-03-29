@@ -431,6 +431,15 @@ export async function startDaemon(): Promise<void> {
         if (agent === 'opencode') {
           extraEnv = { ...extraEnv, OPENCODE_VARIANT: 'max' };
         }
+        // Pass Droid model and reasoning effort via environment variables
+        const droidModel = typeof options.droidModel === 'string' ? options.droidModel.trim() : '';
+        if (agent === 'droid' && droidModel) {
+          extraEnv = { ...extraEnv, YR_DROID_MODEL: droidModel };
+        }
+        const droidReasoningEffort = typeof options.droidReasoningEffort === 'string' ? options.droidReasoningEffort.trim() : '';
+        if (agent === 'droid' && droidReasoningEffort) {
+          extraEnv = { ...extraEnv, YR_DROID_REASONING_EFFORT: droidReasoningEffort };
+        }
         if (options.sessionId) {
           args.push('--yoho-remote-session-id', options.sessionId);
         }

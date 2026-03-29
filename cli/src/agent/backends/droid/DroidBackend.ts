@@ -184,6 +184,18 @@ export class DroidBackend implements AgentBackend {
             '--output-format', 'stream-json'
         ];
 
+        // 模型选择（通过环境变量传入）
+        const droidModel = process.env.YR_DROID_MODEL;
+        if (droidModel) {
+            args.push('--model', droidModel);
+        }
+
+        // Reasoning effort（通过环境变量传入）
+        const droidReasoningEffort = process.env.YR_DROID_REASONING_EFFORT;
+        if (droidReasoningEffort) {
+            args.push('--reasoning-effort', droidReasoningEffort);
+        }
+
         // 权限级别映射
         if (this.autoConfirm) {
             args.push('--auto', 'high');
