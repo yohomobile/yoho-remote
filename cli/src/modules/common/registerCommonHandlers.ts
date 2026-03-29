@@ -147,7 +147,7 @@ export interface SpawnSessionOptions {
     sessionId?: string;
     resumeSessionId?: string;
     approvedNewDirectoryCreation?: boolean;
-    agent?: 'claude' | 'opencode';
+    agent?: string;
     yolo?: boolean;
     token?: string;
     sessionType?: 'simple' | 'worktree';

@@ -206,7 +206,7 @@ export function NewSession(props: {
     const [opencodeModel, setOpencodeModel] = useState(savedPrefs.opencodeModel ?? OPENCODE_MODELS[0].value)
     const [codexReasoningEffort, setCodexReasoningEffort] = useState<'medium' | 'high' | 'xhigh'>(savedPrefs.codexReasoningEffort ?? 'medium')
     const [droidModel, setDroidModel] = useState(savedPrefs.droidModel ?? DROID_MODELS[0].value)
-    const [droidReasoningEffort, setDroidReasoningEffort] = useState(savedPrefs.droidReasoningEffort ?? DROID_MODELS[0].defaultEffort)
+    const [droidReasoningEffort, setDroidReasoningEffort] = useState(savedPrefs.droidReasoningEffort ?? getDroidDefaultReasoningEffort(DROID_MODELS[0].value))
     const [error, setError] = useState<string | null>(null)
     const [isCustomPath, setIsCustomPath] = useState(false)
     const [spawnLogs, setSpawnLogs] = useState<SpawnLogEntry[]>([])
@@ -297,10 +297,7 @@ export function NewSession(props: {
 
     const handleDroidModelChange = useCallback((newModel: string) => {
         setDroidModel(newModel)
-        const model = DROID_MODELS.find(m => m.value === newModel)
-        if (model) {
-            setDroidReasoningEffort(model.defaultEffort)
-        }
+        setDroidReasoningEffort(getDroidDefaultReasoningEffort(newModel))
     }, [])
 
     const handleMachineChange = useCallback((newMachineId: string) => {
@@ -583,8 +580,8 @@ export function NewSession(props: {
                                 className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                             >
                                 {selectedDroidModel.reasoningEfforts.map((effort) => (
-                                    <option key={effort} value={effort}>
-                                        {effort}{effort === selectedDroidModel.defaultEffort ? ' (default)' : ''}
+                                    <option key={effort.value} value={effort.value}>
+                                        {effort.label}{effort.isDefault ? ' (default)' : ''}
                                     </option>
                                 ))}
                             </select>

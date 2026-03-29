@@ -1653,7 +1653,7 @@ export class SyncEngine {
     async spawnSession(
         machineId: string,
         directory: string,
-        agent: 'claude' | 'codex' | 'opencode' = 'claude',
+        agent: string = 'claude',
         yolo?: boolean,
         sessionType?: 'simple' | 'worktree',
         worktreeName?: string,

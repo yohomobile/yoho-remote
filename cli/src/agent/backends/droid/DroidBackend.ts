@@ -198,7 +198,7 @@ export class DroidBackend implements AgentBackend {
 
         // 权限级别映射
         if (this.autoConfirm) {
-            args.push('--auto', 'high');
+            args.push('--skip-permissions-unsafe');
         }
 
         // 工作目录
