@@ -1,6 +1,6 @@
 ---
 layout: home
-title: HAPI Documentation
+title: Yoho Remote Documentation
 ---
 
 <script setup>

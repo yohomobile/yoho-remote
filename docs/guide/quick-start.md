@@ -1,8 +1,8 @@
 # Quick Start
 
-Get HAPI running in a few minutes.
+Get Yoho Remote running in a few minutes.
 
-## Step 1: Install HAPI
+## Step 1: Install Yoho Remote
 
 ::: code-group
 
@@ -28,7 +28,7 @@ Other install options: [Installation](/guide/installation)
 hapi server
 ```
 
-On first run, HAPI prints an access token and saves it to `~/.yoho-remote/settings.json`.
+On first run, Yoho Remote prints an access token and saves it to `~/.yoho-remote/settings.json`.
 
 ## Step 3: Start a coding session
 
@@ -36,7 +36,7 @@ On first run, HAPI prints an access token and saves it to `~/.yoho-remote/settin
 hapi
 ```
 
-This starts Claude Code wrapped with HAPI. The session appears in the web UI.
+This starts Claude Code wrapped with Yoho Remote. The session appears in the web UI.
 
 ## Step 4: Open the UI
 

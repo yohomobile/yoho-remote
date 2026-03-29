@@ -201,7 +201,7 @@ export type Machine = {
     metadata: {
         host: string
         platform: string
-        happyCliVersion: string
+        yohoRemoteCliVersion: string
         displayName?: string
     } | null
 }

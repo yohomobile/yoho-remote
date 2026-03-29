@@ -2,7 +2,7 @@ import React from 'react'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { ImageViewer, parseAttachmentsFromText, hasAttachmentReferences } from '@/components/ImageViewer'
 import { FileIcon } from '@/components/FileIcon'
-import { useHappyChatContextSafe } from '@/components/AssistantChat/context'
+import { useYohoRemoteChatContextSafe } from '@/components/AssistantChat/context'
 
 // Build image URL from relative path
 function buildImageUrl(path: string, sessionId: string): string {
@@ -15,7 +15,7 @@ function buildImageUrl(path: string, sessionId: string): string {
     if (suIdx >= 0) {
         return `/api/${path.slice(suIdx)}`
     }
-    // The image is stored in .hapi/uploads/ directory on the CLI side
+    // The image is stored in .yoho-remote/uploads/ directory on the CLI side
     // We need to fetch it through the session file read API
     const encodedPath = encodeURIComponent(path)
     return `/api/sessions/${encodeURIComponent(sessionId)}/file?path=${encodedPath}&raw=true`
@@ -87,7 +87,7 @@ export function LazyRainbowText(props: { text: string }) {
     const text = props.text
 
     // Get context for building image URLs (safe version that won't throw)
-    const context = useHappyChatContextSafe()
+    const context = useYohoRemoteChatContextSafe()
     const sessionId = context?.sessionId ?? ''
 
     // Check for attachment references

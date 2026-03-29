@@ -108,7 +108,7 @@ function shortenProject(name: string): string {
     return name
         .replace(/^-home-[^-]+-/, '')
         .replace(/^softwares-/, '')
-        .replace(/^happy-/, '')
+        .replace(/^yoho-remote-/, '')
 }
 
 interface HourlyData {

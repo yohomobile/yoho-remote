@@ -126,7 +126,7 @@ async function migrateVapidKeys(): Promise<MigrationResult> {
 }
 
 async function main() {
-    console.log('🔐 HAPI Credentials Migration')
+    console.log('🔐 Yoho Remote Credentials Migration')
     console.log('=============================')
     console.log(`YOHO_REMOTE_HOME: ${YOHO_REMOTE_HOME}`)
     console.log(`Target: ${CREDENTIALS_DIR}`)

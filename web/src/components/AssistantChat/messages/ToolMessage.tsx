@@ -7,7 +7,7 @@ import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { LazyRainbowText } from '@/components/LazyRainbowText'
 import { MessageStatusIndicator } from '@/components/AssistantChat/messages/MessageStatusIndicator'
 import { ToolCard } from '@/components/ToolCard/ToolCard'
-import { useHappyChatContext } from '@/components/AssistantChat/context'
+import { useYohoRemoteChatContext } from '@/components/AssistantChat/context'
 import { CliOutputBlock } from '@/components/CliOutputBlock'
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -58,10 +58,10 @@ function splitTaskChildren(block: ToolCallBlock): { pending: ChatBlock[]; rest: 
     return { pending, rest }
 }
 
-function HappyNestedBlockList(props: {
+function YohoRemoteNestedBlockList(props: {
     blocks: ChatBlock[]
 }) {
-    const ctx = useHappyChatContext()
+    const ctx = useYohoRemoteChatContext()
 
     return (
         <div className="flex flex-col gap-3">
@@ -142,7 +142,7 @@ function HappyNestedBlockList(props: {
                                     <>
                                         {taskChildren && taskChildren.pending.length > 0 ? (
                                             <div className="mt-2 pl-3">
-                                                <HappyNestedBlockList blocks={taskChildren.pending} />
+                                                <YohoRemoteNestedBlockList blocks={taskChildren.pending} />
                                             </div>
                                         ) : null}
                                         {taskChildren && taskChildren.rest.length > 0 ? (
@@ -151,14 +151,14 @@ function HappyNestedBlockList(props: {
                                                     Task details ({taskChildren.rest.length})
                                                 </summary>
                                                 <div className="mt-2 pl-3">
-                                                    <HappyNestedBlockList blocks={taskChildren.rest} />
+                                                    <YohoRemoteNestedBlockList blocks={taskChildren.rest} />
                                                 </div>
                                             </details>
                                         ) : null}
                                     </>
                                 ) : (
                                     <div className="mt-2 pl-3">
-                                        <HappyNestedBlockList blocks={block.children} />
+                                        <YohoRemoteNestedBlockList blocks={block.children} />
                                     </div>
                                 )
                             ) : null}
@@ -172,8 +172,8 @@ function HappyNestedBlockList(props: {
     )
 }
 
-export function HappyToolMessage(props: ToolCallMessagePartProps) {
-    const ctx = useHappyChatContext()
+export function YohoRemoteToolMessage(props: ToolCallMessagePartProps) {
+    const ctx = useYohoRemoteChatContext()
     const artifact = props.artifact
 
     if (!isToolCallBlock(artifact)) {
@@ -232,7 +232,7 @@ export function HappyToolMessage(props: ToolCallMessagePartProps) {
                     <>
                         {taskChildren && taskChildren.pending.length > 0 ? (
                             <div className="mt-2 pl-3">
-                                <HappyNestedBlockList blocks={taskChildren.pending} />
+                                <YohoRemoteNestedBlockList blocks={taskChildren.pending} />
                             </div>
                         ) : null}
                         {taskChildren && taskChildren.rest.length > 0 ? (
@@ -241,14 +241,14 @@ export function HappyToolMessage(props: ToolCallMessagePartProps) {
                                     Task details ({taskChildren.rest.length})
                                 </summary>
                                 <div className="mt-2 pl-3">
-                                    <HappyNestedBlockList blocks={taskChildren.rest} />
+                                    <YohoRemoteNestedBlockList blocks={taskChildren.rest} />
                                 </div>
                             </details>
                         ) : null}
                     </>
                 ) : (
                     <div className="mt-2 pl-3">
-                        <HappyNestedBlockList blocks={block.children} />
+                        <YohoRemoteNestedBlockList blocks={block.children} />
                     </div>
                 )
             ) : null}

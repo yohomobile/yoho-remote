@@ -1,6 +1,6 @@
 # Installation
 
-Install the HAPI CLI and set up the server.
+Install the Yoho Remote CLI and set up the server.
 
 ## Prerequisites
 
@@ -31,7 +31,7 @@ npx @twsxtd/hapi
 <details>
 <summary>Prebuilt binary</summary>
 
-Download the latest release from [GitHub Releases](https://github.com/tiann/hapi/releases).
+Download the latest release from [GitHub Releases](https://github.com/tiann/yoho-remote/releases).
 
 ```bash
 xattr -d com.apple.quarantine ./hapi
@@ -44,14 +44,14 @@ sudo mv ./hapi /usr/local/bin/
 <summary>Docker (server only)</summary>
 
 ```bash
-docker pull ghcr.io/tiann/hapi-server:latest
+docker pull ghcr.io/tiann/yoho-remote-server:latest
 
 docker run -d \
-  --name hapi-server \
+  --name yoho-remote-server \
   -p 3006:3006 \
   -v ~/.yoho-remote:/root/.yoho-remote \
   -e CLI_API_TOKEN=your-secret-token \
-  ghcr.io/tiann/hapi-server:latest
+  ghcr.io/tiann/yoho-remote-server:latest
 ```
 </details>
 
@@ -59,8 +59,8 @@ docker run -d \
 <summary>Build from source</summary>
 
 ```bash
-git clone https://github.com/tiann/hapi.git
-cd hapi
+git clone https://github.com/tiann/yoho-remote.git
+cd yoho-remote
 bun install
 bun build:single-exe
 
@@ -78,7 +78,7 @@ hapi server
 
 The server listens on `http://localhost:3006` by default.
 
-On first run, HAPI:
+On first run, Yoho Remote:
 
 1. Creates `~/.yoho-remote/`
 2. Generates a secure access token

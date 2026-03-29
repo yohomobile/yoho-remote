@@ -28,7 +28,7 @@ jobs:
             - name: Build web app
               run: bun run --cwd web build
             - name: Add CNAME for custom domain
-              run: echo "app.hapi.run" > web/dist/CNAME
+              run: echo "remote.yohomobile.dev" > web/dist/CNAME
             - name: Setup Pages
               uses: actions/configure-pages@v5
             - name: Upload artifact

@@ -55,8 +55,8 @@ async function testE2E() {
     // Step 2: Convert mp3 → opus via ffmpeg
     console.log(`[2/4] Converting mp3 → opus`)
     const t2 = Date.now()
-    const mp3Path = '/tmp/hapi-tts-temp.mp3'
-    const opusPath = '/tmp/hapi-tts-temp.opus'
+    const mp3Path = '/tmp/yoho-remote-tts-temp.mp3'
+    const opusPath = '/tmp/yoho-remote-tts-temp.opus'
     await Bun.write(mp3Path, mp3Buf)
     execSync(`ffmpeg -i ${mp3Path} -acodec libopus -ac 1 -ar 16000 ${opusPath} -y 2>/dev/null`)
     const opusBuf = await Bun.file(opusPath).arrayBuffer()

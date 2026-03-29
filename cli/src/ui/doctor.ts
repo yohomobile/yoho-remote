@@ -2,14 +2,14 @@
  * Doctor command implementation
  * 
  * Provides comprehensive diagnostics and troubleshooting information
- * for hapi CLI including configuration, daemon status, logs, and links
+ * for Yoho Remote CLI including configuration, daemon status, logs, and links
  */
 
 import chalk from 'chalk'
 import { configuration } from '@/configuration'
 import { readSettings, readCredentials } from '@/persistence'
 import { checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient'
-import { findRunawayHappyProcesses, findAllHappyProcesses } from '@/daemon/doctor'
+import { findRunawayYohoRemoteProcesses, findAllYohoRemoteProcesses } from '@/daemon/doctor'
 import { readDaemonState } from '@/persistence'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -32,7 +32,7 @@ export function getEnvironmentInfo(): Record<string, any> {
         DEBUG: process.env.DEBUG,
         workingDirectory: process.cwd(),
         processArgv: process.argv,
-        happyDir: configuration?.happyHomeDir,
+        yohoRemoteDir: configuration?.yohoRemoteHomeDir,
         serverUrl: configuration?.serverUrl,
         logsDir: configuration?.logsDir,
         processPid: process.pid,
@@ -78,13 +78,13 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         filter = 'all';
     }
     
-    console.log(chalk.bold.cyan('\n🩺 hapi CLI Doctor\n'));
+    console.log(chalk.bold.cyan('\n🩺 Yoho Remote Doctor\n'));
 
     // For 'all' filter, show everything. For 'daemon', only show daemon-related info
     if (filter === 'all') {
         // Version and basic info
         console.log(chalk.bold('📋 Basic Information'));
-        console.log(`hapi CLI Version: ${chalk.green(packageJson.version)}`);
+        console.log(`CLI Version: ${chalk.green(packageJson.version)}`);
         console.log(`Platform: ${chalk.green(process.platform)} ${process.arch}`);
         console.log(`Node.js Version: ${chalk.green(process.version)}`);
         console.log('');
@@ -106,7 +106,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
 
         // Configuration
         console.log(chalk.bold('⚙️  Configuration'));
-        console.log(`hapi Home: ${chalk.blue(configuration.happyHomeDir)}`);
+        console.log(`Home: ${chalk.blue(configuration.yohoRemoteHomeDir)}`);
         console.log(`Bot URL: ${chalk.blue(configuration.serverUrl)}`);
         console.log(`Logs Dir: ${chalk.blue(configuration.logsDir)}`);
 
@@ -185,10 +185,10 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             console.log(chalk.gray(JSON.stringify(state, null, 2)));
         }
 
-        // All hapi processes
-        const allProcesses = await findAllHappyProcesses();
+        // All yoho-remote processes
+        const allProcesses = await findAllYohoRemoteProcesses();
         if (allProcesses.length > 0) {
-            console.log(chalk.bold('\n🔍 All hapi CLI Processes'));
+            console.log(chalk.bold('\n🔍 All Yoho Remote Processes'));
 
             // Group by type
             const grouped = allProcesses.reduce((groups, process) => {
@@ -223,7 +223,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
                 });
             });
         } else {
-            console.log(chalk.red('❌ No hapi processes found'));
+            console.log(chalk.red('❌ No yoho-remote processes found'));
         }
 
         if (filter === 'all' && allProcesses.length > 1) { // More than just current process

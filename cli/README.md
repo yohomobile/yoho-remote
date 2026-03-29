@@ -57,7 +57,7 @@ See `src/ui/doctor.ts`.
 
 ### Other
 
-- `hapi mcp` - Start MCP stdio bridge. See `src/codex/happyMcpStdioBridge.ts`.
+- `hapi mcp` - Start MCP stdio bridge. See `src/codex/yohoRemoteMcpStdioBridge.ts`.
 - `hapi server` - Start the bundled server (single binary workflow).
 
 ## Configuration

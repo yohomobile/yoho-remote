@@ -3,7 +3,7 @@
 Short guide for AI agents in this repo. Prefer progressive loading: start with the root README, then package READMEs as needed.
 
 ## Repo layout
-- `cli/` - hapi CLI, daemon, Codex/MCP tooling
+- `cli/` - Yoho Remote CLI, daemon, Codex/MCP tooling
 - `server/` - Telegram bot + HTTP API + Socket.IO + SSE
 - `web/` - React Mini App / PWA
 

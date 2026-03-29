@@ -6,7 +6,7 @@
  * 
  * Why we're not using this approach:
  * 1. Installing a LaunchDaemon requires sudo permissions, which users might not be comfortable with
- * 2. We assume users will run hapi frequently (every time they open their laptop)
+ * 2. We assume users will run yoho-remote frequently (every time they open their laptop)
  * 3. The auto-start approach provides the same functionality without requiring elevated permissions
  * 
  * This code is kept for potential future use if we decide to offer system-level installation as an option.
@@ -31,7 +31,7 @@ export async function install(): Promise<void> {
             execSync(`launchctl unload ${PLIST_FILE}`, { stdio: 'inherit' });
         }
 
-        // Get the path to the hapi CLI executable
+        // Get the path to the CLI executable
         const cliPath = process.argv[0]; // Node.js executable
         const scriptPath = process.argv[1]; // Script path
 

@@ -2,19 +2,19 @@
 
 ## General
 
-### What is HAPI?
+### What is Yoho Remote?
 
-HAPI is a local-first, self-hosted platform for running and controlling AI coding agents (Claude Code, Codex, Gemini) remotely. It lets you start coding sessions on your computer and monitor/control them from your phone.
+Yoho Remote is a local-first, self-hosted platform for running and controlling AI coding agents (Claude Code, Codex, Gemini) remotely. It lets you start coding sessions on your computer and monitor/control them from your phone.
 
-### What does HAPI stand for?
+### What does Yoho Remote stand for?
 
-HAPI (哈皮) is a Chinese transliteration of "Happy", reflecting the project's goal of making AI coding assistance a happier experience by freeing you from the terminal.
+Yoho Remote (哈皮) is a Chinese transliteration of "Happy", reflecting the project's goal of making AI coding assistance a happier experience by freeing you from the terminal.
 
-### Is HAPI free?
+### Is Yoho Remote free?
 
-Yes, HAPI is open source and free to use under the LGPL-3.0 license.
+Yes, Yoho Remote is open source and free to use under the LGPL-3.0 license.
 
-### What AI agents does HAPI support?
+### What AI agents does Yoho Remote support?
 
 - **Claude Code** (recommended)
 - **OpenAI Codex**
@@ -24,9 +24,9 @@ Yes, HAPI is open source and free to use under the LGPL-3.0 license.
 
 ### Do I need a server?
 
-HAPI includes an embedded server. Just run `hapi server` on your machine - no external server required.
+Yoho Remote includes an embedded server. Just run `hapi server` on your machine - no external server required.
 
-### How do I access HAPI from my phone?
+### How do I access Yoho Remote from my phone?
 
 For local network access:
 ```
@@ -48,7 +48,7 @@ It's auto-generated on first server start and saved to `~/.yoho-remote/settings.
 
 Yes. We support lightweight multi-account access via namespaces for shared team servers. See [Namespace (Advanced)](/guide/namespace).
 
-### Can I use HAPI without Telegram?
+### Can I use Yoho Remote without Telegram?
 
 Yes. Telegram is optional. You can use the web app directly in any browser or install it as a PWA.
 
@@ -57,7 +57,7 @@ Yes. Telegram is optional. You can use the web app directly in any browser or in
 ### How do I approve permissions remotely?
 
 1. When your AI agent requests permission (e.g., to edit a file), you'll see a notification
-2. Open HAPI on your phone
+2. Open Yoho Remote on your phone
 3. Navigate to the active session
 4. Approve or deny the pending permission
 
@@ -84,7 +84,7 @@ Yes. Open any session and use the chat interface to send messages directly to th
 
 ### Is my data safe?
 
-Yes. HAPI is local-first:
+Yes. Yoho Remote is local-first:
 - All data stays on your machine
 - Nothing is uploaded to external servers
 - The database is stored locally in `~/.yoho-remote/`
@@ -93,7 +93,7 @@ Yes. HAPI is local-first:
 
 The auto-generated token is 256-bit (cryptographically secure). For external access, always use HTTPS via a tunnel.
 
-### Can others access my HAPI instance?
+### Can others access my Yoho Remote instance?
 
 Only if they have your access token. For additional security:
 - Use a strong, unique token
@@ -146,20 +146,20 @@ This checks server connectivity, token validity, agent availability, and more.
 
 ## Comparison
 
-### HAPI vs Happy
+### Yoho Remote vs Happy
 
-| Aspect | Happy | HAPI |
+| Aspect | Happy | Yoho Remote |
 |--------|-------|------|
 | Design | Cloud-first | Local-first |
 | Users | Multi-user | Single user |
 | Deployment | Multiple services | Single binary |
 | Data | Encrypted on server | Never leaves your machine |
 
-See [Why HAPI](/guide/why-hapi) for detailed comparison.
+See [Why Yoho Remote](/guide/why-yoho-remote) for detailed comparison.
 
-### HAPI vs running Claude Code directly
+### Yoho Remote vs running Claude Code directly
 
-| Feature | Claude Code | HAPI + Claude Code |
+| Feature | Claude Code | Yoho Remote + Claude Code |
 |---------|-------------|-------------------|
 | Remote access | No | Yes |
 | Mobile control | No | Yes |
@@ -171,11 +171,11 @@ See [Why HAPI](/guide/why-hapi) for detailed comparison.
 
 ### How can I contribute?
 
-Visit our [GitHub repository](https://github.com/tiann/hapi) to:
+Visit our [GitHub repository](https://github.com/tiann/yoho-remote) to:
 - Report issues
 - Submit pull requests
 - Suggest features
 
 ### Where do I report bugs?
 
-Open an issue on [GitHub Issues](https://github.com/tiann/hapi/issues).
+Open an issue on [GitHub Issues](https://github.com/tiann/yoho-remote/issues).

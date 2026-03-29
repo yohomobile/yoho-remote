@@ -1,6 +1,6 @@
 version: "1.0"
 
-name: hapi
+name: yoho-remote
 type: ai-platform
 description: AI 远程开发平台，支持 Claude Code/Codex/Gemini/Grok 等多种 AI 后端，本地运行远程控制，通过 Telegram Mini App 或 Web UI 操作
 owner: tech
@@ -50,7 +50,7 @@ cli:
     - backends/ - 后端实现 (ACP等)
   codex: # Codex 支持
     - runCodex.ts - Codex 入口
-    - happyMcpStdioBridge.ts - MCP stdio 桥接
+    - yohoRemoteMcpStdioBridge.ts - MCP stdio 桥接
     - codexMcpClient.ts - MCP 客户端
     - session.ts - 会话管理
   modules/common: # 通用处理器
@@ -251,7 +251,7 @@ deployment:
   method: local
   command: ./deploy.sh
   location: 本地服务器 (homelab)
-  path: /home/guang/softwares/hapi
+  path: /home/guang/softwares/yoho-remote
   url: https://remote.yohomobile.dev
   services:
     server:

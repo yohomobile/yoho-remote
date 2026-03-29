@@ -3,7 +3,7 @@ import { createContext, useContext } from 'react'
 import type { ApiClient } from '@/api/client'
 import type { SessionMetadataSummary } from '@/types/api'
 
-export type HappyChatContextValue = {
+export type YohoRemoteChatContextValue = {
     api: ApiClient
     sessionId: string
     metadata: SessionMetadataSummary | null
@@ -12,25 +12,25 @@ export type HappyChatContextValue = {
     onRetryMessage?: (localId: string) => void
 }
 
-const HappyChatContext = createContext<HappyChatContextValue | null>(null)
+const YohoRemoteChatContext = createContext<YohoRemoteChatContextValue | null>(null)
 
-export function HappyChatProvider(props: { value: HappyChatContextValue; children: ReactNode }) {
+export function YohoRemoteChatProvider(props: { value: YohoRemoteChatContextValue; children: ReactNode }) {
     return (
-        <HappyChatContext.Provider value={props.value}>
+        <YohoRemoteChatContext.Provider value={props.value}>
             {props.children}
-        </HappyChatContext.Provider>
+        </YohoRemoteChatContext.Provider>
     )
 }
 
-export function useHappyChatContext(): HappyChatContextValue {
-    const ctx = useContext(HappyChatContext)
+export function useYohoRemoteChatContext(): YohoRemoteChatContextValue {
+    const ctx = useContext(YohoRemoteChatContext)
     if (!ctx) {
-        throw new Error('HappyChatContext is missing')
+        throw new Error('YohoRemoteChatContext is missing')
     }
     return ctx
 }
 
 // Safe version that returns null instead of throwing
-export function useHappyChatContextSafe(): HappyChatContextValue | null {
-    return useContext(HappyChatContext)
+export function useYohoRemoteChatContextSafe(): YohoRemoteChatContextValue | null {
+    return useContext(YohoRemoteChatContext)
 }

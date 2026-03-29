@@ -33,7 +33,7 @@ export async function handleAuthCommand(args: string[]): Promise<void> {
             console.log(chalk.gray('    2. Read ~/.yoho-remote/settings.json on the server'))
             console.log(chalk.gray('    3. Ask your server administrator (if token is set via env var)'))
             console.log('')
-            console.log(chalk.gray('  Then run: hapi auth login'))
+            console.log(chalk.gray('  Then run: yoho-remote auth login'))
         }
         return
     }
@@ -85,12 +85,12 @@ export async function handleAuthCommand(args: string[]): Promise<void> {
 
 function showHelp(): void {
     console.log(`
-${chalk.bold('hapi auth')} - Authentication management
+${chalk.bold('yoho-remote auth')} - Authentication management
 
 ${chalk.bold('Usage:')}
-  hapi auth status            Show current configuration
-  hapi auth login             Enter and save CLI_API_TOKEN
-  hapi auth logout            Clear saved credentials
+  yoho-remote auth status            Show current configuration
+  yoho-remote auth login             Enter and save CLI_API_TOKEN
+  yoho-remote auth logout            Clear saved credentials
 
 ${chalk.bold('Token priority (highest to lowest):')}
   1. CLI_API_TOKEN environment variable

@@ -18,7 +18,7 @@ import type { AgentBackend, HistoryMessage, PromptContent } from '@/agent/types'
 import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
 import { initialMachineMetadata } from '@/daemon/run';
 import { startYohoRemoteServer } from '@/claude/utils/startYohoRemoteServer';
-import { getYohoRemoteCliCommand } from '@/utils/spawnHappyCLI';
+import { getYohoRemoteCliCommand } from '@/utils/spawnYohoRemoteCLI';
 import { registerKillSessionHandler } from '@/claude/registerKillSessionHandler';
 import { readWorktreeEnv } from '@/utils/worktreeEnv';
 

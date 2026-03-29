@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { useHappyChatContextSafe } from '@/components/AssistantChat/context'
+import { useYohoRemoteChatContextSafe } from '@/components/AssistantChat/context'
 
 interface ImageViewerProps {
     src: string
@@ -12,7 +12,7 @@ export function ImageViewer({ src, alt = 'Image', className = '' }: ImageViewerP
     const [isOpen, setIsOpen] = useState(false)
     const [isLoading, setIsLoading] = useState(true)
     const [hasError, setHasError] = useState(false)
-    const context = useHappyChatContextSafe()
+    const context = useYohoRemoteChatContextSafe()
 
     const handleOpen = useCallback(() => {
         setIsOpen(true)

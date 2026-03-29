@@ -1,5 +1,5 @@
 {
-    "name": "hapi",
+    "name": "yoho-remote",
     "private": true,
     "workspaces": ["cli", "server", "web"],
     "scripts": {

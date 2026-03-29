@@ -18,7 +18,7 @@ interface StartYohoRemoteServerOptions {
     sessionCaller?: string
     apiClient?: ApiClient
     machineId?: string
-    hapiSessionId?: string
+    yohoRemoteSessionId?: string
 }
 
 export async function startYohoRemoteServer(client: ApiSessionClient, options?: StartYohoRemoteServerOptions) {
@@ -91,12 +91,12 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
     }
 
     // Register Brain tools when source is 'brain'
-    if (options?.sessionSource === 'brain' && options.apiClient && options.machineId && options.hapiSessionId) {
+    if (options?.sessionSource === 'brain' && options.apiClient && options.machineId && options.yohoRemoteSessionId) {
         const { registerBrainTools } = await import('./brainTools');
         registerBrainTools(mcp, toolNames, {
             apiClient: options.apiClient,
             machineId: options.machineId,
-            brainSessionId: options.hapiSessionId,
+            brainSessionId: options.yohoRemoteSessionId,
         });
         logger.debug('[yrMCP] Brain tools registered');
     }

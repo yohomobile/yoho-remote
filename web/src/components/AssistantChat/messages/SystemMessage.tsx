@@ -1,8 +1,8 @@
 import { useAssistantState } from '@assistant-ui/react'
 import { getEventPresentation } from '@/chat/presentation'
-import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
+import type { YohoRemoteChatMessageMetadata } from '@/lib/assistant-runtime'
 
-export function HappySystemMessage() {
+export function YohoRemoteSystemMessage() {
     const role = useAssistantState(({ message }) => message.role)
     const text = useAssistantState(({ message }) => {
         if (message.role !== 'system') return ''
@@ -10,7 +10,7 @@ export function HappySystemMessage() {
     })
     const icon = useAssistantState(({ message }) => {
         if (message.role !== 'system') return null
-        const custom = message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
+        const custom = message.metadata.custom as Partial<YohoRemoteChatMessageMetadata> | undefined
         const event = custom?.kind === 'event' ? custom.event : undefined
         return event ? getEventPresentation(event).icon : null
     })

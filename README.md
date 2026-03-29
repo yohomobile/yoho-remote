@@ -1,10 +1,10 @@
-# HAPI
+# Yoho Remote
 
-HAPI means "哈皮," a Chinese transliteration of [Happy](https://github.com/slopus/happy). Great credit to the original project.
+Yoho Remote means "哈皮," a Chinese transliteration of [Happy](https://github.com/slopus/happy). Great credit to the original project.
 
 Run Claude Code / Codex / Gemini sessions locally and control them remotely through a Web / PWA / Telegram Mini App.
 
-> **Why HAPI?** HAPI is a local-first alternative to Happy. See [Why Not Happy?](docs/WHY_NOT_HAPPY.md) for the key differences.
+> **Why Yoho Remote?** Yoho Remote is a local-first alternative to Happy. See [Why Not Happy?](docs/WHY_NOT_HAPPY.md) for the key differences.
 
 ## Features
 
@@ -48,7 +48,7 @@ hapi
 ## Docker (server only)
 
 ```bash
-docker run -d --name hapi -p 3006:3006 -v hapi-data:/data ghcr.io/tiann/hapi-server:latest
+docker run -d --name yoho-remote -p 3006:3006 -v yoho-remote-data:/data ghcr.io/tiann/yoho-remote-server:latest
 ```
 
 More setup options: [Installation guide](docs/guide/installation.md)
@@ -59,7 +59,7 @@ More setup options: [Installation guide](docs/guide/installation.md)
 - [Installation](docs/guide/installation.md)
 - [PWA](docs/guide/pwa.md)
 - [How it Works](docs/guide/how-it-works.md)
-- [Why HAPI](docs/guide/why-hapi.md)
+- [Why Yoho Remote](docs/guide/why-yoho-remote.md)
 - [FAQ](docs/guide/faq.md)
 
 ## Requirements

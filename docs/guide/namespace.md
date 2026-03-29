@@ -1,6 +1,6 @@
 # Namespace (Advanced)
 
-Namespaces are intended for small teams sharing a single public HAPI server. Each team member uses a different namespace to isolate their sessions and machines without running separate servers.
+Namespaces are intended for small teams sharing a single public Yoho Remote server. Each team member uses a different namespace to isolate their sessions and machines without running separate servers.
 
 This is not a default setup path for most users.
 

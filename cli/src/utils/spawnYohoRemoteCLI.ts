@@ -23,7 +23,7 @@ function isStandaloneExecutable(): boolean {
 
 /**
  * Get the path to the main CLI executable when running as standalone daemon/server.
- * Looks for 'hapi' binary in the same directory as the current executable.
+ * Looks for 'yoho-remote' binary in the same directory as the current executable.
  */
 function getMainCliExecutable(): string | null {
   if (!isStandaloneExecutable()) {

@@ -261,7 +261,7 @@ const CODEX_REASONING_LEVELS: CodexReasoningLevel[] = [
 
 const defaultSuggestionHandler = async (): Promise<Suggestion[]> => []
 
-export function HappyComposer(props: {
+export function YohoRemoteComposer(props: {
     apiClient: ApiClient
     sessionId: string
     disabled?: boolean

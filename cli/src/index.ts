@@ -15,20 +15,20 @@ import packageJson from '../package.json'
 import { isBunCompiled } from './projectPath'
 import { z } from 'zod'
 import { startDaemon } from './daemon/run'
-import { checkIfDaemonRunningAndCleanupStaleState, isDaemonRunningCurrentlyInstalledHappyVersion, stopDaemon } from './daemon/controlClient'
+import { checkIfDaemonRunningAndCleanupStaleState, isDaemonRunningCurrentlyInstalledVersion, stopDaemon } from './daemon/controlClient'
 import { getLatestDaemonLog } from './ui/logger'
-import { killRunawayHappyProcesses } from './daemon/doctor'
+import { killRunawayYohoRemoteProcesses } from './daemon/doctor'
 import { install } from './daemon/install'
 import { uninstall } from './daemon/uninstall'
 import { runDoctorCommand } from './ui/doctor'
 import { listDaemonSessions, stopDaemonSession } from './daemon/controlClient'
 import { handleAuthCommand } from './commands/auth'
 import { handleConnectCommand } from './commands/connect'
-import { spawnHappyCLI } from './utils/spawnHappyCLI'
+import { spawnYohoRemoteCLI } from './utils/spawnYohoRemoteCLI'
 import { execFileSync } from 'node:child_process'
 import { initializeToken } from './ui/tokenInit'
 import { ensureRuntimeAssets } from './runtime/assets'
-import { runHappyMcpStdioBridge } from './codex/happyMcpStdioBridge'
+import { runYohoRemoteMcpStdioBridge } from './codex/yohoRemoteMcpStdioBridge'
 import { withBunRuntimeEnv } from './utils/bunRuntime'
 import { getCliArgs } from './utils/cliArgs'
 
@@ -37,7 +37,7 @@ import { getCliArgs } from './utils/cliArgs'
   const args = getCliArgs()
 
   if (args.includes('-v') || args.includes('--version')) {
-    console.log(`hapi version: ${packageJson.version}`)
+    console.log(`yoho-remote version: ${packageJson.version}`)
     process.exit(0)
   }
 
@@ -49,7 +49,7 @@ import { getCliArgs } from './utils/cliArgs'
   }
 
   if (subcommand === 'mcp') {
-    await runHappyMcpStdioBridge(args.slice(1))
+    await runYohoRemoteMcpStdioBridge(args.slice(1))
     return
   }
 
@@ -79,7 +79,7 @@ import { getCliArgs } from './utils/cliArgs'
   if (subcommand === 'doctor') {
     // Check for clean subcommand
     if (args[1] === 'clean') {
-      const result = await killRunawayHappyProcesses()
+      const result = await killRunawayYohoRemoteProcesses()
       console.log(`Cleaned up ${result.killed} runaway processes`)
       if (result.errors.length > 0) {
         console.log('Errors:', result.errors)
@@ -122,7 +122,7 @@ import { getCliArgs } from './utils/cliArgs'
         startedBy?: 'daemon' | 'terminal';
         codexArgs?: string[];
         permissionMode?: 'default' | 'read-only' | 'safe-yolo' | 'yolo';
-        hapiSessionId?: string;
+        yohoRemoteSessionId?: string;
         resumeSessionId?: string;
       } = {};
       const unknownArgs: string[] = [];
@@ -130,9 +130,9 @@ import { getCliArgs } from './utils/cliArgs'
         const arg = args[i];
         if (arg === '--started-by') {
           options.startedBy = args[++i] as 'daemon' | 'terminal';
-        } else if (arg === '--hapi-session-id') {
-          options.hapiSessionId = args[++i];
-        } else if (arg === '--hapi-resume-session-id') {
+        } else if (arg === '--yoho-remote-session-id') {
+          options.yohoRemoteSessionId = args[++i];
+        } else if (arg === '--yoho-remote-resume-session-id') {
           options.resumeSessionId = args[++i];
         } else if (arg === '--yolo' || arg === '--dangerously-bypass-approvals-and-sandbox') {
           options.permissionMode = 'yolo';
@@ -438,7 +438,7 @@ import { getCliArgs } from './utils/cliArgs'
 
     } else if (daemonSubcommand === 'start') {
       // Spawn detached daemon process
-      const child = spawnHappyCLI(['daemon', 'start-sync'], {
+      const child = spawnYohoRemoteCLI(['daemon', 'start-sync'], {
         detached: true,
         stdio: 'ignore',
         env: process.env
@@ -534,11 +534,11 @@ ${chalk.bold('To clean up runaway processes:')} Use ${chalk.cyan('hapi doctor cl
         showHelp = true
         // Also pass through to claude
         unknownArgs.push(arg)
-      } else if (arg === '--hapi-starting-mode') {
+      } else if (arg === '--yoho-remote-starting-mode') {
         options.startingMode = z.enum(['local', 'remote']).parse(args[++i])
-      } else if (arg === '--hapi-session-id') {
-        options.hapiSessionId = args[++i]
-      } else if (arg === '--hapi-resume-session-id') {
+      } else if (arg === '--yoho-remote-session-id') {
+        options.yohoRemoteSessionId = args[++i]
+      } else if (arg === '--yoho-remote-resume-session-id') {
         options.resumeSessionId = args[++i]
       } else if (arg === '--yolo') {
         // Shortcut for --dangerously-skip-permissions
@@ -627,11 +627,11 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
     // Always auto-start daemon for simplicity
     logger.debug('Ensuring YR background service is running & matches our version...');
 
-    if (!(await isDaemonRunningCurrentlyInstalledHappyVersion())) {
+    if (!(await isDaemonRunningCurrentlyInstalledVersion())) {
       logger.debug('Starting YR background service...');
 
       // Use the built binary to spawn daemon
-      const daemonProcess = spawnHappyCLI(['daemon', 'start-sync'], {
+      const daemonProcess = spawnYohoRemoteCLI(['daemon', 'start-sync'], {
         detached: true,
         stdio: 'ignore',
         env: process.env

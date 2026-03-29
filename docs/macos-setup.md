@@ -26,7 +26,7 @@ export YR_CLAUDE_PATH="/usr/local/bin/claude"
 The `yoho-remote-daemon.sh` script provides convenient daemon management:
 
 ```bash
-cd ~/softwares/hapi
+cd ~/softwares/yoho-remote
 ./yoho-remote-daemon.sh start    # Start daemon
 ./yoho-remote-daemon.sh stop     # Stop daemon
 ./yoho-remote-daemon.sh restart  # Restart daemon
@@ -45,7 +45,7 @@ export YOHO_REMOTE_URL="http://192.168.0.32:3006"
 export PATH="/usr/local/bin:/Users/guang/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export YR_CLAUDE_PATH="/usr/local/bin/claude"
 
-YR_DIR="/Users/guang/softwares/hapi"
+YR_DIR="/Users/guang/softwares/yoho-remote"
 DAEMON_BIN="${YR_DIR}/cli/dist-exe/bun-darwin-arm64/yoho-remote-daemon"
 
 # Start daemon with environment
@@ -71,7 +71,7 @@ To auto-start daemon on login, create a LaunchAgent:
     <string>com.yoho-remote.daemon</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/guang/softwares/hapi/yoho-remote-daemon.sh</string>
+        <string>/Users/guang/softwares/yoho-remote/yoho-remote-daemon.sh</string>
         <string>start</string>
     </array>
     <key>RunAtLoad</key>

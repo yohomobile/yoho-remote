@@ -1,12 +1,12 @@
 /**
- * Configuration for hapi-server (Direct Connect)
+ * Configuration for yoho-remote-server (Direct Connect)
  *
  * Configuration is loaded with priority: environment variable > settings.json > default
  * When values are read from environment variables and not present in settings.json,
  * they are automatically saved for future use.
  *
  * Optional environment variables:
- * - CLI_API_TOKEN: Shared secret for hapi CLI authentication (auto-generated if not set)
+ * - CLI_API_TOKEN: Shared secret for CLI authentication (auto-generated if not set)
  * - TELEGRAM_BOT_TOKEN: Telegram Bot API token from @BotFather
  * - WEBAPP_PORT: Port for Mini App HTTP server (default: 3006)
  * - WEBAPP_URL: Public URL for Telegram Mini App

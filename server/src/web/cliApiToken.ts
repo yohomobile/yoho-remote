@@ -14,7 +14,7 @@ import { parseAccessToken } from '../utils/accessToken'
 export interface Settings {
     machineId?: string
     machineIdConfirmedByServer?: boolean
-    daemonAutoStartWhenRunningHappy?: boolean
+    daemonAutoStartWhenRunningYohoRemote?: boolean
     cliApiToken?: string
     // Server configuration (persisted from environment variables)
     telegramBotToken?: string

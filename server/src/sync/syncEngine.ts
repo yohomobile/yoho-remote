@@ -71,7 +71,7 @@ export type AgentState = z.infer<typeof AgentStateSchema>
 const machineMetadataSchema = z.object({
     host: z.string().optional(),
     platform: z.string().optional(),
-    happyCliVersion: z.string().optional(),
+    yohoRemoteCliVersion: z.string().optional(),
     displayName: z.string().optional()
 }).passthrough()
 
@@ -108,7 +108,7 @@ export interface Machine {
     metadata: {
         host: string
         platform: string
-        happyCliVersion: string
+        yohoRemoteCliVersion: string
         displayName?: string
         [key: string]: unknown
     } | null
@@ -1342,9 +1342,9 @@ export class SyncEngine {
             const data = parsed.data as Record<string, unknown>
             const host = typeof data.host === 'string' ? data.host : 'unknown'
             const platform = typeof data.platform === 'string' ? data.platform : 'unknown'
-            const happyCliVersion = typeof data.happyCliVersion === 'string' ? data.happyCliVersion : 'unknown'
+            const yohoRemoteCliVersion = typeof data.yohoRemoteCliVersion === 'string' ? data.yohoRemoteCliVersion : 'unknown'
             const displayName = typeof data.displayName === 'string' ? data.displayName : undefined
-            return { host, platform, happyCliVersion, displayName, ...data }
+            return { host, platform, yohoRemoteCliVersion, displayName, ...data }
         })()
 
         const storedActiveAt = stored.activeAt ?? stored.createdAt
@@ -1677,7 +1677,7 @@ export class SyncEngine {
         try {
             const result = await this.machineRpc(
                 machineId,
-                'spawn-happy-session',
+                'spawn-yoho-remote-session',
                 {
                     type: 'spawn-in-directory',
                     directory,

@@ -79,7 +79,7 @@ function generatePlatformPackageJson(
     return {
         name: `@twsxtd/hapi-${platform.name}`,
         version: mainPkg.version,
-        description: `hapi binary for ${platform.os} ${platform.cpu}`,
+        description: `yoho-remote binary for ${platform.os} ${platform.cpu}`,
         os: [platform.os],
         cpu: [platform.cpu],
         bin: {

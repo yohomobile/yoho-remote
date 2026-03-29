@@ -28,30 +28,30 @@ if [[ "$MACMINO_ONLY" == "true" ]]; then
 
     # 同步 daemon 到 macmini
     echo "=== Syncing source files to macmini..."
-    sshpass -p 'guang' ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password guang@192.168.0.236 'mkdir -p ~/softwares/hapi'
+    sshpass -p 'guang' ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password guang@192.168.0.236 'mkdir -p ~/softwares/yoho-remote'
 
     # 同步源文件到 macmini
     rsync -avz -e 'sshpass -p guang ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password' \
         --exclude='node_modules' --exclude='dist' --exclude='dist-exe' \
         --exclude='.git' --exclude='test-fixtures' --exclude='.cache' \
         cli/src/ \
-        guang@192.168.0.236:~/softwares/hapi/cli/src/ 2>/dev/null || true
+        guang@192.168.0.236:~/softwares/yoho-remote/cli/src/ 2>/dev/null || true
 
     rsync -avz -e 'sshpass -p guang ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password' \
         --exclude='node_modules' --exclude='dist' --exclude='dist-exe' \
         --exclude='.git' --exclude='.cache' \
         server/src/ \
-        guang@192.168.0.236:~/softwares/hapi/server/src/ 2>/dev/null || true
+        guang@192.168.0.236:~/softwares/yoho-remote/server/src/ 2>/dev/null || true
 
     # 在 macmini 上重新构建 daemon
     echo "=== Building daemon on macmini..."
     sshpass -p 'guang' ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password guang@192.168.0.236 \
-        'cd ~/softwares/hapi/cli && ~/.bun/bin/bun run build:exe:daemon'
+        'cd ~/softwares/yoho-remote/cli && ~/.bun/bin/bun run build:exe:daemon'
 
     # 重启 macmini 上的 daemon
     echo "=== Restarting daemon on macmini..."
     sshpass -p 'guang' ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password guang@192.168.0.236 \
-        'pkill -f yoho-remote-daemon || true; sleep 1; ~/softwares/hapi/start-daemon.sh > /dev/null 2>&1 &'
+        'pkill -f yoho-remote-daemon || true; sleep 1; ~/softwares/yoho-remote/start-daemon.sh > /dev/null 2>&1 &'
 
     echo "=== macmini daemon updated and restarted"
     exit 0
@@ -82,7 +82,7 @@ bun run build:web
 (cd server && bun run generate:embedded-web-assets)
 
 # 构建 server
-echo "=== Building hapi-server..."
+echo "=== Building yoho-remote-server..."
 (cd cli && bun run build:exe:server)
 sync
 
@@ -110,7 +110,7 @@ sync
 
 # 如果需要，构建 daemon
 if [[ "$BUILD_DAEMON" == "true" ]]; then
-    echo "=== Building hapi-daemon..."
+    echo "=== Building yoho-remote-daemon..."
     (cd cli && bun run build:exe:daemon)
     sync
 
@@ -131,28 +131,28 @@ if [[ "$BUILD_DAEMON" == "true" ]]; then
 
     # 同步 daemon 到 macmini
     echo "=== Deploying daemon to macmini..."
-    sshpass -p 'guang' ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password guang@192.168.0.236 'mkdir -p ~/softwares/hapi'
+    sshpass -p 'guang' ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password guang@192.168.0.236 'mkdir -p ~/softwares/yoho-remote'
 
     # 同步源文件到 macmini
     rsync -avz -e 'sshpass -p guang ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password' \
         --exclude='node_modules' --exclude='dist' --exclude='dist-exe' \
         --exclude='.git' --exclude='test-fixtures' --exclude='.cache' \
         cli/src/ \
-        guang@192.168.0.236:~/softwares/hapi/cli/src/ 2>/dev/null || true
+        guang@192.168.0.236:~/softwares/yoho-remote/cli/src/ 2>/dev/null || true
 
     rsync -avz -e 'sshpass -p guang ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password' \
         --exclude='node_modules' --exclude='dist' --exclude='dist-exe' \
         --exclude='.git' --exclude='.cache' \
         server/src/ \
-        guang@192.168.0.236:~/softwares/hapi/server/src/ 2>/dev/null || true
+        guang@192.168.0.236:~/softwares/yoho-remote/server/src/ 2>/dev/null || true
 
     # 在 macmini 上重新构建 daemon
     sshpass -p 'guang' ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password guang@192.168.0.236 \
-        'cd ~/softwares/hapi/cli && ~/.bun/bin/bun run build:exe:daemon'
+        'cd ~/softwares/yoho-remote/cli && ~/.bun/bin/bun run build:exe:daemon'
 
     # 重启 macmini 上的 daemon
     sshpass -p 'guang' ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password guang@192.168.0.236 \
-        'pkill -f yoho-remote-daemon || true; sleep 1; ~/softwares/hapi/start-daemon.sh > /dev/null 2>&1 &'
+        'pkill -f yoho-remote-daemon || true; sleep 1; ~/softwares/yoho-remote/start-daemon.sh > /dev/null 2>&1 &'
 
     echo "=== macmini daemon updated and restarted"
 fi

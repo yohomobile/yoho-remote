@@ -9,9 +9,9 @@ import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import { reduceChatBlocks } from '@/chat/reducer'
 import { reconcileChatBlocks } from '@/chat/reconcile'
-import { HappyComposer } from '@/components/AssistantChat/HappyComposer'
-import { HappyThread } from '@/components/AssistantChat/HappyThread'
-import { useHappyRuntime } from '@/lib/assistant-runtime'
+import { YohoRemoteComposer } from '@/components/AssistantChat/YohoRemoteComposer'
+import { YohoRemoteThread } from '@/components/AssistantChat/YohoRemoteThread'
+import { useYohoRemoteRuntime } from '@/lib/assistant-runtime'
 import { SessionHeader } from '@/components/SessionHeader'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { usePlatform } from '@/hooks/usePlatform'
@@ -292,7 +292,7 @@ export function SessionChat(props: {
         void resumeSession(text)
     }, [props.session.active, props.onSend, resumeSession])
 
-    const runtime = useHappyRuntime({
+    const runtime = useYohoRemoteRuntime({
         session: props.session,
         blocks: reconciled.blocks,
         isSending: props.isSending,
@@ -369,7 +369,7 @@ export function SessionChat(props: {
 
             <AssistantRuntimeProvider runtime={runtime}>
                 <div className="relative flex min-h-0 flex-1 flex-col">
-                    <HappyThread
+                    <YohoRemoteThread
                         key={props.session.id}
                         api={props.api}
                         sessionId={props.session.id}
@@ -386,7 +386,7 @@ export function SessionChat(props: {
                         renderedMessagesCount={reconciled.blocks.length}
                     />
 
-                    <HappyComposer
+                    <YohoRemoteComposer
                         apiClient={props.api}
                         sessionId={props.session.id}
                         disabled={props.isSending || isResuming || controlsDisabled}

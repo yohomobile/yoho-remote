@@ -10,11 +10,11 @@ Command: `hapi daemon start`
 
 Control Flow:
 1. `src/index.ts` receives `daemon start` command
-2. Spawns detached process via `spawnHappyCLI(['daemon', 'start-sync'], { detached: true })`
+2. Spawns detached process via `spawnYohoRemoteCLI(['daemon', 'start-sync'], { detached: true })`
 3. New process calls `startDaemon()` from `src/daemon/run.ts`
 4. `startDaemon()` performs startup:
    - Sets up shutdown promise and handlers (SIGINT, SIGTERM, uncaughtException, unhandledRejection)
-   - Version check: `isDaemonRunningCurrentlyInstalledHappyVersion()` compares CLI binary mtime
+   - Version check: `isDaemonRunningCurrentlyInstalledVersion()` compares CLI binary mtime
    - If version mismatch: calls `stopDaemon()` to kill old daemon before proceeding
    - If same version running: exits with "Daemon already running"
    - Lock acquisition: `acquireDaemonLock()` creates exclusive lock file to prevent multiple daemons
@@ -22,12 +22,12 @@ Control Flow:
    - State persistence: writes PID, version, HTTP port, mtime to daemon.state.json
    - HTTP server: starts Fastify on random port for local CLI control (list, stop, spawn)
    - WebSocket: establishes persistent connection to backend via `ApiMachineClient`
-   - RPC registration: exposes `spawn-happy-session`, `stop-session`, `stop-daemon` handlers
+   - RPC registration: exposes `spawn-yoho-remote-session`, `stop-session`, `stop-daemon` handlers
    - Heartbeat loop: every 60s (or `YR_DAEMON_HEARTBEAT_INTERVAL`) checks for version updates, prunes dead sessions, verifies PID ownership
 5. Awaits shutdown promise which resolves when:
    - OS signal received (SIGINT/SIGTERM) - source: `os-signal`
-   - HTTP `/stop` endpoint called - source: `hapi-cli`
-   - RPC `stop-daemon` invoked - source: `hapi-app`
+   - HTTP `/stop` endpoint called - source: `yoho-remote-cli`
+   - RPC `stop-daemon` invoked - source: `yoho-remote-app`
    - Uncaught exception occurs - source: `exception`
 6. On shutdown, `cleanupAndShutdown()` performs:
    - Clears heartbeat interval
@@ -45,7 +45,7 @@ The daemon detects when CLI binary changes (e.g., after `npm upgrade hapi`):
 2. Heartbeat compares current CLI mtime with recorded mtime via `getInstalledCliMtimeMs()`
 3. If mtime changed:
    - Clears heartbeat interval
-   - Spawns new daemon via `spawnHappyCLI(['daemon', 'start'])`
+   - Spawns new daemon via `spawnYohoRemoteCLI(['daemon', 'start'])`
    - Waits 10 seconds to be killed by new daemon
 4. New daemon starts, sees old daemon running with different mtime
 5. New daemon calls `stopDaemon()` which tries HTTP `/stop`, falls back to SIGKILL
@@ -67,7 +67,7 @@ Command: `hapi daemon stop`
 Control Flow:
 1. `stopDaemon()` in `controlClient.ts` reads daemon.state.json
 2. Attempts graceful shutdown via HTTP POST to `/stop`
-3. Daemon receives request, triggers shutdown with source `hapi-cli`
+3. Daemon receives request, triggers shutdown with source `yoho-remote-cli`
 4. `cleanupAndShutdown()` executes:
    - Updates backend status to "shutting-down"
    - Closes WebSocket connection
@@ -97,7 +97,7 @@ When spawning a session with a token:
 ### Daemon-Spawned Sessions (Remote)
 
 Initiated by mobile app via backend RPC:
-1. Backend forwards RPC `spawn-happy-session` to daemon via WebSocket
+1. Backend forwards RPC `spawn-yoho-remote-session` to daemon via WebSocket
 2. `ApiMachineClient` invokes `spawnSession()` handler
 3. `spawnSession()`:
    - Validates/creates directory (with approval flow)
@@ -106,9 +106,9 @@ Initiated by mobile app via backend RPC:
    - Adds to `pidToTrackedSession` map
    - Sets up 15-second awaiter for session webhook
 4. New yoho-remote process:
-   - Creates session with backend, receives `happySessionId`
+   - Creates session with backend, receives `yohoRemoteSessionId`
    - Calls `notifyDaemonSessionStarted()` to POST to daemon's `/session-started`
-5. Daemon updates tracking with `happySessionId`, resolves awaiter
+5. Daemon updates tracking with `yohoRemoteSessionId`, resolves awaiter
 6. RPC returns session info to mobile app
 
 ### Terminal-Spawned Sessions
@@ -134,7 +134,7 @@ When spawning a session, directory handling:
 ### Session Termination
 
 Via RPC `stop-session` or HTTP `/stop-session`:
-1. `stopSession()` finds session by `happySessionId` or `PID-{pid}` format
+1. `stopSession()` finds session by `yohoRemoteSessionId` or `PID-{pid}` format
 2. Sends termination request via `killProcessByChildProcess()` or `killProcess()` (Windows uses `taskkill /T`)
 3. `on('exit')` handler removes from tracking map
 
@@ -166,7 +166,7 @@ Returns all tracked sessions.
 ```json
 {
   "children": [
-    { "startedBy": "daemon", "happySessionId": "uuid", "pid": 12345 }
+    { "startedBy": "daemon", "yohoRemoteSessionId": "uuid", "pid": 12345 }
   ]
 }
 ```
@@ -252,7 +252,7 @@ Graceful daemon shutdown.
 
 **Server to Daemon:**
 - `rpc-request` with methods:
-  - `spawn-happy-session` - spawn new session
+  - `spawn-yoho-remote-session` - spawn new session
   - `stop-session` - stop session by ID
   - `stop-daemon` - request shutdown
 
@@ -270,8 +270,8 @@ All data is plain JSON over TLS; authentication is `CLI_API_TOKEN` (no end-to-en
 ### Clean Runaway Processes
 
 `hapi doctor clean`:
-1. `findRunawayHappyProcesses()` filters for likely orphans
-2. `killRunawayHappyProcesses()`:
+1. `findRunawayYohoRemoteProcesses()` filters for likely orphans
+2. `killRunawayYohoRemoteProcesses()`:
    - Sends SIGTERM
    - Waits 1 second
    - Sends SIGKILL if still alive
@@ -306,10 +306,10 @@ All data is plain JSON over TLS; authentication is `CLI_API_TOKEN` (no end-to-en
 interface MachineMetadata {
   host: string;              // hostname
   platform: string;          // darwin, linux, win32
-  happyCliVersion: string;
+  yohoRemoteCliVersion: string;
   homeDir: string;
-  happyHomeDir: string;
-  happyLibDir: string;       // runtime path
+  yohoRemoteHomeDir: string;
+  yohoRemoteLibDir: string;       // runtime path
 }
 
 // Dynamic daemon state (frequently updated)
@@ -319,7 +319,7 @@ interface DaemonState {
   httpPort?: number;
   startedAt?: number;
   shutdownRequestedAt?: number;
-  shutdownSource?: 'hapi-app' | 'hapi-cli' | 'os-signal' | 'exception';
+  shutdownSource?: 'yoho-remote-app' | 'yoho-remote-cli' | 'os-signal' | 'exception';
 }
 ```
 
@@ -339,10 +339,10 @@ Checks if machine ID exists in settings:
   "metadata": {
     "host": "MacBook-Pro.local",
     "platform": "darwin",
-    "happyCliVersion": "v2026.01.02.1338",
+    "yohoRemoteCliVersion": "v2026.01.02.1338",
     "homeDir": "/Users/john",
-    "happyHomeDir": "/Users/john/.yoho-remote",
-    "happyLibDir": "/usr/local/lib/node_modules/hapi"
+    "yohoRemoteHomeDir": "/Users/john/.yoho-remote",
+    "yohoRemoteLibDir": "/usr/local/lib/node_modules/hapi"
   },
   "daemonState": {
     "status": "running",
@@ -358,7 +358,7 @@ Checks if machine ID exists in settings:
 {
   "machine": {
     "id": "machine-uuid-123",
-    "metadata": { "host": "...", "platform": "...", "happyCliVersion": "..." },
+    "metadata": { "host": "...", "platform": "...", "yohoRemoteCliVersion": "..." },
     "metadataVersion": 1,
     "daemonState": { "status": "running", "pid": 12345 },
     "daemonStateVersion": 1,
@@ -407,7 +407,7 @@ socket.emit('machine-update-state', {
     "httpPort": 8080,
     "startedAt": 1703001234567,
     "shutdownRequestedAt": 1703001244567,
-    "shutdownSource": "hapi-app"
+    "shutdownSource": "yoho-remote-app"
   },
   "expectedVersion": 1
 }, callback)
@@ -436,9 +436,9 @@ socket.emit('machine-update-metadata', {
   "metadata": {
     "host": "MacBook-Pro.local",
     "platform": "darwin",
-    "happyCliVersion": "v2026.01.02.1340",
+    "yohoRemoteCliVersion": "v2026.01.02.1340",
     "homeDir": "/Users/john",
-    "happyHomeDir": "/Users/john/.yoho-remote"
+    "yohoRemoteHomeDir": "/Users/john/.yoho-remote"
   },
   "expectedVersion": 1
 }, callback)
@@ -450,7 +450,7 @@ The Telegram Mini App calls REST endpoints on `yoho-remote-server` (for example 
 `yoho-remote-server` then relays those requests to the daemon via Socket.IO `rpc-request` on the `/cli` namespace.
 
 RPC method naming (machine-scoped) uses a `${machineId}:` prefix, for example:
-- `${machineId}:spawn-happy-session`
+- `${machineId}:spawn-yoho-remote-session`
 
 ## 6. Server Broadcasts to Clients
 
@@ -501,7 +501,7 @@ Authorization: Bearer <CLI_API_TOKEN>
 {
   "machine": {
     "id": "machine-uuid-123",
-    "metadata": { "host": "...", "platform": "...", "happyCliVersion": "..." },
+    "metadata": { "host": "...", "platform": "...", "yohoRemoteCliVersion": "..." },
     "metadataVersion": 2,
     "daemonState": { "status": "running", "pid": 12345 },
     "daemonStateVersion": 3,
@@ -582,7 +582,7 @@ In split deployment mode, version detection uses `yoho-remote-daemon`'s mtime ex
 
 When `yoho-remote-daemon` needs to spawn a session:
 
-1. `spawnHappyCLI()` detects it's running as `yoho-remote-daemon` (standalone mode)
+1. `spawnYohoRemoteCLI()` detects it's running as `yoho-remote-daemon` (standalone mode)
 2. Uses the `hapi` executable in the same directory instead of `process.execPath`
 3. Spawns: `hapi claude --hapi-starting-mode remote --started-by daemon`
 
@@ -630,5 +630,5 @@ RestartSec=10
 2. **`cli/src/bootstrap-daemon.ts`** - Standalone daemon entry point
 3. **`cli/scripts/build-executable.ts`** - Supports `--name` parameter for different executables
 4. **`cli/src/daemon/controlClient.ts`** - `getInstalledCliMtimeMs()` checks `yoho-remote-daemon` mtime
-5. **`cli/src/utils/spawnHappyCLI.ts`** - Detects standalone mode, uses correct executable
+5. **`cli/src/utils/spawnYohoRemoteCLI.ts`** - Detects standalone mode, uses correct executable
 6. **`deploy.sh`** - Selective build and restart logic

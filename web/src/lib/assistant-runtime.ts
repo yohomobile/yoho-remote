@@ -4,7 +4,7 @@ import { useExternalMessageConverter, useExternalStoreRuntime } from '@assistant
 import { renderEventLabel } from '@/chat/presentation'
 import type { ChatBlock, CliOutputBlock } from '@/chat/types'
 import type { AgentEvent, ToolCallBlock } from '@/chat/types'
-import type { MessageStatus as HappyMessageStatus, Session } from '@/types/api'
+import type { MessageStatus as YohoRemoteMessageStatus, Session } from '@/types/api'
 
 function safeStringify(value: unknown): string {
     if (typeof value === 'string') return value
@@ -16,9 +16,9 @@ function safeStringify(value: unknown): string {
     }
 }
 
-export type HappyChatMessageMetadata = {
+export type YohoRemoteChatMessageMetadata = {
     kind: 'user' | 'assistant' | 'tool' | 'event' | 'cli-output'
-    status?: HappyMessageStatus
+    status?: YohoRemoteMessageStatus
     localId?: string | null
     originalText?: string
     toolCallId?: string
@@ -40,7 +40,7 @@ function toThreadMessageLike(block: ChatBlock): ThreadMessageLike {
                     status: block.status,
                     localId: block.localId,
                     originalText: block.originalText
-                } satisfies HappyChatMessageMetadata
+                } satisfies YohoRemoteChatMessageMetadata
             }
         }
     }
@@ -53,7 +53,7 @@ function toThreadMessageLike(block: ChatBlock): ThreadMessageLike {
             createdAt: new Date(block.createdAt),
             content: [{ type: 'text', text: block.text }],
             metadata: {
-                custom: { kind: 'assistant' } satisfies HappyChatMessageMetadata
+                custom: { kind: 'assistant' } satisfies YohoRemoteChatMessageMetadata
             }
         }
     }
@@ -66,7 +66,7 @@ function toThreadMessageLike(block: ChatBlock): ThreadMessageLike {
             createdAt: new Date(block.createdAt),
             content: [{ type: 'reasoning', text: block.text }],
             metadata: {
-                custom: { kind: 'assistant' } satisfies HappyChatMessageMetadata
+                custom: { kind: 'assistant' } satisfies YohoRemoteChatMessageMetadata
             }
         }
     }
@@ -79,7 +79,7 @@ function toThreadMessageLike(block: ChatBlock): ThreadMessageLike {
             createdAt: new Date(block.createdAt),
             content: [{ type: 'text', text: renderEventLabel(block.event) }],
             metadata: {
-                custom: { kind: 'event', event: block.event } satisfies HappyChatMessageMetadata
+                custom: { kind: 'event', event: block.event } satisfies YohoRemoteChatMessageMetadata
             }
         }
     }
@@ -92,7 +92,7 @@ function toThreadMessageLike(block: ChatBlock): ThreadMessageLike {
             createdAt: new Date(block.createdAt),
             content: [{ type: 'text', text: block.text }],
             metadata: {
-                custom: { kind: 'cli-output', source: block.source } satisfies HappyChatMessageMetadata
+                custom: { kind: 'cli-output', source: block.source } satisfies YohoRemoteChatMessageMetadata
             }
         }
     }
@@ -115,7 +115,7 @@ function toThreadMessageLike(block: ChatBlock): ThreadMessageLike {
             artifact: toolBlock
         }],
         metadata: {
-            custom: { kind: 'tool', toolCallId: toolBlock.id } satisfies HappyChatMessageMetadata
+            custom: { kind: 'tool', toolCallId: toolBlock.id } satisfies YohoRemoteChatMessageMetadata
         }
     }
 }
@@ -133,7 +133,7 @@ function getTextFromAppendMessage(message: AppendMessage): string | null {
     return text.length > 0 ? text : null
 }
 
-export function useHappyRuntime(props: {
+export function useYohoRemoteRuntime(props: {
     session: Session
     blocks: readonly ChatBlock[]
     isSending: boolean

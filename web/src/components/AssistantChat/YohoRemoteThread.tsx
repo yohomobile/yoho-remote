@@ -2,10 +2,10 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { ThreadPrimitive } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
 import type { SessionMetadataSummary } from '@/types/api'
-import { HappyChatProvider } from '@/components/AssistantChat/context'
-import { HappyAssistantMessage } from '@/components/AssistantChat/messages/AssistantMessage'
-import { HappyUserMessage } from '@/components/AssistantChat/messages/UserMessage'
-import { HappySystemMessage } from '@/components/AssistantChat/messages/SystemMessage'
+import { YohoRemoteChatProvider } from '@/components/AssistantChat/context'
+import { YohoRemoteAssistantMessage } from '@/components/AssistantChat/messages/AssistantMessage'
+import { YohoRemoteUserMessage } from '@/components/AssistantChat/messages/UserMessage'
+import { YohoRemoteSystemMessage } from '@/components/AssistantChat/messages/SystemMessage'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/Spinner'
 
@@ -47,12 +47,12 @@ function MessageSkeleton() {
 }
 
 const THREAD_MESSAGE_COMPONENTS = {
-    UserMessage: HappyUserMessage,
-    AssistantMessage: HappyAssistantMessage,
-    SystemMessage: HappySystemMessage
+    UserMessage: YohoRemoteUserMessage,
+    AssistantMessage: YohoRemoteAssistantMessage,
+    SystemMessage: YohoRemoteSystemMessage
 } as const
 
-export function HappyThread(props: {
+export function YohoRemoteThread(props: {
     api: ApiClient
     sessionId: string
     metadata: SessionMetadataSummary | null
@@ -257,7 +257,7 @@ export function HappyThread(props: {
     }, [props.isLoadingMoreMessages])
 
     return (
-        <HappyChatProvider value={{
+        <YohoRemoteChatProvider value={{
             api: props.api,
             sessionId: props.sessionId,
             metadata: props.metadata,
@@ -317,6 +317,6 @@ export function HappyThread(props: {
                 </ThreadPrimitive.Viewport>
                 <NewMessagesIndicator count={newMessageCount} onClick={scrollToBottom} />
             </ThreadPrimitive.Root>
-        </HappyChatProvider>
+        </YohoRemoteChatProvider>
     )
 }

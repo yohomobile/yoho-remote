@@ -1,12 +1,12 @@
 import { MessagePrimitive, useAssistantState } from '@assistant-ui/react'
 import { LazyRainbowText } from '@/components/LazyRainbowText'
-import { useHappyChatContext } from '@/components/AssistantChat/context'
-import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
+import { useYohoRemoteChatContext } from '@/components/AssistantChat/context'
+import type { YohoRemoteChatMessageMetadata } from '@/lib/assistant-runtime'
 import { MessageStatusIndicator } from '@/components/AssistantChat/messages/MessageStatusIndicator'
 import { CliOutputBlock } from '@/components/CliOutputBlock'
 
-export function HappyUserMessage() {
-    const ctx = useHappyChatContext()
+export function YohoRemoteUserMessage() {
+    const ctx = useYohoRemoteChatContext()
     const role = useAssistantState(({ message }) => message.role)
     const text = useAssistantState(({ message }) => {
         if (message.role !== 'user') return ''
@@ -14,20 +14,20 @@ export function HappyUserMessage() {
     })
     const status = useAssistantState(({ message }) => {
         if (message.role !== 'user') return undefined
-        const custom = message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
+        const custom = message.metadata.custom as Partial<YohoRemoteChatMessageMetadata> | undefined
         return custom?.status
     })
     const localId = useAssistantState(({ message }) => {
         if (message.role !== 'user') return null
-        const custom = message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
+        const custom = message.metadata.custom as Partial<YohoRemoteChatMessageMetadata> | undefined
         return custom?.localId ?? null
     })
     const isCliOutput = useAssistantState(({ message }) => {
-        const custom = message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
+        const custom = message.metadata.custom as Partial<YohoRemoteChatMessageMetadata> | undefined
         return custom?.kind === 'cli-output'
     })
     const cliText = useAssistantState(({ message }) => {
-        const custom = message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
+        const custom = message.metadata.custom as Partial<YohoRemoteChatMessageMetadata> | undefined
         if (custom?.kind !== 'cli-output') return ''
         return message.content.find((part) => part.type === 'text')?.text ?? ''
     })

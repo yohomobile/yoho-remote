@@ -27,7 +27,7 @@ export async function runCodex(opts: {
     startedBy?: 'daemon' | 'terminal';
     codexArgs?: string[];
     permissionMode?: PermissionMode;
-    hapiSessionId?: string;
+    yohoRemoteSessionId?: string;
     resumeSessionId?: string;
 }): Promise<void> {
     const workingDirectory = process.cwd();
@@ -65,9 +65,9 @@ export async function runCodex(opts: {
         machineId: machineId,
         source: sessionSource || undefined,
         homeDir: os.homedir(),
-        happyHomeDir: configuration.happyHomeDir,
-        happyLibDir: runtimePath(),
-        happyToolsDir: resolve(runtimePath(), 'tools', 'unpacked'),
+        yohoRemoteHomeDir: configuration.yohoRemoteHomeDir,
+        yohoRemoteLibDir: runtimePath(),
+        yohoRemoteToolsDir: resolve(runtimePath(), 'tools', 'unpacked'),
         startedFromDaemon: startedBy === 'daemon',
         hostPid: process.pid,
         startedBy,
@@ -78,20 +78,20 @@ export async function runCodex(opts: {
     };
 
     let response: Awaited<ReturnType<typeof api.getOrCreateSession>> | null = null;
-    const hapiSessionId = opts.hapiSessionId?.trim() || null;
-    if (hapiSessionId) {
+    const yohoRemoteSessionId = opts.yohoRemoteSessionId?.trim() || null;
+    if (yohoRemoteSessionId) {
         try {
-            response = await api.getSession(hapiSessionId);
+            response = await api.getSession(yohoRemoteSessionId);
             logger.debug(`Session loaded: ${response.id}`);
         } catch (error) {
-            logger.debug(`[codex] Failed to load session ${hapiSessionId}, creating new one`, error);
+            logger.debug(`[codex] Failed to load session ${yohoRemoteSessionId}, creating new one`, error);
         }
     }
     if (!response) {
         response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
     }
     const session = api.sessionSyncClient(response);
-    if (hapiSessionId) {
+    if (yohoRemoteSessionId) {
         session.updateMetadata((current) => ({
             ...current,
             ...metadata,

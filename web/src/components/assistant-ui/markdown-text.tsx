@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 import { SyntaxHighlighter } from '@/components/assistant-ui/shiki-highlighter'
 import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
 import { CopyIcon, CheckIcon } from '@/components/icons'
-import { useHappyChatContextSafe } from '@/components/AssistantChat/context'
+import { useYohoRemoteChatContextSafe } from '@/components/AssistantChat/context'
 import { ImageViewer as ImageViewerComponent } from '@/components/ImageViewer'
 
 export const MARKDOWN_PLUGINS = [remarkGfm]
@@ -232,7 +232,7 @@ function processChildren(children: ReactNode): ReactNode {
 
 // 文件路径链接组件 - 点击时复制文件到服务器并在新窗口打开
 function FilePathLink({ path }: { path: string }) {
-    const context = useHappyChatContextSafe()
+    const context = useYohoRemoteChatContextSafe()
     const [loading, setLoading] = useState(false)
 
     const filename = path.split('/').pop() || path
@@ -349,7 +349,7 @@ function scheduleBatchCheck(api: { checkFiles: (sessionId: string, paths: string
 
 // 相对路径链接组件 - 懒加载检查文件是否存在
 function RelativeFilePathLink({ path }: { path: string }) {
-    const context = useHappyChatContextSafe()
+    const context = useYohoRemoteChatContextSafe()
     const [status, setStatus] = useState<'checking' | 'exists' | 'not-exists'>('checking')
     const [absolutePath, setAbsolutePath] = useState<string | null>(null)
     const [loading, setLoading] = useState(false)

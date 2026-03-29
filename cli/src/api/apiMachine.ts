@@ -103,7 +103,7 @@ export class ApiMachineClient {
     }
 
     setRPCHandlers({ spawnSession, stopSession, requestShutdown }: MachineRpcHandlers): void {
-        this.rpcHandlerManager.registerHandler('spawn-happy-session', async (params: any) => {
+        this.rpcHandlerManager.registerHandler('spawn-yoho-remote-session', async (params: any) => {
             const { directory, sessionId, resumeSessionId, machineId, approvedNewDirectoryCreation, agent, yolo, token, sessionType, worktreeName, claudeSettingsType, claudeAgent, opencodeModel, opencodeVariant, permissionMode, modelMode, modelReasoningEffort, source, mainSessionId, caller } = params || {}
 
             if (!directory) {

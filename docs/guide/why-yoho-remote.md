@@ -1,12 +1,12 @@
-# Why HAPI?
+# Why Yoho Remote?
 
-[Happy](https://github.com/slopus/happy) is an excellent project. So why build HAPI?
+[Happy](https://github.com/slopus/happy) is an excellent project. So why build Yoho Remote?
 
-**The short answer**: Happy is designed for cloud hosting with multiple users. HAPI is designed for self-hosting with a single user. These different goals lead to fundamentally different architectures.
+**The short answer**: Happy is designed for cloud hosting with multiple users. Yoho Remote is designed for self-hosting with a single user. These different goals lead to fundamentally different architectures.
 
 ## TL;DR
 
-| Aspect | Happy | HAPI |
+| Aspect | Happy | Yoho Remote |
 |--------|-------|------|
 | **Design** | Cloud-first | Local-first |
 | **Users** | Multi-user | Single user |
@@ -14,7 +14,7 @@
 | **Deployment** | Multiple services | Single binary |
 | **Complexity** | High (E2EE, scaling) | Low (one command) |
 
-**Choose HAPI if**: You want personal use, data sovereignty, and minimal setup.
+**Choose Yoho Remote if**: You want personal use, data sovereignty, and minimal setup.
 
 **Choose Happy if**: You need multi-user collaboration or team sharing.
 
@@ -50,9 +50,9 @@ Happy's cloud design requires:
                                              └───────────────────┘
 ```
 
-### HAPI: Local-First
+### Yoho Remote: Local-First
 
-HAPI's local design simplifies everything:
+Yoho Remote's local design simplifies everything:
 
 - **No E2EE needed** - Your data never leaves your machine
 - **Single embedded database** - No scaling required
@@ -89,7 +89,7 @@ HAPI's local design simplifies everything:
 
 ### Data Location
 
-| Aspect | Happy | HAPI |
+| Aspect | Happy | Yoho Remote |
 |--------|-------|------|
 | **Where data lives** | Cloud server | Your local machine |
 | **Who can access** | Server stores encrypted blobs | Only you |
@@ -111,7 +111,7 @@ HAPI's local design simplifies everything:
 └───────────────────────────────────────────────────────────────────┘
 ```
 
-**HAPI** bundles everything:
+**Yoho Remote** bundles everything:
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
@@ -127,7 +127,7 @@ HAPI's local design simplifies everything:
 
 ### Security Approach
 
-| Aspect | Happy | HAPI |
+| Aspect | Happy | Yoho Remote |
 |--------|-------|------|
 | **Problem** | Data on untrusted server | External access to local data |
 | **Solution** | End-to-end encryption | Tunnel with TLS |
@@ -153,7 +153,7 @@ Goal: Multi-user cloud platform
 
 **Result**: Sophisticated but complex architecture
 
-### HAPI's Simplifications
+### Yoho Remote's Simplifications
 
 ```
 Goal: Single-user self-hosted tool
@@ -172,7 +172,7 @@ Goal: Single-user self-hosted tool
 
 ## Summary
 
-| Dimension | Happy | HAPI |
+| Dimension | Happy | Yoho Remote |
 |-----------|-------|------|
 | **Philosophy** | Cloud-first | Local-first |
 | **Data location** | Server (encrypted) | Local (plaintext) |
@@ -187,6 +187,6 @@ The architectural differences stem from fundamentally different goals:
 
 - **Happy**: Built for multi-user cloud scenarios. Solves the "untrusted server" problem with E2EE, at the cost of deployment complexity.
 
-- **HAPI**: Built for single-user self-hosted scenarios. Solves the "remote access" problem with tunneling, achieving one-command deployment.
+- **Yoho Remote**: Built for single-user self-hosted scenarios. Solves the "remote access" problem with tunneling, achieving one-command deployment.
 
-If you want to self-host for personal use, HAPI removes all the complexity that Happy needs for its cloud service.
+If you want to self-host for personal use, Yoho Remote removes all the complexity that Happy needs for its cloud service.

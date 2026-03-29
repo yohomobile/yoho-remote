@@ -1,12 +1,12 @@
 import { MessagePrimitive, useAssistantState } from '@assistant-ui/react'
 import { MarkdownText } from '@/components/assistant-ui/markdown-text'
 import { Reasoning, ReasoningGroup } from '@/components/assistant-ui/reasoning'
-import { HappyToolMessage } from '@/components/AssistantChat/messages/ToolMessage'
+import { YohoRemoteToolMessage } from '@/components/AssistantChat/messages/ToolMessage'
 import { CliOutputBlock } from '@/components/CliOutputBlock'
-import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
+import type { YohoRemoteChatMessageMetadata } from '@/lib/assistant-runtime'
 
 const TOOL_COMPONENTS = {
-    Fallback: HappyToolMessage
+    Fallback: YohoRemoteToolMessage
 } as const
 
 const MESSAGE_PART_COMPONENTS = {
@@ -16,13 +16,13 @@ const MESSAGE_PART_COMPONENTS = {
     tools: TOOL_COMPONENTS
 } as const
 
-export function HappyAssistantMessage() {
+export function YohoRemoteAssistantMessage() {
     const isCliOutput = useAssistantState(({ message }) => {
-        const custom = message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
+        const custom = message.metadata.custom as Partial<YohoRemoteChatMessageMetadata> | undefined
         return custom?.kind === 'cli-output'
     })
     const cliText = useAssistantState(({ message }) => {
-        const custom = message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
+        const custom = message.metadata.custom as Partial<YohoRemoteChatMessageMetadata> | undefined
         if (custom?.kind !== 'cli-output') return ''
         return message.content.find((part) => part.type === 'text')?.text ?? ''
     })

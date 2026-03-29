@@ -12,7 +12,7 @@ import { createConfiguration, type ConfigSource } from './configuration'
 import { PostgresStore } from './store/postgres'
 import type { IStore } from './store/interface'
 import { SyncEngine, type SyncEvent } from './sync/syncEngine'
-import { HappyBot } from './telegram/bot'
+import { YohoRemoteBot } from './telegram/bot'
 import { FeishuBot } from './feishu/bot'
 import { startWebServer } from './web/server'
 import { createSocketServer } from './socket/server'
@@ -36,7 +36,7 @@ function formatSource(source: ConfigSource | 'generated'): string {
 }
 
 let syncEngine: SyncEngine | null = null
-let happyBot: HappyBot | null = null
+let bot: YohoRemoteBot | null = null
 let feishuBot: FeishuBot | null = null
 let webServer: BunServer<WebSocketData> | null = null
 let sseManager: SSEManager | null = null
@@ -89,7 +89,7 @@ async function main() {
         port: parseInt(process.env.PG_PORT || '5432', 10),
         user: process.env.PG_USER || 'postgres',
         password: process.env.PG_PASSWORD || '',
-        database: process.env.PG_DATABASE || 'hapi',
+        database: process.env.PG_DATABASE || 'yoho_remote',
         ssl: process.env.PG_SSL === 'true'
     }
     console.log(`[Server] Store: PostgreSQL (${pgConfig.host}/${pgConfig.database})`)
@@ -127,7 +127,7 @@ async function main() {
 
     // Initialize Telegram bot (optional)
     if (config.telegramEnabled && config.telegramBotToken) {
-        happyBot = new HappyBot({
+        bot = new YohoRemoteBot({
             syncEngine,
             botToken: config.telegramBotToken,
             miniAppUrl: config.miniAppUrl,
@@ -159,8 +159,8 @@ async function main() {
     })
 
     // Start the bot if configured
-    if (happyBot) {
-        await happyBot.start()
+    if (bot) {
+        await bot.start()
     }
 
     // Start Feishu bot if configured
@@ -174,7 +174,7 @@ async function main() {
     const shutdown = async () => {
         console.log('\nShutting down...')
         await feishuBot?.stop()
-        await happyBot?.stop()
+        await bot?.stop()
         syncEngine?.stop()
         sseManager?.stop()
         webServer?.stop()

@@ -4,7 +4,7 @@
 
 ## 适用场景
 
-- 外部系统需要创建并管理 HAPI session
+- 外部系统需要创建并管理 Yoho Remote session
 - 外部系统希望实时消费 AI 输出、状态变化、typing 等事件
 
 ## 认证流程（JWT）
@@ -85,7 +85,7 @@ curl -sS http://localhost:3006/api/sessions \
     -H 'Content-Type: application/json' \
     -d '{
         "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
-        "directory": "/home/guang/softwares/hapi",
+        "directory": "/home/guang/softwares/yoho-remote",
         "agent": "codex",
         "source": "external-api"
     }'
@@ -173,4 +173,4 @@ socket.on('event', (evt) => {
 - `machineId` 必须在线；否则创建会失败。
 - `/events` 不做订阅过滤，请在客户端自行过滤需要的事件。
 - namespace 由 `CLI_API_TOKEN[:namespace]` 决定，不同 namespace 之间隔离。
-- 当设置 `source` 时，Claude Code 的 SessionStart hook 载荷会包含 `hapi_source` 字段；若原载荷没有 `source` 字段，也会自动补上。
+- 当设置 `source` 时，Claude Code 的 SessionStart hook 载荷会包含 `hapi_source` 字段（API 字段名保持不变）；若原载荷没有 `source` 字段，也会自动补上。

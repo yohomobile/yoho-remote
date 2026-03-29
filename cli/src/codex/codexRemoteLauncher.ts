@@ -13,8 +13,8 @@ import { logger } from '@/ui/logger';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { CodexDisplay } from '@/ui/ink/CodexDisplay';
 import type { CodexSessionConfig } from './types';
-import { getHappyCliCommand } from '@/utils/spawnHappyCLI';
-import { startHappyServer } from '@/claude/utils/startHappyServer';
+import { getYohoRemoteCliCommand } from '@/utils/spawnYohoRemoteCLI';
+import { startYohoRemoteServer } from '@/claude/utils/startYohoRemoteServer';
 import { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 import type { CodexSession } from './session';
 import type { EnhancedMode } from './loop';
@@ -479,8 +479,8 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
         }
     });
 
-    const happyServer = await startHappyServer(session.client);
-    const bridgeCommand = getHappyCliCommand(['mcp', '--url', happyServer.url]);
+    const yohoRemoteServer = await startYohoRemoteServer(session.client);
+    const bridgeCommand = getYohoRemoteCliCommand(['mcp', '--url', yohoRemoteServer.url]);
     const mcpServers = {
         yoho_remote: {
             command: bridgeCommand.command,
@@ -933,7 +933,7 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
         }
         session.client.rpcHandlerManager.registerHandler('abort', async () => {});
         session.client.rpcHandlerManager.registerHandler('switch', async () => {});
-        happyServer.stop();
+        yohoRemoteServer.stop();
         permissionHandler.reset();
         reasoningProcessor.abort();
         diffProcessor.reset();

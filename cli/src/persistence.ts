@@ -1,5 +1,5 @@
 /**
- * Minimal persistence functions for HAPI CLI
+ * Minimal persistence functions for Yoho Remote CLI
  * 
  * Handles settings and private key storage in ~/.yoho-remote/ (or YOHO_REMOTE_HOME override)
  */
@@ -24,7 +24,7 @@ interface Settings {
   // All machine operations use this ID
   machineId?: string
   machineIdConfirmedByServer?: boolean
-  daemonAutoStartWhenRunningHappy?: boolean
+  daemonAutoStartWhenRunningYohoRemote?: boolean
   cliApiToken?: string
   /** Path mapping for cross-platform project directories */
   pathMapping?: Record<string, string>
@@ -104,8 +104,8 @@ export async function readSettings(): Promise<Settings> {
 }
 
 export async function writeSettings(settings: Settings): Promise<void> {
-  if (!existsSync(configuration.happyHomeDir)) {
-    await mkdir(configuration.happyHomeDir, { recursive: true })
+  if (!existsSync(configuration.yohoRemoteHomeDir)) {
+    await mkdir(configuration.yohoRemoteHomeDir, { recursive: true })
   }
 
   await writeFile(configuration.settingsFile, JSON.stringify(settings, null, 2))
@@ -124,8 +124,8 @@ export async function updateSettings(
   const MAX_LOCK_ATTEMPTS = 50;        // Maximum number of attempts (5 seconds total)
   const STALE_LOCK_TIMEOUT_MS = 10000; // Consider lock stale after 10 seconds
 
-  if (!existsSync(configuration.happyHomeDir)) {
-    await mkdir(configuration.happyHomeDir, { recursive: true });
+  if (!existsSync(configuration.yohoRemoteHomeDir)) {
+    await mkdir(configuration.yohoRemoteHomeDir, { recursive: true });
   }
 
   const lockFile = configuration.settingsFile + '.lock';
@@ -235,8 +235,8 @@ export async function readCredentials(): Promise<Credentials | null> {
 }
 
 export async function writeCredentialsLegacy(credentials: { secret: Uint8Array, token: string }): Promise<void> {
-  if (!existsSync(configuration.happyHomeDir)) {
-    await mkdir(configuration.happyHomeDir, { recursive: true })
+  if (!existsSync(configuration.yohoRemoteHomeDir)) {
+    await mkdir(configuration.yohoRemoteHomeDir, { recursive: true })
   }
   await writeFile(configuration.privateKeyFile, JSON.stringify({
     secret: encodeBase64(credentials.secret),
@@ -245,8 +245,8 @@ export async function writeCredentialsLegacy(credentials: { secret: Uint8Array, 
 }
 
 export async function writeCredentialsDataKey(credentials: { publicKey: Uint8Array, machineKey: Uint8Array, token: string }): Promise<void> {
-  if (!existsSync(configuration.happyHomeDir)) {
-    await mkdir(configuration.happyHomeDir, { recursive: true })
+  if (!existsSync(configuration.yohoRemoteHomeDir)) {
+    await mkdir(configuration.yohoRemoteHomeDir, { recursive: true })
   }
   await writeFile(configuration.privateKeyFile, JSON.stringify({
     encryption: { publicKey: encodeBase64(credentials.publicKey), machineKey: encodeBase64(credentials.machineKey) },

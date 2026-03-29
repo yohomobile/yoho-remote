@@ -1,5 +1,5 @@
 /**
- * Global configuration for HAPI CLI
+ * Global configuration for Yoho Remote CLI
  *
  * Centralizes all configuration including environment variables and paths
  * Environment files should be loaded using Node's --env-file flag

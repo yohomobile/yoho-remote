@@ -14,18 +14,18 @@ import { isProcessAlive, killProcess } from '@/utils/process';
 
 /**
  * Get the mtime of the daemon executable for version checking.
- * In split deployment mode (hapi + yoho-remote-daemon), we always check yoho-remote-daemon's mtime
+ * In split deployment mode (yoho-remote + yoho-remote-daemon), we always check yoho-remote-daemon's mtime
  * to ensure consistent version detection between daemon and sessions.
  */
 export function getInstalledCliMtimeMs(): number | undefined {
   if (isBunCompiled()) {
     try {
-      // Check if we're in split deployment mode (hapi-daemon exists alongside hapi)
+      // Check if we're in split deployment mode (yoho-remote-daemon exists alongside yoho-remote)
       const execDir = dirname(process.execPath);
       const isWindows = process.platform === 'win32';
       const daemonExe = join(execDir, isWindows ? 'yoho-remote-daemon.exe' : 'yoho-remote-daemon');
 
-      // If hapi-daemon exists, use its mtime for consistent version checking
+      // If yoho-remote-daemon exists, use its mtime for consistent version checking
       if (existsSync(daemonExe)) {
         return statSync(daemonExe).mtimeMs;
       }
@@ -149,7 +149,7 @@ export async function stopDaemonHttp(): Promise<void> {
  * Not just a boolean.
  * 
  * We can destructure the response on the caller for richer output.
- * For instance when running `hapi daemon status` we can show more information.
+ * For instance when running `yoho-remote daemon status` we can show more information.
  */
 export async function checkIfDaemonRunningAndCleanupStaleState(): Promise<boolean> {
   const state = await readDaemonState();
@@ -201,7 +201,7 @@ export async function isDaemonRunningCurrentlyInstalledVersion(): Promise<boolea
     
     // PREVIOUS IMPLEMENTATION - Keeping this commented in case we need it
     // Kirill does not understand how the upgrade of npm packages happen and whether 
-    // we will get a new path or not when hapi is upgraded globally.
+    // we will get a new path or not when yoho-remote is upgraded globally.
     // If reading package.json doesn't work correctly after npm upgrades, 
     // we can revert to spawning a process (but should add timeout and cleanup!)
     /*

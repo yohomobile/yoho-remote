@@ -1,10 +1,10 @@
-# HAPI 常驻 AI 自动迭代功能 - 设计文档
+# Yoho Remote 常驻 AI 自动迭代功能 - 设计文档
 
 ## 1. 概述
 
 ### 1.1 背景
 
-当前 HAPI 的常驻 AI Advisor 系统已具备：
+当前 Yoho Remote 的常驻 AI Advisor 系统已具备：
 - 持续监控所有开发会话
 - 双层建议机制（Layer 1 本地检查 + Layer 2 MiniMax 审查）
 - 建议状态自动评估

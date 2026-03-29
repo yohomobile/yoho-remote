@@ -1,4 +1,4 @@
-# HAPI 自动迭代功能 - AI 实现提示词
+# Yoho Remote 自动迭代功能 - AI 实现提示词
 
 将此提示词复制给新的 AI 会话，让它按设计文档实现功能。
 
@@ -6,11 +6,11 @@
 
 ## 提示词开始
 
-你是一个专业的 TypeScript/Node.js 开发者，现在需要为 HAPI 项目实现"常驻 AI 自动迭代"功能。
+你是一个专业的 TypeScript/Node.js 开发者，现在需要为 Yoho Remote 项目实现"常驻 AI 自动迭代"功能。
 
 ### 项目背景
 
-HAPI 是一个 AI 开发助手远程控制系统，包含：
+Yoho Remote 是一个 AI 开发助手远程控制系统，包含：
 - **server**: Bun + Hono 后端，PostgreSQL 数据库
 - **webapp**: React 前端
 - **cli**: 命令行工具
@@ -29,7 +29,7 @@ HAPI 是一个 AI 开发助手远程控制系统，包含：
 
 ### 设计文档位置
 
-完整设计文档：`/home/guang/softwares/hapi/docs/design/auto-iteration-feature.md`
+完整设计文档：`/home/guang/softwares/yoho-remote/docs/design/auto-iteration-feature.md`
 
 请先阅读该文档了解完整设计。
 
@@ -312,7 +312,7 @@ export const DEFAULT_POLICY: Record<ActionType, ExecutionPolicy> = {
 
 ### 开始实现
 
-请先阅读设计文档 `/home/guang/softwares/hapi/docs/design/auto-iteration-feature.md`，然后按实现顺序逐步编写代码。
+请先阅读设计文档 `/home/guang/softwares/yoho-remote/docs/design/auto-iteration-feature.md`，然后按实现顺序逐步编写代码。
 
 每完成一个文件，说明修改点和原因。
 

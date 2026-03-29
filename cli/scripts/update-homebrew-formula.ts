@@ -1,5 +1,5 @@
 /**
- * Update the Homebrew formula for hapi.
+ * Update the Homebrew formula for yoho-remote.
  *
  * This script:
  * 1. Reads checksums from release-artifacts/checksums.txt
@@ -14,7 +14,7 @@
  *   bun run scripts/update-homebrew-formula.ts --version 0.1.0 --push
  *
  * Environment:
- *   HOMEBREW_TAP_REPO - Git URL of the tap repository (default: https://github.com/tiann/homebrew-tap.git)
+ *   HOMEBREW_TAP_REPO - Git URL of the tap repository (default: https://github.com/tiann/homebrew-yoho-remote.git)
  */
 
 import { execSync } from 'node:child_process';
@@ -66,38 +66,38 @@ function generateFormula(version: string, shas: PlatformSha): string {
     return `# typed: false
 # frozen_string_literal: true
 
-class Hapi < Formula
+class YohoRemote < Formula
   desc "App for agentic coding - access coding agent anywhere"
-  homepage "https://github.com/tiann/hapi"
+  homepage "https://github.com/tiann/yoho-remote"
   version "${version}"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/tiann/hapi/releases/download/v#{version}/hapi-darwin-arm64.tar.gz"
+      url "https://github.com/tiann/yoho-remote/releases/download/v#{version}/yoho-remote-darwin-arm64.tar.gz"
       sha256 "${shas.darwinArm64}"
     else
-      url "https://github.com/tiann/hapi/releases/download/v#{version}/hapi-darwin-x64.tar.gz"
+      url "https://github.com/tiann/yoho-remote/releases/download/v#{version}/yoho-remote-darwin-x64.tar.gz"
       sha256 "${shas.darwinX64}"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/tiann/hapi/releases/download/v#{version}/hapi-linux-arm64.tar.gz"
+      url "https://github.com/tiann/yoho-remote/releases/download/v#{version}/yoho-remote-linux-arm64.tar.gz"
       sha256 "${shas.linuxArm64}"
     else
-      url "https://github.com/tiann/hapi/releases/download/v#{version}/hapi-linux-x64.tar.gz"
+      url "https://github.com/tiann/yoho-remote/releases/download/v#{version}/yoho-remote-linux-x64.tar.gz"
       sha256 "${shas.linuxX64}"
     end
   end
 
   def install
-    bin.install "hapi"
+    bin.install "yoho-remote"
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/hapi --version")
+    assert_match version.to_s, shell_output("#{bin}/yoho-remote --version")
   end
 end
 `;
@@ -138,7 +138,7 @@ async function main(): Promise<void> {
 
     const version = args[versionIdx + 1];
     const shouldPush = args.includes('--push');
-    const tapRepo = process.env.HOMEBREW_TAP_REPO || 'https://github.com/tiann/homebrew-tap.git';
+    const tapRepo = process.env.HOMEBREW_TAP_REPO || 'https://github.com/tiann/homebrew-yoho-remote.git';
     const checksumsPath = join(projectRoot, 'release-artifacts', 'checksums.txt');
 
     if (!existsSync(checksumsPath)) {
@@ -165,7 +165,7 @@ async function main(): Promise<void> {
         const localFormulaDir = join(projectRoot, 'release-artifacts', 'Formula');
         mkdirSync(localFormulaDir, { recursive: true });
 
-        const localFormulaPath = join(localFormulaDir, 'hapi.rb');
+        const localFormulaPath = join(localFormulaDir, 'yoho-remote.rb');
         writeFileSync(localFormulaPath, formulaContent);
 
         console.log(`Formula generated: ${localFormulaPath}\n`);
@@ -196,7 +196,7 @@ async function main(): Promise<void> {
         mkdirSync(formulaDir, { recursive: true });
 
         // Write formula
-        const formulaPath = join(formulaDir, 'hapi.rb');
+        const formulaPath = join(formulaDir, 'yoho-remote.rb');
         writeFileSync(formulaPath, formulaContent);
         console.log(`Updated: ${formulaPath}`);
 
@@ -207,18 +207,18 @@ async function main(): Promise<void> {
         }
 
         // Commit and push
-        execSync('git add Formula/hapi.rb', { cwd: tempDir, stdio: 'pipe' });
+        execSync('git add Formula/yoho-remote.rb', { cwd: tempDir, stdio: 'pipe' });
 
         try {
-            execSync(`git commit -m "Update hapi to v${version}"`, { cwd: tempDir, stdio: 'pipe' });
+            execSync(`git commit -m "Update yoho-remote to v${version}"`, { cwd: tempDir, stdio: 'pipe' });
             execSync('git push origin main', { cwd: tempDir, stdio: 'pipe' });
-            console.log(`\nSuccessfully pushed hapi v${version} to homebrew-tap`);
+            console.log(`\nSuccessfully pushed yoho-remote v${version} to homebrew-tap`);
         } catch {
             console.log('\nNo changes to commit (formula already up to date)');
         }
 
         console.log('\nUsers can now install via:');
-        console.log('  brew install tiann/tap/hapi');
+        console.log('  brew install tiann/yoho-remote/yoho-remote');
     } finally {
         // Cleanup
         rmSync(tempDir, { recursive: true, force: true });

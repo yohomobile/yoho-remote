@@ -1,6 +1,6 @@
 # How it Works
 
-HAPI consists of three interconnected components that work together to provide remote AI agent control.
+Yoho Remote consists of three interconnected components that work together to provide remote AI agent control.
 
 ## Architecture Overview
 
@@ -10,9 +10,9 @@ HAPI consists of three interconnected components that work together to provide r
 │                                                                            │
 │   ┌──────────────┐         ┌──────────────┐         ┌──────────────┐       │
 │   │              │         │              │         │              │       │
-│   │   HAPI CLI   │◄───────►│ HAPI Server  │◄───────►│   Web App    │       │
+│   │ Yoho Remote  │◄───────►│ Yoho Remote  │◄───────►│   Web App    │       │
 │   │              │ Socket  │              │   SSE   │  (embedded)  │       │
-│   │  + AI Agent  │   .IO   │  + PostgreSQL│         │              │       │
+│   │  CLI         │   .IO   │  Server      │         │              │       │
 │   │              │         │  + REST API  │         │              │       │
 │   └──────────────┘         └──────┬───────┘         └──────────────┘       │
 │                                   │                                        │
@@ -43,12 +43,12 @@ HAPI consists of three interconnected components that work together to provide r
 
 ## Components
 
-### HAPI CLI
+### Yoho Remote CLI
 
 The CLI is a wrapper around AI coding agents (Claude Code, Codex, Gemini). It:
 
 - Starts and manages coding sessions
-- Registers sessions with the HAPI server
+- Registers sessions with the Yoho Remote server
 - Relays messages and permission requests
 - Provides MCP (Model Context Protocol) tools
 
@@ -60,7 +60,7 @@ hapi gemini       # Start Google Gemini session
 hapi daemon start # Run background service for remote session spawning
 ```
 
-### HAPI Server
+### Yoho Remote Server
 
 The server is the central hub that connects everything:
 

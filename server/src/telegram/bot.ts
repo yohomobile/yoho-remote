@@ -15,7 +15,7 @@ export interface BotContext extends Context {
     // Extended context for future use
 }
 
-export interface HappyBotConfig {
+export interface YohoRemoteBotConfig {
     syncEngine: SyncEngine
     botToken: string
     miniAppUrl: string
@@ -25,7 +25,7 @@ export interface HappyBotConfig {
 /**
  * Yoho Remote Telegram Bot - Notification-only mode
  */
-export class HappyBot {
+export class YohoRemoteBot {
     private bot: Bot<BotContext>
     private syncEngine: SyncEngine | null = null
     private isRunning = false
@@ -44,7 +44,7 @@ export class HappyBot {
     // Unsubscribe function for sync events
     private unsubscribeSyncEvents: (() => void) | null = null
 
-    constructor(config: HappyBotConfig) {
+    constructor(config: YohoRemoteBotConfig) {
         this.syncEngine = config.syncEngine
         this.miniAppUrl = config.miniAppUrl
         this.store = config.store

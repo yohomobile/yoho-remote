@@ -220,7 +220,7 @@ async function main(): Promise<void> {
     const args = process.argv.slice(2);
     const target = getArg(args, '--target');
     const outdirArg = getArg(args, '--outdir') ?? 'dist-exe';
-    const name = getArg(args, '--name') ?? 'hapi';
+    const name = getArg(args, '--name') ?? 'yoho-remote';
     const buildAll = args.includes('--all');
     const includeWebAssets = args.includes('--with-web-assets');
 
@@ -233,8 +233,8 @@ async function main(): Promise<void> {
     }
 
     if (args.includes('--target') && !target) {
-        console.error('Usage: bun run scripts/build-executable.ts [--target <bun-platform[-arch]>] [--outdir dist-exe] [--name hapi|hapi-server|hapi-daemon] [--with-web-assets]');
-        console.error('   or: bun run scripts/build-executable.ts --all [--outdir dist-exe] [--name hapi|hapi-server|hapi-daemon] [--with-web-assets]');
+        console.error('Usage: bun run scripts/build-executable.ts [--target <bun-platform[-arch]>] [--outdir dist-exe] [--name yoho-remote|yoho-remote-server|yoho-remote-daemon] [--with-web-assets]');
+        console.error('   or: bun run scripts/build-executable.ts --all [--outdir dist-exe] [--name yoho-remote|yoho-remote-server|yoho-remote-daemon] [--with-web-assets]');
         process.exit(1);
     }
 
