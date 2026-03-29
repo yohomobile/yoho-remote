@@ -42,7 +42,6 @@ export type SessionMetadataSummary = {
         lastActivity?: number
         errorCount?: number
     }
-    claudeAccountName?: string
 }
 
 export type AgentStateRequest = {
@@ -113,7 +112,6 @@ export type SessionSummaryMetadata = {
     worktree?: WorktreeMetadata
     source?: string
     privacyMode?: boolean  // true = 私密模式，不分享给其他人
-    claudeAccountName?: string
 }
 
 export type SessionViewer = {
@@ -367,63 +365,4 @@ export type SyncEvent =
 
 export type OnlineUsersResponse = { users: OnlineUser[] }
 
-// Agent Group 相关类型
-export type AgentGroupType = 'collaboration' | 'debate' | 'review'
-export type AgentGroupStatus = 'active' | 'paused' | 'completed'
-export type GroupMemberRole = 'owner' | 'moderator' | 'member'
-export type GroupSenderType = 'agent' | 'user' | 'system'
-export type GroupMessageType = 'chat' | 'task' | 'feedback' | 'decision'
-
-export type AgentGroup = {
-    id: string
-    namespace: string
-    name: string
-    description: string | null
-    type: AgentGroupType
-    createdAt: number
-    updatedAt: number
-    status: AgentGroupStatus
-    memberCount?: number
-}
-
-export type AgentGroupMember = {
-    groupId: string
-    sessionId: string
-    role: GroupMemberRole
-    agentType: string | null
-    joinedAt: number
-    sessionName?: string
-    sessionActive?: boolean
-}
-
-export type AgentGroupMessage = {
-    id: string
-    groupId: string
-    sourceSessionId: string | null
-    senderType: GroupSenderType
-    content: string
-    messageType: GroupMessageType
-    createdAt: number
-    senderName?: string
-}
-
-export type GroupsResponse = { groups: AgentGroup[] }
-export type GroupResponse = { group: AgentGroup; members: AgentGroupMember[] }
-export type CreateGroupResponse = { ok: true; group: AgentGroup }
-export type UpdateGroupResponse = { ok: true; group: AgentGroup }
-export type DeleteGroupResponse = { ok: true }
-export type AddMemberResponse = { ok: true; members: AgentGroupMember[] }
-export type RemoveMemberResponse = { ok: true; members: AgentGroupMember[] }
-export type GroupMessagesResponse = { messages: AgentGroupMessage[] }
-export type SendGroupMessageResponse = { ok: true; message: AgentGroupMessage }
-export type BroadcastResponse = {
-    ok: true
-    message: AgentGroupMessage
-    broadcast: {
-        total: number
-        sent: number
-        failed: number
-        results: Array<{ sessionId: string; success: boolean; error?: string }>
-    }
-}
 

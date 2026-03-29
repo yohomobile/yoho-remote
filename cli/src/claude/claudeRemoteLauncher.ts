@@ -3,7 +3,7 @@ import { Session } from "./session";
 import { MessageBuffer } from "@/ui/ink/messageBuffer";
 import { RemoteModeDisplay } from "@/ui/ink/RemoteModeDisplay";
 import React from "react";
-import { claudeRemote, ThinkingTimeoutError, HitLimitError } from "./claudeRemote";
+import { claudeRemote, ThinkingTimeoutError } from "./claudeRemote";
 import { PermissionHandler } from "./utils/permissionHandler";
 import { Future } from "@/utils/future";
 import { SDKAssistantMessage, SDKMessage, SDKSystemMessage, SDKUserMessage } from "./sdk";
@@ -16,10 +16,7 @@ import { RawJSONLines } from "@/claude/types";
 import { OutgoingMessageQueue } from "./utils/OutgoingMessageQueue";
 import { getToolName } from "./utils/getToolName";
 import { restoreTerminalState } from "@/ui/terminalState";
-import { isAccountExhaustedError, rotateAccount } from "./utils/accountRotation";
-
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
-const MAX_ACCOUNT_ROTATIONS = 3;
 const TITLE_INSTRUCTION = 'Based on this message, call mcp__yoho_remote__change_title to change chat session title that would represent the current task. If chat idea would change dramatically - call this function again to update the title.';
 
 function isInitPromptMessage(message: string): boolean {
@@ -359,9 +356,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             message: string;
             mode: EnhancedMode;
         } | null = null;
-        let accountRotationCount = 0;
-        let lastKnownMode: EnhancedMode | null = null; // Track last mode for auto-continue after rotation
-        let capturedInitPrompt: string | null = null; // Remember init prompt for re-injection after rotation
+        let lastKnownMode: EnhancedMode | null = null;
 
         // Track session ID to detect when it actually changes
         // This prevents context loss when mode changes (permission mode, model, etc.)
@@ -408,11 +403,6 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                             let p = pending;
                             pending = null;
                             permissionHandler.handleModeChange(p.mode.permissionMode);
-                            // Capture init prompt for re-injection after rotation (only first time)
-                            if (!capturedInitPrompt && isInitPromptMessage(p.message)) {
-                                capturedInitPrompt = p.message;
-                                logger.debug(`[remote]: Captured init prompt (${p.message.length} chars) for rotation reuse`);
-                            }
                             return {
                                 ...p,
                                 message: appendTitleInstructionIfNeeded(p.message)
@@ -432,11 +422,6 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                             mode = msg.mode;
                             lastKnownMode = msg.mode;
                             permissionHandler.handleModeChange(mode.permissionMode);
-                            // Capture init prompt for re-injection after rotation (only first time)
-                            if (!capturedInitPrompt && isInitPromptMessage(msg.message)) {
-                                capturedInitPrompt = msg.message;
-                                logger.debug(`[remote]: Captured init prompt (${msg.message.length} chars) for rotation reuse`);
-                            }
                             return {
                                 message: appendTitleInstructionIfNeeded(msg.message),
                                 mode: msg.mode
@@ -512,185 +497,15 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     continue;
                 }
 
-                // Handle hit limit - auto-rotate account and continue
-                if (!exitReason && e instanceof HitLimitError) {
-                    if (accountRotationCount < MAX_ACCOUNT_ROTATIONS) {
-                        logger.debug(`[remote]: Hit limit detected: ${e.resultText}`);
-                        session.client.sendSessionEvent({
-                            type: 'message',
-                            message: `${e.resultText} — Switching account...`
-                        });
-
-                        try {
-                            const rotationResult = await rotateAccount({
-                                api: session.api,
-                                currentConfigDir: session.claudeEnvVars?.CLAUDE_CONFIG_DIR,
-                                claudeSessionId: session.sessionId,
-                                workingDirectory: session.path,
-                            });
-
-                            if (rotationResult.success && rotationResult.newAccount) {
-                                // Update CLAUDE_CONFIG_DIR
-                                process.env.CLAUDE_CONFIG_DIR = rotationResult.newAccount.configDir;
-                                if (session.claudeEnvVars) {
-                                    session.claudeEnvVars.CLAUDE_CONFIG_DIR = rotationResult.newAccount.configDir;
-                                } else {
-                                    session.claudeEnvVars = { CLAUDE_CONFIG_DIR: rotationResult.newAccount.configDir };
-                                }
-
-                                // Set --resume so the new process picks up conversation history
-                                if (session.sessionId) {
-                                    session.consumeOneTimeFlags();
-                                    session.claudeArgs = [
-                                        ...(session.claudeArgs || []),
-                                        '--resume', session.sessionId
-                                    ];
-                                }
-
-                                // Update session metadata
-                                session.client.updateMetadata((metadata) => ({
-                                    ...metadata,
-                                    claudeAccountId: rotationResult.newAccount!.id,
-                                    claudeAccountName: rotationResult.newAccount!.name,
-                                }));
-
-                                session.client.sendSessionEvent({
-                                    type: 'message',
-                                    message: `Switched to ${rotationResult.newAccount.name}. Continuing...`
-                                });
-
-                                // Inject continue message with init prompt rules so Claude retains language/rules
-                                if (lastKnownMode) {
-                                    const continueMsg = capturedInitPrompt
-                                        ? `${capturedInitPrompt}\n\nContinue from where you left off. You were interrupted by a rate limit on the previous account.`
-                                        : 'Continue from where you left off. You were interrupted by a rate limit on the previous account.';
-                                    session.queue.pushImmediate(continueMsg, lastKnownMode);
-                                    if (capturedInitPrompt) {
-                                        logger.debug('[remote]: Re-injected init prompt after hit limit rotation');
-                                    }
-                                }
-
-                                accountRotationCount++;
-                                logger.debug(`[remote]: Hit limit rotation to ${rotationResult.newAccount.name} (${accountRotationCount}/${MAX_ACCOUNT_ROTATIONS})`);
-                                continue;
-                            } else {
-                                session.client.sendSessionEvent({
-                                    type: 'message',
-                                    message: `Could not switch account: ${rotationResult.reason}. ${e.resultText}`
-                                });
-                            }
-                        } catch (rotationError) {
-                            logger.debug('[remote]: Hit limit rotation failed:', rotationError);
-                            session.client.sendSessionEvent({
-                                type: 'message',
-                                message: `Account switch failed. ${e.resultText}`
-                            });
-                        }
-                    } else {
-                        session.client.sendSessionEvent({
-                            type: 'message',
-                            message: `All accounts exhausted. ${e.resultText}`
-                        });
-                    }
-                    // Fall through to normal exit if rotation fails
-                }
-
                 // Handle failed --resume (session file not found / conversation not found)
                 if (!exitReason && /no conversation found/i.test(errorMessage)) {
                     logger.debug('[remote]: Resume failed - conversation not found, clearing resume and retrying as new session');
                     session.consumeOneTimeFlags(); // Strip --resume from claudeArgs
                     session.clearSessionId();      // Start fresh
-                    // Re-inject init prompt since we're starting fresh (no conversation history)
-                    if (capturedInitPrompt && lastKnownMode) {
-                        session.queue.pushImmediate(capturedInitPrompt, lastKnownMode);
-                        logger.debug('[remote]: Re-injected init prompt after resume failure');
-                    }
                     session.client.sendSessionEvent({
                         type: 'message',
                         message: 'Previous session not found. Starting a new session...'
                     });
-                    continue;
-                }
-
-                // Auto-rotate account on 401/token exhaustion errors
-                if (!exitReason && isAccountExhaustedError(errorMessage)) {
-                    if (accountRotationCount < MAX_ACCOUNT_ROTATIONS) {
-                        logger.debug('[remote]: Account exhaustion detected, attempting rotation');
-                        session.client.sendSessionEvent({
-                            type: 'message',
-                            message: 'Account limit reached. Switching to a different account...'
-                        });
-
-                        try {
-                            const rotationResult = await rotateAccount({
-                                api: session.api,
-                                currentConfigDir: session.claudeEnvVars?.CLAUDE_CONFIG_DIR,
-                                claudeSessionId: session.sessionId,
-                                workingDirectory: session.path,
-                            });
-
-                            if (rotationResult.success && rotationResult.newAccount) {
-                                // Update CLAUDE_CONFIG_DIR
-                                process.env.CLAUDE_CONFIG_DIR = rotationResult.newAccount.configDir;
-                                if (session.claudeEnvVars) {
-                                    session.claudeEnvVars.CLAUDE_CONFIG_DIR = rotationResult.newAccount.configDir;
-                                } else {
-                                    session.claudeEnvVars = { CLAUDE_CONFIG_DIR: rotationResult.newAccount.configDir };
-                                }
-
-                                // Set --resume so the new process picks up conversation history
-                                // First strip any existing --resume flags to avoid accumulation
-                                if (session.sessionId) {
-                                    session.consumeOneTimeFlags();
-                                    session.claudeArgs = [
-                                        ...(session.claudeArgs || []),
-                                        '--resume', session.sessionId
-                                    ];
-                                }
-
-                                // Update session metadata with new account info
-                                session.client.updateMetadata((metadata) => ({
-                                    ...metadata,
-                                    claudeAccountId: rotationResult.newAccount!.id,
-                                    claudeAccountName: rotationResult.newAccount!.name,
-                                }));
-
-                                session.client.sendSessionEvent({
-                                    type: 'message',
-                                    message: `Switched to account: ${rotationResult.newAccount.name}`
-                                });
-
-                                // Re-inject init prompt so language/rules are preserved
-                                if (capturedInitPrompt && lastKnownMode) {
-                                    session.queue.pushImmediate(capturedInitPrompt, lastKnownMode);
-                                    logger.debug('[remote]: Re-injected init prompt after 401 rotation');
-                                }
-
-                                accountRotationCount++;
-                                logger.debug(`[remote]: Account rotated to ${rotationResult.newAccount.name} (rotation ${accountRotationCount}/${MAX_ACCOUNT_ROTATIONS})`);
-                                continue; // Retry with new account
-                            } else {
-                                session.client.sendSessionEvent({
-                                    type: 'message',
-                                    message: `Could not switch account: ${rotationResult.reason}. Please try again later or switch manually.`
-                                });
-                            }
-                        } catch (rotationError) {
-                            logger.debug('[remote]: Account rotation failed:', rotationError);
-                            session.client.sendSessionEvent({
-                                type: 'message',
-                                message: `Account rotation failed: ${rotationError instanceof Error ? rotationError.message : String(rotationError)}`
-                            });
-                        }
-                    } else {
-                        session.client.sendSessionEvent({
-                            type: 'message',
-                            message: `All available accounts exhausted after ${accountRotationCount} rotations. Please try again later.`
-                        });
-                    }
-
-                    // Rotation failed or max rotations reached — wait for user action
-                    // (claudeRemote's nextMessage() will block until user sends a new message)
                     continue;
                 }
 

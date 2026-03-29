@@ -21,8 +21,6 @@ import { createVersionRoutes } from './routes/version'
 import { createSettingsRoutes } from './routes/settings'
 import { createPushRoutes } from './routes/push'
 import { createUsageRoutes } from './routes/usage'
-import { createGroupRoutes } from './routes/groups'
-import { createClaudeAccountsRoutes } from './routes/claude-accounts'
 import { createYohoCredentialsRoutes } from './routes/yoho-credentials'
 import { createOpenCodeRoutes } from './routes/opencode'
 import { createCodexOpenAIRoutes } from './routes/codex-openai'
@@ -116,8 +114,6 @@ function createWebApp(options: {
     app.route('/api', createSettingsRoutes(options.store))
     app.route('/api', createPushRoutes())
     app.route('/api', createUsageRoutes(options.getSyncEngine))
-    app.route('/api', createGroupRoutes(options.store, options.getSyncEngine(), options.getSseManager()))
-    app.route('/api', createClaudeAccountsRoutes())
     app.route('/api', createYohoCredentialsRoutes())
     app.route('/api', createOpenCodeRoutes(options.getSyncEngine, () => options.getSseManager()))
 

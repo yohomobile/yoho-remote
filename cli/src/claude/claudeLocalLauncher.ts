@@ -4,7 +4,6 @@ import { Session } from "./session";
 import { Future } from "@/utils/future";
 import { createSessionScanner } from "./utils/sessionScanner";
 import { getLocalLaunchExitReason } from "@/agent/localLaunchPolicy";
-import { isAccountExhaustedError } from "./utils/accountRotation";
 
 export async function claudeLocalLauncher(session: Session): Promise<'switch' | 'exit'> {
 
@@ -133,17 +132,6 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
                 logger.debug('[local]: launch error', e);
                 const message = e instanceof Error ? e.message : String(e);
                 session.client.sendSessionEvent({ type: 'message', message: `Local Claude process failed: ${message}` });
-
-                // On account exhaustion, switch to remote mode for auto-rotation
-                if (!exitReason && isAccountExhaustedError(message)) {
-                    logger.debug('[local]: Account exhaustion detected, switching to remote mode for rotation');
-                    session.client.sendSessionEvent({
-                        type: 'message',
-                        message: 'Account limit reached. Switching to remote mode for account rotation...'
-                    });
-                    exitReason = 'switch';
-                    break;
-                }
 
                 const failureExitReason = exitReason ?? getLocalLaunchExitReason({
                     startedBy: session.startedBy,

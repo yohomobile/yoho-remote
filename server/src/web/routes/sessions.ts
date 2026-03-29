@@ -38,7 +38,6 @@ type SessionSummaryMetadata = {
         errorCount?: number
     }
     privacyMode?: boolean  // 私密模式，true表示不分享给其他人
-    claudeAccountName?: string
 }
 
 type SessionViewer = {
@@ -81,7 +80,6 @@ function toSessionSummary(session: Session): SessionSummary {
         opencodeCapabilities: session.metadata.opencodeCapabilities,
         opencodeStatus: session.metadata.opencodeStatus,
         privacyMode: session.metadata.privacyMode,
-        claudeAccountName: session.metadata.claudeAccountName
     } : null
 
     const todoProgress = session.todos?.length ? {
@@ -1160,7 +1158,7 @@ export function createSessionsRoutes(
             const value = session.metadata?.claudeSessionId
             return typeof value === 'string' && value.trim() ? value : undefined
         })()
-        console.log(`[refresh-account] sessionId=${sessionId}, resumeSessionId=${resumeSessionId ?? 'NONE'}, claudeAccountName=${session.metadata?.claudeAccountName ?? 'unknown'}`)
+        console.log(`[refresh-account] sessionId=${sessionId}, resumeSessionId=${resumeSessionId ?? 'NONE'}`)
 
         // Spawn new Claude process with the SAME hapi session ID + Claude --resume
         const spawnResult = await engine.spawnSession(

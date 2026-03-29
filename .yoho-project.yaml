@@ -89,7 +89,6 @@ server:
       - git.ts - Git 操作
       - groups.ts - 群聊
       - machines.ts - 机器管理
-      - claude-accounts.ts - Claude 账号
       - auth.ts - 认证
       - settings.ts - 设置
       - usage.ts - 用量追踪

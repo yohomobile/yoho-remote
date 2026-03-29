@@ -21,13 +21,6 @@ export class ThinkingTimeoutError extends Error {
     }
 }
 
-export class HitLimitError extends Error {
-    constructor(public readonly resultText: string) {
-        super(resultText);
-        this.name = 'HitLimitError';
-    }
-}
-
 export async function claudeRemote(opts: {
 
     // Fixed parameters
@@ -291,10 +284,10 @@ export async function claudeRemote(opts: {
                     throw new Error(errorText);
                 }
 
-                // Detect hit limit or auth errors — throw so launcher can auto-rotate account
+                // Detect hit limit or auth errors
                 const resultText = typeof resultMsg.result === 'string' ? resultMsg.result : '';
                 if (resultMsg.is_error && /hit your limit|hit.your.limit/i.test(resultText)) {
-                    throw new HitLimitError(resultText);
+                    throw new Error(resultText);
                 }
                 if (resultMsg.is_error && /does not have access|authentication.*(?:failed|error|invalid)|Failed to authenticate|\b401\b|Invalid.*credentials/i.test(resultText)) {
                     throw new Error(resultText);

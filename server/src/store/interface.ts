@@ -13,10 +13,6 @@ import type {
     StoredAutoIterationConfig,
     StoredAutoIterationLog,
     StoredSessionAutoIterConfig,
-    StoredAgentGroup,
-    StoredAgentGroupWithLastMessage,
-    StoredAgentGroupMember,
-    StoredAgentGroupMessage,
     StoredSessionNotificationSubscription,
     StoredAIProfile,
     StoredAIProfileMemory,
@@ -37,11 +33,6 @@ import type {
     MemoryType,
     FeedbackSource,
     FeedbackAction,
-    AgentGroupType,
-    AgentGroupStatus,
-    GroupMemberRole,
-    GroupSenderType,
-    GroupMessageType,
     AIProfileRole,
     AIProfileStatus,
     AIProfileMemoryType,
@@ -266,37 +257,6 @@ export interface IStore {
     isSessionAutoIterEnabled(sessionId: string): Promise<boolean>
     setSessionAutoIterEnabled(sessionId: string, enabled: boolean): Promise<StoredSessionAutoIterConfig | null>
 
-    // === Agent Group 操作 ===
-    createAgentGroup(data: {
-        namespace: string
-        name: string
-        description?: string
-        type?: AgentGroupType
-    }): Promise<StoredAgentGroup>
-    getAgentGroup(id: string): Promise<StoredAgentGroup | null>
-    getAgentGroups(namespace: string): Promise<StoredAgentGroup[]>
-    getAgentGroupsWithLastMessage(namespace: string): Promise<StoredAgentGroupWithLastMessage[]>
-    updateAgentGroupStatus(id: string, status: AgentGroupStatus): Promise<void>
-    deleteAgentGroup(id: string): Promise<void>
-    addGroupMember(data: {
-        groupId: string
-        sessionId: string
-        role?: GroupMemberRole
-        agentType?: string
-    }): Promise<StoredAgentGroupMember>
-    removeGroupMember(groupId: string, sessionId: string): Promise<void>
-    getGroupMembers(groupId: string): Promise<StoredAgentGroupMember[]>
-    getSessionGroups(sessionId: string): Promise<StoredAgentGroup[]>
-    getGroupsForSession(sessionId: string): Promise<StoredAgentGroup[]>
-    addGroupMessage(data: {
-        groupId: string
-        sourceSessionId?: string
-        senderType?: GroupSenderType
-        content: string
-        messageType?: GroupMessageType
-    }): Promise<StoredAgentGroupMessage>
-    getGroupMessages(groupId: string, limit?: number, beforeId?: string): Promise<StoredAgentGroupMessage[]>
-
     // === Session Creator ChatId 操作 ===
     setSessionCreatorChatId(sessionId: string, chatId: string, namespace: string): Promise<boolean>
     getSessionCreatorChatId(sessionId: string): Promise<string | null>
@@ -479,10 +439,6 @@ export type {
     StoredAutoIterationConfig,
     StoredAutoIterationLog,
     StoredSessionAutoIterConfig,
-    StoredAgentGroup,
-    StoredAgentGroupWithLastMessage,
-    StoredAgentGroupMember,
-    StoredAgentGroupMessage,
     StoredSessionNotificationSubscription,
     StoredAIProfile,
     StoredAIProfileMemory,
@@ -502,11 +458,6 @@ export type {
     MemoryType,
     FeedbackSource,
     FeedbackAction,
-    AgentGroupType,
-    AgentGroupStatus,
-    GroupMemberRole,
-    GroupSenderType,
-    GroupMessageType,
     AIProfileRole,
     AIProfileStatus,
     AIProfileMemoryType,

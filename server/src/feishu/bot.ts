@@ -17,8 +17,6 @@ import { extractAgentText, extractAgentMessageMeta, isInternalBrainMessage, buil
 import { textToSpeech } from './tts'
 import { enrichTextWithDocContent } from './docFetcher'
 import { buildFeishuBrainInitPrompt, buildFeishuVijnaptiInitPrompt } from '../web/prompts/initPrompt'
-import { selectBestAccount } from '../claude-accounts/accountsService'
-import { getClaudeAccessToken } from '../web/routes/usage'
 import { lookupKeycloakUserByEmail, type KeycloakUserInfo } from './keycloakLookup'
 import { getConfiguration } from '../configuration'
 
@@ -1069,26 +1067,6 @@ export class FeishuBot {
             const homeDir = (machine.metadata as Record<string, unknown>)?.homeDir as string || '/tmp'
             const brainDirectory = `${homeDir}/.hapi/brain-workspace`
 
-            // Get Claude OAuth token from best available account
-            let claudeToken: string | undefined
-            try {
-                const selection = await selectBestAccount()
-                if (selection?.account?.configDir) {
-                    const token = await getClaudeAccessToken(selection.account.configDir)
-                    if (token) {
-                        claudeToken = token
-                        console.log(`[FeishuBot] Using Claude account: ${selection.account.name}`)
-                    }
-                }
-            } catch (err) {
-                console.error('[FeishuBot] Failed to get Claude token:', err)
-            }
-
-            if (!claudeToken) {
-                console.error('[FeishuBot] No valid Claude token available')
-                return null
-            }
-
             const result = await this.syncEngine.spawnSession(
                 machine.id,
                 brainDirectory,
@@ -1099,7 +1077,6 @@ export class FeishuBot {
                 {
                     source: 'brain',
                     permissionMode: 'bypassPermissions',
-                    token: claudeToken,
                     caller: 'feishu',
                 }
             )
@@ -1249,15 +1226,6 @@ export class FeishuBot {
             const homeDir = (machine.metadata as Record<string, unknown>)?.homeDir as string || '/tmp'
             const brainDirectory = `${homeDir}/.hapi/brain-workspace`
 
-            let claudeToken: string | undefined
-            try {
-                const selection = await selectBestAccount()
-                if (selection?.account?.configDir) {
-                    claudeToken = await getClaudeAccessToken(selection.account.configDir) ?? undefined
-                }
-            } catch { /* ignore */ }
-            if (!claudeToken) return false
-
             const result = await this.syncEngine.spawnSession(
                 machine.id,
                 brainDirectory,
@@ -1270,7 +1238,6 @@ export class FeishuBot {
                     resumeSessionId: claudeSessionId,  // resume Claude conversation
                     source: 'brain',
                     permissionMode: 'bypassPermissions',
-                    token: claudeToken,
                     caller: 'feishu',
                 }
             )

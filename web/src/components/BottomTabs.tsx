@@ -21,25 +21,6 @@ function SessionsIcon(props: { className?: string; filled?: boolean }) {
     )
 }
 
-function ChatIcon(props: { className?: string; filled?: boolean }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill={props.filled ? 'currentColor' : 'none'}
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        </svg>
-    )
-}
-
 function SettingsIcon(props: { className?: string; filled?: boolean }) {
     return (
         <svg
@@ -77,12 +58,6 @@ const tabs: TabItem[] = [
         matchPaths: ['/sessions/new']
     },
     {
-        key: 'chat',
-        label: 'Chat',
-        path: '/groups',
-        icon: ChatIcon,
-    },
-    {
         key: 'settings',
         label: 'Settings',
         path: '/settings',
@@ -92,7 +67,7 @@ const tabs: TabItem[] = [
 ]
 
 // Pages where bottom tabs should be visible
-const TOP_LEVEL_PATHS = ['/sessions', '/settings', '/usage', '/sessions/new', '/groups']
+const TOP_LEVEL_PATHS = ['/sessions', '/settings', '/usage', '/sessions/new']
 
 export function useShowBottomTabs(): boolean {
     const location = useLocation()

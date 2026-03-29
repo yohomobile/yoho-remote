@@ -341,12 +341,6 @@ function SessionItem(props: {
                             <span className="shrink-0" title={s.createdBy}>share by {getCreatorDisplayName(s.createdBy)}</span>
                         </>
                     )}
-                    {s.metadata?.claudeAccountName && (
-                        <>
-                            <span className="opacity-50">·</span>
-                            <span className="shrink-0 text-orange-500" title={s.metadata.claudeAccountName}>{getCreatorDisplayName(s.metadata.claudeAccountName)}</span>
-                        </>
-                    )}
                 </div>
                 {/* OpenCode 能力显示 */}
                 {openCodeCapabilities && openCodeCapabilities.length > 0 && (

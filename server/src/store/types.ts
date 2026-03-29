@@ -131,13 +131,6 @@ export type StoredSessionAutoIterConfig = {
     updatedAt: number
 }
 
-// Agent Group 相关类型
-export type AgentGroupType = 'collaboration' | 'debate' | 'review'
-export type AgentGroupStatus = 'active' | 'paused' | 'completed'
-export type GroupMemberRole = 'owner' | 'moderator' | 'member'
-export type GroupSenderType = 'agent' | 'user' | 'system'
-export type GroupMessageType = 'chat' | 'task' | 'feedback' | 'decision'
-
 // AI Profile 相关类型
 export type AIProfileRole = 'developer' | 'architect' | 'reviewer' | 'pm' | 'tester' | 'devops'
 export type AIProfileStatus = 'idle' | 'working' | 'resting'
@@ -225,44 +218,6 @@ export type StoredAITeamKnowledge = {
     accessCount: number
     createdAt: number
     updatedAt: number
-}
-
-export type StoredAgentGroup = {
-    id: string
-    namespace: string
-    name: string
-    description: string | null
-    type: AgentGroupType
-    createdAt: number
-    updatedAt: number
-    status: AgentGroupStatus
-}
-
-export type StoredAgentGroupWithLastMessage = StoredAgentGroup & {
-    memberCount: number
-    lastMessage: {
-        content: string
-        senderType: GroupSenderType
-        createdAt: number
-    } | null
-}
-
-export type StoredAgentGroupMember = {
-    groupId: string
-    sessionId: string
-    role: GroupMemberRole
-    agentType: string | null
-    joinedAt: number
-}
-
-export type StoredAgentGroupMessage = {
-    id: string
-    groupId: string
-    sourceSessionId: string | null
-    senderType: GroupSenderType
-    content: string
-    messageType: GroupMessageType
-    createdAt: number
 }
 
 export type StoredSessionNotificationSubscription = {

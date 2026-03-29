@@ -1,23 +1,12 @@
 import type {
     AddInputPresetResponse,
-    AddMemberResponse,
     AddProjectResponse,
-    AgentGroupType,
     AllowedUsersResponse,
     AuthResponse,
-    BroadcastResponse,
-    CreateGroupResponse,
-    DeleteGroupResponse,
     DeleteSessionResponse,
     FileReadResponse,
     FileUploadResponse,
     GitCommandResponse,
-    GroupMessagesResponse,
-    GroupMemberRole,
-    GroupMessageType,
-    GroupResponse,
-    GroupSenderType,
-    GroupsResponse,
     ImageUploadResponse,
     InputPresetsResponse,
     MachinePathsExistsResponse,
@@ -27,11 +16,9 @@ import type {
     OnlineUsersResponse,
     ProjectsResponse,
     RemoveInputPresetResponse,
-    RemoveMemberResponse,
     RemoveProjectResponse,
     ResumeSessionResponse,
     RolePromptsResponse,
-    SendGroupMessageResponse,
     SessionShare,
     SessionSharesResponse,
     SessionPrivacyModeResponse,
@@ -45,7 +32,6 @@ import type {
     RemoveSessionShareResponse,
     SessionResponse,
     SessionsResponse,
-    UpdateGroupResponse,
     UpdateInputPresetResponse,
     UpdateProjectResponse,
     UpdateUserPreferencesResponse,
@@ -866,233 +852,4 @@ export class ApiClient {
         return { data }
     }
 
-    // ==================== Agent Groups ====================
-
-    async getGroups(): Promise<GroupsResponse> {
-        return await this.request<GroupsResponse>('/api/groups')
-    }
-
-    async getGroup(groupId: string): Promise<GroupResponse> {
-        return await this.request<GroupResponse>(`/api/groups/${encodeURIComponent(groupId)}`)
-    }
-
-    async createGroup(
-        name: string,
-        type: AgentGroupType = 'collaboration',
-        description?: string
-    ): Promise<CreateGroupResponse> {
-        return await this.request<CreateGroupResponse>('/api/groups', {
-            method: 'POST',
-            body: JSON.stringify({ name, type, description })
-        })
-    }
-
-    async updateGroupStatus(
-        groupId: string,
-        status: 'active' | 'paused' | 'completed'
-    ): Promise<UpdateGroupResponse> {
-        return await this.request<UpdateGroupResponse>(
-            `/api/groups/${encodeURIComponent(groupId)}`,
-            {
-                method: 'PUT',
-                body: JSON.stringify({ status })
-            }
-        )
-    }
-
-    async deleteGroup(groupId: string): Promise<DeleteGroupResponse> {
-        return await this.request<DeleteGroupResponse>(
-            `/api/groups/${encodeURIComponent(groupId)}`,
-            { method: 'DELETE' }
-        )
-    }
-
-    async addGroupMember(
-        groupId: string,
-        sessionId: string,
-        role: GroupMemberRole = 'member',
-        agentType?: string
-    ): Promise<AddMemberResponse> {
-        return await this.request<AddMemberResponse>(
-            `/api/groups/${encodeURIComponent(groupId)}/members`,
-            {
-                method: 'POST',
-                body: JSON.stringify({ sessionId, role, agentType })
-            }
-        )
-    }
-
-    async removeGroupMember(groupId: string, sessionId: string): Promise<RemoveMemberResponse> {
-        return await this.request<RemoveMemberResponse>(
-            `/api/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(sessionId)}`,
-            { method: 'DELETE' }
-        )
-    }
-
-    async getGroupMessages(groupId: string, limit?: number, beforeId?: string): Promise<GroupMessagesResponse> {
-        const params = new URLSearchParams()
-        if (limit !== undefined) {
-            params.set('limit', `${limit}`)
-        }
-        if (beforeId) {
-            params.set('beforeId', beforeId)
-        }
-        const qs = params.toString()
-        return await this.request<GroupMessagesResponse>(
-            `/api/groups/${encodeURIComponent(groupId)}/messages${qs ? `?${qs}` : ''}`
-        )
-    }
-
-    async sendGroupMessage(
-        groupId: string,
-        content: string,
-        sourceSessionId?: string,
-        senderType: GroupSenderType = 'user',
-        messageType: GroupMessageType = 'chat'
-    ): Promise<SendGroupMessageResponse> {
-        return await this.request<SendGroupMessageResponse>(
-            `/api/groups/${encodeURIComponent(groupId)}/messages`,
-            {
-                method: 'POST',
-                body: JSON.stringify({ content, sourceSessionId, senderType, messageType })
-            }
-        )
-    }
-
-    async broadcastToGroup(
-        groupId: string,
-        content: string,
-        sourceSessionId?: string,
-        senderType: GroupSenderType = 'user',
-        messageType: GroupMessageType = 'chat',
-        mentions?: string[]
-    ): Promise<BroadcastResponse> {
-        return await this.request<BroadcastResponse>(
-            `/api/groups/${encodeURIComponent(groupId)}/broadcast`,
-            {
-                method: 'POST',
-                body: JSON.stringify({ content, sourceSessionId, senderType, messageType, mentions })
-            }
-        )
-    }
-
-    // ==================== Claude Accounts ====================
-
-    async getClaudeAccountsConfig(): Promise<ClaudeAccountsConfig> {
-        return await this.request<ClaudeAccountsConfig>('/api/claude-accounts')
-    }
-
-    async getActiveClaudeAccount(): Promise<{ account: ClaudeAccount | null }> {
-        return await this.request<{ account: ClaudeAccount | null }>('/api/claude-accounts/active')
-    }
-
-    async addClaudeAccount(data: {
-        name: string
-        configDir?: string
-        autoRotate?: boolean
-        usageThreshold?: number
-        planType?: 'pro' | 'max'
-    }): Promise<{ ok: boolean; account: ClaudeAccount; config: ClaudeAccountsConfig }> {
-        return await this.request('/api/claude-accounts', {
-            method: 'POST',
-            body: JSON.stringify(data)
-        })
-    }
-
-    async updateClaudeAccount(
-        id: string,
-        data: { name?: string; autoRotate?: boolean; usageThreshold?: number; planType?: 'pro' | 'max' }
-    ): Promise<{ ok: boolean; account: ClaudeAccount; config: ClaudeAccountsConfig }> {
-        return await this.request(`/api/claude-accounts/${encodeURIComponent(id)}`, {
-            method: 'PUT',
-            body: JSON.stringify(data)
-        })
-    }
-
-    async removeClaudeAccount(id: string): Promise<{ ok: boolean; config: ClaudeAccountsConfig }> {
-        return await this.request(`/api/claude-accounts/${encodeURIComponent(id)}`, {
-            method: 'DELETE'
-        })
-    }
-
-    async activateClaudeAccount(id: string): Promise<{ ok: boolean; config: ClaudeAccountsConfig }> {
-        return await this.request(`/api/claude-accounts/${encodeURIComponent(id)}/activate`, {
-            method: 'POST'
-        })
-    }
-
-    async updateClaudeAccountsGlobalConfig(data: {
-        autoRotateEnabled?: boolean
-        defaultThreshold?: number
-    }): Promise<{ ok: boolean; config: ClaudeAccountsConfig }> {
-        return await this.request('/api/claude-accounts/config', {
-            method: 'PUT',
-            body: JSON.stringify(data)
-        })
-    }
-
-    async getClaudeAccountSetupGuide(id?: string): Promise<{
-        steps: Array<{ step: number; title: string; command?: string; description: string }>
-        configDir: string
-        suggestedId: string
-    }> {
-        const params = id ? `?id=${encodeURIComponent(id)}` : ''
-        return await this.request(`/api/claude-accounts/setup-guide${params}`)
-    }
-
-    async migrateDefaultClaudeAccount(): Promise<{
-        ok: boolean
-        account?: ClaudeAccount
-        config?: ClaudeAccountsConfig
-        message?: string
-    }> {
-        return await this.request('/api/claude-accounts/migrate', {
-            method: 'POST'
-        })
-    }
-
-    async getClaudeAccountsUsage(): Promise<{
-        accounts: Array<{
-            accountId: string
-            accountName: string
-            configDir: string
-            isActive: boolean
-            planType?: 'pro' | 'max'
-            fiveHour: { utilization: number; resetsAt: string } | null
-            sevenDay: { utilization: number; resetsAt: string } | null
-            error?: string
-        }>
-        timestamp: number
-    }> {
-        return await this.request('/api/claude-accounts/usage')
-    }
-
-}
-
-// Types for Claude Accounts
-export interface ClaudeAccountUsage {
-    usedTokens: number
-    totalTokens: number
-    percentage: number
-    updatedAt: number
-}
-
-export interface ClaudeAccount {
-    id: string
-    name: string
-    configDir: string
-    isActive: boolean
-    autoRotate: boolean
-    usageThreshold: number
-    planType?: 'pro' | 'max'
-    lastUsage?: ClaudeAccountUsage
-    createdAt: number
-    lastActiveAt?: number
-}
-
-export interface ClaudeAccountsConfig {
-    accounts: ClaudeAccount[]
-    activeAccountId: string
-    autoRotateEnabled: boolean
-    defaultThreshold: number
 }

@@ -312,13 +312,6 @@ export function SessionHeader(props: {
     const projects = Array.isArray(projectsData?.projects) ? projectsData.projects : []
     const project = useMemo(() => matchSessionToProject(props.session, projects), [props.session, projects])
 
-    const claudeAccountName = props.session.metadata?.claudeAccountName || null
-    const claudeAccountDisplay = useMemo(() => {
-        if (!claudeAccountName) return null
-        const atIndex = claudeAccountName.indexOf('@')
-        return atIndex > 0 ? claudeAccountName.slice(0, atIndex) : claudeAccountName
-    }, [claudeAccountName])
-
     const agentMeta = useMemo(
         () => {
             const parts = [agentLabel]
@@ -334,12 +327,9 @@ export function SessionHeader(props: {
             if (worktreeBranch) {
                 parts.push(worktreeBranch)
             }
-            if (claudeAccountDisplay) {
-                parts.push(claudeAccountDisplay)
-            }
             return parts.join(' · ')
         },
-        [agentLabel, runtimeAgent, runtimeModel, project, worktreeBranch, claudeAccountDisplay]
+        [agentLabel, runtimeAgent, runtimeModel, project, worktreeBranch]
     )
 
     // Subscription state - supports both Telegram chatId and Web clientId

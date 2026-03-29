@@ -20,7 +20,6 @@ import { initialMachineMetadata } from '@/daemon/run';
 import { startHappyServer } from '@/claude/utils/startHappyServer';
 import { startHookServer } from '@/claude/utils/startHookServer';
 import { generateHookSettingsFile, cleanupHookSettingsFile, updateHookSettingsFastMode, readHookSettingsFastMode } from '@/claude/utils/generateHookSettings';
-import { ensureClaudeSessionSymlink } from '@/claude/utils/sessionSymlink';
 import { registerKillSessionHandler } from './registerKillSessionHandler';
 import { runtimePath } from '../projectPath';
 import { resolve } from 'node:path';
@@ -89,18 +88,6 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     // Create session service
     const api = await ApiClient.create();
 
-    // Select best Claude account via load balancing and set CLAUDE_CONFIG_DIR
-    const activeAccount = await api.selectBestClaudeAccount();
-    if (activeAccount) {
-        logger.debug(`[START] Load-balanced to Claude account: ${activeAccount.name} (${activeAccount.id}), configDir: ${activeAccount.configDir}`);
-        options.claudeEnvVars = {
-            ...options.claudeEnvVars,
-            CLAUDE_CONFIG_DIR: activeAccount.configDir
-        };
-    } else {
-        logger.debug('[START] No active Claude account configured, using default');
-    }
-
     // Create a new session
     let state: AgentState = {};
 
@@ -141,9 +128,6 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         flavor: 'claude',
         runtimeAgent: runtimeAgent ?? undefined,
         worktree: worktreeInfo ?? undefined,
-        // Claude account info
-        claudeAccountId: activeAccount?.id,
-        claudeAccountName: activeAccount?.name
     };
     let response: Awaited<ReturnType<typeof api.getOrCreateSession>> | null = null;
     const hapiSessionId = options.hapiSessionId?.trim() || null;
@@ -496,17 +480,6 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     });
 
     const resumeSessionId = (options.resumeSessionId ?? response.metadata?.claudeSessionId ?? null) || null;
-
-    // When refreshing accounts, the session .jsonl file lives under the old account's config dir.
-    // Claude Code's claudeCheckSession will fail if it can't find the file under the new CLAUDE_CONFIG_DIR.
-    // We symlink the old session file into the new account's project dir so --resume works across accounts.
-    if (resumeSessionId && activeAccount) {
-        ensureClaudeSessionSymlink({
-            sessionId: resumeSessionId,
-            workingDirectory,
-            newAccountConfigDir: activeAccount.configDir,
-        });
-    }
 
     // Create claude loop
     await loop({

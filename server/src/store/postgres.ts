@@ -16,10 +16,6 @@ import type {
     StoredAutoIterationConfig,
     StoredAutoIterationLog,
     StoredSessionAutoIterConfig,
-    StoredAgentGroup,
-    StoredAgentGroupWithLastMessage,
-    StoredAgentGroupMember,
-    StoredAgentGroupMessage,
     StoredSessionNotificationSubscription,
     StoredAIProfile,
     StoredAIProfileMemory,
@@ -35,11 +31,6 @@ import type {
     VersionedUpdateResult,
     SuggestionStatus,
     MemoryType,
-    AgentGroupType,
-    AgentGroupStatus,
-    GroupMemberRole,
-    GroupSenderType,
-    GroupMessageType,
     AIProfileRole,
     AIProfileStatus,
     AIProfileMemoryType,
@@ -346,41 +337,6 @@ export class PostgresStore implements IStore {
                 auto_iter_enabled BOOLEAN DEFAULT TRUE,
                 updated_at BIGINT DEFAULT FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)
             );
-
-            -- Agent Groups 表
-            CREATE TABLE IF NOT EXISTS agent_groups (
-                id TEXT PRIMARY KEY,
-                namespace TEXT NOT NULL,
-                name TEXT NOT NULL,
-                description TEXT,
-                type TEXT DEFAULT 'collaboration',
-                created_at BIGINT NOT NULL,
-                updated_at BIGINT NOT NULL,
-                status TEXT DEFAULT 'active'
-            );
-            CREATE INDEX IF NOT EXISTS idx_agent_groups_namespace ON agent_groups(namespace);
-
-            -- Agent Group Members 表
-            CREATE TABLE IF NOT EXISTS agent_group_members (
-                group_id TEXT NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
-                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-                role TEXT DEFAULT 'member',
-                agent_type TEXT,
-                joined_at BIGINT NOT NULL,
-                PRIMARY KEY (group_id, session_id)
-            );
-
-            -- Agent Group Messages 表
-            CREATE TABLE IF NOT EXISTS agent_group_messages (
-                id TEXT PRIMARY KEY,
-                group_id TEXT NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
-                source_session_id TEXT,
-                sender_type TEXT DEFAULT 'agent',
-                content TEXT NOT NULL,
-                message_type TEXT DEFAULT 'chat',
-                created_at BIGINT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_agent_group_messages_group ON agent_group_messages(group_id);
 
             -- Session Notification Subscriptions 表
             CREATE TABLE IF NOT EXISTS session_notification_subscriptions (
@@ -1934,184 +1890,6 @@ export class PostgresStore implements IStore {
         return this.getSessionAutoIterConfig(sessionId)
     }
 
-    // ========== Agent Group 操作 ==========
-
-    async createAgentGroup(data: {
-        namespace: string
-        name: string
-        description?: string | null
-        type?: AgentGroupType
-    }): Promise<StoredAgentGroup> {
-        const id = randomUUID()
-        const now = Date.now()
-        await this.pool.query(`
-            INSERT INTO agent_groups (id, namespace, name, description, type, created_at, updated_at, status)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        `, [id, data.namespace, data.name, data.description ?? null, data.type ?? 'collaboration', now, now, 'active'])
-
-        const result = await this.getAgentGroup(id)
-        if (!result) throw new Error('Failed to create agent group')
-        return result
-    }
-
-    async getAgentGroup(id: string): Promise<StoredAgentGroup | null> {
-        const result = await this.pool.query('SELECT * FROM agent_groups WHERE id = $1', [id])
-        if (result.rows.length === 0) return null
-        return this.toStoredAgentGroup(result.rows[0])
-    }
-
-    async getAgentGroups(namespace: string): Promise<StoredAgentGroup[]> {
-        const result = await this.pool.query('SELECT * FROM agent_groups WHERE namespace = $1 ORDER BY updated_at DESC', [namespace])
-        return result.rows.map(row => this.toStoredAgentGroup(row))
-    }
-
-    async getAgentGroupsWithLastMessage(namespace: string): Promise<StoredAgentGroupWithLastMessage[]> {
-        const result = await this.pool.query(`
-            SELECT g.*,
-                   (SELECT COUNT(*) FROM agent_group_members WHERE group_id = g.id) as member_count,
-                   m.content as last_message_content,
-                   m.sender_type as last_message_sender_type,
-                   m.created_at as last_message_created_at
-            FROM agent_groups g
-            LEFT JOIN LATERAL (
-                SELECT content, sender_type, created_at FROM agent_group_messages
-                WHERE group_id = g.id ORDER BY created_at DESC LIMIT 1
-            ) m ON true
-            WHERE g.namespace = $1
-            ORDER BY g.updated_at DESC
-        `, [namespace])
-
-        return result.rows.map(row => ({
-            ...this.toStoredAgentGroup(row),
-            memberCount: Number(row.member_count),
-            lastMessage: row.last_message_content ? {
-                content: row.last_message_content,
-                senderType: row.last_message_sender_type as GroupSenderType,
-                createdAt: Number(row.last_message_created_at)
-            } : null
-        }))
-    }
-
-    async updateAgentGroupStatus(id: string, status: AgentGroupStatus): Promise<void> {
-        await this.pool.query('UPDATE agent_groups SET status = $1, updated_at = $2 WHERE id = $3', [status, Date.now(), id])
-    }
-
-    async deleteAgentGroup(id: string): Promise<void> {
-        await this.pool.query('DELETE FROM agent_groups WHERE id = $1', [id])
-    }
-
-    async addGroupMember(data: {
-        groupId: string
-        sessionId: string
-        role?: GroupMemberRole
-        agentType?: string | null
-    }): Promise<StoredAgentGroupMember> {
-        const now = Date.now()
-        await this.pool.query(`
-            INSERT INTO agent_group_members (group_id, session_id, role, agent_type, joined_at)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (group_id, session_id) DO UPDATE SET role = EXCLUDED.role, agent_type = EXCLUDED.agent_type
-        `, [data.groupId, data.sessionId, data.role ?? 'member', data.agentType ?? null, now])
-
-        return {
-            groupId: data.groupId,
-            sessionId: data.sessionId,
-            role: (data.role ?? 'member') as GroupMemberRole,
-            agentType: data.agentType ?? null,
-            joinedAt: now
-        }
-    }
-
-    async removeGroupMember(groupId: string, sessionId: string): Promise<void> {
-        await this.pool.query('DELETE FROM agent_group_members WHERE group_id = $1 AND session_id = $2', [groupId, sessionId])
-    }
-
-    async getGroupMembers(groupId: string): Promise<StoredAgentGroupMember[]> {
-        const result = await this.pool.query('SELECT * FROM agent_group_members WHERE group_id = $1', [groupId])
-        return result.rows.map(row => ({
-            groupId: row.group_id,
-            sessionId: row.session_id,
-            role: row.role as GroupMemberRole,
-            agentType: row.agent_type,
-            joinedAt: Number(row.joined_at)
-        }))
-    }
-
-    async getSessionGroups(sessionId: string): Promise<StoredAgentGroup[]> {
-        const result = await this.pool.query(`
-            SELECT g.* FROM agent_groups g
-            JOIN agent_group_members m ON g.id = m.group_id
-            WHERE m.session_id = $1
-            ORDER BY g.updated_at DESC
-        `, [sessionId])
-        return result.rows.map(row => this.toStoredAgentGroup(row))
-    }
-
-    async getGroupsForSession(sessionId: string): Promise<StoredAgentGroup[]> {
-        return this.getSessionGroups(sessionId)
-    }
-
-    async addGroupMessage(data: {
-        groupId: string
-        sourceSessionId?: string | null
-        senderType?: GroupSenderType
-        content: string
-        messageType?: GroupMessageType
-    }): Promise<StoredAgentGroupMessage> {
-        const id = randomUUID()
-        const now = Date.now()
-        await this.pool.query(`
-            INSERT INTO agent_group_messages (id, group_id, source_session_id, sender_type, content, message_type, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-        `, [id, data.groupId, data.sourceSessionId ?? null, data.senderType ?? 'agent', data.content, data.messageType ?? 'chat', now])
-
-        await this.pool.query('UPDATE agent_groups SET updated_at = $1 WHERE id = $2', [now, data.groupId])
-
-        return {
-            id,
-            groupId: data.groupId,
-            sourceSessionId: data.sourceSessionId ?? null,
-            senderType: (data.senderType ?? 'agent') as GroupSenderType,
-            content: data.content,
-            messageType: (data.messageType ?? 'chat') as GroupMessageType,
-            createdAt: now
-        }
-    }
-
-    async getGroupMessages(groupId: string, limit: number = 100, beforeId?: string): Promise<StoredAgentGroupMessage[]> {
-        let query = 'SELECT * FROM agent_group_messages WHERE group_id = $1'
-        const params: unknown[] = [groupId]
-
-        if (beforeId) {
-            query += ' AND created_at < (SELECT created_at FROM agent_group_messages WHERE id = $2)'
-            params.push(beforeId)
-        }
-
-        query += ' ORDER BY created_at ASC, id ASC LIMIT $' + (params.length + 1)
-        params.push(limit)
-
-        const result = await this.pool.query(query, params)
-        console.log(`[DEBUG] getGroupMessages(${groupId.slice(0,8)}...): query=${query}, beforeId=${beforeId}`)
-        console.log(`[DEBUG] GROUP DB returned ${result.rows.length} messages, first 3 rows:`)
-        result.rows.slice(0, 3).forEach((row, i) => {
-            console.log(`[DEBUG]   Row${i}: id=${row.id}, created_at=${row.created_at}`)
-        })
-        const mapped = result.rows.map(row => ({
-            id: row.id,
-            groupId: row.group_id,
-            sourceSessionId: row.source_session_id,
-            senderType: row.sender_type as GroupSenderType,
-            content: row.content,
-            messageType: row.message_type as GroupMessageType,
-            createdAt: Number(row.created_at)
-        }))
-        console.log(`[DEBUG] GROUP mapped, first 3 messages:`)
-        mapped.slice(0, 3).forEach((msg, i) => {
-            console.log(`[DEBUG]   Msg${i}: id=${msg.id}, createdAt=${msg.createdAt}`)
-        })
-        return mapped
-    }
-
     // ========== Session Creator Chat ID 操作 ==========
 
     async setSessionCreatorChatId(sessionId: string, chatId: string, namespace: string): Promise<boolean> {
@@ -3123,19 +2901,6 @@ export class PostgresStore implements IStore {
             rolledBackAt: row.rolled_back_at ? Number(row.rolled_back_at) : null,
             createdAt: Number(row.created_at),
             executedAt: row.executed_at ? Number(row.executed_at) : null
-        }
-    }
-
-    private toStoredAgentGroup(row: any): StoredAgentGroup {
-        return {
-            id: row.id,
-            namespace: row.namespace,
-            name: row.name,
-            description: row.description,
-            type: row.type as AgentGroupType,
-            createdAt: Number(row.created_at),
-            updatedAt: Number(row.updated_at),
-            status: row.status as AgentGroupStatus
         }
     }
 

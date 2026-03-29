@@ -32,8 +32,6 @@ import { queryKeys } from '@/lib/query-keys'
 import TerminalPage from '@/routes/sessions/terminal'
 import SettingsPage from '@/routes/settings'
 import UsagePage from '@/routes/usage'
-import GroupsPage from '@/routes/groups'
-import GroupChatPage from '@/routes/groups/chat'
 import { LoginPage } from '@/routes/login'
 import { AuthCallbackPage } from '@/routes/auth/callback'
 
@@ -555,17 +553,6 @@ const usageRoute = createRoute({
     component: UsagePage,
 })
 
-const groupsRoute = createRoute({
-    getParentRoute: () => rootRoute,
-    path: '/groups',
-    component: GroupsPage,
-})
-
-const groupChatRoute = createRoute({
-    getParentRoute: () => rootRoute,
-    path: '/groups/$groupId/chat',
-    component: GroupChatPage,
-})
 
 // Auth routes (public - no authentication required)
 const loginRoute = createRoute({
@@ -590,8 +577,6 @@ export const routeTree = rootRoute.addChildren([
     newSessionRoute,
     settingsRoute,
     usageRoute,
-    groupsRoute,
-    groupChatRoute,
 ])
 
 type RouterHistory = Parameters<typeof createRouter>[0]['history']

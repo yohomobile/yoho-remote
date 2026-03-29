@@ -1,6 +1,6 @@
 import axios from 'axios'
-import type { AgentState, ClaudeAccount, CliMessagesResponse, CreateMachineResponse, CreateSessionResponse, DaemonState, Machine, MachineMetadata, Metadata, Session } from '@/api/types'
-import { ActiveAccountResponseSchema, SelectBestAccountResponseSchema, AgentStateSchema, CliMessagesResponseSchema, CreateMachineResponseSchema, CreateSessionResponseSchema, DaemonStateSchema, MachineMetadataSchema, MetadataSchema } from '@/api/types'
+import type { AgentState, CliMessagesResponse, CreateMachineResponse, CreateSessionResponse, DaemonState, Machine, MachineMetadata, Metadata, Session } from '@/api/types'
+import { AgentStateSchema, CliMessagesResponseSchema, CreateMachineResponseSchema, CreateSessionResponseSchema, DaemonStateSchema, MachineMetadataSchema, MetadataSchema } from '@/api/types'
 import { configuration } from '@/configuration'
 import { getAuthToken } from '@/api/auth'
 import { ApiMachineClient } from './apiMachine'
@@ -385,67 +385,4 @@ export class ApiClient {
         return response.data.messages
     }
 
-    /**
-     * 获取当前活跃的 Claude 账号
-     * 如果没有配置多账号，返回 null
-     */
-    async getActiveClaudeAccount(): Promise<ClaudeAccount | null> {
-        try {
-            const response = await axios.get(
-                `${configuration.serverUrl}/cli/claude-accounts/active`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${this.token}`,
-                        'Content-Type': 'application/json'
-                    },
-                    timeout: 10_000
-                }
-            )
-
-            const parsed = ActiveAccountResponseSchema.safeParse(response.data)
-            if (!parsed.success) {
-                return null
-            }
-
-            return parsed.data.account
-        } catch (error) {
-            // 如果 API 不存在或出错，返回 null（使用默认配置）
-            return null
-        }
-    }
-
-    /**
-     * 智能选择最优 Claude 账号（负载平衡）
-     * 基于所有账号的实时 usage 数据选择最空闲的账号
-     * 如果 select-best 端点不存在（旧版 server），fallback 到 getActiveClaudeAccount
-     */
-    async selectBestClaudeAccount(excludeConfigDir?: string): Promise<ClaudeAccount | null> {
-        try {
-            const params: Record<string, string> = {}
-            if (excludeConfigDir) {
-                params.excludeConfigDir = excludeConfigDir
-            }
-            const response = await axios.get(
-                `${configuration.serverUrl}/cli/claude-accounts/select-best`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${this.token}`,
-                        'Content-Type': 'application/json'
-                    },
-                    params,
-                    timeout: 15_000
-                }
-            )
-
-            const parsed = SelectBestAccountResponseSchema.safeParse(response.data)
-            if (!parsed.success) {
-                return this.getActiveClaudeAccount()
-            }
-
-            return parsed.data.account
-        } catch (error) {
-            // fallback: 如果 select-best 端点不存在，使用旧的 active 端点
-            return this.getActiveClaudeAccount()
-        }
-    }
 }
