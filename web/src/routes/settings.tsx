@@ -1,5 +1,6 @@
 import { useCallback, useState, useMemo, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from '@tanstack/react-router'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { Spinner } from '@/components/Spinner'
@@ -9,6 +10,7 @@ import { useServerUrl } from '@/hooks/useServerUrl'
 import { getLogoutUrl, clearTokens } from '@/services/keycloak'
 import type { InputPreset, Project } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
+import { useMyOrgs } from '@/hooks/queries/useOrgs'
 
 function BackIcon(props: { className?: string }) {
     return (
@@ -267,6 +269,7 @@ function ProjectForm(props: {
 export default function SettingsPage() {
     const { api } = useAppContext()
     const goBack = useAppGoBack()
+    const navigate = useNavigate()
     const queryClient = useQueryClient()
     const { baseUrl } = useServerUrl()
     const [projectError, setProjectError] = useState<string | null>(null)
@@ -278,6 +281,9 @@ export default function SettingsPage() {
         clientId: getClientId(),
         deviceType: getDeviceType()
     }), [])
+
+    // Organizations
+    const { orgs } = useMyOrgs(api)
 
     // Machines (for project form)
     const { data: machinesData } = useQuery({
@@ -616,6 +622,36 @@ export default function SettingsPage() {
                             </div>
                         </div>
                     </div>
+
+                    {/* Organization Section */}
+                    {orgs.length > 0 && (
+                        <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
+                            <div className="px-3 py-2 border-b border-[var(--app-divider)]">
+                                <h2 className="text-sm font-medium">Organization</h2>
+                            </div>
+                            <div className="divide-y divide-[var(--app-divider)]">
+                                {orgs.map((org) => (
+                                    <button
+                                        key={org.id}
+                                        type="button"
+                                        onClick={() => navigate({ to: '/orgs/$orgId', params: { orgId: org.id } })}
+                                        className="w-full px-3 py-2.5 flex items-center justify-between gap-2 hover:bg-[var(--app-secondary-bg)] transition-colors"
+                                    >
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 text-white text-xs font-bold">
+                                                {org.name.charAt(0).toUpperCase()}
+                                            </div>
+                                            <div className="min-w-0 text-left">
+                                                <div className="text-sm font-medium truncate">{org.name}</div>
+                                                <div className="text-[10px] text-[var(--app-hint)]">{org.myRole}</div>
+                                            </div>
+                                        </div>
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[var(--app-hint)]"><polyline points="9 18 15 12 9 6" /></svg>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     {/* Privacy Settings Section */}
                     <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
