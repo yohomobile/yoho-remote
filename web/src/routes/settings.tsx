@@ -72,6 +72,25 @@ function PlusIcon(props: { className?: string }) {
     )
 }
 
+function CheckIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <polyline points="20 6 9 17 4 12" />
+        </svg>
+    )
+}
+
 function EditIcon(props: { className?: string }) {
     return (
         <svg
@@ -658,25 +677,47 @@ export default function SettingsPage() {
                             <h2 className="text-sm font-medium">Organization</h2>
                         </div>
                         <div className="divide-y divide-[var(--app-divider)]">
-                            {orgs.map((org) => (
-                                <button
-                                    key={org.id}
-                                    type="button"
-                                    onClick={() => navigate({ to: '/orgs/$orgId', params: { orgId: org.id } })}
-                                    className="w-full px-3 py-2.5 flex items-center justify-between gap-2 hover:bg-[var(--app-secondary-bg)] transition-colors"
-                                >
-                                    <div className="flex items-center gap-2 min-w-0">
-                                        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 text-white text-xs font-bold">
-                                            {org.name.charAt(0).toUpperCase()}
+                            {orgs.map((org) => {
+                                const isCurrent = org.id === currentOrgId
+                                return (
+                                    <button
+                                        key={org.id}
+                                        type="button"
+                                        onClick={() => navigate({ to: '/orgs/$orgId', params: { orgId: org.id } })}
+                                        className={`w-full px-3 py-2.5 flex items-center justify-between gap-2 transition-colors ${
+                                            isCurrent ? 'bg-[var(--app-button)]/10' : 'hover:bg-[var(--app-secondary-bg)]'
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-white text-xs font-bold ${
+                                                isCurrent
+                                                    ? 'bg-gradient-to-br from-indigo-500 to-purple-600 ring-2 ring-[var(--app-button)] ring-offset-2 ring-offset-[var(--app-subtle-bg)]'
+                                                    : 'bg-gradient-to-br from-indigo-500/50 to-purple-600/50'
+                                            }`}>
+                                                {org.name.charAt(0).toUpperCase()}
+                                            </div>
+                                            <div className="min-w-0 text-left">
+                                                <div className={`text-sm font-medium truncate ${isCurrent ? 'text-[var(--app-button)]' : ''}`}>
+                                                    {org.name}
+                                                    {isCurrent && (
+                                                        <span className="ml-1.5 text-[10px] font-normal px-1.5 py-0.5 rounded bg-[var(--app-button)]/10 text-[var(--app-button)]">
+                                                            Current
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className={`text-[10px] ${isCurrent ? 'text-[var(--app-button)]/70' : 'text-[var(--app-hint)]'}`}>
+                                                    {org.myRole}
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div className="min-w-0 text-left">
-                                            <div className="text-sm font-medium truncate">{org.name}</div>
-                                            <div className="text-[10px] text-[var(--app-hint)]">{org.myRole}</div>
-                                        </div>
-                                    </div>
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[var(--app-hint)]"><polyline points="9 18 15 12 9 6" /></svg>
-                                </button>
-                            ))}
+                                        {isCurrent ? (
+                                            <CheckIcon className="shrink-0 text-[var(--app-button)]" />
+                                        ) : (
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[var(--app-hint)]"><polyline points="9 18 15 12 9 6" /></svg>
+                                        )}
+                                    </button>
+                                )
+                            })}
                         </div>
                         {!showCreateOrg ? (
                             <div className="border-t border-[var(--app-divider)] px-3 py-2">
