@@ -1447,6 +1447,13 @@ export class SyncEngine {
             await this.refreshMachine(m.id)
         }
 
+        // On server startup, no daemon is connected yet.
+        // Mark all machines as inactive so that handleMachineAlive
+        // correctly detects the offline→online transition for auto-resume.
+        for (const machine of this.machines.values()) {
+            machine.active = false
+        }
+
         // Don't clean up zombie sessions on startup.
         // expireInactive() will handle stale sessions after the timer fires,
         // giving CLI processes time to reconnect and send heartbeats.
