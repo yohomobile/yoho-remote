@@ -6,6 +6,18 @@
 import nodemailer from 'nodemailer'
 import type { Transporter } from 'nodemailer'
 
+/**
+ * HTML 转义函数，防止 XSS 攻击
+ */
+function escapeHtml(unsafe: string): string {
+    return unsafe
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;')
+}
+
 export interface EmailConfig {
     host: string
     port: number
@@ -71,6 +83,12 @@ class EmailService {
         role: string
         expiresAt: number
     }): Promise<void> {
+        // HTML 转义所有用户输入，防止 XSS
+        const safeOrgName = escapeHtml(params.orgName)
+        const safeOrgSlug = escapeHtml(params.orgSlug)
+        const safeInviterEmail = escapeHtml(params.inviterEmail)
+        const safeRole = escapeHtml(params.role)
+
         const acceptUrl = `${process.env.WEB_URL || 'https://remote.yohomobile.dev'}/invitations/accept/${params.invitationId}`
 
         const expiresDate = new Date(params.expiresAt).toLocaleDateString('en-US', {
@@ -101,21 +119,21 @@ class EmailService {
             </p>
 
             <p style="margin: 0 0 20px; color: #333333; font-size: 16px; line-height: 1.6;">
-                <strong>${params.inviterEmail}</strong> has invited you to join the organization <strong>${params.orgName}</strong> on Yoho Remote.
+                <strong>${safeInviterEmail}</strong> has invited you to join the organization <strong>${safeOrgName}</strong> on Yoho Remote.
             </p>
 
             <div style="background-color: #f8f9fa; border-left: 4px solid #667eea; padding: 16px 20px; margin: 24px 0; border-radius: 4px;">
                 <div style="margin-bottom: 8px;">
                     <strong style="color: #495057; font-size: 14px;">Organization:</strong>
-                    <span style="color: #212529; font-size: 14px; margin-left: 8px;">${params.orgName}</span>
+                    <span style="color: #212529; font-size: 14px; margin-left: 8px;">${safeOrgName}</span>
                 </div>
                 <div style="margin-bottom: 8px;">
                     <strong style="color: #495057; font-size: 14px;">Slug:</strong>
-                    <span style="color: #212529; font-size: 14px; margin-left: 8px; font-family: monospace;">${params.orgSlug}</span>
+                    <span style="color: #212529; font-size: 14px; margin-left: 8px; font-family: monospace;">${safeOrgSlug}</span>
                 </div>
                 <div>
                     <strong style="color: #495057; font-size: 14px;">Role:</strong>
-                    <span style="color: #212529; font-size: 14px; margin-left: 8px; text-transform: capitalize;">${params.role}</span>
+                    <span style="color: #212529; font-size: 14px; margin-left: 8px; text-transform: capitalize;">${safeRole}</span>
                 </div>
             </div>
 
@@ -170,7 +188,7 @@ Yoho Remote - AI-powered remote collaboration
 
         await this.sendEmail({
             to: params.to,
-            subject: `Invitation to join ${params.orgName} on Yoho Remote`,
+            subject: `Invitation to join ${safeOrgName} on Yoho Remote`,
             html,
             text,
         })
