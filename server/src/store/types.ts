@@ -37,6 +37,7 @@ export type StoredMachine = {
     active: boolean
     activeAt: number | null
     seq: number
+    orgId: string | null
 }
 
 export type StoredMessage = {

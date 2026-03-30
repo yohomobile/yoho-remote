@@ -473,11 +473,11 @@ function SessionPage() {
 }
 
 function NewSessionPage() {
-    const { api } = useAppContext()
+    const { api, currentOrgId } = useAppContext()
     const navigate = useNavigate()
     const goBack = useAppGoBack()
     const queryClient = useQueryClient()
-    const { machines, isLoading: machinesLoading, error: machinesError } = useMachines(api, true)
+    const { machines, isLoading: machinesLoading, error: machinesError } = useMachines(api, true, currentOrgId)
 
     const handleCancel = useCallback(() => {
         navigate({ to: '/sessions' })

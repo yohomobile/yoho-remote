@@ -79,8 +79,9 @@ export interface IStore {
     updateMachineDaemonState(id: string, daemonState: unknown, expectedVersion: number, namespace: string): Promise<VersionedUpdateResult<unknown | null>>
     getMachine(id: string): Promise<StoredMachine | null>
     getMachineByNamespace(id: string, namespace: string): Promise<StoredMachine | null>
-    getMachines(): Promise<StoredMachine[]>
-    getMachinesByNamespace(namespace: string): Promise<StoredMachine[]>
+    getMachines(orgId?: string | null): Promise<StoredMachine[]>
+    getMachinesByNamespace(namespace: string, orgId?: string | null): Promise<StoredMachine[]>
+    setMachineOrgId(id: string, orgId: string, namespace: string): Promise<boolean>
 
     // === Message 操作 ===
     addMessage(sessionId: string, content: unknown, localId?: string): Promise<StoredMessage>

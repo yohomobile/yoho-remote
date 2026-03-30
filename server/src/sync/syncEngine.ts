@@ -115,6 +115,7 @@ export interface Machine {
     metadataVersion: number
     daemonState: unknown | null
     daemonStateVersion: number
+    orgId: string | null
 }
 
 export interface DecryptedMessage {
@@ -557,8 +558,12 @@ export class SyncEngine {
         return this.getMachines().filter(m => m.active)
     }
 
-    getOnlineMachinesByNamespace(namespace: string): Machine[] {
-        return this.getMachinesByNamespace(namespace).filter((machine) => machine.active)
+    getOnlineMachinesByNamespace(namespace: string, orgId?: string | null): Machine[] {
+        const machines = this.getMachinesByNamespace(namespace).filter((machine) => machine.active)
+        if (orgId) {
+            return machines.filter((machine) => machine.orgId === orgId)
+        }
+        return machines
     }
 
     getSessionMessages(sessionId: string): DecryptedMessage[] {
@@ -1455,7 +1460,8 @@ export class SyncEngine {
             metadata,
             metadataVersion: stored.metadataVersion,
             daemonState: stored.daemonState,
-            daemonStateVersion: stored.daemonStateVersion
+            daemonStateVersion: stored.daemonStateVersion,
+            orgId: stored.orgId ?? null
         }
 
         this.machines.set(machineId, machine)

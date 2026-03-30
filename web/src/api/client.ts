@@ -518,8 +518,9 @@ export class ApiClient {
         })
     }
 
-    async getMachines(): Promise<MachinesResponse> {
-        return await this.request<MachinesResponse>('/api/machines')
+    async getMachines(orgId?: string | null): Promise<MachinesResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<MachinesResponse>(`/api/machines${qs}`)
     }
 
     async checkMachinePathsExists(

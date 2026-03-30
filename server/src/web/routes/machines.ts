@@ -108,7 +108,8 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
         }
 
         const namespace = c.get('namespace')
-        const machines = engine.getOnlineMachinesByNamespace(namespace)
+        const orgId = c.req.query('orgId')
+        const machines = engine.getOnlineMachinesByNamespace(namespace, orgId ?? undefined)
             .filter((m) => !isMachineBlocked(m))
         return c.json({ machines })
     })

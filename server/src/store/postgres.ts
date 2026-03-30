@@ -535,6 +535,18 @@ export class PostgresStore implements IStore {
             -- Migration: Assign existing sessions to 'yoho' org
             UPDATE sessions SET org_id = (SELECT id FROM organizations WHERE slug = 'yoho' LIMIT 1)
             WHERE org_id IS NULL AND (SELECT id FROM organizations WHERE slug = 'yoho' LIMIT 1) IS NOT NULL;
+
+            -- Migration: Add org_id to machines
+            ALTER TABLE machines ADD COLUMN IF NOT EXISTS org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL;
+            CREATE INDEX IF NOT EXISTS idx_machines_org_id ON machines(org_id);
+
+            -- Migration: Assign ncu machine to 'yoho' org
+            UPDATE machines SET org_id = (SELECT id FROM organizations WHERE slug = 'yoho' LIMIT 1)
+            WHERE id = 'e16b3653-ad9f-46a7-89fd-48a3d576cccb' AND org_id IS NULL;
+
+            -- Migration: Assign 腾讯云 machine to 'demoorg' org
+            UPDATE machines SET org_id = (SELECT id FROM organizations WHERE slug = 'demoorg' LIMIT 1)
+            WHERE id = '252095a0-73cb-4552-85bc-df11060b4972' AND org_id IS NULL;
         `)
     }
 
@@ -850,14 +862,30 @@ export class PostgresStore implements IStore {
         return result.rows.length > 0 ? this.toStoredMachine(result.rows[0]) : null
     }
 
-    async getMachines(): Promise<StoredMachine[]> {
+    async getMachines(orgId?: string | null): Promise<StoredMachine[]> {
+        if (orgId) {
+            const result = await this.pool.query('SELECT * FROM machines WHERE org_id = $1 ORDER BY updated_at DESC', [orgId])
+            return result.rows.map(row => this.toStoredMachine(row))
+        }
         const result = await this.pool.query('SELECT * FROM machines ORDER BY updated_at DESC')
         return result.rows.map(row => this.toStoredMachine(row))
     }
 
-    async getMachinesByNamespace(namespace: string): Promise<StoredMachine[]> {
+    async getMachinesByNamespace(namespace: string, orgId?: string | null): Promise<StoredMachine[]> {
+        if (orgId) {
+            const result = await this.pool.query('SELECT * FROM machines WHERE namespace = $1 AND org_id = $2 ORDER BY updated_at DESC', [namespace, orgId])
+            return result.rows.map(row => this.toStoredMachine(row))
+        }
         const result = await this.pool.query('SELECT * FROM machines WHERE namespace = $1 ORDER BY updated_at DESC', [namespace])
         return result.rows.map(row => this.toStoredMachine(row))
+    }
+
+    async setMachineOrgId(id: string, orgId: string, namespace: string): Promise<boolean> {
+        const result = await this.pool.query(
+            'UPDATE machines SET org_id = $1 WHERE id = $2 AND namespace = $3',
+            [orgId, id, namespace]
+        )
+        return result.rowCount > 0
     }
 
     // ========== Message 操作 ==========
@@ -2853,7 +2881,8 @@ export class PostgresStore implements IStore {
             daemonStateVersion: row.daemon_state_version,
             active: row.active === true,
             activeAt: row.active_at ? Number(row.active_at) : null,
-            seq: row.seq
+            seq: row.seq,
+            orgId: row.org_id ?? null
         }
     }
 
