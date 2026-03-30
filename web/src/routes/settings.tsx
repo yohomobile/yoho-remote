@@ -8,7 +8,7 @@ import { getClientId, getDeviceType, getStoredEmail } from '@/lib/client-identit
 import { useNotificationPermission, useWebPushSubscription } from '@/hooks/useNotification'
 import { useServerUrl } from '@/hooks/useServerUrl'
 import { getLogoutUrl, clearTokens } from '@/services/keycloak'
-import type { InputPreset, Project } from '@/types/api'
+import type { InputPreset, Project, Machine } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useMyOrgs } from '@/hooks/queries/useOrgs'
 import { useCreateOrg } from '@/hooks/mutations/useOrgMutations'
@@ -774,6 +774,56 @@ export default function SettingsPage() {
                                         {isCreatingOrg ? 'Creating...' : 'Create'}
                                     </button>
                                 </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Machines Section */}
+                    <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
+                        <div className="px-3 py-2 border-b border-[var(--app-divider)]">
+                            <h2 className="text-sm font-medium">Machines</h2>
+                            <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
+                                Machines connected to this organization.
+                            </p>
+                        </div>
+                        {machines.length === 0 ? (
+                            <div className="px-3 py-4 text-center text-sm text-[var(--app-hint)]">
+                                No machines connected yet.
+                            </div>
+                        ) : (
+                            <div className="divide-y divide-[var(--app-divider)]">
+                                {machines.map((machine) => (
+                                    <div key={machine.id} className="px-3 py-2.5">
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div className="min-w-0 flex-1">
+                                                <div className="text-sm font-medium truncate">
+                                                    {machine.metadata?.host || machine.id.slice(0, 8)}
+                                                </div>
+                                                <div className="text-xs text-[var(--app-hint)] mt-1 space-y-0.5">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-[10px] font-medium">Platform:</span>
+                                                        <span className="font-mono">{machine.metadata?.platform || '-'}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-[10px] font-medium">Version:</span>
+                                                        <span className="font-mono text-[10px]">{machine.metadata?.yohoRemoteCliVersion || '-'}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-[10px] font-medium">ID:</span>
+                                                        <span className="font-mono text-[10px]">{machine.id}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className={`shrink-0 px-2 py-1 rounded text-[10px] font-medium ${
+                                                machine.active
+                                                    ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                                                    : 'bg-gray-500/10 text-gray-600 dark:text-gray-400'
+                                            }`}>
+                                                {machine.active ? 'Active' : 'Inactive'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         )}
                     </div>

@@ -22,7 +22,7 @@ import { runtimePath } from '@/projectPath';
 
 // Prepare initial metadata
 export const initialMachineMetadata: MachineMetadata = {
-  host: os.hostname(),
+  host: process.env.YOHO_MACHINE_NAME || os.hostname(),
   platform: os.platform(),
   yohoRemoteCliVersion: packageJson.version,
   homeDir: os.homedir(),
@@ -669,6 +669,20 @@ export async function startDaemon(): Promise<void> {
 
     // Connect to server
     apiMachine.connect();
+
+    // Check if metadata has changed and update if needed
+    const currentMetadata = machine.metadata;
+    const metadataChanged =
+      currentMetadata?.host !== initialMachineMetadata.host ||
+      currentMetadata?.platform !== initialMachineMetadata.platform ||
+      currentMetadata?.yohoRemoteCliVersion !== initialMachineMetadata.yohoRemoteCliVersion;
+
+    if (metadataChanged) {
+      logger.debug(`[DAEMON RUN] Metadata changed, updating...`);
+      logger.debug(`[DAEMON RUN] Old host: ${currentMetadata?.host}, New host: ${initialMachineMetadata.host}`);
+      await apiMachine.updateMachineMetadata(() => initialMachineMetadata);
+      logger.debug(`[DAEMON RUN] Metadata updated successfully`);
+    }
 
     // Every 60 seconds:
     // 1. Prune stale sessions
