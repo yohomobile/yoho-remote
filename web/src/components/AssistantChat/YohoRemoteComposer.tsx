@@ -1448,7 +1448,7 @@ export function YohoRemoteComposer(props: {
                             </div>
                         ) : null}
 
-                        {showPermissionSettings && showModelSettings ? (
+                        {(showPermissionSettings && showModelSettings) || (!showPermissionSettings && showModelSettings && isClaude) ? (
                             <div className="mx-3 h-px bg-[var(--app-divider)]" />
                         ) : null}
 
