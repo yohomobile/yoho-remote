@@ -16,6 +16,12 @@ import { RawJSONLines } from "@/claude/types";
 import { OutgoingMessageQueue } from "./utils/OutgoingMessageQueue";
 import { getToolName } from "./utils/getToolName";
 import { restoreTerminalState } from "@/ui/terminalState";
+import {
+    DEFAULT_OPENAI_FALLBACK_MODEL,
+    isClaudeOverloadError,
+    resolveOpenAiOverloadFallbackMode,
+    shouldUseOpenAiOverloadFallback
+} from "./utils/overloadFallback";
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
 const TITLE_INSTRUCTION = 'Based on this message, call mcp__yoho_remote__change_title to change chat session title that would represent the current task. If chat idea would change dramatically - call this function again to update the title.';
 
@@ -32,6 +38,8 @@ interface PermissionsField {
 
 export async function claudeRemoteLauncher(session: Session): Promise<'switch' | 'exit'> {
     logger.debug('[claudeRemoteLauncher] Starting remote launcher');
+    const sessionSource = process.env.YR_SESSION_SOURCE?.trim() || null;
+    const openAiFallbackModel = process.env.YR_CLAUDE_OPENAI_FALLBACK_MODEL?.trim() || DEFAULT_OPENAI_FALLBACK_MODEL;
 
     // Check if we have a TTY for UI rendering
     const hasTTY = process.stdout.isTTY && process.stdin.isTTY;
@@ -357,6 +365,14 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             mode: EnhancedMode;
         } | null = null;
         let lastKnownMode: EnhancedMode | null = null;
+        const lastDispatchedMessageRef: {
+            current: {
+                message: string;
+                mode: EnhancedMode;
+            } | null;
+        } = {
+            current: null
+        };
 
         // Track session ID to detect when it actually changes
         // This prevents context loss when mode changes (permission mode, model, etc.)
@@ -402,6 +418,10 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         if (pending) {
                             let p = pending;
                             pending = null;
+                            lastDispatchedMessageRef.current = {
+                                message: p.message,
+                                mode: p.mode
+                            };
                             permissionHandler.handleModeChange(p.mode.permissionMode);
                             return {
                                 ...p,
@@ -421,6 +441,10 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                             modeHash = msg.hash;
                             mode = msg.mode;
                             lastKnownMode = msg.mode;
+                            lastDispatchedMessageRef.current = {
+                                message: msg.message,
+                                mode: msg.mode
+                            };
                             permissionHandler.handleModeChange(mode.permissionMode);
                             return {
                                 message: appendTitleInstructionIfNeeded(msg.message),
@@ -507,6 +531,34 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         message: 'Previous session not found. Starting a new session...'
                     });
                     continue;
+                }
+
+                const dispatchedMessage = lastDispatchedMessageRef.current;
+                if (
+                    !exitReason
+                    && dispatchedMessage
+                    && shouldUseOpenAiOverloadFallback(sessionSource)
+                    && isClaudeOverloadError(errorMessage)
+                ) {
+                    const overloadFallback = resolveOpenAiOverloadFallbackMode(
+                        dispatchedMessage.mode,
+                        openAiFallbackModel
+                    );
+
+                    if (overloadFallback) {
+                        logger.debug(
+                            `[remote]: Claude overload detected, applying fallback strategy=${overloadFallback.strategy}, source=${sessionSource}, model=${openAiFallbackModel}`
+                        );
+                        const retryMessage = overloadFallback.strategy === 'set_fallback_model'
+                            ? `Claude 服务过载，正在用备用模型 ${openAiFallbackModel} 重试...`
+                            : `Claude 仍然过载，正在切换到 ${openAiFallbackModel} 重试...`;
+                        session.client.sendSessionEvent({
+                            type: 'message',
+                            message: retryMessage
+                        });
+                        session.queue.pushImmediate(dispatchedMessage.message, overloadFallback.mode);
+                        continue;
+                    }
                 }
 
                 if (!exitReason) {
