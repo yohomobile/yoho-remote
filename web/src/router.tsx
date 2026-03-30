@@ -32,7 +32,6 @@ import { useOtherUserTyping } from '@/hooks/useOtherUserTyping'
 import { queryKeys } from '@/lib/query-keys'
 import TerminalPage from '@/routes/sessions/terminal'
 import SettingsPage from '@/routes/settings'
-import UsagePage from '@/routes/usage'
 import OrgDetailPage from '@/routes/orgs'
 import { LoginPage } from '@/routes/login'
 import { AuthCallbackPage } from '@/routes/auth/callback'
@@ -119,27 +118,6 @@ function BrainIcon(props: { className?: string }) {
             <path d="M19.938 10.5a4 4 0 0 1 .585.396" />
             <path d="M6 18a4 4 0 0 1-1.967-.516" />
             <path d="M19.967 17.484A4 4 0 0 1 18 18" />
-        </svg>
-    )
-}
-
-function UsageIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <path d="M12 20V10" />
-            <path d="M18 20V4" />
-            <path d="M6 20v-4" />
         </svg>
     )
 }
@@ -289,14 +267,6 @@ function SessionsPage() {
                         </span>
                         <button
                             type="button"
-                            onClick={() => navigate({ to: '/usage' })}
-                            className="flex items-center justify-center h-7 w-7 rounded-lg text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors"
-                            title="Token Usage"
-                        >
-                            <UsageIcon />
-                        </button>
-                        <button
-                            type="button"
                             onClick={() => navigate({ to: '/settings' })}
                             className="flex items-center justify-center h-7 w-7 rounded-lg text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors"
                             title="Settings"
@@ -376,12 +346,6 @@ function SessionPage() {
     // Wrap sendMessage to intercept client-side slash commands
     const sendMessage = useCallback((text: string) => {
         const trimmed = text.trim().toLowerCase()
-
-        // Handle /stats and /status - navigate to usage page
-        if (trimmed === '/stats' || trimmed === '/status') {
-            navigate({ to: '/usage' })
-            return
-        }
 
         // Handle /fast - toggle fast mode (Claude only)
         if (trimmed === '/fast') {
@@ -574,12 +538,6 @@ const settingsRoute = createRoute({
     component: SettingsPage,
 })
 
-const usageRoute = createRoute({
-    getParentRoute: () => rootRoute,
-    path: '/usage',
-    component: UsagePage,
-})
-
 const orgDetailRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/orgs/$orgId',
@@ -608,7 +566,6 @@ export const routeTree = rootRoute.addChildren([
     sessionTerminalRoute,
     newSessionRoute,
     settingsRoute,
-    usageRoute,
     orgDetailRoute,
 ])
 

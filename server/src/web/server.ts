@@ -20,7 +20,6 @@ import { createOptimizeRoutes } from './routes/optimize'
 import { createVersionRoutes } from './routes/version'
 import { createSettingsRoutes } from './routes/settings'
 import { createPushRoutes } from './routes/push'
-import { createUsageRoutes } from './routes/usage'
 import { createYohoCredentialsRoutes } from './routes/yoho-credentials'
 import { createOrgsRoutes } from './routes/orgs'
 import { createCodexOpenAIRoutes } from './routes/codex-openai'
@@ -113,7 +112,6 @@ function createWebApp(options: {
     app.route('/api', createOptimizeRoutes())
     app.route('/api', createSettingsRoutes(options.store))
     app.route('/api', createPushRoutes())
-    app.route('/api', createUsageRoutes(options.getSyncEngine))
     app.route('/api', createYohoCredentialsRoutes())
     app.route('/api', createOrgsRoutes(options.store))
 
