@@ -245,6 +245,7 @@ export class SyncEngine {
     private readonly lastBroadcastAtByMachineId: Map<string, number> = new Map()
     private readonly todoBackfillAttemptedSessionIds: Set<string> = new Set()
     private readonly deletingSessions: Set<string> = new Set()
+    private _dbActiveSessionIds: Set<string> = new Set() // Sessions that were active in DB at startup
     private inactivityTimer: NodeJS.Timeout | null = null
 
     // 推送频率限制：每个 session 最少间隔 30 秒才能再次发送推送
@@ -1261,16 +1262,13 @@ export class SyncEngine {
         // Wait for daemon RPC handlers to be registered
         await new Promise(r => setTimeout(r, 3000))
 
-        const now = Date.now()
-        const MAX_OFFLINE_MS = 10 * 60 * 1000 // Only resume sessions inactive for <10 minutes
-
         const candidates = Array.from(this.sessions.values()).filter(s =>
             !s.active &&
+            this._dbActiveSessionIds.has(s.id) && // Was active in DB at server startup
             s.metadata?.machineId === machineId &&
             s.namespace === namespace &&
             (s.metadata?.flavor === 'claude' || s.metadata?.flavor === 'codex') &&
-            (s.metadata?.claudeSessionId || s.metadata?.codexSessionId) &&
-            (now - s.activeAt) < MAX_OFFLINE_MS
+            (s.metadata?.claudeSessionId || s.metadata?.codexSessionId)
         )
 
         if (candidates.length === 0) return
@@ -1314,6 +1312,8 @@ export class SyncEngine {
                 session.active = false
                 console.warn(`[auto-resume] Failed to resume session ${session.id.slice(0, 8)}: ${result.message}`)
             }
+            // Remove from candidates so it won't be retried
+            this._dbActiveSessionIds.delete(session.id)
         }
     }
 
@@ -1451,11 +1451,21 @@ export class SyncEngine {
             await this.refreshMachine(m.id)
         }
 
-        // On server startup, no daemon is connected yet.
-        // Mark all machines as inactive so that handleMachineAlive
-        // correctly detects the offline→online transition for auto-resume.
+        // On server startup, no daemon/CLI is connected yet.
+        // Mark all machines and sessions as inactive in memory so that:
+        // - handleMachineAlive correctly detects offline→online transition for auto-resume
+        // - Only sessions that were active in DB before restart are candidates for auto-resume
+        // Note: We track DB-active sessions separately for auto-resume before clearing.
+        this._dbActiveSessionIds = new Set(
+            Array.from(this.sessions.values())
+                .filter(s => s.active)
+                .map(s => s.id)
+        )
         for (const machine of this.machines.values()) {
             machine.active = false
+        }
+        for (const session of this.sessions.values()) {
+            session.active = false
         }
 
         // Don't clean up zombie sessions on startup.
