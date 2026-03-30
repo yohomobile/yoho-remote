@@ -262,8 +262,8 @@ function SessionsPage() {
                     <div className="flex shrink-0 items-center gap-2">
                         <OnlineUsersBadge users={onlineUsers} />
                         <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[var(--app-subtle-bg)] text-[var(--app-hint)]">
-                            <span className="sm:hidden">{sessions.length}</span>
-                            <span className="hidden sm:inline">{sessions.length} sessions</span>
+                            <span className="sm:hidden">{sessions.filter(s => s.status === 'active').length}</span>
+                            <span className="hidden sm:inline">{sessions.filter(s => s.status === 'active').length} sessions</span>
                         </span>
                         <button
                             type="button"
