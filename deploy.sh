@@ -148,6 +148,16 @@ if ! grep -q "EnvironmentFile=" "$SERVICE_FILE" 2>/dev/null; then
     echo "guang" | sudo -S systemctl daemon-reload
 fi
 
+echo "=== Killing existing yoho-remote processes..."
+# 杀掉 yoho-remote 相关进程，排除 deploy.sh 自身和 systemctl/sudo
+pgrep -f 'yoho-remote' | while read pid; do
+    cmdline=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' ')
+    if [[ "$pid" != "$$" && "$cmdline" != *"deploy.sh"* && "$cmdline" != *"systemctl"* && "$cmdline" != *"sudo"* ]]; then
+        kill "$pid" 2>/dev/null || true
+    fi
+done
+sleep 1
+
 echo "=== Restarting services..."
 if [[ "$BUILD_DAEMON" == "true" ]]; then
     echo "    (with daemon restart)"
