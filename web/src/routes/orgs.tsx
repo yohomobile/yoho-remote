@@ -4,7 +4,7 @@ import { useNavigate, useParams } from '@tanstack/react-router'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useOrg } from '@/hooks/queries/useOrgs'
-import { useInviteMember, useUpdateMemberRole, useRemoveMember } from '@/hooks/mutations/useOrgMutations'
+import { useInviteMember, useUpdateMemberRole, useRemoveMember, useUpdateOrg } from '@/hooks/mutations/useOrgMutations'
 import { queryKeys } from '@/lib/query-keys'
 import { LoadingState } from '@/components/LoadingState'
 import type { OrgMember, OrgRole } from '@/types/api'
@@ -29,12 +29,16 @@ export function OrgDetailPage() {
     const { inviteMember, isPending: isInviting, error: inviteError } = useInviteMember(api, orgId)
     const { updateRole } = useUpdateMemberRole(api, orgId)
     const { removeMember } = useRemoveMember(api, orgId)
+    const { updateOrg, isPending: isUpdating, error: updateError } = useUpdateOrg(api, orgId)
 
     const [inviteEmail, setInviteEmail] = useState('')
     const [inviteRole, setInviteRole] = useState<'admin' | 'member'>('member')
     const [showInviteForm, setShowInviteForm] = useState(false)
+    const [isEditingName, setIsEditingName] = useState(false)
+    const [editingName, setEditingName] = useState('')
 
     const canManageMembers = myRole === 'owner' || myRole === 'admin'
+    const canEditOrg = myRole === 'owner'
 
     const handleInvite = useCallback(async () => {
         if (!inviteEmail.trim()) return
@@ -46,6 +50,26 @@ export function OrgDetailPage() {
             // error is handled by hook
         }
     }, [inviteMember, inviteEmail, inviteRole])
+
+    const handleStartEditName = useCallback(() => {
+        setEditingName(org?.name ?? '')
+        setIsEditingName(true)
+    }, [org?.name])
+
+    const handleSaveName = useCallback(async () => {
+        if (!editingName.trim()) return
+        try {
+            await updateOrg({ name: editingName.trim() })
+            setIsEditingName(false)
+        } catch {
+            // error is handled by hook
+        }
+    }, [updateOrg, editingName])
+
+    const handleCancelEditName = useCallback(() => {
+        setEditingName(org?.name ?? '')
+        setIsEditingName(false)
+    }, [org?.name])
 
     const handleRoleChange = useCallback(async (email: string, newRole: string) => {
         try {
@@ -92,8 +116,54 @@ export function OrgDetailPage() {
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
                     </button>
                     <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium truncate">{org.name}</div>
+                        {isEditingName && canEditOrg ? (
+                            <div className="flex items-center gap-1">
+                                <input
+                                    type="text"
+                                    value={editingName}
+                                    onChange={(e) => setEditingName(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleSaveName()
+                                        if (e.key === 'Escape') handleCancelEditName()
+                                    }}
+                                    className="flex-1 px-1.5 py-0.5 text-sm font-medium rounded bg-[var(--app-subtle-bg)] border border-[var(--app-divider)] text-[var(--app-fg)]"
+                                    autoFocus
+                                />
+                                <button
+                                    type="button"
+                                    onClick={handleSaveName}
+                                    disabled={isUpdating || !editingName.trim()}
+                                    className="p-1 rounded text-green-600 hover:bg-green-50 disabled:opacity-50"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleCancelEditName}
+                                    className="p-1 rounded text-red-600 hover:bg-red-50"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="flex items-center gap-1">
+                                <div className="text-sm font-medium truncate">{org.name}</div>
+                                {canEditOrg && (
+                                    <button
+                                        type="button"
+                                        onClick={handleStartEditName}
+                                        className="p-0.5 rounded text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors"
+                                        title="Edit name"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+                                    </button>
+                                )}
+                            </div>
+                        )}
                         <div className="text-[10px] text-[var(--app-hint)]">{org.slug}</div>
+                        {updateError && (
+                            <div className="text-[10px] text-red-500">{updateError}</div>
+                        )}
                     </div>
                     {myRole && (
                         <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full text-white bg-gradient-to-r ${ROLE_COLORS[myRole]}`}>

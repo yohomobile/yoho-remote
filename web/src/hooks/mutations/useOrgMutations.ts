@@ -2,6 +2,27 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/query-keys'
 import type { ApiClient } from '@/api/client'
 
+export function useUpdateOrg(api: ApiClient | null, orgId: string) {
+    const queryClient = useQueryClient()
+
+    const mutation = useMutation({
+        mutationFn: async (input: { name?: string; settings?: Record<string, unknown> }) => {
+            if (!api) throw new Error('API unavailable')
+            return await api.updateOrg(orgId, input)
+        },
+        onSuccess: () => {
+            void queryClient.invalidateQueries({ queryKey: queryKeys.orgs })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.org(orgId) })
+        },
+    })
+
+    return {
+        updateOrg: mutation.mutateAsync,
+        isPending: mutation.isPending,
+        error: mutation.error instanceof Error ? mutation.error.message : null,
+    }
+}
+
 export function useCreateOrg(api: ApiClient | null) {
     const queryClient = useQueryClient()
 
