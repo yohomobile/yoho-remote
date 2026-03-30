@@ -10,7 +10,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { useAppContext } from '@/lib/app-context'
 
 type AgentType = 'claude' | 'codex' | 'droid'
-type ClaudeModelMode = 'default' | 'sonnet' | 'opus'
+type ClaudeModelMode = 'sonnet' | 'opus'
 
 /** 上次创建 session 时的偏好设置，存储在 localStorage */
 interface SpawnPrefs {
@@ -47,7 +47,6 @@ function saveSpawnPrefs(userEmail: string | null, prefs: SpawnPrefs): void {
 
 // Claude 模型选项
 const CLAUDE_MODES: { value: ClaudeModelMode; label: string; description: string }[] = [
-    { value: 'default', label: 'Default', description: 'Claude 默认模型' },
     { value: 'sonnet', label: 'Sonnet', description: 'Claude Sonnet 4.5+' },
     { value: 'opus', label: 'Opus', description: 'Claude Opus 4.6' },
 ]

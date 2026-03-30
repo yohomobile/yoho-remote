@@ -543,7 +543,7 @@ export class ApiClient {
         yolo?: boolean,
         sessionType?: 'simple' | 'worktree',
         worktreeName?: string,
-        claudeModel?: 'default' | 'sonnet' | 'opus',
+        claudeModel?: 'sonnet' | 'opus',
         codexModel?: string,
         modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh',
         droidModel?: string,

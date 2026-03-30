@@ -258,9 +258,8 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     // Permission mode is always bypassPermissions for Claude sessions
     let currentPermissionMode: PermissionMode = 'bypassPermissions';
     let currentModelMode: SessionModelMode = modeEnv.modelMode ?? (options.model === 'sonnet' || options.model === 'opus' ? options.model : 'sonnet');
-    // Sync currentModel with modelMode: 'opus'/'sonnet'/'default' → pass as --model
-    // When modelMode is 'default', use 'sonnet' (Claude Code's default)
-    let currentModel = currentModelMode === 'default' ? 'sonnet' : currentModelMode;
+    // Sync currentModel with modelMode: 'opus'/'sonnet' → pass as --model
+    let currentModel = currentModelMode;
     let currentFallbackModel: string | undefined = undefined; // Track current fallback model
     if (modeEnv.modelMode) {
         logger.debug(`[loop] Using mode settings from environment: modelMode=${modeEnv.modelMode}, reasoningEffort=${modeEnv.modelReasoningEffort}`);
@@ -462,12 +461,12 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         }
 
         if (config.modelMode !== undefined) {
-            const validModels: SessionModelMode[] = ['default', 'sonnet', 'opus'];
+            const validModels: SessionModelMode[] = ['sonnet', 'opus'];
             if (!validModels.includes(config.modelMode)) {
                 throw new Error('Invalid model mode');
             }
             currentModelMode = config.modelMode;
-            currentModel = config.modelMode === 'default' ? 'sonnet' : config.modelMode;
+            currentModel = config.modelMode;
         }
 
         if (config.fastMode !== undefined) {

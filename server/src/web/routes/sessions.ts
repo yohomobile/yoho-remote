@@ -128,7 +128,7 @@ const createSessionSchema = z.object({
     yolo: z.boolean().optional(),
     sessionType: z.enum(['simple', 'worktree']).optional(),
     worktreeName: z.string().optional(),
-    claudeModel: z.enum(['default', 'sonnet', 'opus']).optional(),
+    claudeModel: z.enum(['sonnet', 'opus']).optional(),
     codexModel: z.string().min(1).optional(),
     droidModel: z.string().min(1).optional(),
     droidReasoningEffort: z.string().min(1).optional(),
@@ -539,7 +539,7 @@ export function createSessionsRoutes(
         // 将 claudeModel/codexModel 转换为 modelMode
         let modelMode = parsed.data.modelMode
         if (parsed.data.claudeModel) {
-            // Claude 模型: default, sonnet, opus
+            // Claude 模型: sonnet, opus
             modelMode = parsed.data.claudeModel
         } else if (parsed.data.codexModel) {
             // codex 模型值如 'openai/gpt-5.2-codex' -> 'gpt-5.2-codex'
