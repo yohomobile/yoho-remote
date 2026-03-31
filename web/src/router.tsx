@@ -30,7 +30,6 @@ import { useSendMessage } from '@/hooks/mutations/useSendMessage'
 import { useOtherUserTyping } from '@/hooks/useOtherUserTyping'
 import { queryKeys } from '@/lib/query-keys'
 import SettingsPage from '@/routes/settings'
-import OrgDetailPage from '@/routes/orgs'
 import AcceptInvitationPage from '@/routes/invitations/accept'
 import { LoginPage } from '@/routes/login'
 import { AuthCallbackPage } from '@/routes/auth/callback'
@@ -234,12 +233,36 @@ function SessionsPage() {
                             </div>
                         </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
+                    <div className="flex shrink-0 items-center gap-1.5">
                         <OnlineUsersBadge users={onlineUsers} />
                         <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[var(--app-subtle-bg)] text-[var(--app-hint)]">
                             <span className="sm:hidden">{sessions.filter(s => s.active).length}</span>
                             <span className="hidden sm:inline">{sessions.filter(s => s.active).length} sessions</span>
                         </span>
+                        <button
+                            type="button"
+                            onClick={() => { navigate({ to: '/settings' }); setTimeout(() => document.getElementById('section-api-keys')?.scrollIntoView({ behavior: 'smooth' }), 100) }}
+                            className="flex items-center justify-center h-7 w-7 rounded-lg text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors"
+                            title="API Keys"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" /></svg>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => { navigate({ to: '/settings' }); setTimeout(() => document.getElementById('section-members')?.scrollIntoView({ behavior: 'smooth' }), 100) }}
+                            className="flex items-center justify-center h-7 w-7 rounded-lg text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors"
+                            title="Members"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => { navigate({ to: '/settings' }); setTimeout(() => document.getElementById('section-projects')?.scrollIntoView({ behavior: 'smooth' }), 100) }}
+                            className="flex items-center justify-center h-7 w-7 rounded-lg text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors"
+                            title="Projects"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>
+                        </button>
                         <button
                             type="button"
                             onClick={() => navigate({ to: '/settings' })}
@@ -497,12 +520,6 @@ const settingsRoute = createRoute({
     component: SettingsPage,
 })
 
-const orgDetailRoute = createRoute({
-    getParentRoute: () => rootRoute,
-    path: '/orgs/$orgId',
-    component: OrgDetailPage,
-})
-
 // Auth routes (public - no authentication required)
 const loginRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -530,7 +547,6 @@ export const routeTree = rootRoute.addChildren([
     sessionRoute,
     newSessionRoute,
     settingsRoute,
-    orgDetailRoute,
     acceptInvitationRoute,
 ])
 

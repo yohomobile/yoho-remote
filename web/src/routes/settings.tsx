@@ -8,11 +8,23 @@ import { getClientId, getDeviceType, getStoredEmail } from '@/lib/client-identit
 import { useNotificationPermission, useWebPushSubscription } from '@/hooks/useNotification'
 import { useServerUrl } from '@/hooks/useServerUrl'
 import { getLogoutUrl, clearTokens } from '@/services/keycloak'
-import type { Project, Machine } from '@/types/api'
+import type { Project, Machine, OrgMember, OrgRole } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
-import { useMyOrgs } from '@/hooks/queries/useOrgs'
-import { useCreateOrg } from '@/hooks/mutations/useOrgMutations'
+import { useMyOrgs, useOrg } from '@/hooks/queries/useOrgs'
+import { useCreateOrg, useInviteMember, useUpdateMemberRole, useRemoveMember } from '@/hooks/mutations/useOrgMutations'
 import { CRSApiKeyManager } from '@/components/CRSApiKeyManager'
+
+const ROLE_LABELS: Record<OrgRole, string> = {
+    owner: 'Owner',
+    admin: 'Admin',
+    member: 'Member',
+}
+
+const ROLE_COLORS: Record<OrgRole, string> = {
+    owner: 'from-amber-500 to-orange-600',
+    admin: 'from-blue-500 to-indigo-600',
+    member: 'from-gray-400 to-gray-500',
+}
 
 function BackIcon(props: { className?: string }) {
     return (
@@ -252,6 +264,44 @@ export default function SettingsPage() {
             // error handled by hook
         }
     }, [createOrg, newOrgName, newOrgSlug, setCurrentOrgId])
+
+    // Members management
+    const { members, myRole: orgRole } = useOrg(api, currentOrgId ?? '')
+    const { inviteMember, isPending: isInviting, error: inviteError } = useInviteMember(api, currentOrgId ?? '')
+    const { updateRole } = useUpdateMemberRole(api, currentOrgId ?? '')
+    const { removeMember } = useRemoveMember(api, currentOrgId ?? '')
+    const [inviteEmail, setInviteEmail] = useState('')
+    const [inviteRole, setInviteRole] = useState<'admin' | 'member'>('member')
+    const [showInviteForm, setShowInviteForm] = useState(false)
+    const canManageMembers = orgRole === 'owner' || orgRole === 'admin'
+
+    const handleInvite = useCallback(async () => {
+        if (!inviteEmail.trim()) return
+        try {
+            await inviteMember({ email: inviteEmail.trim(), role: inviteRole })
+            setInviteEmail('')
+            setShowInviteForm(false)
+        } catch {
+            // error is handled by hook
+        }
+    }, [inviteMember, inviteEmail, inviteRole])
+
+    const handleRoleChange = useCallback(async (email: string, newRole: string) => {
+        try {
+            await updateRole({ email, role: newRole })
+        } catch (e) {
+            console.error('Failed to update role:', e)
+        }
+    }, [updateRole])
+
+    const handleRemoveMember = useCallback(async (email: string) => {
+        if (!confirm(`Remove ${email} from organization?`)) return
+        try {
+            await removeMember(email)
+        } catch (e) {
+            console.error('Failed to remove member:', e)
+        }
+    }, [removeMember])
 
     // Machines (for project form)
     const { data: machinesData } = useQuery({
@@ -730,22 +780,241 @@ export default function SettingsPage() {
                     {/* ========== ORGANIZATION SETTINGS ========== */}
                     {currentOrgId && (
                         <div className="space-y-4">
-                            <div className="flex items-center justify-between px-1">
-                                <h2 className="text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
-                                    Organization Settings
-                                </h2>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        const currentOrg = orgs.find(o => o.id === currentOrgId)
-                                        if (currentOrg) {
-                                            navigate({ to: '/orgs/$orgId', params: { orgId: currentOrg.id } })
-                                        }
-                                    }}
-                                    className="text-[10px] px-2 py-1 rounded text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors"
-                                >
-                                    Manage Members →
-                                </button>
+                            <h2 className="text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide px-1">
+                                Organization Settings
+                            </h2>
+
+                            {/* API Keys Section - Only for owners */}
+                            {api && orgs.find(o => o.id === currentOrgId)?.myRole === 'owner' && (
+                                <div id="section-api-keys" className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
+                                    <div className="px-3 py-2 border-b border-[var(--app-divider)]">
+                                        <h3 className="text-sm font-medium">API Keys</h3>
+                                        <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
+                                            Manage Claude API keys and monitor token usage
+                                        </p>
+                                    </div>
+                                    <div className="p-3">
+                                        <CRSApiKeyManager
+                                            api={api}
+                                            orgId={currentOrgId}
+                                            orgSlug={orgs.find(o => o.id === currentOrgId)?.slug ?? ''}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Members Section */}
+                            <div id="section-members" className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
+                                <div className="px-3 py-2 border-b border-[var(--app-divider)] flex items-center justify-between">
+                                    <div>
+                                        <h3 className="text-sm font-medium">Members</h3>
+                                        <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
+                                            {members.length} member{members.length !== 1 ? 's' : ''} in this organization
+                                        </p>
+                                    </div>
+                                    {canManageMembers && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowInviteForm(!showInviteForm)}
+                                            className="text-xs px-2 py-1 rounded bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90 transition-opacity"
+                                        >
+                                            + Invite
+                                        </button>
+                                    )}
+                                </div>
+                                {showInviteForm && canManageMembers && (
+                                    <div className="px-3 py-2.5 border-b border-[var(--app-divider)] space-y-2">
+                                        <input
+                                            type="email"
+                                            value={inviteEmail}
+                                            onChange={(e) => setInviteEmail(e.target.value)}
+                                            placeholder="Email address"
+                                            className="w-full px-2.5 py-1.5 text-sm rounded bg-[var(--app-bg)] border border-[var(--app-divider)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)]"
+                                            onKeyDown={(e) => { if (e.key === 'Enter') handleInvite() }}
+                                        />
+                                        <div className="flex items-center gap-2">
+                                            <select
+                                                value={inviteRole}
+                                                onChange={(e) => setInviteRole(e.target.value as 'admin' | 'member')}
+                                                className="flex-1 px-2 py-1.5 text-sm rounded bg-[var(--app-bg)] border border-[var(--app-divider)] text-[var(--app-fg)]"
+                                            >
+                                                <option value="member">Member</option>
+                                                {orgRole === 'owner' && <option value="admin">Admin</option>}
+                                            </select>
+                                            <button
+                                                type="button"
+                                                onClick={handleInvite}
+                                                disabled={isInviting || !inviteEmail.trim()}
+                                                className="px-3 py-1.5 text-sm rounded bg-gradient-to-r from-indigo-500 to-purple-600 text-white disabled:opacity-50"
+                                            >
+                                                {isInviting ? '...' : 'Send'}
+                                            </button>
+                                        </div>
+                                        {inviteError && (
+                                            <div className="text-xs text-red-500">{inviteError}</div>
+                                        )}
+                                    </div>
+                                )}
+                                <div className="divide-y divide-[var(--app-divider)]">
+                                    {members.map((member) => {
+                                        const isCurrentUser = member.userEmail === currentSession.email
+                                        const canEdit = canManageMembers && !isCurrentUser
+                                        const canChangeRole = orgRole === 'owner' && !isCurrentUser
+                                        return (
+                                            <div key={member.userEmail} className="px-3 py-2 flex items-center gap-2">
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="text-sm truncate text-[var(--app-fg)]">
+                                                        {member.userEmail}
+                                                        {isCurrentUser && <span className="text-[var(--app-hint)] ml-1">(you)</span>}
+                                                    </div>
+                                                </div>
+                                                {canChangeRole ? (
+                                                    <select
+                                                        value={member.role}
+                                                        onChange={(e) => handleRoleChange(member.userEmail, e.target.value)}
+                                                        className="text-[11px] px-1.5 py-0.5 rounded bg-[var(--app-bg)] border border-[var(--app-divider)] text-[var(--app-fg)]"
+                                                    >
+                                                        <option value="owner">Owner</option>
+                                                        <option value="admin">Admin</option>
+                                                        <option value="member">Member</option>
+                                                    </select>
+                                                ) : (
+                                                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full text-white bg-gradient-to-r ${ROLE_COLORS[member.role as OrgRole]}`}>
+                                                        {ROLE_LABELS[member.role as OrgRole] ?? member.role}
+                                                    </span>
+                                                )}
+                                                {canEdit && member.role !== 'owner' && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleRemoveMember(member.userEmail)}
+                                                        className="text-[var(--app-hint)] hover:text-red-500 transition-colors"
+                                                        title="Remove member"
+                                                    >
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* Projects Section */}
+                            <div id="section-projects" className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
+                                <div className="px-3 py-2 border-b border-[var(--app-divider)] flex items-center justify-between">
+                                    <div>
+                                        <h3 className="text-sm font-medium">Projects</h3>
+                                        <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
+                                            Saved project paths for quick access
+                                        </p>
+                                    </div>
+                                    {!showAddProject && !editingProject && (
+                                        <div className="flex items-center gap-2">
+                                            <select
+                                                value={selectedMachineId ?? ''}
+                                                onChange={(e) => setSelectedMachineId(e.target.value || null)}
+                                                className="text-xs px-2 py-1 rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
+                                            >
+                                                <option value="">All machines</option>
+                                                {machines.map((m) => (
+                                                    <option key={m.id} value={m.id}>
+                                                        {m.metadata?.displayName || m.metadata?.host || m.id.slice(0, 8)}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowAddProject(true)}
+                                                className="flex items-center gap-1 px-2 py-1 text-xs font-medium rounded bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90 transition-opacity"
+                                            >
+                                                <PlusIcon className="w-3 h-3" />
+                                                Add
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                                {showAddProject && (
+                                    <ProjectForm
+                                        onSubmit={handleAddProject}
+                                        onCancel={() => {
+                                            setShowAddProject(false)
+                                            setProjectError(null)
+                                        }}
+                                        isPending={addProjectMutation.isPending}
+                                        submitLabel="Add Project"
+                                        machines={machines}
+                                    />
+                                )}
+                                {projectError && (
+                                    <div className="px-3 py-2 text-sm text-red-500 border-b border-[var(--app-divider)]">
+                                        {projectError}
+                                    </div>
+                                )}
+                                {projectsLoading ? (
+                                    <div className="px-3 py-4 flex justify-center">
+                                        <Spinner size="sm" label="Loading..." />
+                                    </div>
+                                ) : projects.length === 0 && !showAddProject ? (
+                                    <div className="px-3 py-4 text-center text-sm text-[var(--app-hint)]">
+                                        No projects saved yet.
+                                    </div>
+                                ) : (
+                                    <div className="divide-y divide-[var(--app-divider)]">
+                                        {projects.map((project) => (
+                                            editingProject?.id === project.id ? (
+                                                <ProjectForm
+                                                    key={project.id}
+                                                    initial={{
+                                                        name: project.name,
+                                                        path: project.path,
+                                                        description: project.description ?? '',
+                                                        machineId: project.machineId
+                                                    }}
+                                                    onSubmit={handleUpdateProject}
+                                                    onCancel={() => {
+                                                        setEditingProject(null)
+                                                        setProjectError(null)
+                                                    }}
+                                                    isPending={updateProjectMutation.isPending}
+                                                    submitLabel="Save"
+                                                    machines={machines}
+                                                />
+                                            ) : (
+                                                <div key={project.id} className="px-3 py-2">
+                                                    <div className="flex items-start justify-between gap-2">
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="text-sm font-medium truncate">{project.name}</div>
+                                                            <div className="text-xs text-[var(--app-hint)] font-mono truncate mt-0.5">{project.path}</div>
+                                                            {project.description && (
+                                                                <div className="text-xs text-[var(--app-hint)] mt-0.5 line-clamp-2">{project.description}</div>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex items-center gap-1 shrink-0">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setEditingProject(project)}
+                                                                disabled={removeProjectMutation.isPending}
+                                                                className="flex h-7 w-7 items-center justify-center rounded text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors disabled:opacity-50"
+                                                                title="Edit project"
+                                                            >
+                                                                <EditIcon />
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleRemoveProject(project.id)}
+                                                                disabled={removeProjectMutation.isPending}
+                                                                className="flex h-7 w-7 items-center justify-center rounded text-[var(--app-hint)] hover:text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                                                                title="Remove project"
+                                                            >
+                                                                <TrashIcon />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )
+                                        ))}
+                                    </div>
+                                )}
                             </div>
 
                             {/* Machines Section */}
@@ -797,151 +1066,6 @@ export default function SettingsPage() {
                                     </div>
                                 )}
                             </div>
-
-                            {/* Projects Section */}
-                            <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
-                                <div className="px-3 py-2 border-b border-[var(--app-divider)] flex items-center justify-between">
-                                    <div>
-                                        <h3 className="text-sm font-medium">Projects</h3>
-                                        <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
-                                            Saved project paths for quick access
-                                        </p>
-                                    </div>
-                                    {!showAddProject && !editingProject && (
-                                        <div className="flex items-center gap-2">
-                                            <select
-                                                value={selectedMachineId ?? ''}
-                                                onChange={(e) => setSelectedMachineId(e.target.value || null)}
-                                                className="text-xs px-2 py-1 rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
-                                            >
-                                                <option value="">All machines</option>
-                                                {machines.map((m) => (
-                                                    <option key={m.id} value={m.id}>
-                                                        {m.metadata?.displayName || m.metadata?.host || m.id.slice(0, 8)}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                            <button
-                                                type="button"
-                                                onClick={() => setShowAddProject(true)}
-                                                className="flex items-center gap-1 px-2 py-1 text-xs font-medium rounded bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90 transition-opacity"
-                                            >
-                                                <PlusIcon className="w-3 h-3" />
-                                                Add
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-
-                        {/* Add Project Form */}
-                        {showAddProject && (
-                            <ProjectForm
-                                onSubmit={handleAddProject}
-                                onCancel={() => {
-                                    setShowAddProject(false)
-                                    setProjectError(null)
-                                }}
-                                isPending={addProjectMutation.isPending}
-                                submitLabel="Add Project"
-                                machines={machines}
-                            />
-                        )}
-
-                        {projectError && (
-                            <div className="px-3 py-2 text-sm text-red-500 border-b border-[var(--app-divider)]">
-                                {projectError}
-                            </div>
-                        )}
-
-                        {/* Project List */}
-                        {projectsLoading ? (
-                            <div className="px-3 py-4 flex justify-center">
-                                <Spinner size="sm" label="Loading..." />
-                            </div>
-                        ) : projects.length === 0 && !showAddProject ? (
-                            <div className="px-3 py-4 text-center text-sm text-[var(--app-hint)]">
-                                No projects saved yet.
-                            </div>
-                        ) : (
-                            <div className="divide-y divide-[var(--app-divider)]">
-                                {projects.map((project) => (
-                                    editingProject?.id === project.id ? (
-                                        <ProjectForm
-                                            key={project.id}
-                                            initial={{
-                                                name: project.name,
-                                                path: project.path,
-                                                description: project.description ?? '',
-                                                machineId: project.machineId
-                                            }}
-                                            onSubmit={handleUpdateProject}
-                                            onCancel={() => {
-                                                setEditingProject(null)
-                                                setProjectError(null)
-                                            }}
-                                            isPending={updateProjectMutation.isPending}
-                                            submitLabel="Save"
-                                            machines={machines}
-                                        />
-                                    ) : (
-                                        <div
-                                            key={project.id}
-                                            className="px-3 py-2"
-                                        >
-                                            <div className="flex items-start justify-between gap-2">
-                                                <div className="min-w-0 flex-1">
-                                                    <div className="text-sm font-medium truncate">{project.name}</div>
-                                                    <div className="text-xs text-[var(--app-hint)] font-mono truncate mt-0.5">{project.path}</div>
-                                                    {project.description && (
-                                                        <div className="text-xs text-[var(--app-hint)] mt-0.5 line-clamp-2">{project.description}</div>
-                                                    )}
-                                                </div>
-                                                <div className="flex items-center gap-1 shrink-0">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setEditingProject(project)}
-                                                        disabled={removeProjectMutation.isPending}
-                                                        className="flex h-7 w-7 items-center justify-center rounded text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors disabled:opacity-50"
-                                                        title="Edit project"
-                                                    >
-                                                        <EditIcon />
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleRemoveProject(project.id)}
-                                                        disabled={removeProjectMutation.isPending}
-                                                        className="flex h-7 w-7 items-center justify-center rounded text-[var(--app-hint)] hover:text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50"
-                                                        title="Remove project"
-                                                    >
-                                                        <TrashIcon />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )
-                                ))}
-                            </div>
-                        )}
-                            </div>
-
-                            {/* API Keys Section - Only for owners */}
-                            {api && orgs.find(o => o.id === currentOrgId)?.myRole === 'owner' && (
-                                <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
-                                    <div className="px-3 py-2 border-b border-[var(--app-divider)]">
-                                        <h3 className="text-sm font-medium">API Keys</h3>
-                                        <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
-                                            Manage Claude API keys and monitor token usage
-                                        </p>
-                                    </div>
-                                    <div className="p-3">
-                                        <CRSApiKeyManager
-                                            api={api}
-                                            orgId={currentOrgId}
-                                            orgSlug={orgs.find(o => o.id === currentOrgId)?.slug ?? ''}
-                                        />
-                                    </div>
-                                </div>
-                            )}
                         </div>
                     )}
 
