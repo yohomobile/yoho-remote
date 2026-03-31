@@ -312,25 +312,115 @@ export function CRSApiKeyManager({ api, orgId, orgSlug }: Props) {
                                         </div>
                                     )}
 
-                                    {/* Metadata */}
-                                    <div className="mt-2 text-[10px] text-[var(--app-hint)] space-y-0.5">
+                                    {/* Detailed Info Grid */}
+                                    <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[10px]">
+                                        {/* Time Info */}
                                         <div>
-                                            Created {new Date(key.createdAt).toLocaleDateString()}
-                                            {key.lastUsedAt && ` • Last used ${new Date(key.lastUsedAt).toLocaleDateString()}`}
+                                            <span className="text-[var(--app-hint)]">Created:</span>{' '}
+                                            <span className="text-[var(--app-fg)]">{new Date(key.createdAt).toLocaleString()}</span>
                                         </div>
-                                        {key.expiresAt && (
+                                        {key.lastUsedAt && (
                                             <div>
-                                                Expires: {new Date(key.expiresAt).toLocaleDateString()}
-                                                {key.expirationMode === 'activation' && !key.isActivated && ' (after first use)'}
+                                                <span className="text-[var(--app-hint)]">Last Used:</span>{' '}
+                                                <span className="text-[var(--app-fg)]">{new Date(key.lastUsedAt).toLocaleString()}</span>
                                             </div>
                                         )}
-                                        {key.enableModelRestriction && key.restrictedModels.length > 0 && (
+
+                                        {/* Expiration Info */}
+                                        {key.expiresAt ? (
+                                            <div className="col-span-2">
+                                                <span className="text-[var(--app-hint)]">Expires:</span>{' '}
+                                                <span className={new Date(key.expiresAt) < new Date() ? 'text-red-500 font-medium' : 'text-[var(--app-fg)]'}>
+                                                    {new Date(key.expiresAt).toLocaleString()}
+                                                </span>
+                                                {key.expirationMode === 'activation' && !key.isActivated && (
+                                                    <span className="ml-1 text-yellow-600">(activates on first use)</span>
+                                                )}
+                                            </div>
+                                        ) : (
                                             <div>
-                                                Models: {key.restrictedModels.join(', ')}
+                                                <span className="text-[var(--app-hint)]">Expires:</span>{' '}
+                                                <span className="text-green-600">Never</span>
                                             </div>
                                         )}
+
+                                        {/* Rate Limits */}
+                                        {key.rateLimitRequests > 0 && (
+                                            <div>
+                                                <span className="text-[var(--app-hint)]">Rate Limit:</span>{' '}
+                                                <span className="text-[var(--app-fg)]">
+                                                    {key.rateLimitRequests} req/{key.rateLimitWindow}min
+                                                </span>
+                                            </div>
+                                        )}
+                                        {key.rateLimitCost > 0 && (
+                                            <div>
+                                                <span className="text-[var(--app-hint)]">Cost Rate Limit:</span>{' '}
+                                                <span className="text-[var(--app-fg)]">${key.rateLimitCost}/{key.rateLimitWindow}min</span>
+                                            </div>
+                                        )}
+
+                                        {/* Weekly Opus Limit */}
+                                        {key.weeklyOpusCostLimit > 0 && (
+                                            <div>
+                                                <span className="text-[var(--app-hint)]">Weekly Opus Limit:</span>{' '}
+                                                <span className="text-[var(--app-fg)]">${key.weeklyOpusCostLimit}</span>
+                                            </div>
+                                        )}
+
+                                        {/* Model Restrictions */}
+                                        {key.enableModelRestriction && key.restrictedModels && key.restrictedModels.length > 0 && (
+                                            <div className="col-span-2">
+                                                <span className="text-[var(--app-hint)]">Allowed Models:</span>{' '}
+                                                <span className="text-[var(--app-fg)]">{key.restrictedModels.join(', ')}</span>
+                                            </div>
+                                        )}
+
+                                        {/* Client Restrictions */}
+                                        {key.enableClientRestriction && key.allowedClients && key.allowedClients.length > 0 && (
+                                            <div className="col-span-2">
+                                                <span className="text-[var(--app-hint)]">Allowed Clients:</span>{' '}
+                                                <span className="text-[var(--app-fg)]">{key.allowedClients.join(', ')}</span>
+                                            </div>
+                                        )}
+
+                                        {/* Account Bindings */}
                                         {key.claudeAccountId && (
-                                            <div>Claude Account: {key.claudeAccountId}</div>
+                                            <div className="col-span-2">
+                                                <span className="text-[var(--app-hint)]">Claude Account:</span>{' '}
+                                                <code className="text-[var(--app-fg)] font-mono">{key.claudeAccountId}</code>
+                                            </div>
+                                        )}
+                                        {key.geminiAccountId && (
+                                            <div className="col-span-2">
+                                                <span className="text-[var(--app-hint)]">Gemini Account:</span>{' '}
+                                                <code className="text-[var(--app-fg)] font-mono">{key.geminiAccountId}</code>
+                                            </div>
+                                        )}
+                                        {key.openaiAccountId && (
+                                            <div className="col-span-2">
+                                                <span className="text-[var(--app-hint)]">OpenAI Account:</span>{' '}
+                                                <code className="text-[var(--app-fg)] font-mono">{key.openaiAccountId}</code>
+                                            </div>
+                                        )}
+                                        {key.bedrockAccountId && (
+                                            <div className="col-span-2">
+                                                <span className="text-[var(--app-hint)]">Bedrock Account:</span>{' '}
+                                                <code className="text-[var(--app-fg)] font-mono">{key.bedrockAccountId}</code>
+                                            </div>
+                                        )}
+
+                                        {/* Activation Info */}
+                                        {key.expirationMode === 'activation' && key.activationDays > 0 && (
+                                            <div className="col-span-2">
+                                                <span className="text-[var(--app-hint)]">Activation Period:</span>{' '}
+                                                <span className="text-[var(--app-fg)]">
+                                                    {key.activationDays} {key.activationUnit}
+                                                    {key.isActivated && key.activatedAt && (
+                                                        <span className="ml-1">(activated {new Date(key.activatedAt).toLocaleString()})</span>
+                                                    )}
+                                                </span>
+                                            </div>
                                         )}
                                     </div>
                                 </div>
