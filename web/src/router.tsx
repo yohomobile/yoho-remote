@@ -210,21 +210,28 @@ function SessionsPage() {
                 <div className="mx-auto w-full max-w-content px-3 py-2 flex items-center justify-between gap-2 sm:py-1.5">
                     <div className="flex min-w-0 flex-1 items-center gap-2">
                         <div className="flex items-center gap-2 min-w-0">
-                            <span className="text-sm font-bold leading-tight yoho-brand-text">
-                                Remote
-                            </span>
-                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-sm">
-                                {currentOrg?.name ?? 'Yoho'}
-                            </span>
-                            <button
-                                type="button"
-                                onClick={handleForceRefresh}
-                                disabled={isRefreshing}
-                                className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors disabled:opacity-50"
-                                title={`${gitCommitMessage}\n\nClick to force refresh`}
-                            >
-                                {isRefreshing ? '...' : gitCommitHash}
-                            </button>
+                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-sm text-white text-xs font-bold">
+                                {currentOrg?.name?.charAt(0)?.toUpperCase() ?? 'Y'}
+                            </div>
+                            <div className="flex flex-col items-start justify-center min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-sm font-bold leading-tight yoho-brand-text">
+                                        Remote
+                                    </span>
+                                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-sm">
+                                        {currentOrg?.name ?? 'Yoho'}
+                                    </span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={handleForceRefresh}
+                                    disabled={isRefreshing}
+                                    className="mt-0.5 text-[10px] px-1.5 py-0.5 rounded bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors disabled:opacity-50"
+                                    title={`${gitCommitMessage}\n\nClick to force refresh`}
+                                >
+                                    {isRefreshing ? '...' : gitCommitHash}
+                                </button>
+                            </div>
                         </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
