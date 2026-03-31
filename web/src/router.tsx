@@ -189,13 +189,17 @@ function SessionsPage() {
                     to: '/sessions/$sessionId',
                     params: { sessionId: result.sessionId },
                 })
+            } else if (result.type === 'error') {
+                console.error('Brain session creation failed:', result.message)
+                alert(`创建 Brain Session 失败: ${result.message}`)
             }
         } catch (err) {
             console.error('Failed to create brain session:', err)
+            alert(`创建 Brain Session 出错: ${err instanceof Error ? err.message : '未知错误'}`)
         } finally {
             setIsCreatingBrain(false)
         }
-    }, [api, isCreatingBrain, navigate, queryClient])
+    }, [api, currentOrgId, navigate, queryClient, isCreatingBrain])
 
     const projectCount = new Set(sessions.map(s => s.metadata?.path ?? 'Other')).size
     const gitCommitHash = typeof __GIT_COMMIT_HASH__ !== 'undefined' ? __GIT_COMMIT_HASH__ : 'dev'
