@@ -735,47 +735,32 @@ export function reduceChatBlocks(
     // This matches backend logic in server/src/sync/syncEngine.ts:getLastUsageForSession
     let latestUsage: LatestUsage | null = null
 
-    // DEBUG: Log all messages with usage data
-    const messagesWithUsage = normalized.filter(msg => msg.usage && (msg.usage.input_tokens > 0 || msg.usage.cache_creation_input_tokens > 0 || msg.usage.cache_read_input_tokens > 0)).map((msg, idx) => ({
-        index: idx,
-        role: msg.role,
-        id: msg.id,
-        usage: msg.usage
-    }))
-
-    if (messagesWithUsage.length > 0) {
-        console.log('[Context Debug] Messages with actual usage (>0):', messagesWithUsage.length)
-        console.log('[Context Debug] All usage data:', messagesWithUsage)
-    }
-
-    // Find the last message with actual usage data (not just zero/empty usage)
+    // Find the last message with actual usage data
+    // Skip messages where usage exists but all values are 0
     for (let i = normalized.length - 1; i >= 0; i--) {
         const msg = normalized[i]
-        if (msg.usage && (msg.usage.input_tokens > 0 || (msg.usage.cache_creation_input_tokens || 0) > 0 || (msg.usage.cache_read_input_tokens || 0) > 0)) {
-            const contextSize = calculateContextSize(msg.usage)
+        if (msg.usage) {
+            const inputTokens = msg.usage.input_tokens
+            const cacheCreation = msg.usage.cache_creation_input_tokens || 0
+            const cacheRead = msg.usage.cache_read_input_tokens || 0
 
-            console.log('[Context Debug] Latest usage found:')
-            console.log('  - input_tokens:', msg.usage.input_tokens)
-            console.log('  - cache_creation:', msg.usage.cache_creation_input_tokens ?? 0)
-            console.log('  - cache_read:', msg.usage.cache_read_input_tokens ?? 0)
-            console.log('  - calculated contextSize:', contextSize)
-            console.log('  - message role:', msg.role)
-            console.log('  - message id:', msg.id)
+            // Skip if all values are 0 (continue searching)
+            if (inputTokens === 0 && cacheCreation === 0 && cacheRead === 0) {
+                continue
+            }
+
+            const contextSize = inputTokens + cacheCreation + cacheRead
 
             latestUsage = {
-                inputTokens: msg.usage.input_tokens,
+                inputTokens,
                 outputTokens: msg.usage.output_tokens,
-                cacheCreation: msg.usage.cache_creation_input_tokens ?? 0,
-                cacheRead: msg.usage.cache_read_input_tokens ?? 0,
-                contextSize: contextSize,
+                cacheCreation,
+                cacheRead,
+                contextSize,
                 timestamp: msg.createdAt
             }
             break
         }
-    }
-
-    if (!latestUsage) {
-        console.log('[Context Debug] No usage data found in any message')
     }
 
     // Sort blocks by createdAt to ensure permission-only blocks appear in correct order.
