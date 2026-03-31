@@ -36,6 +36,7 @@ const brainSpawnSchema = z.object({
     machineId: z.string().min(1),
     directory: z.string().min(1),
     agent: z.enum(['claude', 'codex', 'opencode']).default('claude'),
+    modelMode: z.enum(['default', 'sonnet', 'opus']).optional(),
     source: z.string().default('brain-child'),
     mainSessionId: z.string().optional(),
 })
@@ -311,6 +312,7 @@ export function createCliRoutes(
                 source: parsed.data.source,
                 mainSessionId: parsed.data.mainSessionId,
                 permissionMode: 'bypassPermissions',
+                modelMode: parsed.data.modelMode as any,
             }
         )
 
@@ -332,6 +334,8 @@ export function createCliRoutes(
             active: s.active,
             activeAt: s.activeAt,
             thinking: s.thinking ?? false,
+            modelMode: s.modelMode ?? 'default',
+            pendingRequestsCount: s.agentState?.requests ? Object.keys(s.agentState.requests).length : 0,
             metadata: s.metadata ? {
                 path: s.metadata.path,
                 source: s.metadata.source,
@@ -393,6 +397,33 @@ export function createCliRoutes(
             return c.json({ error: result.error }, 500)
         }
 
+        return c.json({ ok: true })
+    })
+
+    // Brain: set session modelMode
+    const setModelModeSchema = z.object({
+        modelMode: z.enum(['default', 'sonnet', 'opus']),
+    })
+
+    app.patch('/sessions/:id/model-mode', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not ready' }, 503)
+        }
+        const sessionId = c.req.param('id')
+        const namespace = c.get('namespace')
+        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        if (!resolved.ok) {
+            return c.json({ error: resolved.error }, resolved.status)
+        }
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = setModelModeSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        await engine.setModelMode(sessionId, parsed.data.modelMode as any)
         return c.json({ ok: true })
     })
 

@@ -54,21 +54,23 @@ export function registerBrainTools(
         directory: z.string().describe('工作目录的绝对路径，如 /home/guang/softwares/yoho-remote'),
         machineId: z.string().optional().describe('目标机器 ID。不填则使用当前机器。'),
         agent: z.enum(['claude', 'codex', 'opencode']).optional().describe('Agent 类型，默认 claude'),
+        modelMode: z.enum(['default', 'sonnet', 'opus']).optional().describe('模型选择。sonnet（默认）适合 80-90% 的任务：日常开发、代码补全、测试编写、文档等。opus 适合 10-20% 的复杂任务：大型代码库重构、安全审计、多代理工作流、架构设计等。不填默认使用 sonnet。'),
     })
 
     mcp.registerTool<any, any>('session_create', {
         title: 'Create Session',
-        description: '强制创建新的工作 session。如果只想发任务到已有目录，优先使用 session_find_or_create 来复用空闲 session。',
+        description: '强制创建新的工作 session。如果只想发任务到已有目录，优先使用 session_find_or_create 来复用空闲 session。\n\n模型选择建议（基于 2026 年最佳实践）：\n- sonnet（默认）：适合 80-90% 的任务，包括日常开发、代码补全、测试编写、文档、标准功能开发、自动化脚本等。性价比高，响应快。\n- opus：仅用于 10-20% 的高复杂度任务，包括大型代码库重构（数万行代码的架构调整）、安全审计、多代理协作工作流、深度架构设计、复杂的多步推理任务等。成本是 sonnet 的 5 倍。\n\n推荐策略：默认使用 sonnet，仅在任务明确需要更深度推理时才使用 opus。',
         inputSchema: createSchema,
-    }, async (args: { directory: string; machineId?: string; agent?: string }) => {
+    }, async (args: { directory: string; machineId?: string; agent?: string; modelMode?: string }) => {
         try {
             const targetMachineId = args.machineId || machineId
-            logger.debug(`[brain] Creating session: machine=${targetMachineId}, dir=${args.directory}, agent=${args.agent || 'claude'}`)
+            logger.debug(`[brain] Creating session: machine=${targetMachineId}, dir=${args.directory}, agent=${args.agent || 'claude'}, modelMode=${args.modelMode || 'sonnet'}`)
 
             const result = await api.brainSpawnSession({
                 machineId: targetMachineId,
                 directory: args.directory,
                 agent: args.agent,
+                modelMode: args.modelMode,
                 source: 'brain-child',
                 mainSessionId: brainSessionId,
             })
@@ -107,13 +109,14 @@ export function registerBrainTools(
         hint: z.string().optional().describe('任务意图关键词（如 "订单API 优惠券"），用于匹配已有上下文的 session，优先复用做过相关工作的 session，省去重新理解代码的成本'),
         machineId: z.string().optional().describe('目标机器 ID。不填则使用当前机器。'),
         agent: z.enum(['claude', 'codex', 'opencode']).optional().describe('Agent 类型，默认 claude'),
+        modelMode: z.enum(['default', 'sonnet', 'opus']).optional().describe('模型选择。sonnet（默认）适合 80-90% 的任务：日常开发、代码补全、测试编写、文档等。opus 适合 10-20% 的复杂任务：大型代码库重构、安全审计、多代理工作流、架构设计等。复用时会优先匹配相同 modelMode 的 session。'),
     })
 
     mcp.registerTool<any, any>('session_find_or_create', {
         title: 'Find or Create Session',
-        description: '智能查找可复用的空闲子 session。匹配 directory + 属于当前 Brain，并通过 hint 优先选择上下文相关的 session（基于 brainSummary 匹配）。找不到则创建新 session。推荐优先使用此工具。',
+        description: '智能查找可复用的空闲子 session。匹配 directory + 属于当前 Brain + modelMode，并通过 hint 优先选择上下文相关的 session（基于 brainSummary 匹配）。找不到则创建新 session。推荐优先使用此工具。\n\n模型选择建议（基于 2026 年最佳实践）：\n- sonnet（默认）：适合 80-90% 的任务，包括日常开发、代码补全、测试编写、文档、标准功能开发、自动化脚本等。性价比高，响应快。\n- opus：仅用于 10-20% 的高复杂度任务，包括大型代码库重构（数万行代码的架构调整）、安全审计、多代理协作工作流、深度架构设计、复杂的多步推理任务等。成本是 sonnet 的 5 倍。\n\n推荐策略：默认使用 sonnet，仅在任务明确需要更深度推理时才使用 opus。复用逻辑会优先匹配相同 modelMode 的 session。',
         inputSchema: findOrCreateSchema,
-    }, async (args: { directory: string; hint?: string; machineId?: string; agent?: string }) => {
+    }, async (args: { directory: string; hint?: string; machineId?: string; agent?: string; modelMode?: string }) => {
         try {
             const targetMachineId = args.machineId || machineId
 
@@ -121,6 +124,7 @@ export function registerBrainTools(
             const data = await api.listSessions({ includeOffline: false })
 
             // Step 2: Find reusable child session
+            const targetModelMode = args.modelMode || 'sonnet'
             const candidates = data.sessions.filter(s => {
                 if (!s.metadata) return false
                 if (s.metadata.source !== 'brain-child') return false
@@ -134,16 +138,33 @@ export function registerBrainTools(
                 return true
             })
 
-            // Pick the best candidate: prefer context-relevant (hint matches brainSummary), then most recently active
+            // Pick the best candidate: prefer modelMode match, then context-relevant (hint matches brainSummary), then most recently active
             if (candidates.length > 0) {
                 let best = candidates.sort((a, b) => b.activeAt - a.activeAt)[0]
                 let matchReason = '最近活跃'
 
-                if (args.hint && candidates.length > 1) {
+                // Step 1: Prefer exact modelMode match
+                // Note: 'default' is normalized to 'sonnet' for matching purposes
+                const normalizeModelMode = (mode?: string) => {
+                    if (!mode || mode === 'default') return 'sonnet'
+                    return mode
+                }
+                const exactModelMatches = candidates.filter(s => {
+                    return normalizeModelMode(s.modelMode) === normalizeModelMode(targetModelMode)
+                })
+                const candidatesForHint = exactModelMatches.length > 0 ? exactModelMatches : candidates
+
+                if (exactModelMatches.length > 0 && exactModelMatches.length < candidates.length) {
+                    best = exactModelMatches.sort((a, b) => b.activeAt - a.activeAt)[0]
+                    matchReason = `模型匹配 (${targetModelMode})`
+                }
+
+                // Step 2: If hint provided, prefer context match within modelMode-filtered candidates
+                if (args.hint && candidatesForHint.length > 1) {
                     // Tokenize hint into keywords, match against brainSummary + session title
                     const hintKeywords = args.hint.toLowerCase().split(/[\s,，/]+/).filter(k => k.length > 0)
                     if (hintKeywords.length > 0) {
-                        const scored = candidates.map(s => {
+                        const scored = candidatesForHint.map(s => {
                             const text = [
                                 s.metadata?.brainSummary || '',
                                 s.metadata?.summary?.text || '',
@@ -156,7 +177,7 @@ export function registerBrainTools(
                         )[0]
                         if (topMatch.hits > 0) {
                             best = topMatch.session
-                            matchReason = `上下文匹配 (${topMatch.hits}/${hintKeywords.length} 关键词命中)`
+                            matchReason = `模型+上下文匹配 (${targetModelMode}, ${topMatch.hits}/${hintKeywords.length} 关键词)`
                         }
                     }
                 }
@@ -172,12 +193,13 @@ export function registerBrainTools(
             }
 
             // Step 3: No reusable session, create new one
-            logger.debug(`[brain] No reusable session for dir=${args.directory}, creating new one`)
+            logger.debug(`[brain] No reusable session for dir=${args.directory}, modelMode=${targetModelMode}, creating new one`)
 
             const result = await api.brainSpawnSession({
                 machineId: targetMachineId,
                 directory: args.directory,
                 agent: args.agent,
+                modelMode: args.modelMode,
                 source: 'brain-child',
                 mainSessionId: brainSessionId,
             })
@@ -306,8 +328,9 @@ export function registerBrainTools(
                 const name = s.metadata?.summary?.text || s.metadata?.path || '未命名'
                 const source = s.metadata?.source ? ` [${s.metadata.source}]` : ''
                 const isMine = s.metadata?.mainSessionId === brainSessionId ? ' 📌' : ''
+                const model = s.modelMode && s.modelMode !== 'default' ? ` [${s.modelMode}]` : ''
                 const summary = s.metadata?.brainSummary ? `\n  总结: ${s.metadata.brainSummary}` : ''
-                return `- ${s.id.slice(0, 8)} [${status}] ${name}${source}${isMine}${summary}`
+                return `- ${s.id.slice(0, 8)} [${status}]${model} ${name}${source}${isMine}${summary}`
             })
 
             return {
@@ -448,7 +471,37 @@ export function registerBrainTools(
         }
     })
 
-    // ===== 8. chat_messages =====
+    // ===== 8. session_set_model_mode =====
+    const setModelModeSchema: z.ZodTypeAny = z.object({
+        sessionId: z.string().describe('目标 session ID'),
+        modelMode: z.enum(['default', 'sonnet', 'opus']).describe('要切换到的模型。sonnet 适合日常任务，opus 适合复杂推理任务。'),
+    })
+
+    mcp.registerTool<any, any>('session_set_model_mode', {
+        title: 'Set Session Model Mode',
+        description: '切换指定 session 的模型。适用场景：当任务复杂度发生变化时，可以从 sonnet 切换到 opus（或反之）。注意：切换模型不会影响已有的对话历史，但会影响后续的推理能力和成本。',
+        inputSchema: setModelModeSchema,
+    }, async (args: { sessionId: string; modelMode: string }) => {
+        try {
+            await api.setSessionModelMode(args.sessionId, args.modelMode as any)
+            return {
+                content: [{
+                    type: 'text' as const,
+                    text: `已将 Session ${args.sessionId} 的模型切换为 ${args.modelMode}。`,
+                }],
+            }
+        } catch (err: any) {
+            return {
+                content: [{
+                    type: 'text' as const,
+                    text: `切换模型失败: ${err.message || String(err)}`,
+                }],
+                isError: true,
+            }
+        }
+    })
+
+    // ===== 9. chat_messages =====
     const chatMessagesSchema: z.ZodTypeAny = z.object({
         chatId: z.string().describe('飞书 chat_id（群聊或单聊）'),
         limit: z.number().optional().describe('返回条数，默认 50，最大 200'),
@@ -495,8 +548,9 @@ export function registerBrainTools(
         'session_close',
         'session_update',
         'session_status',
+        'session_set_model_mode',
         'chat_messages',
     )
 
-    logger.debug(`[brain] Registered 8 brain tools (async mode) for session ${brainSessionId}`)
+    logger.debug(`[brain] Registered 9 brain tools (async mode) for session ${brainSessionId}`)
 }

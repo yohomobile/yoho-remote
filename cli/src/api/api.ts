@@ -257,6 +257,7 @@ export class ApiClient {
         machineId: string
         directory: string
         agent?: string
+        modelMode?: string
         source?: string
         mainSessionId?: string
     }): Promise<{ type: 'success'; sessionId: string; logs?: unknown[] } | { type: 'error'; message: string; logs?: unknown[] }> {
@@ -266,6 +267,7 @@ export class ApiClient {
                 machineId: opts.machineId,
                 directory: opts.directory,
                 agent: opts.agent ?? 'claude',
+                modelMode: opts.modelMode,
                 source: opts.source ?? 'brain-child',
                 mainSessionId: opts.mainSessionId,
             },
@@ -286,6 +288,8 @@ export class ApiClient {
             active: boolean
             activeAt: number
             thinking: boolean
+            modelMode?: string
+            pendingRequestsCount: number
             metadata: {
                 path?: string
                 source?: string
@@ -329,6 +333,20 @@ export class ApiClient {
         await axios.patch(
             `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/metadata`,
             patch,
+            {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 15_000
+            }
+        )
+    }
+
+    async setSessionModelMode(sessionId: string, modelMode: 'default' | 'sonnet' | 'opus'): Promise<void> {
+        await axios.patch(
+            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/model-mode`,
+            { modelMode },
             {
                 headers: {
                     Authorization: `Bearer ${this.token}`,

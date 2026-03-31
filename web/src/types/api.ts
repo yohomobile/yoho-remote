@@ -381,3 +381,59 @@ export type OrgInvitationsResponse = { invitations: OrgInvitation[] }
 export type PendingInvitationsResponse = { invitations: OrgInvitation[] }
 export type OrgActionResponse = { ok: true }
 export type CreateInvitationResponse = { ok: true; invitation: OrgInvitation }
+
+// CRS API Key Types
+export type CRSApiKey = {
+    id: string
+    key: string
+    name: string
+    owner: string
+    tags: string[]
+    isActive: boolean
+    createdAt: number
+    expiresAt: number | null
+    lastUsedAt: number | null
+}
+
+export type CRSKeyStats = {
+    requests: number
+    tokens: number
+    inputTokens: number
+    outputTokens: number
+    cacheCreateTokens: number
+    cacheReadTokens: number
+    cost: number
+    formattedCost: string
+}
+
+export type CRSUsageSummary = {
+    totalKeys: number
+    totalRequests: number
+    totalTokens: number
+    totalCost: number
+    formattedCost: string
+    timeRange: string
+}
+
+export type CRSApiKeysResponse = {
+    success: boolean
+    data: {
+        items: CRSApiKey[]
+        pagination: {
+            page: number
+            pageSize: number
+            totalItems: number
+            totalPages: number
+        }
+    }
+}
+
+export type CRSBatchStatsResponse = {
+    success: boolean
+    data: Record<string, CRSKeyStats>
+}
+
+export type CRSUsageSummaryResponse = {
+    success: boolean
+    data: CRSUsageSummary
+}
