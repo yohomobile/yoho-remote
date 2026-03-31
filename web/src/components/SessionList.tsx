@@ -189,6 +189,7 @@ function SessionItem(props: {
         : false
     const progress = getTodoProgress(s)
     const hasPending = s.pendingRequestsCount > 0
+    const isThinking = s.thinking || hasPending  // Use thinking flag or fallback to pendingRequestsCount
     const runtimeAgent = s.metadata?.runtimeAgent?.trim()
     const sourceTag = getSourceTag(s)
 
@@ -259,7 +260,7 @@ function SessionItem(props: {
 
             {/* Status and Time */}
             <div className="shrink-0 flex items-center gap-1.5">
-                {hasPending ? (
+                {isThinking ? (
                     <span className="text-[10px] font-medium text-amber-600">
                         Thinking
                     </span>

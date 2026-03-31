@@ -149,6 +149,7 @@ export type SessionSummary = {
     metadata: SessionSummaryMetadata | null
     todoProgress: { completed: number; total: number } | null
     pendingRequestsCount: number
+    thinking: boolean
     modelMode?: ModelMode
     modelReasoningEffort?: ModelReasoningEffort
     fastMode?: boolean

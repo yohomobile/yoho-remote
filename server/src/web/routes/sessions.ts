@@ -80,6 +80,7 @@ function toSessionSummary(session: Session): SessionSummary {
         metadata,
         todoProgress,
         pendingRequestsCount,
+        thinking: session.thinking ?? false,
         modelMode: session.modelMode,
         modelReasoningEffort: session.modelReasoningEffort,
         fastMode: session.fastMode
