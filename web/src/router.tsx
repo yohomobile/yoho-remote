@@ -130,7 +130,6 @@ function SessionsPage() {
     const { orgs } = useMyOrgs(api)
     const [isRefreshing, setIsRefreshing] = useState(false)
     const [isCreatingBrain, setIsCreatingBrain] = useState(false)
-    const [showOrgPicker, setShowOrgPicker] = useState(false)
 
     const currentOrg = orgs.find(o => o.id === currentOrgId) ?? orgs[0] ?? null
 
@@ -210,56 +209,22 @@ function SessionsPage() {
             <div className="bg-[var(--app-bg)] border-b border-[var(--app-divider)] pt-[env(safe-area-inset-top)]">
                 <div className="mx-auto w-full max-w-content px-3 py-2 flex items-center justify-between gap-2 sm:py-1.5">
                     <div className="flex min-w-0 flex-1 items-center gap-2">
-                        <div className="relative">
+                        <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-sm font-bold leading-tight yoho-brand-text">
+                                Remote
+                            </span>
+                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-sm">
+                                {currentOrg?.name ?? 'Yoho'}
+                            </span>
                             <button
                                 type="button"
-                                onClick={() => orgs.length > 1 ? setShowOrgPicker(!showOrgPicker) : undefined}
-                                className={`flex items-center gap-2 min-w-0 ${orgs.length > 1 ? 'cursor-pointer' : ''}`}
+                                onClick={handleForceRefresh}
+                                disabled={isRefreshing}
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors disabled:opacity-50"
+                                title={`${gitCommitMessage}\n\nClick to force refresh`}
                             >
-                                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-sm text-white text-xs font-bold">
-                                    {currentOrg?.name?.charAt(0)?.toUpperCase() ?? 'Y'}
-                                </div>
-                                <div className="flex flex-col items-start justify-center min-w-0">
-                                    <span className="max-w-[160px] truncate text-sm font-bold leading-tight yoho-brand-text sm:max-w-none">
-                                        {currentOrg?.name ?? 'Yoho Remote'}
-                                    </span>
-                                    <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); handleForceRefresh() }}
-                                        disabled={isRefreshing}
-                                        className="mt-0.5 text-[10px] px-1.5 py-0.5 rounded bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors disabled:opacity-50"
-                                        title={`${gitCommitMessage}\n\nClick to force refresh`}
-                                    >
-                                        {isRefreshing ? '...' : gitCommitHash}
-                                    </button>
-                                </div>
-                                {orgs.length > 1 && (
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[var(--app-hint)]"><polyline points="6 9 12 15 18 9" /></svg>
-                                )}
+                                {isRefreshing ? '...' : gitCommitHash}
                             </button>
-                            {showOrgPicker && orgs.length > 1 && (
-                                <>
-                                    <div className="fixed inset-0 z-40" onClick={() => setShowOrgPicker(false)} />
-                                    <div className="absolute left-0 top-full mt-1 z-50 w-48 rounded-lg bg-[var(--app-bg)] border border-[var(--app-divider)] shadow-lg overflow-hidden">
-                                        {orgs.map((org) => (
-                                            <button
-                                                key={org.id}
-                                                type="button"
-                                                onClick={() => { setCurrentOrgId(org.id); setShowOrgPicker(false) }}
-                                                className={`w-full px-3 py-2 flex items-center gap-2 text-left text-sm hover:bg-[var(--app-subtle-bg)] transition-colors ${org.id === currentOrgId ? 'bg-[var(--app-subtle-bg)] font-medium' : ''}`}
-                                            >
-                                                <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-gradient-to-br from-indigo-500 to-purple-600 text-white text-[10px] font-bold">
-                                                    {org.name.charAt(0).toUpperCase()}
-                                                </div>
-                                                <span className="truncate">{org.name}</span>
-                                                {org.id === currentOrgId && (
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 ml-auto text-green-500"><polyline points="20 6 9 17 4 12" /></svg>
-                                                )}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </>
-                            )}
                         </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
