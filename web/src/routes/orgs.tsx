@@ -7,6 +7,7 @@ import { useOrg } from '@/hooks/queries/useOrgs'
 import { useInviteMember, useUpdateMemberRole, useRemoveMember, useUpdateOrg } from '@/hooks/mutations/useOrgMutations'
 import { queryKeys } from '@/lib/query-keys'
 import { LoadingState } from '@/components/LoadingState'
+import { CRSApiKeyManager } from '@/components/CRSApiKeyManager'
 import type { OrgMember, OrgRole } from '@/types/api'
 
 const ROLE_LABELS: Record<OrgRole, string> = {
@@ -241,6 +242,21 @@ export function OrgDetailPage() {
                             ))}
                         </div>
                     </div>
+
+                    {/* API Keys Section - Only for owners */}
+                    {canEditOrg && api && (
+                        <div>
+                            <div className="mb-2">
+                                <h3 className="text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide">
+                                    API Keys
+                                </h3>
+                                <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
+                                    Manage Claude API keys and monitor token usage
+                                </p>
+                            </div>
+                            <CRSApiKeyManager api={api} orgId={orgId} orgSlug={org.slug} />
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
