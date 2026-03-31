@@ -768,6 +768,12 @@ export function createSessionsRoutes(
             }
 
             storedSessions = storedSessions.filter(s => {
+                // Brain sessions should always be visible (飞书群创建的 session)
+                const meta = s.metadata as { source?: string } | null
+                if (meta?.source === 'brain') {
+                    return true
+                }
+
                 // 自己创建的，或者没有 createdBy 的 session
                 if (!s.createdBy || s.createdBy === email) {
                     return true
