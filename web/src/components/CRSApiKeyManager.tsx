@@ -24,7 +24,17 @@ export function CRSApiKeyManager({ api, orgId, orgSlug }: Props) {
         enabled: Boolean(api && orgId)
     })
 
-    const apiKeys = keysData?.data?.items ?? []
+    // 规范化 API Keys 数据（处理字符串类型的数字字段）
+    const apiKeys = (keysData?.data?.items ?? []).map(key => ({
+        ...key,
+        concurrencyLimit: typeof key.concurrencyLimit === 'string' ? parseInt(key.concurrencyLimit) : key.concurrencyLimit,
+        dailyCostLimit: typeof key.dailyCostLimit === 'string' ? parseFloat(key.dailyCostLimit) : key.dailyCostLimit,
+        totalCostLimit: typeof key.totalCostLimit === 'string' ? parseFloat(key.totalCostLimit) : key.totalCostLimit,
+        weeklyOpusCostLimit: typeof key.weeklyOpusCostLimit === 'string' ? parseFloat(key.weeklyOpusCostLimit) : key.weeklyOpusCostLimit,
+        rateLimitWindow: typeof key.rateLimitWindow === 'string' ? parseInt(key.rateLimitWindow) : key.rateLimitWindow,
+        rateLimitRequests: typeof key.rateLimitRequests === 'string' ? parseInt(key.rateLimitRequests) : key.rateLimitRequests,
+        rateLimitCost: typeof key.rateLimitCost === 'string' ? parseFloat(key.rateLimitCost) : key.rateLimitCost,
+    }))
     const keyIds = apiKeys.map(k => k.id)
 
     // 获取用量统计
