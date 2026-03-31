@@ -29,7 +29,6 @@ import { useSessionViewers } from '@/hooks/queries/useSessionViewers'
 import { useSendMessage } from '@/hooks/mutations/useSendMessage'
 import { useOtherUserTyping } from '@/hooks/useOtherUserTyping'
 import { queryKeys } from '@/lib/query-keys'
-import TerminalPage from '@/routes/sessions/terminal'
 import SettingsPage from '@/routes/settings'
 import OrgDetailPage from '@/routes/orgs'
 import AcceptInvitationPage from '@/routes/invitations/accept'
@@ -510,12 +509,6 @@ const sessionRoute = createRoute({
     component: SessionPage,
 })
 
-const sessionTerminalRoute = createRoute({
-    getParentRoute: () => rootRoute,
-    path: '/sessions/$sessionId/terminal',
-    component: TerminalPage,
-})
-
 const newSessionRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/sessions/new',
@@ -559,7 +552,6 @@ export const routeTree = rootRoute.addChildren([
     authCallbackRoute,
     sessionsRoute,
     sessionRoute,
-    sessionTerminalRoute,
     newSessionRoute,
     settingsRoute,
     orgDetailRoute,

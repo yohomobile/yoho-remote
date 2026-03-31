@@ -1732,7 +1732,7 @@ export function YohoRemoteComposer(props: {
                         <ComposerButtons
                             canSend={canSend}
                             controlsDisabled={controlsDisabled}
-                            showVoiceButton={speechToText.isSupported}
+                            showVoiceButton={false}
                             voiceDisabled={controlsDisabled}
                             voiceActive={speechToText.status === 'recording'}
                             voiceStopping={speechToText.status === 'stopping'}
