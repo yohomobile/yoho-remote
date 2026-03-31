@@ -10,10 +10,63 @@ export function createCRSProxyRoutes(store: IStore): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
     const CRS_BASE_URL = process.env.CRS_BASE_URL || 'https://token.yohomobile.dev'
-    const CRS_ADMIN_TOKEN = process.env.CRS_ADMIN_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN
+    const CRS_USERNAME = process.env.CRS_ADMIN_USERNAME
+    const CRS_PASSWORD = process.env.CRS_ADMIN_PASSWORD
 
-    if (!CRS_ADMIN_TOKEN) {
-        console.warn('[CRS Proxy] Warning: No CRS admin token configured')
+    // token 缓存：自动登录获取，过期后重新登录
+    let cachedToken: string | null = process.env.CRS_ADMIN_TOKEN || null
+    let tokenExpiresAt = 0 // 0 表示不知道过期时间，第一次 401 时会触发重新登录
+
+    /**
+     * 通过用户名密码登录 CRS 获取 session token
+     */
+    async function loginCRS(): Promise<string | null> {
+        if (!CRS_USERNAME || !CRS_PASSWORD) {
+            console.error('[CRS Proxy] Cannot auto-login: CRS_ADMIN_USERNAME or CRS_ADMIN_PASSWORD not configured')
+            return null
+        }
+
+        try {
+            const resp = await fetch(`${CRS_BASE_URL}/web/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: CRS_USERNAME, password: CRS_PASSWORD }),
+            })
+
+            if (!resp.ok) {
+                console.error('[CRS Proxy] Login failed:', await resp.text())
+                return null
+            }
+
+            const data = await resp.json() as { success: boolean; token: string; expiresIn: number }
+            if (data.success && data.token) {
+                cachedToken = data.token
+                // 提前 5 分钟过期，避免边界情况
+                tokenExpiresAt = Date.now() + data.expiresIn - 5 * 60 * 1000
+                console.log('[CRS Proxy] Auto-login successful, token refreshed')
+                return data.token
+            }
+
+            console.error('[CRS Proxy] Login response unexpected:', data)
+            return null
+        } catch (err) {
+            console.error('[CRS Proxy] Login error:', err)
+            return null
+        }
+    }
+
+    /**
+     * 获取有效的 admin token（自动刷新）
+     */
+    async function getToken(): Promise<string | null> {
+        if (cachedToken && tokenExpiresAt > 0 && Date.now() < tokenExpiresAt) {
+            return cachedToken
+        }
+        // token 过期或未知过期时间，尝试重新登录
+        if (CRS_USERNAME && CRS_PASSWORD) {
+            return loginCRS()
+        }
+        return cachedToken
     }
 
     /**
@@ -32,32 +85,42 @@ export function createCRSProxyRoutes(store: IStore): Hono<WebAppEnv> {
     }
 
     /**
-     * 调用 CRS API
+     * 调用 CRS API（带 401 自动重试）
      */
     async function callCRS(
         method: string,
         path: string,
         body?: any
     ): Promise<Response> {
-        const url = `${CRS_BASE_URL}${path}`
-        const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
+        const token = await getToken()
+
+        const doFetch = (t: string | null) => {
+            const url = `${CRS_BASE_URL}${path}`
+            const headers: Record<string, string> = {
+                'Content-Type': 'application/json',
+            }
+            if (t) {
+                headers['Authorization'] = `Bearer ${t}`
+            }
+            const options: RequestInit = { method, headers }
+            if (body && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
+                options.body = JSON.stringify(body)
+            }
+            return fetch(url, options)
         }
 
-        if (CRS_ADMIN_TOKEN) {
-            headers['Authorization'] = `Bearer ${CRS_ADMIN_TOKEN}`
+        const resp = await doFetch(token)
+
+        // 401 时尝试重新登录并重试一次
+        if (resp.status === 401 && CRS_USERNAME && CRS_PASSWORD) {
+            console.log('[CRS Proxy] Got 401, attempting token refresh...')
+            const newToken = await loginCRS()
+            if (newToken) {
+                return doFetch(newToken)
+            }
         }
 
-        const options: RequestInit = {
-            method,
-            headers,
-        }
-
-        if (body && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
-            options.body = JSON.stringify(body)
-        }
-
-        return fetch(url, options)
+        return resp
     }
 
     // ==================== API Keys 管理 ====================
