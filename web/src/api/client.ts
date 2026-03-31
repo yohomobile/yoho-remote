@@ -1,5 +1,4 @@
 import type {
-    AddInputPresetResponse,
     AddProjectResponse,
     AllowedUsersResponse,
     AuthResponse,
@@ -8,14 +7,12 @@ import type {
     FileUploadResponse,
     GitCommandResponse,
     ImageUploadResponse,
-    InputPresetsResponse,
     MachinePathsExistsResponse,
     MachinesResponse,
     MessageCountResponse,
     MessagesResponse,
     OnlineUsersResponse,
     ProjectsResponse,
-    RemoveInputPresetResponse,
     RemoveProjectResponse,
     ResumeSessionResponse,
     RolePromptsResponse,
@@ -32,7 +29,6 @@ import type {
     RemoveSessionShareResponse,
     SessionResponse,
     SessionsResponse,
-    UpdateInputPresetResponse,
     UpdateProjectResponse,
     UpdateUserPreferencesResponse,
     UserPreferencesResponse,
@@ -643,35 +639,6 @@ export class ApiClient {
                 method: 'DELETE'
             }
         )
-    }
-
-    // 输入预设管理
-    async getInputPresets(orgId?: string | null): Promise<InputPresetsResponse> {
-        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
-        return await this.request<InputPresetsResponse>(`/api/settings/input-presets${qs}`)
-    }
-
-    async addInputPreset(trigger: string, title: string, prompt: string, orgId?: string | null): Promise<AddInputPresetResponse> {
-        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
-        return await this.request<AddInputPresetResponse>(`/api/settings/input-presets${qs}`, {
-            method: 'POST',
-            body: JSON.stringify({ trigger, title, prompt })
-        })
-    }
-
-    async updateInputPreset(id: string, trigger: string, title: string, prompt: string, orgId?: string | null): Promise<UpdateInputPresetResponse> {
-        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
-        return await this.request<UpdateInputPresetResponse>(`/api/settings/input-presets/${encodeURIComponent(id)}${qs}`, {
-            method: 'PUT',
-            body: JSON.stringify({ trigger, title, prompt })
-        })
-    }
-
-    async removeInputPreset(id: string, orgId?: string | null): Promise<RemoveInputPresetResponse> {
-        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
-        return await this.request<RemoveInputPresetResponse>(`/api/settings/input-presets/${encodeURIComponent(id)}${qs}`, {
-            method: 'DELETE'
-        })
     }
 
     // Push 通知

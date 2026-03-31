@@ -139,20 +139,6 @@ export type RolePrompt = {
 export type RolePromptsResponse = { prompts: RolePrompt[] }
 export type SetRolePromptResponse = { ok: true; prompts: RolePrompt[] }
 
-export type InputPreset = {
-    id: string
-    trigger: string
-    title: string
-    prompt: string
-    createdAt: number
-    updatedAt: number
-}
-
-export type InputPresetsResponse = { presets: InputPreset[] }
-export type AddInputPresetResponse = { ok: true; preset: InputPreset; presets: InputPreset[] }
-export type UpdateInputPresetResponse = { ok: true; preset: InputPreset; presets: InputPreset[] }
-export type RemoveInputPresetResponse = { ok: true; presets: InputPreset[] }
-
 export type SessionSummary = {
     id: string
     active: boolean

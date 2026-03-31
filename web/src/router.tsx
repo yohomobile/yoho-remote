@@ -25,7 +25,6 @@ import { useSessions } from '@/hooks/queries/useSessions'
 import { useOnlineUsers } from '@/hooks/queries/useOnlineUsers'
 import { useSlashCommands } from '@/hooks/queries/useSlashCommands'
 import { useFileSuggestions } from '@/hooks/queries/useFileSuggestions'
-import { useInputPresets } from '@/hooks/queries/useInputPresets'
 import { useSessionViewers } from '@/hooks/queries/useSessionViewers'
 import { useSendMessage } from '@/hooks/mutations/useSendMessage'
 import { useOtherUserTyping } from '@/hooks/useOtherUserTyping'
@@ -374,29 +373,19 @@ function SessionPage() {
         getSuggestions: getFileSuggestions,
     } = useFileSuggestions(api, sessionId)
 
-    // Input presets (global, not session-specific)
-    const {
-        getSuggestions: getPresetSuggestions,
-    } = useInputPresets(api, currentOrgId)
-
     // 其他用户正在输入
     const otherUserTyping = useOtherUserTyping(sessionId)
 
     // Combined suggestions handler
     const getAutocompleteSuggestions = useCallback(async (query: string) => {
         if (query.startsWith('/')) {
-            // Presets first, then slash commands
-            const [presets, slashCommands] = await Promise.all([
-                getPresetSuggestions(query),
-                getSlashSuggestions(query)
-            ])
-            return [...presets, ...slashCommands]
+            return getSlashSuggestions(query)
         }
         if (query.startsWith('@')) {
             return getFileSuggestions(query)
         }
         return []
-    }, [getPresetSuggestions, getSlashSuggestions, getFileSuggestions])
+    }, [getSlashSuggestions, getFileSuggestions])
 
     const refreshSelectedSession = useCallback(() => {
         void refetchSession()
