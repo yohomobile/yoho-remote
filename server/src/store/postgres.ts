@@ -541,9 +541,6 @@ export class PostgresStore implements IStore {
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL;
             CREATE INDEX IF NOT EXISTS idx_sessions_org_id ON sessions(org_id);
 
-            -- Migration: Assign existing sessions to 'yoho' org
-            UPDATE sessions SET org_id = (SELECT id FROM organizations WHERE slug = 'yoho' LIMIT 1)
-            WHERE org_id IS NULL AND (SELECT id FROM organizations WHERE slug = 'yoho' LIMIT 1) IS NOT NULL;
 
             -- Migration: Add org_id to machines
             ALTER TABLE machines ADD COLUMN IF NOT EXISTS org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL;

@@ -316,6 +316,14 @@ export function createCliRoutes(
             }
         )
 
+        // Inherit org_id from main (brain) session
+        if (result.type === 'success' && parsed.data.mainSessionId && store) {
+            const mainSession = await store.getSession(parsed.data.mainSessionId, namespace)
+            if (mainSession?.orgId) {
+                await store.setSessionOrgId(result.sessionId, mainSession.orgId, namespace)
+            }
+        }
+
         return c.json(result)
     })
 

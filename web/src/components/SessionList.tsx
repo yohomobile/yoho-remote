@@ -57,15 +57,15 @@ function filterSessions(
 
         // Owner filter
         const isOpenClawSession = session.metadata?.source === 'openclaw'
-        const isBrainSession = session.metadata?.source === 'brain' || session.metadata?.source === 'brain-child'
+        const isBrainChildSession = session.metadata?.source === 'brain-child'
         if (ownerFilter === 'mine') {
             if (session.ownerEmail) return false
             if (isOpenClawSession) return false
-            if (isBrainSession) return false
+            if (isBrainChildSession) return false
         } else if (ownerFilter === 'openclaw') {
             if (!isOpenClawSession) return false
         } else if (ownerFilter === 'brain-child') {
-            if (!isBrainSession) return false
+            if (!isBrainChildSession) return false
         } else if (ownerFilter === 'others') {
             if (!session.ownerEmail) return false
         }
@@ -317,9 +317,9 @@ export function SessionList(props: {
         [props.sessions]
     )
 
-    // Check if there are any brain sessions (brain or brain-child)
-    const hasBrainSessions = useMemo(() =>
-        props.sessions.some(s => s.metadata?.source === 'brain' || s.metadata?.source === 'brain-child'),
+    // Check if there are any brain-child sessions
+    const hasBrainChildSessions = useMemo(() =>
+        props.sessions.some(s => s.metadata?.source === 'brain-child'),
         [props.sessions]
     )
 
@@ -363,10 +363,10 @@ export function SessionList(props: {
                         {archiveFilter ? 'Archive' : 'Active'}
                     </button>
                 </div>
-                {(viewOthersSessions || hasOpenClawSessions || hasBrainSessions) && (
+                {(viewOthersSessions || hasOpenClawSessions || hasBrainChildSessions) && (
                     <div className="flex items-center gap-1.5 min-w-0">
                         <div className="flex items-center gap-1">
-                            {(viewOthersSessions || hasOpenClawSessions || hasBrainSessions) && (
+                            {(viewOthersSessions || hasOpenClawSessions || hasBrainChildSessions) && (
                                 <button
                                     type="button"
                                     onClick={() => setOwnerFilter('mine')}
@@ -396,7 +396,7 @@ export function SessionList(props: {
                                     OpenClaw
                                 </button>
                             )}
-                            {hasBrainSessions && (
+                            {hasBrainChildSessions && (
                                 <button
                                     type="button"
                                     onClick={() => setOwnerFilter('brain-child')}
