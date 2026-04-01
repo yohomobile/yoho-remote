@@ -81,11 +81,11 @@ function getContextWarning(contextSize: number, maxContextSize: number): { text:
     console.log('  - percentageRemaining:', percentageRemaining.toFixed(2) + '%')
 
     if (percentageRemaining <= 5) {
-        return { text: `${Math.round(percentageRemaining)}% left`, color: 'text-red-500' }
+        return { text: `${Math.round(percentageUsed)}% used`, color: 'text-red-500' }
     } else if (percentageRemaining <= 10) {
-        return { text: `${Math.round(percentageRemaining)}% left`, color: 'text-amber-500' }
+        return { text: `${Math.round(percentageUsed)}% used`, color: 'text-amber-500' }
     } else {
-        return { text: `${Math.round(percentageRemaining)}% left`, color: 'text-[var(--app-hint)]' }
+        return { text: `${Math.round(percentageUsed)}% used`, color: 'text-[var(--app-hint)]' }
     }
 }
 
