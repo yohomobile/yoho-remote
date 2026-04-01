@@ -753,7 +753,10 @@ export function reduceChatBlocks(
                 continue
             }
 
-            const contextSize = inputTokens + cacheCreation + cacheRead
+            // NOTE: For Claude Code SDK cumulative usage, input_tokens already includes
+            // all tokens (regular + cache). Adding cache tokens again causes 200%+ values.
+            // This matches the previous bug fix and SDK behavior.
+            const contextSize = inputTokens
             const usage = {
                 inputTokens,
                 outputTokens: msg.usage.output_tokens,
