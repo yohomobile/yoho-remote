@@ -65,7 +65,7 @@ export function traceMessages(messages: NormalizedMessage[]): TracedMessage[] {
     for (const message of messages) {
         if (message.role !== 'agent') continue
         for (const content of message.content) {
-            if (content.type !== 'tool-call' || content.name !== 'Task') continue
+            if (content.type !== 'tool-call' || (content.name !== 'Task' && content.name !== 'Agent')) continue
             const input = content.input
             if (!isObject(input) || typeof input.prompt !== 'string') continue
             state.promptToTaskId.set(input.prompt, message.id)

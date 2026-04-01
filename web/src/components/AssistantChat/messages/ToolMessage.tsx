@@ -124,7 +124,7 @@ function YohoRemoteNestedBlockList(props: {
                 }
 
                 if (block.kind === 'tool-call') {
-                    const isTask = block.tool.name === 'Task'
+                    const isTask = block.tool.name === 'Task' || block.tool.name === 'Agent'
                     const taskChildren = isTask ? splitTaskChildren(block) : null
 
                     return (
@@ -214,7 +214,7 @@ export function YohoRemoteToolMessage(props: ToolCallMessagePartProps) {
     }
 
     const block = artifact
-    const isTask = block.tool.name === 'Task'
+    const isTask = block.tool.name === 'Task' || block.tool.name === 'Agent'
     const taskChildren = isTask ? splitTaskChildren(block) : null
 
     return (
