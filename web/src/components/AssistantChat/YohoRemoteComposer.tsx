@@ -667,7 +667,7 @@ export function YohoRemoteComposer(props: {
         const imageRefs = uploadedImages.map(img => `[Image: ${img.path}]`).join('\n')
         const fileRefs = uploadedFiles.map(file => `[File: ${file.path}]`).join('\n')
         const attachmentRefs = [imageRefs, fileRefs].filter(Boolean).join('\n')
-        const currentText = baseText.trim()
+        const currentText = (baseText ?? '').trim()
         if (!attachmentRefs) {
             return currentText
         }
@@ -677,7 +677,7 @@ export function YohoRemoteComposer(props: {
 
     // 处理带附件的消息发送
     const handleSendWithAttachments = useCallback((baseText?: string) => {
-        const newText = buildMessageWithAttachments(baseText ?? composerText)
+        const newText = buildMessageWithAttachments(baseText ?? composerText ?? '')
         if (!newText) {
             return
         }
