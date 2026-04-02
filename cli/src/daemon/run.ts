@@ -423,6 +423,10 @@ export async function startDaemon(): Promise<void> {
         if (agent === 'claude' && claudeAgent) {
           args.push('--agent', claudeAgent);
         }
+        // Pass Claude model mode via --model argument
+        if (agent === 'claude' && options.modelMode && (options.modelMode === 'sonnet' || options.modelMode === 'opus')) {
+          args.push('--model', options.modelMode);
+        }
         const opencodeModel = typeof options.opencodeModel === 'string' ? options.opencodeModel.trim() : '';
         if (agent === 'opencode' && opencodeModel) {
           args.push('--model', opencodeModel);
