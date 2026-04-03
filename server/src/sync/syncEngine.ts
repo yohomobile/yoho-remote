@@ -857,12 +857,12 @@ export class SyncEngine {
             || modeChanged
             || (now - lastBroadcastAt > 10_000)
 
-        if (DEBUG_THINKING && (wasThinking !== session.thinking || wasActive !== session.active)) {
+        if (wasThinking !== session.thinking || wasActive !== session.active) {
             const machineId = session.metadata?.machineId ?? 'unknown'
             console.log(
                 `[sync] session-alive sid=${shortId(session.id)} machine=${machineId} ` +
                 `active ${wasActive}->${session.active} thinking ${wasThinking}->${session.thinking} ` +
-                `mode=${payload.mode ?? 'n/a'} perm=${session.permissionMode ?? 'unset'} model=${session.modelMode ?? 'unset'}`
+                `payload.thinking=${payload.thinking} mode=${payload.mode ?? 'n/a'}`
             )
         }
 
