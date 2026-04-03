@@ -271,54 +271,12 @@ function normalizeAgentRecord(
                 }
             }
 
-            if (subtype === 'task_notification') {
-                return {
-                    id: messageId,
-                    localId,
-                    createdAt,
-                    role: 'event',
-                    content: {
-                        type: 'task-notification',
-                        taskId: asString(data.task_id) ?? '',
-                        status: asString(data.status) ?? '',
-                        summary: asString(data.summary) ?? asString(data.description) ?? ''
-                    } as AgentEvent,
-                    isSidechain: false,
-                    meta
-                }
-            }
-
-            if (subtype === 'task_started') {
-                return {
-                    id: messageId,
-                    localId,
-                    createdAt,
-                    role: 'event',
-                    content: {
-                        type: 'task-started',
-                        taskId: asString(data.task_id) ?? '',
-                        description: asString(data.description) ?? ''
-                    } as AgentEvent,
-                    isSidechain: false,
-                    meta
-                }
-            }
-
-            if (subtype === 'task_progress') {
-                return {
-                    id: messageId,
-                    localId,
-                    createdAt,
-                    role: 'event',
-                    content: {
-                        type: 'task-progress',
-                        taskId: asString(data.task_id) ?? '',
-                        description: asString(data.description) ?? '',
-                        lastToolName: asString(data.last_tool_name) ?? undefined
-                    } as AgentEvent,
-                    isSidechain: false,
-                    meta
-                }
+            // Task system events (task_started, task_progress, task_notification) are
+            // redundant when sidechain messages are present — the Agent/Task tool card
+            // already shows the sub-agent's tool calls inline.  Suppress them to avoid
+            // cluttering the main timeline with dozens of progress events.
+            if (subtype === 'task_notification' || subtype === 'task_started' || subtype === 'task_progress') {
+                return null
             }
 
             if (subtype === 'compact_boundary') {
