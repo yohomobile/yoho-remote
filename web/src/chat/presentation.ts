@@ -43,7 +43,10 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
     }
     if (event.type === 'turn-duration') {
         const ms = typeof event.durationMs === 'number' ? event.durationMs : 0
-        return { icon: '⏱️', text: `Turn: ${formatDuration(ms)}` }
+        const numTurns = (event as Record<string, unknown>).numTurns
+        const parts = [`Turn: ${formatDuration(ms)}`]
+        if (typeof numTurns === 'number') parts.push(`${numTurns} turns`)
+        return { icon: '⏱️', text: parts.join(' · ') }
     }
 
     // --- New SDK event types ---
@@ -121,13 +124,11 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
     }
 
     if (event.type === 'session-result') {
-        const cost = (event as Record<string, unknown>).cost
-        const durationMs = (event as Record<string, unknown>).durationMs
         const numTurns = (event as Record<string, unknown>).numTurns
-        const parts: string[] = []
-        if (typeof cost === 'number') parts.push(`$${cost.toFixed(4)}`)
-        if (typeof numTurns === 'number') parts.push(`${numTurns} turns`)
-        return { icon: '📊', text: parts.length > 0 ? `Session: ${parts.join(' · ')}` : 'Session completed' }
+        if (typeof numTurns === 'number') {
+            return { icon: '📊', text: `Session: ${numTurns} turns` }
+        }
+        return { icon: '📊', text: 'Session completed' }
     }
 
     try {

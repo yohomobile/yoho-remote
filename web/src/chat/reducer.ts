@@ -136,6 +136,34 @@ function dedupeAgentEvents(blocks: ChatBlock[]): ChatBlock[] {
         }
 
         const event = block.event as { type: string; [key: string]: unknown }
+
+        // Merge turn-duration + session-result into a single event.
+        // When session-result follows turn-duration, replace the previous turn-duration
+        // with a combined event showing turn time + turn count (no cost).
+        if (event.type === 'session-result') {
+            const prev = result.length > 0 ? result[result.length - 1] : null
+            if (prev && prev.kind === 'agent-event') {
+                const prevEvent = prev.event as { type: string; [key: string]: unknown }
+                if (prevEvent.type === 'turn-duration') {
+                    const numTurns = typeof event.numTurns === 'number' ? event.numTurns : null
+                    // Replace the previous turn-duration with a combined event
+                    result[result.length - 1] = {
+                        ...prev,
+                        event: {
+                            ...prevEvent,
+                            numTurns
+                        }
+                    }
+                    continue
+                }
+            }
+            // session-result without preceding turn-duration: show it standalone
+            result.push(block)
+            prevEventKey = `event:session-result`
+            prevTitleChangedTo = null
+            continue
+        }
+
         if (event.type === 'title-changed' && typeof event.title === 'string') {
             const title = event.title.trim()
             const key = `title-changed:${title}`
