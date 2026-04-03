@@ -13,6 +13,7 @@ export type FeishuBrainInitPromptOptions = InitPromptOptions & {
 export async function buildInitPrompt(_role: UserRole, options?: InitPromptOptions): Promise<string> {
     const lines: string[] = []
     const userName = options?.userName || null
+    const projectRoot = options?.projectRoot || null
 
     // 标识头
     lines.push('#InitPrompt-Yoho开发规范（最高优先级）')
@@ -28,10 +29,25 @@ export async function buildInitPrompt(_role: UserRole, options?: InitPromptOptio
     lines.push('- 当前运行环境信息（机器名、公网 IP、别名、平台等）请调用 `mcp__yoho_remote__environment_info` 获取，不要依赖提示词中的静态信息')
     lines.push('')
 
-    lines.push('2) 凭证系统')
+    // 2) Yoho Remote 工作空间
+    lines.push('2) Yoho Remote 工作空间')
+    lines.push('Yoho Remote 在数据库中维护一份 Project 列表，每个 Project 对应一个代码目录（path），可绑定到特定机器（machineId）或设为全局（machineId = null）。')
+    lines.push('')
+    if (projectRoot) {
+        lines.push(`- 当前会话工作目录：${projectRoot}`)
+    }
+    lines.push('- 用 `mcp__yoho_remote__project_list` 查看所有已注册的 Project（名称、路径、所属机器）')
+    lines.push('- 可以切换到其他 Project 的目录去工作，用完再切回来')
+    lines.push('- 可以用 `project_create` / `project_update` / `project_delete` 管理 Project 列表（注册新项目、修改名称描述、删除废弃项目）')
+    lines.push('')
+
+    // 3) 凭证系统
+    lines.push('3) 凭证系统')
     lines.push('- [强制] 需要任何凭证（数据库密码、API Key、SSH 配置、SMTP、消息队列等）时，必须通过 get_credential 工具获取。这是凭证的唯一来源，不要从 .env、代码硬编码或其他地方查找。如果这里没有，就是真没有。')
     lines.push('')
-    lines.push('3) 项目上下文')
+
+    // 4) 项目上下文
+    lines.push('4) 项目上下文')
     lines.push('- [强制] 每轮对话开始时，你 MUST 评估用户消息是否涉及公司项目、服务器、数据库、外部API、业务逻辑、团队成员、部署架构等。如涉及，必须先调用 recall 查询再做任何回复或操作。不调用 recall 就直接回答 = 可能给出错误信息。宁可多调一次，不可漏调。')
     lines.push('- [强制] 执行部署、发布、重启、测试、构建、数据库迁移、SSH 连接、安装依赖等操作前，必须先调用 recall 查询相关的部署方式、命令、配置，严禁凭猜测执行。不调用 recall 就直接执行 = 可能用错命令、部署到错误环境、造成生产事故。')
     lines.push('- 开始工作前，先调用 recall 工具查询当前项目的信息（技术栈、目录结构、部署方式等）')
