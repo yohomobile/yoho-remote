@@ -10,7 +10,6 @@ import { z } from 'zod'
 import { configuration } from '../../configuration'
 import { safeCompareStrings } from '../../utils/crypto'
 import { parseAccessToken } from '../../utils/accessToken'
-import type { SyncEngine } from '../../sync/syncEngine'
 import type { SSEManager } from '../../sse/sseManager'
 import type { IStore } from '../../store/interface'
 import type { WebAppEnv } from '../middleware/auth'
@@ -25,7 +24,6 @@ const uploadSchema = z.object({
 type CliEnv = { Variables: { namespace: string } }
 
 export function createDownloadCliRoutes(
-    getSyncEngine: () => SyncEngine | null,
     getSseManager: () => SSEManager | null,
     store: IStore,
 ): Hono<CliEnv> {
@@ -75,8 +73,7 @@ export function createDownloadCliRoutes(
 
         // Broadcast SSE event so frontend knows there's a new file
         const sseManager = getSseManager()
-        const engine = getSyncEngine()
-        if (sseManager && engine) {
+        if (sseManager) {
             const namespace = c.get('namespace')
             sseManager.broadcast({
                 type: 'file-ready',

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/query-keys'
 import { useKeycloakAuth } from '@/hooks/useKeycloakAuth'
+import { useConfig } from '@/hooks/useConfig'
 import type { SessionDownloadFile } from '@/types/api'
 
 function DownloadIcon() {
@@ -31,7 +32,8 @@ function formatBytes(bytes: number): string {
 }
 
 export function DownloadButton({ sessionId }: { sessionId: string }) {
-    const { apiClient } = useKeycloakAuth()
+    const { baseUrl } = useConfig()
+    const { api: apiClient } = useKeycloakAuth(baseUrl)
     const [open, setOpen] = useState(false)
     const [downloading, setDownloading] = useState<string | null>(null)
     const popoverRef = useRef<HTMLDivElement>(null)
