@@ -202,6 +202,7 @@ export function useSSE(options: {
                                                     ...s,
                                                     ...(data.active !== undefined && { active: data.active }),
                                                     ...(data.activeAt !== undefined && { activeAt: data.activeAt }),
+                                                    ...(data.thinking !== undefined && { thinking: data.thinking }),
                                                     ...(data.modelMode !== undefined && { modelMode: data.modelMode as SessionSummary['modelMode'] }),
                                                     ...(data.modelReasoningEffort !== undefined && { modelReasoningEffort: data.modelReasoningEffort as SessionSummary['modelReasoningEffort'] }),
                                                     ...(data.fastMode !== undefined && { fastMode: data.fastMode }),
