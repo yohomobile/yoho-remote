@@ -23,7 +23,6 @@ export async function buildInitPrompt(_role: UserRole, options?: InitPromptOptio
     // 1) 最高优先级规则
     lines.push('1) 最高优先级规则（不可违背）')
     lines.push('- 始终使用中文沟通')
-    lines.push('- 在推进任务（编码/命令/推动主 session）前，先质疑：用户给出的决策/方案是否最优；若不是，先给出更优/更稳妥的替代与取舍，并先向用户确认再行动')
     lines.push('- 安装软件和依赖时，永远不使用 docker')
     if (userName) {
         lines.push(`- 称呼当前用户为：${userName}`)
