@@ -35,14 +35,26 @@ const pathsExistsSchema = z.object({
     paths: z.array(z.string().min(1)).max(1000)
 })
 
-async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null): Promise<void> {
+async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null, machineId?: string): Promise<void> {
     try {
         const session = engine.getSession(sessionId)
         const projectRoot = session?.metadata?.path?.trim()
             || session?.metadata?.worktree?.basePath?.trim()
             || null
-        console.log(`[machines/sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}`)
-        const prompt = await buildInitPrompt(role, { projectRoot, userName })
+
+        // Get machine info for init prompt
+        let machineName: string | undefined
+        let machineIp: string | undefined
+        if (machineId) {
+            const machine = engine.getMachine(machineId)
+            if (machine?.metadata) {
+                machineName = (machine.metadata as any).displayName || machine.metadata.host
+                machineIp = (machine.metadata as any).ip
+            }
+        }
+
+        console.log(`[machines/sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}, machine=${machineName}/${machineIp}`)
+        const prompt = await buildInitPrompt(role, { projectRoot, userName, machineName, machineIp })
         if (!prompt.trim()) {
             console.warn(`[machines/sendInitPrompt] Empty prompt for session ${sessionId}, skipping`)
             return
@@ -186,7 +198,7 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
                 if (orgId) {
                     await store.setSessionOrgId(result.sessionId, orgId, namespace)
                 }
-                await sendInitPrompt(engine, result.sessionId, role, userName)
+                await sendInitPrompt(engine, result.sessionId, role, userName, machineId)
             })().catch((err: unknown) => {
                 console.error(`[machines/spawn] Post-spawn setup failed for session ${result.sessionId}:`, err)
             })

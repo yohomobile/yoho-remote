@@ -27,7 +27,9 @@ export const initialMachineMetadata: MachineMetadata = {
   yohoRemoteCliVersion: packageJson.version,
   homeDir: os.homedir(),
   yohoRemoteHomeDir: configuration.yohoRemoteHomeDir,
-  yohoRemoteLibDir: runtimePath()
+  yohoRemoteLibDir: runtimePath(),
+  ...(process.env.YOHO_MACHINE_IP ? { ip: process.env.YOHO_MACHINE_IP } : {}),
+  ...(process.env.YOHO_MACHINE_NAME ? { displayName: process.env.YOHO_MACHINE_NAME } : {}),
 };
 
 export async function startDaemon(): Promise<void> {
@@ -692,7 +694,8 @@ export async function startDaemon(): Promise<void> {
     const metadataChanged =
       currentMetadata?.host !== initialMachineMetadata.host ||
       currentMetadata?.platform !== initialMachineMetadata.platform ||
-      currentMetadata?.yohoRemoteCliVersion !== initialMachineMetadata.yohoRemoteCliVersion;
+      currentMetadata?.yohoRemoteCliVersion !== initialMachineMetadata.yohoRemoteCliVersion ||
+      (currentMetadata as any)?.ip !== (initialMachineMetadata as any).ip;
 
     if (metadataChanged) {
       logger.debug(`[DAEMON RUN] Metadata changed, updating...`);

@@ -3,6 +3,8 @@ import type { UserRole } from '../../store'
 type InitPromptOptions = {
     projectRoot?: string | null
     userName?: string | null
+    machineName?: string | null
+    machineIp?: string | null
 }
 
 export type FeishuBrainInitPromptOptions = InitPromptOptions & {
@@ -25,6 +27,14 @@ export async function buildInitPrompt(_role: UserRole, options?: InitPromptOptio
     lines.push('- 安装软件和依赖时，永远不使用 docker')
     if (userName) {
         lines.push(`- 称呼当前用户为：${userName}`)
+    }
+    const machineName = options?.machineName || null
+    const machineIp = options?.machineIp || null
+    if (machineName || machineIp) {
+        const parts: string[] = []
+        if (machineName) parts.push(`机器名: ${machineName}`)
+        if (machineIp) parts.push(`IP: ${machineIp}`)
+        lines.push(`- 当前运行环境：${parts.join('，')}`)
     }
     lines.push('')
 
