@@ -73,41 +73,53 @@ function collectTitleChanges(messages: NormalizedMessage[]): Map<string, string>
  * agent-text block before hitting a user-text block (turn boundary), the
  * result-text is redundant and can be removed.
  */
+/**
+ * Remove result-text blocks when the same turn already has agent-text blocks.
+ *
+ * normalize.ts extracts result.result text as an extra agent-text message
+ * (id containing ":result-text:") so that codex responses are visible even
+ * when the separate assistant message was lost.  For claude sessions the
+ * assistant text message already exists, so we need to strip the duplicate.
+ *
+ * Strategy: group blocks by turn (between user-text boundaries).  Within each
+ * turn, if both result-text AND non-result-text agent-text blocks exist, drop
+ * the result-text blocks.  This handles both orderings (result before or after
+ * assistant) since the CLI can deliver them in either order.
+ */
 function dedupeResultTextBlocks(blocks: ChatBlock[]): ChatBlock[] {
-    const result: ChatBlock[] = []
+    // Identify result-text block IDs to remove
+    const removeIds = new Set<string>()
+    let turnStart = 0
 
-    // DEBUG: log all agent-text block IDs for diagnosis
-    const agentTextIds = blocks
-        .filter(b => b.kind === 'agent-text')
-        .map(b => ({ id: b.id, hasResultText: b.id.includes(':result-text:'), text: (b as { text?: string }).text?.slice(0, 50) }))
-    if (agentTextIds.length > 0) {
-        console.log('[dedupeResultText] agent-text blocks:', JSON.stringify(agentTextIds))
-    }
+    for (let i = 0; i <= blocks.length; i++) {
+        if (i === blocks.length || blocks[i].kind === 'user-text') {
+            // Scan the turn [turnStart, i) for agent-text blocks
+            let hasNonResultAgentText = false
+            const resultTextIds: string[] = []
 
-    for (let i = 0; i < blocks.length; i++) {
-        const block = blocks[i]
-
-        if (block.kind === 'agent-text' && block.id.includes(':result-text:')) {
-            // Walk backwards to check if this turn already has agent-text
-            let hasPriorAgentText = false
-            for (let j = result.length - 1; j >= 0; j--) {
-                const prev = result[j]
-                if (prev.kind === 'user-text') break // turn boundary
-                if (prev.kind === 'agent-text' && !prev.id.includes(':result-text:')) {
-                    hasPriorAgentText = true
-                    break
+            for (let j = turnStart; j < i; j++) {
+                const b = blocks[j]
+                if (b.kind === 'agent-text') {
+                    if (b.id.includes(':result-text:')) {
+                        resultTextIds.push(b.id)
+                    } else {
+                        hasNonResultAgentText = true
+                    }
                 }
             }
-            console.log('[dedupeResultText] result-text block:', block.id, 'hasPriorAgentText:', hasPriorAgentText)
-            if (hasPriorAgentText) {
-                continue // skip this redundant result-text block
-            }
-        }
 
-        result.push(block)
+            if (hasNonResultAgentText) {
+                for (const id of resultTextIds) {
+                    removeIds.add(id)
+                }
+            }
+
+            turnStart = i + 1
+        }
     }
 
-    return result
+    if (removeIds.size === 0) return blocks
+    return blocks.filter(b => !removeIds.has(b.id))
 }
 
 function dedupeAgentEvents(blocks: ChatBlock[]): ChatBlock[] {
@@ -309,7 +321,6 @@ function mergeAgentTextBlocks(blocks: ChatBlock[]): ChatBlock[] {
             const currBaseId = block.id.split(':')[0]
             if (prevBaseId === currBaseId) {
                 // Merge consecutive agent-text blocks from the same message (for streaming deltas)
-                console.log('[mergeAgentText] merging same-base-id:', { prevId: prev.id, currId: block.id, prevBaseId })
                 merged[merged.length - 1] = { ...prev, text: prev.text + block.text }
                 continue
             }
@@ -318,7 +329,6 @@ function mergeAgentTextBlocks(blocks: ChatBlock[]): ChatBlock[] {
             // This handles cases where each streaming chunk has a unique message ID
             const timeGap = block.createdAt - prev.createdAt
             if (timeGap >= 0 && timeGap < STREAMING_MERGE_GAP_MS) {
-                console.log('[mergeAgentText] merging by time gap:', { prevId: prev.id, currId: block.id, timeGap })
                 merged[merged.length - 1] = { ...prev, text: prev.text + block.text }
                 continue
             }

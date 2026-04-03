@@ -427,7 +427,6 @@ function normalizeAgentRecord(
             if (resultText) {
                 const uuid = asString(data.uuid) ?? messageId
                 const parentUUID = asString(data.parentUuid) ?? null
-                console.log('[normalize] result has text, creating result-text msg:', { messageId, resultTextId: `${messageId}:result-text`, textSlice: resultText.slice(0, 60), parentUUID })
                 const textMsg: NormalizedMessage = {
                     id: `${messageId}:result-text`,
                     localId,
