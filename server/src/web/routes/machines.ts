@@ -42,19 +42,8 @@ async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserR
             || session?.metadata?.worktree?.basePath?.trim()
             || null
 
-        // Get machine info for init prompt
-        let machineName: string | undefined
-        let machineIp: string | undefined
-        if (machineId) {
-            const machine = engine.getMachine(machineId)
-            if (machine?.metadata) {
-                machineName = (machine.metadata as any).displayName || machine.metadata.host
-                machineIp = (machine.metadata as any).ip
-            }
-        }
-
-        console.log(`[machines/sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}, machine=${machineName}/${machineIp}`)
-        const prompt = await buildInitPrompt(role, { projectRoot, userName, machineName, machineIp })
+        console.log(`[machines/sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}`)
+        const prompt = await buildInitPrompt(role, { projectRoot, userName })
         if (!prompt.trim()) {
             console.warn(`[machines/sendInitPrompt] Empty prompt for session ${sessionId}, skipping`)
             return

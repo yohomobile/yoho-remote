@@ -7,11 +7,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createServer } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { AddressInfo } from "node:net";
+import os from "node:os";
 import { z } from "zod";
 import { logger } from "@/ui/logger";
 import { ApiSessionClient } from "@/api/apiSession";
 import type { ApiClient } from "@/api/api";
 import { randomUUID } from "node:crypto";
+import { configuration } from "@/configuration";
+import packageJson from "../../../package.json";
 
 interface StartYohoRemoteServerOptions {
     sessionSource?: string
@@ -90,7 +93,7 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
         toolNames.push('change_title')
     }
 
-    // Register Project tools for all sessions with apiClient
+    // Register Project + Session tools for all sessions with apiClient
     if (options?.apiClient && options.yohoRemoteSessionId) {
         const { registerProjectTools } = await import('./projectTools');
         registerProjectTools(mcp, toolNames, {
@@ -98,7 +101,46 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
             sessionId: options.yohoRemoteSessionId,
             machineId: options.machineId,
         });
-        logger.debug('[yrMCP] Project tools registered');
+
+        const { registerSessionTools } = await import('./sessionTools');
+        registerSessionTools(mcp, toolNames, {
+            apiClient: options.apiClient,
+            sessionId: options.yohoRemoteSessionId,
+        });
+
+        logger.debug('[yrMCP] Project + Session tools registered');
+    }
+
+    // Register environment_info tool (local info, no API call needed)
+    {
+        mcp.registerTool<any, any>('environment_info', {
+            title: 'Environment Info',
+            description: 'Get current execution environment information: machine name, public IP, alias, platform, session ID, working directory, and more.',
+            inputSchema: z.object({}),
+        }, async () => {
+            const info = {
+                machineId: options?.machineId ?? null,
+                hostname: os.hostname(),
+                displayName: process.env.YOHO_MACHINE_NAME ?? null,
+                publicIp: process.env.YOHO_MACHINE_IP ?? null,
+                platform: os.platform(),
+                arch: os.arch(),
+                user: process.env.USER ?? null,
+                shell: process.env.SHELL ?? null,
+                homeDir: os.homedir(),
+                yohoRemoteHomeDir: configuration.yohoRemoteHomeDir,
+                serverUrl: configuration.serverUrl,
+                cwd: process.cwd(),
+                nodeVersion: process.version,
+                cliVersion: packageJson.version,
+                sessionId: options?.yohoRemoteSessionId ?? client.sessionId ?? null,
+                sessionSource: options?.sessionSource ?? null,
+            }
+            return {
+                content: [{ type: 'text' as const, text: JSON.stringify(info, null, 2) }],
+            }
+        })
+        toolNames.push('environment_info')
     }
 
     // Register Brain tools when source is 'brain'

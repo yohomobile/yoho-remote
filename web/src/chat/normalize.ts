@@ -791,6 +791,12 @@ export function normalizeDecryptedMessage(message: DecryptedMessage): Normalized
         if (!normalized && isCodexContent(record.content)) {
             return null
         }
+        // If normalizeAgentRecord explicitly returned null for a known output
+        // type (system status, filtered events, etc.), suppress the message
+        // instead of falling back to raw JSON stringify.
+        if (!normalized && isObject(record.content) && (record.content as Record<string, unknown>).type === 'output') {
+            return null
+        }
         if (!normalized) {
             return {
                 id: message.id,

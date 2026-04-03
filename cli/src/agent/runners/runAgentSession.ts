@@ -151,7 +151,12 @@ export async function runAgentSession(opts: {
 
     let yohoRemoteServer: Awaited<ReturnType<typeof startYohoRemoteServer>>;
     try {
-        yohoRemoteServer = await startYohoRemoteServer(session);
+        yohoRemoteServer = await startYohoRemoteServer(session, {
+            sessionSource: sessionSource || undefined,
+            apiClient: api,
+            machineId,
+            yohoRemoteSessionId: response.id,
+        });
     } catch (error) {
         await reportStartFailure('start-mcp', error);
         await backend.disconnect().catch(() => {});

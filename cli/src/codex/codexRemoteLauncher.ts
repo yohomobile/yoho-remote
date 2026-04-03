@@ -479,7 +479,10 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
         }
     });
 
-    const yohoRemoteServer = await startYohoRemoteServer(session.client);
+    const yohoRemoteServer = await startYohoRemoteServer(session.client, {
+        apiClient: session.api,
+        yohoRemoteSessionId: session.client.sessionId,
+    });
     const bridgeCommand = getYohoRemoteCliCommand(['mcp', '--url', yohoRemoteServer.url]);
     const mcpServers = {
         yoho_remote: {

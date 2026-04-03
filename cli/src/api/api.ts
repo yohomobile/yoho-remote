@@ -453,6 +453,25 @@ export class ApiClient {
         return response.data.ok === true
     }
 
+    async listMachines(): Promise<Array<{
+        id: string
+        active: boolean
+        activeAt: number
+        metadata: { host: string; platform: string; yohoRemoteCliVersion: string } | null
+    }>> {
+        const response = await axios.get(
+            `${configuration.serverUrl}/cli/machines`,
+            {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 15_000
+            }
+        )
+        return response.data.machines
+    }
+
     async getFeishuChatMessages(chatId: string, limit?: number, before?: number): Promise<Array<{
         messageId: string
         senderOpenId: string

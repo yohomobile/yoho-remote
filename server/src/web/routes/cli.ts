@@ -183,6 +183,28 @@ export function createCliRoutes(
         return c.json({ ok: true })
     })
 
+    // List online machines
+    app.get('/machines', (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not ready' }, 503)
+        }
+        const namespace = c.get('namespace')
+        const machines = engine.getOnlineMachinesByNamespace(namespace)
+        return c.json({
+            machines: machines.map(m => ({
+                id: m.id,
+                active: m.active,
+                activeAt: m.activeAt,
+                metadata: m.metadata ? {
+                    host: m.metadata.host,
+                    platform: m.metadata.platform,
+                    yohoRemoteCliVersion: m.metadata.yohoRemoteCliVersion,
+                } : null,
+            }))
+        })
+    })
+
     app.post('/machines', async (c) => {
         const engine = getSyncEngine()
         if (!engine) {

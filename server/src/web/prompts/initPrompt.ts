@@ -3,8 +3,6 @@ import type { UserRole } from '../../store'
 type InitPromptOptions = {
     projectRoot?: string | null
     userName?: string | null
-    machineName?: string | null
-    machineIp?: string | null
 }
 
 export type FeishuBrainInitPromptOptions = InitPromptOptions & {
@@ -27,14 +25,7 @@ export async function buildInitPrompt(_role: UserRole, options?: InitPromptOptio
     if (userName) {
         lines.push(`- 称呼当前用户为：${userName}`)
     }
-    const machineName = options?.machineName || null
-    const machineIp = options?.machineIp || null
-    if (machineName || machineIp) {
-        const parts: string[] = []
-        if (machineName) parts.push(`机器名: ${machineName}`)
-        if (machineIp) parts.push(`IP: ${machineIp}`)
-        lines.push(`- 当前运行环境：${parts.join('，')}`)
-    }
+    lines.push('- 当前运行环境信息（机器名、公网 IP、别名、平台等）请调用 `mcp__yoho_remote__environment_info` 获取，不要依赖提示词中的静态信息')
     lines.push('')
 
     lines.push('2) 凭证系统')
