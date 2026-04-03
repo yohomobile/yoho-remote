@@ -681,7 +681,7 @@ function reduceTimeline(
     }
 
     return {
-        blocks: mergeAgentReasoningBlocks(mergeAgentTextBlocks(mergeCliOutputBlocks(blocks))),
+        blocks: mergeAgentReasoningBlocks(mergeAgentTextBlocks(dedupeResultTextBlocks(mergeCliOutputBlocks(blocks)))),
         toolBlocksById,
         hasReadyEvent
     }
