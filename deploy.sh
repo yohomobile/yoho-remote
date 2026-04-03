@@ -223,5 +223,6 @@ if [[ "$BUILD_DAEMON" == "true" ]]; then
 else
     echo "    (daemon was NOT rebuilt - sessions should remain online)"
 fi
-nohup bash "$RESTART_SCRIPT" "$BUILD_DAEMON" > /tmp/yr-restart.log 2>&1 &
+# setsid 让重启脚本完全脱离当前进程树，避免 stop daemon 时把脚本也杀掉
+setsid bash "$RESTART_SCRIPT" "$BUILD_DAEMON" > /tmp/yr-restart.log 2>&1 &
 echo "=== Restart dispatched (log: /tmp/yr-restart.log)"
