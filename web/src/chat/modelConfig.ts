@@ -13,7 +13,8 @@ const MODEL_CONTEXT_WINDOWS: Partial<Record<ModelMode, number>> = {
     // Claude Code 1M context window (Opus 4.6 / Sonnet 4.5+)
     default: 1_000_000,
     sonnet: 1_000_000,
-    opus: 1_000_000
+    opus: 1_000_000,
+    'glm-5.1': 1_000_000
 }
 
 export function getContextBudgetTokens(modelMode: ModelMode | undefined): number | null {

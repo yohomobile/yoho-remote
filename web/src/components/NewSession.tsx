@@ -10,7 +10,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { useAppContext } from '@/lib/app-context'
 
 type AgentType = 'claude' | 'codex' | 'codez' | 'droid'
-type ClaudeModelMode = 'sonnet' | 'opus'
+type ClaudeModelMode = 'sonnet' | 'opus' | 'glm-5.1'
 
 /** 上次创建 session 时的偏好设置，存储在 localStorage */
 interface SpawnPrefs {
@@ -49,6 +49,7 @@ function saveSpawnPrefs(userEmail: string | null, prefs: SpawnPrefs): void {
 const CLAUDE_MODES: { value: ClaudeModelMode; label: string; description: string }[] = [
     { value: 'sonnet', label: 'Sonnet', description: 'Claude Sonnet 4.5+' },
     { value: 'opus', label: 'Opus', description: 'Claude Opus 4.6' },
+    { value: 'glm-5.1', label: 'GLM 5.1', description: '智谱 GLM-5.1 (思考模式)' },
 ]
 
 // Codex 固定使用 gpt-5.3-codex

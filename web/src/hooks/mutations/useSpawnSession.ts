@@ -10,7 +10,7 @@ type SpawnInput = {
     yolo?: boolean
     sessionType?: 'simple' | 'worktree'
     worktreeName?: string
-    claudeModel?: 'sonnet' | 'opus'
+    claudeModel?: 'sonnet' | 'opus' | 'glm-5.1'
     codexModel?: string
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     droidModel?: string

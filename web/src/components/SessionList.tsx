@@ -6,7 +6,7 @@ import { useVibingMessage } from '@/hooks/useVibingMessage'
 
 // Filter types
 type ArchiveFilter = boolean  // true = show archived (offline) sessions only
-type OwnerFilter = 'mine' | 'openclaw' | 'brain-child' | 'others'
+type OwnerFilter = 'mine' | 'openclaw' | 'brain' | 'others'
 
 function getSessionPath(session: SessionSummary): string | null {
     return session.metadata?.worktree?.basePath ?? session.metadata?.path ?? null
@@ -58,15 +58,15 @@ function filterSessions(
 
         // Owner filter
         const isOpenClawSession = session.metadata?.source === 'openclaw'
-        const isBrainChildSession = session.metadata?.source === 'brain-child'
+        const isBrainSession = session.metadata?.source === 'brain' || session.metadata?.source === 'brain-child'
         if (ownerFilter === 'mine') {
             if (session.ownerEmail) return false
             if (isOpenClawSession) return false
-            if (isBrainChildSession) return false
+            if (isBrainSession) return false
         } else if (ownerFilter === 'openclaw') {
             if (!isOpenClawSession) return false
-        } else if (ownerFilter === 'brain-child') {
-            if (!isBrainChildSession) return false
+        } else if (ownerFilter === 'brain') {
+            if (!isBrainSession) return false
         } else if (ownerFilter === 'others') {
             if (!session.ownerEmail) return false
         }
@@ -327,9 +327,9 @@ export function SessionList(props: {
         [props.sessions]
     )
 
-    // Check if there are any brain-child sessions
-    const hasBrainChildSessions = useMemo(() =>
-        props.sessions.some(s => s.metadata?.source === 'brain-child'),
+    // Check if there are any brain or brain-child sessions
+    const hasBrainSessions = useMemo(() =>
+        props.sessions.some(s => s.metadata?.source === 'brain' || s.metadata?.source === 'brain-child'),
         [props.sessions]
     )
 
@@ -373,10 +373,10 @@ export function SessionList(props: {
                         {archiveFilter ? 'Archive' : 'Active'}
                     </button>
                 </div>
-                {(viewOthersSessions || hasOpenClawSessions || hasBrainChildSessions) && (
+                {(viewOthersSessions || hasOpenClawSessions || hasBrainSessions) && (
                     <div className="flex items-center gap-1.5 min-w-0">
                         <div className="flex items-center gap-1">
-                            {(viewOthersSessions || hasOpenClawSessions || hasBrainChildSessions) && (
+                            {(viewOthersSessions || hasOpenClawSessions || hasBrainSessions) && (
                                 <button
                                     type="button"
                                     onClick={() => setOwnerFilter('mine')}
@@ -406,13 +406,13 @@ export function SessionList(props: {
                                     OpenClaw
                                 </button>
                             )}
-                            {hasBrainChildSessions && (
+                            {hasBrainSessions && (
                                 <button
                                     type="button"
-                                    onClick={() => setOwnerFilter('brain-child')}
+                                    onClick={() => setOwnerFilter('brain')}
                                     className={`
                                         px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
-                                        ${ownerFilter === 'brain-child'
+                                        ${ownerFilter === 'brain'
                                             ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-sm'
                                             : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
                                         }

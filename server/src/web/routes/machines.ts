@@ -18,7 +18,7 @@ const spawnBodySchema = z.object({
     claudeAgent: z.string().min(1).optional(),
     opencodeModel: z.string().min(1).optional(),
     opencodeVariant: z.string().min(1).optional(),
-    claudeModel: z.enum(['sonnet', 'opus']).optional(),
+    claudeModel: z.enum(['sonnet', 'opus', 'glm-5.1']).optional(),
     codexModel: z.string().min(1).optional(),
     droidModel: z.string().min(1).optional(),
     droidReasoningEffort: z.string().min(1).optional(),
@@ -26,7 +26,7 @@ const spawnBodySchema = z.object({
     source: z.string().min(1).max(100).optional()
 })
 
-const modelModeValues = ['default', 'sonnet', 'opus', 'gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini', 'gpt-5.2'] as const
+const modelModeValues = ['default', 'sonnet', 'opus', 'glm-5.1', 'gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini', 'gpt-5.2'] as const
 const isModelMode = (value: string): value is NonNullable<Session['modelMode']> => {
     return (modelModeValues as readonly string[]).includes(value)
 }

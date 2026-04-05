@@ -12,7 +12,7 @@ const PERMISSION_MODES = new Set<SessionPermissionMode>([
  * Valid model modes for resume
  */
 const MODEL_MODES = new Set<SessionModelMode>([
-    'sonnet', 'opus',
+    'sonnet', 'opus', 'glm-5.1',
     'gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini', 'gpt-5.2',
     'grok-4-1-fast-reasoning', 'grok-4-1-fast-non-reasoning', 'grok-code-fast-1',
     'grok-4-fast-reasoning', 'grok-4-fast-non-reasoning', 'grok-4-0709', 'grok-3-mini', 'grok-3'
