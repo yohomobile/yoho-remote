@@ -22,6 +22,7 @@ import { restoreTerminalState } from '@/ui/terminalState';
 import { hasCodexCliOverrides } from './utils/codexCliOverrides';
 import { buildCodexStartConfig, TITLE_INSTRUCTION } from './utils/codexStartConfig';
 import { convertCodexEvent } from './utils/codexEventConverter';
+import { getYohoAuxMcpServers } from '@/utils/yohoMcpServers';
 
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
 
@@ -488,8 +489,9 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
         yoho_remote: {
             command: bridgeCommand.command,
             args: bridgeCommand.args
-        }
-    } as const;
+        },
+        ...getYohoAuxMcpServers('codex')
+    };
 
     let abortController = new AbortController();
     let storedSessionIdForResume: string | null = null;
