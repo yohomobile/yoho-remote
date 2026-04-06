@@ -41,4 +41,18 @@ describe('buildCodexStartConfig', () => {
 
         expect(config.model).toBe('o3');
     });
+
+    it('normalizes Yoho MCP tool names for Codex prompts', () => {
+        const config = buildCodexStartConfig({
+            message: '先调用 `mcp__yoho_remote__environment_info`，再看 `mcp__yoho_remote__project_list`，必要时调用 `mcp__yoho-memory__recall` 和 `mcp__yoho-credentials__get_credential`',
+            mode: { permissionMode: 'default' },
+            first: false,
+            mcpServers
+        });
+
+        expect(config.prompt).toContain('functions.yoho_remote__environment_info');
+        expect(config.prompt).toContain('functions.yoho_remote__project_list');
+        expect(config.prompt).toContain('functions.yoho_memory__recall');
+        expect(config.prompt).toContain('functions.yoho_credentials__get_credential');
+    });
 });

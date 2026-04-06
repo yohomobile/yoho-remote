@@ -5,6 +5,13 @@ import type { CodexCliOverrides } from './codexCliOverrides';
 
 export const TITLE_INSTRUCTION = trimIdent(`Based on this message, call functions.yoho_remote__change_title to change chat session title that would represent the current task. If chat idea would change dramatically - call this function again to update the title.`);
 
+function normalizeCodexToolReferences(message: string): string {
+    return message
+        .replaceAll(/mcp__yoho_remote__([a-z0-9_]+)/gi, 'functions.yoho_remote__$1')
+        .replaceAll(/mcp__yoho-memory__([a-z0-9_]+)/gi, 'functions.yoho_memory__$1')
+        .replaceAll(/mcp__yoho-credentials__([a-z0-9_]+)/gi, 'functions.yoho_credentials__$1');
+}
+
 function resolveApprovalPolicy(mode: EnhancedMode): CodexSessionConfig['approval-policy'] {
     switch (mode.permissionMode) {
         case 'default': return 'untrusted';
@@ -51,7 +58,8 @@ export function buildCodexStartConfig(args: {
     const resolvedSandbox = cliOverrides?.sandbox ?? sandbox;
 
     const shouldAddTitleInstruction = args.first && (args.includeTitleInstruction ?? true);
-    const prompt = shouldAddTitleInstruction ? `${args.message}\n\n${TITLE_INSTRUCTION}` : args.message;
+    const normalizedMessage = normalizeCodexToolReferences(args.message);
+    const prompt = shouldAddTitleInstruction ? `${normalizedMessage}\n\n${TITLE_INSTRUCTION}` : normalizedMessage;
     const config: Record<string, unknown> = { mcp_servers: args.mcpServers };
     if (args.developerInstructions) {
         config.developer_instructions = args.developerInstructions;
