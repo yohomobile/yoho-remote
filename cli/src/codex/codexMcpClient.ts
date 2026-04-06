@@ -525,6 +525,30 @@ export class CodexMcpClient {
             { capabilities: { elicitation: {} } }
         );
 
+        this.client.onerror = (error) => {
+            logger.debug('[CodexMCP] Client error:', stringifyForLog({
+                message: error.message,
+                stack: error.stack
+            }));
+        };
+
+        this.client.fallbackRequestHandler = async (request) => {
+            logger.debug('[CodexMCP] Fallback request handler invoked:', stringifyForLog({
+                method: request.method,
+                id: request.id,
+                params: request.params
+            }));
+
+            if (request.method === 'elicitation/create') {
+                return this.handleElicitationRequest({
+                    method: request.method,
+                    params: (request.params ?? {}) as Record<string, unknown>
+                });
+            }
+
+            throw new Error(`Unhandled MCP request method: ${request.method}`);
+        };
+
         // Avoid TS instantiation depth issues by widening the schema type.
         const codexNotificationSchema: z.ZodTypeAny = z.object({
             method: z.literal('codex/event'),
@@ -597,115 +621,116 @@ export class CodexMcpClient {
         ) => void).call(
             this.client,
             codexElicitationRequestSchema,
-            async (request) => {
-                const params = request.params as Record<string, unknown>;
-                const requestedSchema = extractRequestedSchema(params);
-                const approvalKind = extractApprovalKind(params);
-                const toolDetails = extractApprovalToolDetails(params);
-
-                logger.debug(
-                    '[CodexMCP] Elicitation request received:',
-                    stringifyForLog({
-                        method: request.method,
-                        paramsKeys: Object.keys(params),
-                        nestedRequestKeys: isObject(params.request) ? Object.keys(params.request) : [],
-                        approvalKind,
-                        requestedSchema,
-                        toolDetails
-                    })
-                );
-
-                // Load params
-                const toolCallId = extractToolCallId(params) ?? randomUUID();
-                const command = extractCommand(params);
-                const cwd = extractCwd(params);
-                const prompt = extractPrompt(params);
-                const toolName = toolDetails?.toolName ?? 'CodexBash';
-
-                // If no permission handler set, deny by default
-                if (!this.permissionHandler) {
-                    logger.debug('[CodexMCP] No permission handler set, denying by default');
-                    return buildElicitationResult('denied', requestedSchema, 'Permission handler not configured');
-                }
-
-                try {
-                    const input: Record<string, unknown> = approvalKind === 'mcp_tool_call'
-                        ? (isObject(toolDetails?.input) ? toolDetails.input as Record<string, unknown> : { input: toolDetails?.input ?? {} })
-                        : {
-                            command: command ?? (prompt.prompt ? prompt.prompt : []),
-                            cwd: cwd ?? ''
-                        };
-                    if (approvalKind !== 'mcp_tool_call') {
-                        if (prompt.prompt) {
-                            input.prompt = prompt.prompt;
-                        }
-                        if (prompt.description) {
-                            input.description = prompt.description;
-                        }
-                    }
-
-                    logger.debug(
-                        '[CodexMCP] Elicitation approval request prepared:',
-                        stringifyForLog({
-                            toolCallId,
-                            toolName,
-                            approvalKind,
-                            input
-                        })
-                    );
-
-                    // Request permission through the handler
-                    const result = await this.permissionHandler.handleToolCall(
-                        toolCallId,
-                        toolName,
-                        input,
-                        { approvalKind }
-                    );
-
-                    logger.debug(
-                        '[CodexMCP] Permission result:',
-                        stringifyForLog({
-                            toolCallId,
-                            toolName,
-                            approvalKind,
-                            result
-                        })
-                    );
-
-                    const elicitationResult = buildElicitationResult(result.decision, requestedSchema, result.reason);
-                    logger.debug(
-                        '[CodexMCP] Elicitation response payload:',
-                        stringifyForLog({
-                            toolCallId,
-                            elicitationResult
-                        })
-                    );
-                    return elicitationResult;
-                } catch (error) {
-                    logger.debug(
-                        '[CodexMCP] Error handling permission request:',
-                        stringifyForLog({
-                            toolCallId,
-                            toolName,
-                            approvalKind,
-                            error: error instanceof Error ? { message: error.message, stack: error.stack } : error
-                        })
-                    );
-                    const reason = error instanceof Error ? error.message : 'Permission request failed';
-                    const elicitationResult = buildElicitationResult('denied', requestedSchema, reason);
-                    logger.debug(
-                        '[CodexMCP] Elicitation denied payload after error:',
-                        stringifyForLog({
-                            toolCallId,
-                            elicitationResult
-                        })
-                    );
-                    return elicitationResult;
-                }
-            }
+            async (request) => this.handleElicitationRequest(request)
         );
 
+        const requestHandlerKeys = Array.from((((this.client as unknown as { _requestHandlers?: Map<string, unknown> })._requestHandlers) ?? new Map()).keys());
+        logger.debug('[CodexMCP] Registered request handlers:', stringifyForLog(requestHandlerKeys));
         logger.debug('[CodexMCP] Permission handlers registered');
+    }
+
+    private async handleElicitationRequest(request: { method: 'elicitation/create'; params: Record<string, unknown> }): Promise<unknown> {
+        const params = request.params as Record<string, unknown>;
+        const requestedSchema = extractRequestedSchema(params);
+        const approvalKind = extractApprovalKind(params);
+        const toolDetails = extractApprovalToolDetails(params);
+
+        logger.debug(
+            '[CodexMCP] Elicitation request received:',
+            stringifyForLog({
+                method: request.method,
+                paramsKeys: Object.keys(params),
+                nestedRequestKeys: isObject(params.request) ? Object.keys(params.request) : [],
+                approvalKind,
+                requestedSchema,
+                toolDetails
+            })
+        );
+
+        const toolCallId = extractToolCallId(params) ?? randomUUID();
+        const command = extractCommand(params);
+        const cwd = extractCwd(params);
+        const prompt = extractPrompt(params);
+        const toolName = toolDetails?.toolName ?? 'CodexBash';
+
+        if (!this.permissionHandler) {
+            logger.debug('[CodexMCP] No permission handler set, denying by default');
+            return buildElicitationResult('denied', requestedSchema, 'Permission handler not configured');
+        }
+
+        try {
+            const input: Record<string, unknown> = approvalKind === 'mcp_tool_call'
+                ? (isObject(toolDetails?.input) ? toolDetails.input as Record<string, unknown> : { input: toolDetails?.input ?? {} })
+                : {
+                    command: command ?? (prompt.prompt ? prompt.prompt : []),
+                    cwd: cwd ?? ''
+                };
+            if (approvalKind !== 'mcp_tool_call') {
+                if (prompt.prompt) {
+                    input.prompt = prompt.prompt;
+                }
+                if (prompt.description) {
+                    input.description = prompt.description;
+                }
+            }
+
+            logger.debug(
+                '[CodexMCP] Elicitation approval request prepared:',
+                stringifyForLog({
+                    toolCallId,
+                    toolName,
+                    approvalKind,
+                    input
+                })
+            );
+
+            const result = await this.permissionHandler.handleToolCall(
+                toolCallId,
+                toolName,
+                input,
+                { approvalKind }
+            );
+
+            logger.debug(
+                '[CodexMCP] Permission result:',
+                stringifyForLog({
+                    toolCallId,
+                    toolName,
+                    approvalKind,
+                    result
+                })
+            );
+
+            const elicitationResult = buildElicitationResult(result.decision, requestedSchema, result.reason);
+            logger.debug(
+                '[CodexMCP] Elicitation response payload:',
+                stringifyForLog({
+                    toolCallId,
+                    elicitationResult
+                })
+            );
+            return elicitationResult;
+        } catch (error) {
+            logger.debug(
+                '[CodexMCP] Error handling permission request:',
+                stringifyForLog({
+                    toolCallId,
+                    toolName,
+                    approvalKind,
+                    error: error instanceof Error ? { message: error.message, stack: error.stack } : error
+                })
+            );
+            const reason = error instanceof Error ? error.message : 'Permission request failed';
+            const elicitationResult = buildElicitationResult('denied', requestedSchema, reason);
+            logger.debug(
+                '[CodexMCP] Elicitation denied payload after error:',
+                stringifyForLog({
+                    toolCallId,
+                    elicitationResult
+                })
+            );
+            return elicitationResult;
+        }
     }
 
     async startSession(config: CodexSessionConfig, options?: { signal?: AbortSignal }): Promise<CodexToolResponse> {
