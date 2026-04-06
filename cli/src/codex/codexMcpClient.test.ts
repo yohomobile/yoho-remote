@@ -29,4 +29,29 @@ describe('codexMcpClient approval helpers', () => {
         expect(extractApprovalKind({})).toBe('unknown')
         expect(extractApprovalToolDetails({})).toBeNull()
     })
+
+    it('extracts approval metadata from nested elicitation request payload', () => {
+        const params = {
+            request: {
+                mode: 'form',
+                _meta: {
+                    codex_approval_kind: 'mcp_tool_call',
+                    tool_title: 'Recall',
+                    tool_params: {
+                        input: 'nested query',
+                        maxFiles: 10
+                    }
+                }
+            }
+        }
+
+        expect(extractApprovalKind(params)).toBe('mcp_tool_call')
+        expect(extractApprovalToolDetails(params)).toEqual({
+            toolName: 'Recall',
+            input: {
+                input: 'nested query',
+                maxFiles: 10
+            }
+        })
+    })
 })

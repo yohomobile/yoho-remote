@@ -116,32 +116,46 @@ function extractToolCallId(params: Record<string, unknown>): string | null {
 }
 
 export function extractApprovalKind(params: Record<string, unknown>): CodexApprovalKind {
-    const meta = isObject(params._meta) ? params._meta : null;
-    const kind = meta && typeof meta.codex_approval_kind === 'string' ? meta.codex_approval_kind : null;
-    if (kind === 'mcp_tool_call' || kind === 'exec_command') {
-        return kind;
+    const candidates: unknown[] = [params, params.request, params.payload, params.data];
+
+    for (const candidate of candidates) {
+        if (!isObject(candidate)) continue;
+        const meta = isObject(candidate._meta) ? candidate._meta : null;
+        const kind = meta && typeof meta.codex_approval_kind === 'string' ? meta.codex_approval_kind : null;
+        if (kind === 'mcp_tool_call' || kind === 'exec_command') {
+            return kind;
+        }
     }
+
     return 'unknown';
 }
 
 export function extractApprovalToolDetails(params: Record<string, unknown>): { toolName: string | null; input: unknown } | null {
-    const meta = isObject(params._meta) ? params._meta : null;
-    if (!meta) {
-        return null;
+    const candidates: unknown[] = [params, params.request, params.payload, params.data];
+
+    for (const candidate of candidates) {
+        if (!isObject(candidate)) continue;
+
+        const meta = isObject(candidate._meta) ? candidate._meta : null;
+        if (!meta) {
+            continue;
+        }
+
+        const toolTitle = normalizeText(meta.tool_title);
+        const toolName = toolTitle ?? normalizeText(meta.tool_name) ?? normalizeText(meta.server_name);
+        const toolParams = meta.tool_params ?? meta.arguments ?? meta.input;
+
+        if (!toolName && toolParams === undefined) {
+            continue;
+        }
+
+        return {
+            toolName,
+            input: toolParams ?? {}
+        };
     }
 
-    const toolTitle = normalizeText(meta.tool_title);
-    const toolName = toolTitle ?? normalizeText(meta.tool_name) ?? normalizeText(meta.server_name);
-    const toolParams = meta.tool_params ?? meta.arguments ?? meta.input;
-
-    if (!toolName && toolParams === undefined) {
-        return null;
-    }
-
-    return {
-        toolName,
-        input: toolParams ?? {}
-    };
+    return null;
 }
 
 const COMMAND_KEYS = [
