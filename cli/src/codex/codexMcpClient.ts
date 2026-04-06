@@ -21,6 +21,8 @@ type ElicitRequestedSchema = {
     required?: string[];
 };
 
+export type CodexApprovalKind = 'mcp_tool_call' | 'exec_command' | 'unknown';
+
 function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object';
 }
@@ -111,6 +113,35 @@ function extractToolCallId(params: Record<string, unknown>): string | null {
     }
 
     return null;
+}
+
+export function extractApprovalKind(params: Record<string, unknown>): CodexApprovalKind {
+    const meta = isObject(params._meta) ? params._meta : null;
+    const kind = meta && typeof meta.codex_approval_kind === 'string' ? meta.codex_approval_kind : null;
+    if (kind === 'mcp_tool_call' || kind === 'exec_command') {
+        return kind;
+    }
+    return 'unknown';
+}
+
+export function extractApprovalToolDetails(params: Record<string, unknown>): { toolName: string | null; input: unknown } | null {
+    const meta = isObject(params._meta) ? params._meta : null;
+    if (!meta) {
+        return null;
+    }
+
+    const toolTitle = normalizeText(meta.tool_title);
+    const toolName = toolTitle ?? normalizeText(meta.tool_name) ?? normalizeText(meta.server_name);
+    const toolParams = meta.tool_params ?? meta.arguments ?? meta.input;
+
+    if (!toolName && toolParams === undefined) {
+        return null;
+    }
+
+    return {
+        toolName,
+        input: toolParams ?? {}
+    };
 }
 
 const COMMAND_KEYS = [
@@ -537,13 +568,15 @@ export class CodexMcpClient {
             async (request) => {
                 const params = request.params as Record<string, unknown>;
                 const requestedSchema = extractRequestedSchema(params);
+                const approvalKind = extractApprovalKind(params);
+                const toolDetails = extractApprovalToolDetails(params);
 
                 // Load params
                 const toolCallId = extractToolCallId(params) ?? randomUUID();
                 const command = extractCommand(params);
                 const cwd = extractCwd(params);
                 const prompt = extractPrompt(params);
-                const toolName = 'CodexBash';
+                const toolName = toolDetails?.toolName ?? 'CodexBash';
 
                 // If no permission handler set, deny by default
                 if (!this.permissionHandler) {
@@ -552,22 +585,27 @@ export class CodexMcpClient {
                 }
 
                 try {
-                    const input: Record<string, unknown> = {
-                        command: command ?? (prompt.prompt ? prompt.prompt : []),
-                        cwd: cwd ?? ''
-                    };
-                    if (prompt.prompt) {
-                        input.prompt = prompt.prompt;
-                    }
-                    if (prompt.description) {
-                        input.description = prompt.description;
+                    const input: Record<string, unknown> = approvalKind === 'mcp_tool_call'
+                        ? (isObject(toolDetails?.input) ? toolDetails.input as Record<string, unknown> : { input: toolDetails?.input ?? {} })
+                        : {
+                            command: command ?? (prompt.prompt ? prompt.prompt : []),
+                            cwd: cwd ?? ''
+                        };
+                    if (approvalKind !== 'mcp_tool_call') {
+                        if (prompt.prompt) {
+                            input.prompt = prompt.prompt;
+                        }
+                        if (prompt.description) {
+                            input.description = prompt.description;
+                        }
                     }
 
                     // Request permission through the handler
                     const result = await this.permissionHandler.handleToolCall(
                         toolCallId,
                         toolName,
-                        input
+                        input,
+                        { approvalKind }
                     );
 
                     logger.debug('[CodexMCP] Permission result:', result);

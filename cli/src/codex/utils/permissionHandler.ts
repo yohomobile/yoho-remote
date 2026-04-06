@@ -7,7 +7,7 @@
 
 import { logger } from "@/ui/logger";
 import { ApiSessionClient } from "@/api/apiSession";
-import { AgentState } from "@/api/types";
+import { AgentState, type SessionPermissionMode } from "@/api/types";
 
 interface PermissionResponse {
     id: string;
@@ -31,9 +31,11 @@ interface PermissionResult {
 export class CodexPermissionHandler {
     private pendingRequests = new Map<string, PendingRequest>();
     private session: ApiSessionClient;
+    private readonly getPermissionMode?: () => SessionPermissionMode | undefined;
 
-    constructor(session: ApiSessionClient) {
+    constructor(session: ApiSessionClient, options?: { getPermissionMode?: () => SessionPermissionMode | undefined }) {
         this.session = session;
+        this.getPermissionMode = options?.getPermissionMode;
         this.setupRpcHandler();
     }
 
@@ -47,8 +49,18 @@ export class CodexPermissionHandler {
     async handleToolCall(
         toolCallId: string,
         toolName: string,
-        input: unknown
+        input: unknown,
+        options?: { approvalKind?: 'mcp_tool_call' | 'exec_command' | 'unknown' }
     ): Promise<PermissionResult> {
+        const permissionMode = this.getPermissionMode?.();
+        if (
+            options?.approvalKind === 'mcp_tool_call'
+            && (permissionMode === 'yolo' || permissionMode === 'safe-yolo')
+        ) {
+            logger.debug(`[Codex] Auto-approving MCP tool call in ${permissionMode}: ${toolName} (${toolCallId})`);
+            return { decision: 'approved' };
+        }
+
         return new Promise<PermissionResult>((resolve, reject) => {
             // Store the pending request
             this.pendingRequests.set(toolCallId, {

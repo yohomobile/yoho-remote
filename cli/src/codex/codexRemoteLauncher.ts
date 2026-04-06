@@ -301,7 +301,9 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
         ?? parseSampleRateEnv('YR_MCP_EVENT_LOG_SAMPLE_RATE')
         ?? 1;
 
-    const permissionHandler = new CodexPermissionHandler(session.client);
+    const permissionHandler = new CodexPermissionHandler(session.client, {
+        getPermissionMode: () => session.getPermissionMode()
+    });
     const reasoningProcessor = new ReasoningProcessor((message) => {
         session.sendCodexMessage(message);
     });
