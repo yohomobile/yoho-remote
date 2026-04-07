@@ -8,6 +8,7 @@ import { usePlatform } from '@/hooks/usePlatform'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
 import { queryKeys } from '@/lib/query-keys'
 import { useAppContext } from '@/lib/app-context'
+import { getMachineTitle } from '@/lib/machines'
 
 type AgentType = 'claude' | 'codex' | 'codez' | 'droid'
 type ClaudeModelMode = 'sonnet' | 'opus' | 'glm-5.1'
@@ -145,12 +146,6 @@ function SpawnLogPanel({ logs }: { logs: SpawnLogEntry[] }) {
             </div>
         </div>
     )
-}
-
-function getMachineTitle(machine: Machine): string {
-    if (machine.metadata?.displayName) return machine.metadata.displayName
-    if (machine.metadata?.host) return machine.metadata.host
-    return machine.id.slice(0, 8)
 }
 
 export function NewSession(props: {

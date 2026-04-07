@@ -258,11 +258,29 @@ export async function startWebServer(options: {
         : 0
     const maxHttpBodySize = Math.max(socketBodySize, 150 * 1024 * 1024)  // 150MB to support 100MB file uploads with base64 overhead
 
+    const origWs = socketHandler.websocket
+    const debugWs = {
+        ...origWs,
+        open(ws: any) {
+            console.log('[ws-debug] open')
+            return origWs.open(ws)
+        },
+        message(ws: any, message: any) {
+            const preview = typeof message === 'string' ? message.substring(0, 50) : `[binary ${(message as any).byteLength}b]`
+            console.log(`[ws-debug] message: type=${typeof message} val="${preview}"`)
+            return origWs.message(ws, message)
+        },
+        close(ws: any, code: number, message: string) {
+            console.log(`[ws-debug] close: code=${code}`)
+            return origWs.close(ws, code, message)
+        },
+    }
+
     const server = Bun.serve({
         port: configuration.webappPort,
         idleTimeout: Math.max(30, socketHandler.idleTimeout),
         maxRequestBodySize: maxHttpBodySize,
-        websocket: socketHandler.websocket,
+        websocket: debugWs,
         fetch: (req, server) => {
             const url = new URL(req.url)
             if (url.pathname.startsWith('/socket.io/')) {
