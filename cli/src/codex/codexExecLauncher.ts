@@ -10,8 +10,8 @@
 import { render } from 'ink';
 import React from 'react';
 import { randomUUID } from 'node:crypto';
-import { spawn, type ChildProcess } from 'node:child_process';
-import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
 
 import { logger } from '@/ui/logger';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
@@ -23,9 +23,9 @@ import { restoreTerminalState } from '@/ui/terminalState';
 import { hasCodexCliOverrides } from './utils/codexCliOverrides';
 import { buildCodexStartConfig, TITLE_INSTRUCTION } from './utils/codexStartConfig';
 import { resolveCodexBinary } from './codexBinary';
-import { getYohoAuxMcpServers, type YohoStdioMcpServerConfig } from '@/utils/yohoMcpServers';
+import { getYohoAuxMcpServers } from '@/utils/yohoMcpServers';
 import type { CodexSession } from './session';
-import type { EnhancedMode } from './loop';
+import type { EnhancedMode, PermissionMode } from './loop';
 
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
 
@@ -280,7 +280,7 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
             console.error('[YR codex-exec] Processing message:', message.message.slice(0, 50));
 
             try {
-                // Build codex start config to get resolved sandbox/model
+                // Build codex start config to get resolved model/prompt
                 const startConfig = buildCodexStartConfig({
                     message: outgoingMessage,
                     mode: message.mode,
@@ -294,6 +294,7 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
                 const childResult = await spawnCodexExec({
                     codexBin,
                     startConfig,
+                    permissionMode: message.mode.permissionMode,
                     mcpServers,
                     threadId,
                     prompt: startConfig.prompt,
@@ -359,11 +360,10 @@ interface SpawnCodexExecOptions {
     codexBin: { command: string; version: string | null; env: NodeJS.ProcessEnv };
     startConfig: {
         prompt: string;
-        sandbox?: string;
         model?: string;
         model_reasoning_effort?: string;
-        'approval-policy'?: string;
     };
+    permissionMode: PermissionMode;
     mcpServers: Record<string, { command: string; args: string[]; cwd?: string; env?: Record<string, string> }>;
     threadId: string | null;
     prompt: string;
@@ -381,7 +381,8 @@ interface SpawnCodexExecResult {
 async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexExecResult> {
     const {
         codexBin, startConfig, mcpServers, threadId, prompt,
-        session, messageBuffer, turnTimeoutMs, onThreadId, shouldExit
+        session, messageBuffer, turnTimeoutMs, onThreadId, shouldExit,
+        permissionMode
     } = opts;
 
     const args: string[] = [];
@@ -395,24 +396,27 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
 
     args.push('--json');
 
-    // Sandbox
-    if (startConfig.sandbox) {
-        args.push('--sandbox', startConfig.sandbox);
+    // Permission mode → codex exec flags
+    // In exec mode without TTY, approval prompts cause "user cancelled" errors.
+    // Map yoho permission modes directly to codex exec flags:
+    //   yolo       → --dangerously-bypass-approvals-and-sandbox (skip all approvals + no sandbox)
+    //   safe-yolo  → --full-auto + --sandbox workspace-write
+    //   read-only  → --sandbox read-only
+    //   default    → --sandbox workspace-write
+    if (permissionMode === 'yolo') {
+        args.push('--dangerously-bypass-approvals-and-sandbox');
+    } else if (permissionMode === 'safe-yolo') {
+        args.push('--full-auto');
+    } else if (permissionMode === 'read-only') {
+        args.push('--sandbox', 'read-only');
+    } else {
+        args.push('--sandbox', 'workspace-write');
     }
 
     // Model
     if (startConfig.model) {
         args.push('-m', startConfig.model);
     }
-
-    // Approval policy → map to codex exec flags
-    const approvalPolicy = startConfig['approval-policy'];
-    if (approvalPolicy === 'never') {
-        args.push('--dangerously-bypass-approvals-and-sandbox');
-    } else if (approvalPolicy === 'on-request' || approvalPolicy === 'on-failure') {
-        args.push('--full-auto');
-    }
-    // 'untrusted' is the default — no flag needed
 
     // MCP servers
     args.push(...buildMcpConfigFlags(mcpServers));
@@ -425,7 +429,7 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
     // Prompt
     args.push(prompt);
 
-    logger.debug(`[codex-exec] Spawning: ${codexBin.command} ${args.slice(0, 4).join(' ')} ... (${args.length} args total)`);
+    logger.debug(`[codex-exec] Spawning: ${codexBin.command} ${args.slice(0, 6).join(' ')} ... (${args.length} args total, permissionMode=${permissionMode})`);
 
     let resultThreadId: string | null = threadId;
 
