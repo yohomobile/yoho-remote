@@ -42,6 +42,18 @@ function getMainCliExecutable(): string | null {
 }
 
 /**
+ * Look for a compiled yoho-remote binary in the project's dist-exe directory.
+ * Returns the path if found, null otherwise.
+ */
+function findCompiledCli(projectRoot: string): string | null {
+  const platform = process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'darwin' : 'linux';
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const exeName = process.platform === 'win32' ? 'yoho-remote.exe' : 'yoho-remote';
+  const candidate = join(projectRoot, 'dist-exe', `bun-${platform}-${arch}`, exeName);
+  return existsSync(candidate) ? candidate : null;
+}
+
+/**
  * Resolve the TypeScript entrypoint for development mode.
  */
 function resolveEntrypoint(projectRoot: string): string {
@@ -78,8 +90,20 @@ export function getYohoRemoteCliCommand(args: string[]): YohoRemoteCliCommand {
     };
   }
 
-  // Development mode: spawn with TypeScript entrypoint
+  // Check if a compiled yoho-remote binary exists alongside project files
+  // This handles the case where the daemon runs via Node.js/tsx but sessions
+  // should use the compiled Bun executable (e.g. macmini setup)
   const projectRoot = projectPath();
+  const compiledCli = findCompiledCli(projectRoot);
+  if (compiledCli) {
+    logger.debug(`[SPAWN CLI] Using compiled CLI binary: ${compiledCli}`);
+    return {
+      command: compiledCli,
+      args
+    };
+  }
+
+  // Development mode: spawn with TypeScript entrypoint
   const entrypoint = resolveEntrypoint(projectRoot);
   const isBunRuntime = Boolean((process.versions as Record<string, string | undefined>).bun);
 
