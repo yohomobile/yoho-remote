@@ -27,6 +27,13 @@ export function getYohoAuxMcpServers(flavor: 'claude' | 'codex'): Record<string,
     const memoryServerName = flavor === 'codex' ? 'yoho_memory' : 'yoho-memory';
     const credentialsServerName = flavor === 'codex' ? 'yoho_credentials' : 'yoho-credentials';
 
+    // For codex flavor, skip aux MCP servers to avoid head-of-line blocking bug
+    // in Codex binary (see https://github.com/openai/codex/issues/11816).
+    // These tools are available through the yoho_remote MCP bridge instead.
+    if (flavor === 'codex') {
+        return {};
+    }
+
     return {
         [memoryServerName]: {
             command: 'bun',
