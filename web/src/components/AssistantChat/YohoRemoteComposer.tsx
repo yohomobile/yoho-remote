@@ -1521,7 +1521,6 @@ export function YohoRemoteComposer(props: {
         return null
     }, [
         showSettings,
-        showPermissionSettings,
         showModelSettings,
         suggestions,
         selectedIndex,

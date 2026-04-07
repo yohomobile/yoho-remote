@@ -1,11 +1,6 @@
 import type { Machine } from '@/types/api'
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-
-function getMachineTitle(machine: Machine): string {
-    if (machine.metadata?.displayName) return machine.metadata.displayName
-    if (machine.metadata?.host) return machine.metadata.host
-    return machine.id.slice(0, 8)
-}
+import { getMachineTitle } from '@/lib/machines'
 
 export function MachineList(props: {
     machines: Machine[]

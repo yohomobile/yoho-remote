@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
-import type { Project, SessionSummary } from '@/types/api'
+import type { Machine, Project, SessionSummary } from '@/types/api'
 import { ViewersBadge } from './ViewersBadge'
 import { LoadingState } from './LoadingState'
 import { useVibingMessage } from '@/hooks/useVibingMessage'
+import { getMachineTitle } from '@/lib/machines'
 
 // Filter types
 type ArchiveFilter = boolean  // true = show archived (offline) sessions only
@@ -153,6 +154,23 @@ function getSourceTag(session: SessionSummary): { label: string; color: string }
     return null
 }
 
+function getSessionModelLabel(session: SessionSummary): string | null {
+    const runtimeModel = session.metadata?.runtimeModel?.trim()
+    if (!runtimeModel) return null
+    const effort = session.metadata?.runtimeModelReasoningEffort
+    return effort ? `${runtimeModel} (${effort})` : runtimeModel
+}
+
+function getSessionMachineLabel(session: SessionSummary, machineMap: Map<string, Machine>): string | null {
+    const machineId = session.metadata?.machineId
+    if (!machineId) return null
+    const machine = machineMap.get(machineId)
+    if (machine) {
+        return getMachineTitle(machine)
+    }
+    return machineId.slice(0, 8)
+}
+
 function formatRelativeTime(value: number): string | null {
     const ms = value < 1_000_000_000_000 ? value * 1000 : value
     if (!Number.isFinite(ms)) return null
@@ -181,8 +199,10 @@ function SessionItem(props: {
     project: Project | null
     currentUserEmail: string | null
     onSelect: (sessionId: string) => void
+    modelLabel?: string | null
+    machineName?: string | null
 }) {
-    const { session: s, project, currentUserEmail, onSelect } = props
+    const { session: s, project, currentUserEmail, onSelect, modelLabel, machineName } = props
 
     // Check if session was created by current user
     const isMySession = currentUserEmail && s.createdBy
@@ -239,6 +259,28 @@ function SessionItem(props: {
                 </div>
                 <div className="flex items-center gap-1 mt-0.5 text-[11px] text-[var(--app-hint)] flex-wrap">
                     <span className="shrink-0">{getAgentLabel(s)}</span>
+                    {modelLabel && (
+                        <>
+                            <span className="opacity-50">·</span>
+                            <span
+                                className="shrink-0 text-[11px] text-[var(--app-hint)] whitespace-nowrap overflow-hidden truncate max-w-[160px]"
+                                title={modelLabel}
+                            >
+                                {modelLabel}
+                            </span>
+                        </>
+                    )}
+                    {machineName && (
+                        <>
+                            <span className="opacity-50">·</span>
+                            <span
+                                className="shrink-0 text-[11px] text-[var(--app-hint)] whitespace-nowrap overflow-hidden truncate max-w-[160px]"
+                                title={`Machine: ${machineName}`}
+                            >
+                                Machine: {machineName}
+                            </span>
+                        </>
+                    )}
                     {project && (
                         <>
                             <span className="opacity-50">·</span>
@@ -297,8 +339,9 @@ export function SessionList(props: {
     onRefresh: () => void
     isLoading: boolean
     renderHeader?: boolean
+    machines: Machine[]
 }) {
-    const { renderHeader = true, viewOthersSessions = false } = props
+    const { renderHeader = true, viewOthersSessions = false, machines } = props
 
     // Filter state - defaults: not archived, show mine by default
     const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>(false)
@@ -314,6 +357,14 @@ export function SessionList(props: {
         }
         return map
     }, [props.sessions, props.projects])
+
+    const machineMap = useMemo(() => {
+        const map = new Map<string, Machine>()
+        machines.forEach((machine) => {
+            map.set(machine.id, machine)
+        })
+        return map
+    }, [machines])
 
     // Filter and sort sessions (flat display)
     const filteredSessions = useMemo(() => {
@@ -452,15 +503,21 @@ export function SessionList(props: {
                         No matching sessions
                     </div>
                 ) : (
-                    filteredSessions.map((session) => (
-                        <SessionItem
-                            key={session.id}
-                            session={session}
-                            project={sessionProjectMap.get(session.id) ?? null}
-                            currentUserEmail={props.currentUserEmail}
-                            onSelect={props.onSelect}
-                        />
-                    ))
+                    filteredSessions.map((session) => {
+                        const modelLabel = getSessionModelLabel(session)
+                        const machineName = getSessionMachineLabel(session, machineMap)
+                        return (
+                            <SessionItem
+                                key={session.id}
+                                session={session}
+                                project={sessionProjectMap.get(session.id) ?? null}
+                                currentUserEmail={props.currentUserEmail}
+                                onSelect={props.onSelect}
+                                modelLabel={modelLabel}
+                                machineName={machineName}
+                            />
+                        )
+                    })
                 )}
             </div>
         </div>

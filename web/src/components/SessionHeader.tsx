@@ -7,7 +7,9 @@ import { getClientId } from '@/lib/client-identity'
 import { ViewersBadge } from './ViewersBadge'
 import { ShareDialog } from './ShareDialog'
 import { useAppContext } from '@/lib/app-context'
+import { getMachineTitle } from '@/lib/machines'
 import { queryKeys } from '@/lib/query-keys'
+import { useMachines } from '@/hooks/queries/useMachines'
 
 function getSessionPath(session: Session): string | null {
     return session.metadata?.worktree?.basePath ?? session.metadata?.path ?? null
@@ -259,6 +261,7 @@ export function SessionHeader(props: {
     const { api, userEmail, currentOrgId } = useAppContext()
     const queryClient = useQueryClient()
     const navigate = useNavigate()
+    const { machines } = useMachines(api, true, currentOrgId)
     const title = useMemo(() => getSessionTitle(props.session), [props.session])
     const worktreeBranch = props.session.metadata?.worktree?.branch
     const agentLabel = useMemo(() => getAgentLabel(props.session), [props.session])
@@ -267,6 +270,15 @@ export function SessionHeader(props: {
         () => formatRuntimeModel(props.session, props.modelMode, props.modelReasoningEffort),
         [props.session, props.modelMode, props.modelReasoningEffort]
     )
+    const machineName = useMemo(() => {
+        const machineId = props.session.metadata?.machineId
+        if (!machineId) return null
+        const machine = machines.find((m) => m.id === machineId) ?? null
+        if (machine) {
+            return getMachineTitle(machine)
+        }
+        return machineId.slice(0, 8)
+    }, [machines, props.session.metadata?.machineId])
 
     // Check if current user is the creator of this session (must be defined before queries that use it)
     const isCreator = useMemo(() => {
@@ -316,11 +328,11 @@ export function SessionHeader(props: {
     const agentMeta = useMemo(
         () => {
             const parts = [agentLabel]
-            if (runtimeAgent) {
-                parts.push(runtimeAgent)
-            }
             if (runtimeModel) {
                 parts.push(runtimeModel)
+            }
+            if (runtimeAgent) {
+                parts.push(runtimeAgent)
             }
             if (project) {
                 parts.push(project.name)
@@ -414,6 +426,11 @@ export function SessionHeader(props: {
                         <div className="hidden sm:block text-[10px] text-[var(--app-hint)] truncate">
                             {agentMeta}
                         </div>
+                        {machineName && (
+                            <div className="hidden sm:block text-[10px] text-[var(--app-hint)] truncate mt-0.5">
+                                Machine: {machineName}
+                            </div>
+                        )}
                         {/* 移动端详情弹出框 */}
                         {showAgentDetails && (
                             <div className="sm:hidden absolute left-0 top-full z-30 mt-1 min-w-[200px] max-w-[280px] rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] py-2 px-3 shadow-lg">
@@ -421,6 +438,7 @@ export function SessionHeader(props: {
                                     <div><span className="text-[var(--app-hint)]">Agent:</span> {agentLabel}</div>
                                     {runtimeAgent && <div><span className="text-[var(--app-hint)]">Runtime:</span> {runtimeAgent}</div>}
                                     {runtimeModel && <div><span className="text-[var(--app-hint)]">Model:</span> {runtimeModel}</div>}
+                                    {machineName && <div><span className="text-[var(--app-hint)]">Machine:</span> {machineName}</div>}
                                     {project && <div><span className="text-[var(--app-hint)]">Project:</span> {project.name}</div>}
                                     {worktreeBranch && <div><span className="text-[var(--app-hint)]">Branch:</span> {worktreeBranch}</div>}
                                 </div>

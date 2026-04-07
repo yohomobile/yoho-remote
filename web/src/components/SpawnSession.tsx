@@ -6,15 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
 import { useAppContext } from '@/lib/app-context'
+import { getMachineTitle } from '@/lib/machines'
 
 type SessionType = 'simple' | 'worktree'
-
-function getMachineTitle(machine: Machine | null): string {
-    if (!machine) return 'Machine'
-    if (machine.metadata?.displayName) return machine.metadata.displayName
-    if (machine.metadata?.host) return machine.metadata.host
-    return machine.id.slice(0, 8)
-}
 
 export function SpawnSession(props: {
     api: ApiClient

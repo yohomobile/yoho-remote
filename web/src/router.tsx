@@ -125,6 +125,7 @@ function SessionsPage() {
     const navigate = useNavigate()
     const queryClient = useQueryClient()
     const { sessions, isLoading, error, refetch } = useSessions(api, currentOrgId)
+    const { machines, error: machinesError } = useMachines(api, true, currentOrgId)
     const { users: onlineUsers } = useOnlineUsers(api)
     const { orgs } = useMyOrgs(api)
     const [isRefreshing, setIsRefreshing] = useState(false)
@@ -270,6 +271,11 @@ function SessionsPage() {
                         <div className="text-sm text-red-600">{error}</div>
                     </div>
                 ) : null}
+                {machinesError ? (
+                    <div className="mx-auto w-full max-w-content px-3 py-2">
+                        <div className="text-sm text-red-600">{machinesError}</div>
+                    </div>
+                ) : null}
                 <SessionList
                     sessions={sessions}
                     projects={projects}
@@ -282,6 +288,7 @@ function SessionsPage() {
                     onNewSession={() => navigate({ to: '/sessions/new' })}
                     onRefresh={handleRefresh}
                     isLoading={isLoading}
+                    machines={machines}
                     renderHeader={false}
                 />
             </div>
