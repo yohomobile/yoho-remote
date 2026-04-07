@@ -334,6 +334,9 @@ export function SessionHeader(props: {
             if (runtimeAgent) {
                 parts.push(runtimeAgent)
             }
+            if (machineName) {
+                parts.push(machineName)
+            }
             if (project) {
                 parts.push(project.name)
             }
@@ -342,7 +345,7 @@ export function SessionHeader(props: {
             }
             return parts.join(' · ')
         },
-        [agentLabel, runtimeAgent, runtimeModel, project, worktreeBranch]
+        [agentLabel, runtimeAgent, runtimeModel, project, worktreeBranch, machineName]
     )
 
     // Subscription state - supports both Telegram chatId and Web clientId
@@ -426,19 +429,11 @@ export function SessionHeader(props: {
                         <div className="hidden sm:block text-[10px] text-[var(--app-hint)] truncate">
                             {agentMeta}
                         </div>
-                        {machineName && (
-                            <div className="hidden sm:block text-[10px] text-[var(--app-hint)] truncate mt-0.5">
-                                Machine: {machineName}
-                            </div>
-                        )}
                         {/* 移动端详情弹出框 */}
                         {showAgentDetails && (
                             <div className="sm:hidden absolute left-0 top-full z-30 mt-1 min-w-[200px] max-w-[280px] rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] py-2 px-3 shadow-lg">
                                 <div className="text-xs text-[var(--app-fg)] space-y-1">
-                                    <div><span className="text-[var(--app-hint)]">Agent:</span> {agentLabel}</div>
-                                    {runtimeAgent && <div><span className="text-[var(--app-hint)]">Runtime:</span> {runtimeAgent}</div>}
-                                    {runtimeModel && <div><span className="text-[var(--app-hint)]">Model:</span> {runtimeModel}</div>}
-                                    {machineName && <div><span className="text-[var(--app-hint)]">Machine:</span> {machineName}</div>}
+                                    <div className="text-[var(--app-hint)] truncate">{agentMeta}</div>
                                     {project && <div><span className="text-[var(--app-hint)]">Project:</span> {project.name}</div>}
                                     {worktreeBranch && <div><span className="text-[var(--app-hint)]">Branch:</span> {worktreeBranch}</div>}
                                 </div>

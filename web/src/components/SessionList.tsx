@@ -275,9 +275,9 @@ function SessionItem(props: {
                             <span className="opacity-50">·</span>
                             <span
                                 className="shrink-0 text-[11px] text-[var(--app-hint)] whitespace-nowrap overflow-hidden truncate max-w-[160px]"
-                                title={`Machine: ${machineName}`}
+                                title={machineName}
                             >
-                                Machine: {machineName}
+                                {machineName}
                             </span>
                         </>
                     )}
