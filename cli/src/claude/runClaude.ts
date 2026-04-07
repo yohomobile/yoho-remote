@@ -508,7 +508,17 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 'mcp__yoho-credentials__set_credential',
                 'mcp__yoho-credentials__delete_credential',
             ]
-            : yohoRemoteServer.toolNames.map(toolName => `mcp__yoho_remote__${toolName}`),
+            : [
+                ...yohoRemoteServer.toolNames.map(toolName => `mcp__yoho_remote__${toolName}`),
+                'mcp__yoho-memory__recall',
+                'mcp__yoho-memory__remember',
+                'mcp__yoho-memory__get_playbook',
+                'mcp__yoho-memory__learn_playbook',
+                'mcp__yoho-credentials__list_credentials',
+                'mcp__yoho-credentials__get_credential',
+                'mcp__yoho-credentials__set_credential',
+                'mcp__yoho-credentials__delete_credential',
+            ],
         onModeChange: (newMode) => {
             session.sendSessionEvent({ type: 'switch', mode: newMode });
             session.updateAgentState((currentState) => ({

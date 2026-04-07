@@ -23,7 +23,7 @@ import { restoreTerminalState } from '@/ui/terminalState';
 import { hasCodexCliOverrides } from './utils/codexCliOverrides';
 import { buildCodexStartConfig, TITLE_INSTRUCTION } from './utils/codexStartConfig';
 import { resolveCodexBinary } from './codexBinary';
-import { getYohoAuxMcpServers } from '@/utils/yohoMcpServers';
+import { getYohoAuxMcpServers, MEMORY_HTTP_PORT, CREDENTIALS_HTTP_PORT } from '@/utils/yohoMcpServers';
 import type { CodexSession } from './session';
 import type { EnhancedMode, PermissionMode } from './loop';
 
@@ -196,6 +196,27 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
         },
         ...getYohoAuxMcpServers('codex')
     };
+
+    // Add stdio bridges for remote aux MCP servers when local files are absent
+    const auxServers = getYohoAuxMcpServers('codex');
+    if (!auxServers.yoho_memory) {
+        try {
+            const host = new URL(process.env.YOHO_REMOTE_URL || '').hostname;
+            if (host) {
+                const memBridge = getYohoRemoteCliCommand(['mcp', '--url', `http://${host}:${MEMORY_HTTP_PORT}/mcp`]);
+                mcpServers.yoho_memory = { command: memBridge.command, args: memBridge.args };
+            }
+        } catch { /* invalid URL, skip */ }
+    }
+    if (!auxServers.yoho_credentials) {
+        try {
+            const host = new URL(process.env.YOHO_REMOTE_URL || '').hostname;
+            if (host) {
+                const credBridge = getYohoRemoteCliCommand(['mcp', '--url', `http://${host}:${CREDENTIALS_HTTP_PORT}/mcp`]);
+                mcpServers.yoho_credentials = { command: credBridge.command, args: credBridge.args };
+            }
+        } catch { /* invalid URL, skip */ }
+    }
 
     // ----- Resolve codex binary -----
     const codexBin = resolveCodexBinary();
