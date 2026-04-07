@@ -1,8 +1,8 @@
+import axios from 'axios'
 import type { AgentState, CliMessagesResponse, CreateMachineResponse, CreateSessionResponse, DaemonState, Machine, MachineMetadata, Metadata, Project, Session } from '@/api/types'
 import { AgentStateSchema, CliMessagesResponseSchema, CreateMachineResponseSchema, CreateSessionResponseSchema, DaemonStateSchema, MachineMetadataSchema, MetadataSchema } from '@/api/types'
 import { configuration } from '@/configuration'
 import { getAuthToken } from '@/api/auth'
-import { httpClient as http } from '@/api/httpClient'
 import { ApiMachineClient } from './apiMachine'
 import { ApiSessionClient } from './apiSession'
 
@@ -22,7 +22,7 @@ export class ApiClient {
     private constructor(private readonly token: string) { }
 
     async getSession(sessionId: string): Promise<Session> {
-        const response = await http.get<CreateSessionResponse>(
+        const response = await axios.get<CreateSessionResponse>(
             `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}`,
             {
                 headers: {
@@ -73,7 +73,7 @@ export class ApiClient {
         metadata: Metadata
         state: AgentState | null
     }): Promise<Session> {
-        const response = await http.post<CreateSessionResponse>(
+        const response = await axios.post<CreateSessionResponse>(
             `${configuration.serverUrl}/cli/sessions`,
             {
                 tag: opts.tag,
@@ -127,7 +127,7 @@ export class ApiClient {
         metadata: MachineMetadata
         daemonState?: DaemonState
     }): Promise<Machine> {
-        const response = await http.post<CreateMachineResponse>(
+        const response = await axios.post<CreateMachineResponse>(
             `${configuration.serverUrl}/cli/machines`,
             {
                 id: opts.machineId,
@@ -193,7 +193,7 @@ export class ApiClient {
             params.limit = opts.limit
         }
 
-        const response = await http.get<CliMessagesResponse>(
+        const response = await axios.get<CliMessagesResponse>(
             `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/messages`,
             {
                 params,
@@ -224,7 +224,7 @@ export class ApiClient {
         let lastError: Error | null = null
         for (let attempt = 0; attempt < 3; attempt++) {
             try {
-                await http.post(
+                await axios.post(
                     `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/messages`,
                     { text, sentFrom },
                     {
@@ -261,7 +261,7 @@ export class ApiClient {
         source?: string
         mainSessionId?: string
     }): Promise<{ type: 'success'; sessionId: string; logs?: unknown[] } | { type: 'error'; message: string; logs?: unknown[] }> {
-        const response = await http.post(
+        const response = await axios.post(
             `${configuration.serverUrl}/cli/brain/spawn`,
             {
                 machineId: opts.machineId,
@@ -302,7 +302,7 @@ export class ApiClient {
         }>
     }> {
         const params = opts?.includeOffline ? '?includeOffline=true' : ''
-        const response = await http.get(
+        const response = await axios.get(
             `${configuration.serverUrl}/cli/sessions${params}`,
             {
                 headers: {
@@ -316,7 +316,7 @@ export class ApiClient {
     }
 
     async deleteSession(sessionId: string): Promise<{ ok: boolean }> {
-        const response = await http.delete(
+        const response = await axios.delete(
             `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}`,
             {
                 headers: {
@@ -330,7 +330,7 @@ export class ApiClient {
     }
 
     async patchSessionMetadata(sessionId: string, patch: Record<string, unknown>): Promise<void> {
-        await http.patch(
+        await axios.patch(
             `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/metadata`,
             patch,
             {
@@ -344,7 +344,7 @@ export class ApiClient {
     }
 
     async setSessionModelMode(sessionId: string, modelMode: 'default' | 'sonnet' | 'opus'): Promise<void> {
-        await http.patch(
+        await axios.patch(
             `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/model-mode`,
             { modelMode },
             {
@@ -365,7 +365,7 @@ export class ApiClient {
         modelMode?: string
         metadata: { path?: string; summary?: { text: string }; brainSummary?: string } | null
     }> {
-        const response = await http.get(
+        const response = await axios.get(
             `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/status`,
             {
                 headers: {
@@ -383,7 +383,7 @@ export class ApiClient {
     async getProjects(sessionId: string, machineId?: string): Promise<Project[]> {
         const params = new URLSearchParams({ sessionId })
         if (machineId) params.set('machineId', machineId)
-        const response = await http.get(
+        const response = await axios.get(
             `${configuration.serverUrl}/cli/projects?${params}`,
             {
                 headers: {
@@ -403,7 +403,7 @@ export class ApiClient {
         machineId?: string | null
     }): Promise<Project> {
         const params = new URLSearchParams({ sessionId })
-        const response = await http.post(
+        const response = await axios.post(
             `${configuration.serverUrl}/cli/projects?${params}`,
             opts,
             {
@@ -424,7 +424,7 @@ export class ApiClient {
         machineId?: string | null
     }): Promise<Project> {
         const params = new URLSearchParams({ sessionId })
-        const response = await http.put(
+        const response = await axios.put(
             `${configuration.serverUrl}/cli/projects/${encodeURIComponent(id)}?${params}`,
             opts,
             {
@@ -440,7 +440,7 @@ export class ApiClient {
 
     async removeProject(sessionId: string, id: string): Promise<boolean> {
         const params = new URLSearchParams({ sessionId })
-        const response = await http.delete(
+        const response = await axios.delete(
             `${configuration.serverUrl}/cli/projects/${encodeURIComponent(id)}?${params}`,
             {
                 headers: {
@@ -459,7 +459,7 @@ export class ApiClient {
         activeAt: number
         metadata: { host: string; platform: string; yohoRemoteCliVersion: string } | null
     }>> {
-        const response = await http.get(
+        const response = await axios.get(
             `${configuration.serverUrl}/cli/machines`,
             {
                 headers: {
@@ -477,7 +477,7 @@ export class ApiClient {
         content: string   // base64
         mimeType: string
     }): Promise<{ id: string; filename: string; size: number }> {
-        const response = await http.post(
+        const response = await axios.post(
             `${configuration.serverUrl}/cli/files`,
             { sessionId, filename: opts.filename, content: opts.content, mimeType: opts.mimeType },
             {
@@ -503,7 +503,7 @@ export class ApiClient {
         if (limit) params.set('limit', String(limit))
         if (before) params.set('before', String(before))
 
-        const response = await http.get(
+        const response = await axios.get(
             `${configuration.serverUrl}/cli/feishu/chat-messages?${params}`,
             {
                 headers: {

@@ -64,10 +64,7 @@ interface PathExistsResponse {
 export class ApiMachineClient {
     private socket!: Socket<ServerToDaemonEvents, DaemonToServerEvents>
     private keepAliveInterval: NodeJS.Timeout | null = null
-    private reconnectTimer: NodeJS.Timeout | null = null
     private rpcHandlerManager: RpcHandlerManager
-    private shutdownRequested = false
-    private reconnectAttempt = 0
 
     constructor(
         private readonly token: string,
@@ -278,16 +275,6 @@ export class ApiMachineClient {
     }
 
     connect(): void {
-        this.shutdownRequested = false
-        this.createSocket()
-    }
-
-    /**
-     * Create a fresh Socket.IO client and wire up all event handlers.
-     * This is called on initial connect and on every reconnect (full destroy-and-recreate
-     * to work around Bun macOS arm64 WebSocket bugs where built-in reconnection fails).
-     */
-    private createSocket(): void {
         this.socket = io(`${configuration.serverUrl}/cli`, {
             transports: ['websocket'],
             auth: {
@@ -296,14 +283,12 @@ export class ApiMachineClient {
                 machineId: this.machine.id
             },
             path: '/socket.io/',
-            // Disable built-in reconnection — we handle it ourselves by destroying
-            // and recreating the entire Socket.IO client instance. Built-in reconnection
-            // reuses internal WebSocket state that is broken on Bun macOS arm64.
-            reconnection: false
+            reconnection: true,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000
         })
 
         this.socket.on('connect', () => {
-            this.reconnectAttempt = 0
             logger.debug('[API MACHINE] Connected to bot')
             this.rpcHandlerManager.onSocketConnect(this.socket)
             this.updateDaemonState((state) => ({
@@ -318,18 +303,10 @@ export class ApiMachineClient {
             this.startKeepAlive()
         })
 
-        this.socket.on('disconnect', (reason) => {
-            logger.debug(`[API MACHINE] Disconnected from bot, reason: ${reason}`)
+        this.socket.on('disconnect', () => {
+            logger.debug('[API MACHINE] Disconnected from bot')
             this.rpcHandlerManager.onSocketDisconnect()
             this.stopKeepAlive()
-            this.scheduleReconnect()
-        })
-
-        this.socket.on('connect_error', (error) => {
-            logger.debug(`[API MACHINE] Connection error: ${error.message}`)
-            // connect_error fires when initial connection fails (reconnection is off).
-            // Schedule a fresh reconnect attempt.
-            this.scheduleReconnect()
         })
 
         this.socket.on('rpc-request', async (data: { method: string; params: string }, callback: (response: string) => void) => {
@@ -372,38 +349,13 @@ export class ApiMachineClient {
             }
         })
 
+        this.socket.on('connect_error', (error) => {
+            logger.debug(`[API MACHINE] Connection error: ${error.message}`)
+        })
+
         this.socket.on('error', (payload) => {
             logger.debug('[API MACHINE] Socket error:', payload)
         })
-    }
-
-    /**
-     * Schedule a full destroy-and-recreate reconnect with exponential backoff.
-     * Caps at 30s between attempts.
-     */
-    private scheduleReconnect(): void {
-        if (this.shutdownRequested) return
-        if (this.reconnectTimer) return // already scheduled
-
-        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempt), 30_000)
-        this.reconnectAttempt++
-        logger.debug(`[API MACHINE] Scheduling reconnect in ${delay}ms (attempt ${this.reconnectAttempt})`)
-
-        this.reconnectTimer = setTimeout(() => {
-            this.reconnectTimer = null
-            if (this.shutdownRequested) return
-
-            // Fully destroy the old socket before creating a new one
-            try {
-                this.socket.removeAllListeners()
-                this.socket.close()
-            } catch {
-                // ignore cleanup errors
-            }
-
-            logger.debug('[API MACHINE] Creating fresh socket connection')
-            this.createSocket()
-        }, delay)
     }
 
     private startKeepAlive(): void {
@@ -424,14 +376,8 @@ export class ApiMachineClient {
     }
 
     shutdown(): void {
-        this.shutdownRequested = true
         this.stopKeepAlive()
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer)
-            this.reconnectTimer = null
-        }
         if (this.socket) {
-            this.socket.removeAllListeners()
             this.socket.close()
         }
     }

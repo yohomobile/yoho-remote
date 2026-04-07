@@ -58,9 +58,7 @@ export function createSocketServer(deps: SocketServerDeps): {
 
     const engine = new Engine({
         path: '/socket.io/',
-        maxHttpBufferSize: 150 * 1024 * 1024,  // 150MB to support 100MB file uploads with base64 overhead
-        pingInterval: 10000,
-        pingTimeout: 5000
+        maxHttpBufferSize: 150 * 1024 * 1024  // 150MB to support 100MB file uploads with base64 overhead
     })
     io.bind(engine)
 

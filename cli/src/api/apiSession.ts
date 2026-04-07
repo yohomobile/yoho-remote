@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import { io, type Socket } from 'socket.io-client'
-import { httpClient as http } from '@/api/httpClient'
+import axios from 'axios'
 import type { ZodType } from 'zod'
 import { logger } from '@/ui/logger'
 import { backoff } from '@/utils/time'
@@ -40,7 +40,7 @@ export class ApiSessionClient extends EventEmitter {
     private metadataVersion: number
     private agentState: AgentState | null
     private agentStateVersion: number
-    private socket!: Socket<ServerToClientEvents, ClientToServerEvents>
+    private readonly socket: Socket<ServerToClientEvents, ClientToServerEvents>
     private pendingMessages: UserMessage[] = []
     private pendingMessageCallback: ((message: UserMessage) => void) | null = null
     private lastSeenMessageSeq: number | null = null
@@ -51,9 +51,6 @@ export class ApiSessionClient extends EventEmitter {
     private readonly terminalManager: TerminalManager
     private agentStateLock = new AsyncLock()
     private metadataLock = new AsyncLock()
-    private reconnectTimer: NodeJS.Timeout | null = null
-    private reconnectAttempt = 0
-    private closed = false
 
     constructor(token: string, session: Session) {
         super()
@@ -73,6 +70,21 @@ export class ApiSessionClient extends EventEmitter {
             registerCommonHandlers(this.rpcHandlerManager, this.metadata.path)
         }
 
+        this.socket = io(`${configuration.serverUrl}/cli`, {
+            auth: {
+                token: this.token,
+                clientType: 'session-scoped' as const,
+                sessionId: this.sessionId
+            },
+            path: '/socket.io/',
+            reconnection: true,
+            reconnectionAttempts: Infinity,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            transports: ['websocket'],
+            autoConnect: false
+        })
+
         this.terminalManager = new TerminalManager({
             sessionId: this.sessionId,
             getSessionPath: () => this.metadata?.path ?? null,
@@ -82,30 +94,7 @@ export class ApiSessionClient extends EventEmitter {
             onError: (payload) => this.socket.emit('terminal:error', payload)
         })
 
-        this.createSocket()
-    }
-
-    /**
-     * Create a fresh Socket.IO client and wire up all event handlers.
-     * Called on initial connect and on every reconnect (full destroy-and-recreate
-     * to work around Bun macOS arm64 WebSocket bugs).
-     */
-    private createSocket(): void {
-        this.socket = io(`${configuration.serverUrl}/cli`, {
-            auth: {
-                token: this.token,
-                clientType: 'session-scoped' as const,
-                sessionId: this.sessionId
-            },
-            path: '/socket.io/',
-            // Disable built-in reconnection — we handle it ourselves by destroying
-            // and recreating the entire Socket.IO client instance.
-            reconnection: false,
-            transports: ['websocket']
-        })
-
         this.socket.on('connect', () => {
-            this.reconnectAttempt = 0
             logger.debug('Socket connected successfully')
             this.rpcHandlerManager.onSocketConnect(this.socket)
             if (this.hasConnectedOnce) {
@@ -126,13 +115,11 @@ export class ApiSessionClient extends EventEmitter {
             if (this.hasConnectedOnce) {
                 this.needsBackfill = true
             }
-            this.scheduleReconnect()
         })
 
         this.socket.on('connect_error', (error) => {
             logger.debug('[API] Socket connection error:', error)
             this.rpcHandlerManager.onSocketDisconnect()
-            this.scheduleReconnect()
         })
 
         this.socket.on('error', (payload) => {
@@ -214,33 +201,6 @@ export class ApiSessionClient extends EventEmitter {
         this.socket.connect()
     }
 
-    /**
-     * Schedule a full destroy-and-recreate reconnect with exponential backoff.
-     */
-    private scheduleReconnect(): void {
-        if (this.closed) return
-        if (this.reconnectTimer) return
-
-        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempt), 30_000)
-        this.reconnectAttempt++
-        logger.debug(`[API] Scheduling reconnect in ${delay}ms (attempt ${this.reconnectAttempt})`)
-
-        this.reconnectTimer = setTimeout(() => {
-            this.reconnectTimer = null
-            if (this.closed) return
-
-            try {
-                this.socket.removeAllListeners()
-                this.socket.close()
-            } catch {
-                // ignore cleanup errors
-            }
-
-            logger.debug('[API] Creating fresh socket connection')
-            this.createSocket()
-        }, delay)
-    }
-
     onUserMessage(callback: (data: UserMessage) => void): void {
         this.pendingMessageCallback = callback
         while (this.pendingMessages.length > 0) {
@@ -303,7 +263,7 @@ export class ApiSessionClient extends EventEmitter {
         const run = async () => {
             let cursor = startSeq
             while (true) {
-                const response = await http.get(
+                const response = await axios.get(
                     `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(this.sessionId)}/messages`,
                     {
                         params: { afterSeq: cursor, limit },
@@ -705,14 +665,8 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     close(): void {
-        this.closed = true
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer)
-            this.reconnectTimer = null
-        }
         this.rpcHandlerManager.onSocketDisconnect()
         this.terminalManager.closeAll()
-        this.socket.removeAllListeners()
         this.socket.disconnect()
     }
 }
