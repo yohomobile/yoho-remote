@@ -194,6 +194,33 @@ export type GroupMessageData = {
     agentType?: string
 }
 
+type GroupSessionRef = {
+    id: string
+}
+
+type GroupMessageInsert = {
+    groupId: string
+    sourceSessionId: string
+    content: string
+    senderType: 'agent'
+    messageType: 'chat'
+}
+
+type GroupMessageRecord = {
+    id: string
+    groupId: string
+    sourceSessionId: string | null
+    senderType: 'agent' | 'user' | 'system'
+    content: string
+    messageType: 'chat' | 'task' | 'feedback' | 'decision'
+    createdAt: number
+}
+
+type GroupStoreLike = {
+    getGroupsForSession(sessionId: string): Promise<GroupSessionRef[]>
+    addGroupMessage(input: GroupMessageInsert): Promise<GroupMessageRecord>
+}
+
 export interface SyncEvent {
     type: SyncEventType
     namespace?: string
@@ -380,12 +407,17 @@ export class SyncEngine {
      */
     private async syncAgentMessageToGroups(sessionId: string, content: string): Promise<void> {
         try {
-            const groups = await this.store.getGroupsForSession(sessionId)
+            const groupStore = this.store as Partial<GroupStoreLike>
+            if (typeof groupStore.getGroupsForSession !== 'function' || typeof groupStore.addGroupMessage !== 'function') {
+                return
+            }
+
+            const groups = await groupStore.getGroupsForSession(sessionId)
             const session = this.sessions.get(sessionId)
 
             for (const group of groups) {
                 // 存储消息到群组
-                const message = await this.store.addGroupMessage({
+                const message = await groupStore.addGroupMessage({
                     groupId: group.id,
                     sourceSessionId: sessionId,
                     content,
