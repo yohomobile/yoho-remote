@@ -180,11 +180,11 @@ export function NewSession(props: {
         [props.machines]
     )
 
-    // Fetch org-shared projects once a target machine is selected.
+    // Fetch projects for selected machine (shared + machine-specific).
     const { data: projectsData, isLoading: projectsLoading } = useQuery({
-        queryKey: ['projects', currentOrgId],
+        queryKey: ['projects', currentOrgId, machineId],
         queryFn: async () => {
-            return await props.api.getProjects(currentOrgId)
+            return await props.api.getProjects(currentOrgId, machineId)
         },
         enabled: machineId !== null
     })

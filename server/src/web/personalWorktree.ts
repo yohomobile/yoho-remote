@@ -1,8 +1,10 @@
 import type { Machine } from '../sync/syncEngine'
 
 const PERSONAL_WORKTREE_MACHINE_NAMES = new Set([
+    'ncu',
     'guang-instance',
     'bruce-instance',
+    'macmini-daemon',
 ])
 
 type SessionType = 'simple' | 'worktree' | undefined

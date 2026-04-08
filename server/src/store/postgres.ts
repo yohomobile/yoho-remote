@@ -1294,14 +1294,19 @@ export class PostgresStore implements IStore {
 
     // ========== Project 操作 ==========
 
-    async getProjects(_machineId?: string | null, orgId?: string | null): Promise<StoredProject[]> {
+    async getProjects(machineId?: string | null, orgId?: string | null): Promise<StoredProject[]> {
         const conditions: string[] = []
         const params: (string | null)[] = []
         let idx = 1
 
-        // Projects are now org-scoped shared entries. Legacy machine-bound rows
-        // remain in the database for recovery, but active lists only use global rows.
-        conditions.push('machine_id IS NULL')
+        // 返回共享项目 (machine_id IS NULL) + 当前机器的私有项目 (machine_id = ?)
+        if (machineId) {
+            conditions.push(`(machine_id IS NULL OR machine_id = $${idx})`)
+            params.push(machineId)
+            idx++
+        } else {
+            conditions.push('machine_id IS NULL')
+        }
 
         if (orgId !== undefined) {
             if (orgId === null) {
