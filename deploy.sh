@@ -15,6 +15,7 @@ DAEMON_TARGETS=(
 )
 MACMINI_SSH="guang@192.168.0.236"
 MACMINI_DAEMON_ENV="CLI_API_TOKEN=rDhnX0JCPIki0s6t1kNsHJkSLCvpAEt3wNCb_dkEyOc YOHO_REMOTE_URL=https://remote.yohomobile.dev YOHO_MACHINE_NAME=macmini-daemon YOHO_MACHINE_IP=192.168.0.236"
+MACBOOK_SSH="guang@100.106.84.90"  # Tailscale IP
 
 INSTALL_DIR="/opt/yoho-remote"
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3"
@@ -104,7 +105,7 @@ force_kill_process() {
 
 # ==================== Parse arguments ====================
 # 所有合法的 daemon 目标名
-ALL_DAEMON_TARGET_NAMES="ncu guang-instance bruce-instance macmini"
+ALL_DAEMON_TARGET_NAMES="ncu guang-instance bruce-instance macmini macbook"
 
 MODE="${1:-}"
 shift 2>/dev/null || true
@@ -123,12 +124,14 @@ Daemon targets:
   ncu             ncu 本机 (systemd)
   guang-instance  VM (systemd)
   bruce-instance  VM (systemd)
-  macmini         macOS (darwin-arm64)
+  macmini         macOS (darwin-arm64, LAN)
+  macbook         macOS (darwin-arm64, Tailscale 100.106.84.90)
 
 Examples:
-  deploy.sh daemon                        # 部署到全部 4 台
+  deploy.sh daemon                        # 部署到全部 5 台
   deploy.sh daemon guang-instance         # 只部署到 guang-instance
   deploy.sh daemon ncu macmini            # 部署到 ncu 和 macmini
+  deploy.sh daemon macbook                # 只部署到 macbook
 USAGE
     exit 1
 fi
@@ -160,9 +163,9 @@ should_deploy_daemon() {
     return 1
 }
 
-# 是否需要构建 macmini 的 darwin-arm64 二进制
+# 是否需要构建 darwin-arm64 二进制（macmini 或 macbook）
 NEED_DARWIN_BUILD=false
-if should_deploy_daemon macmini; then
+if should_deploy_daemon macmini || should_deploy_daemon macbook; then
     NEED_DARWIN_BUILD=true
 fi
 
@@ -366,6 +369,33 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
             fi
         else
             warn "macmini is unreachable — skipping"
+        fi
+    fi
+
+    # 6b-2b: Deploy to macbook (via Tailscale)
+    if should_deploy_daemon macbook; then
+        log "Deploying daemon to macbook..."
+        if ncu_exec "ssh $SSH_OPTS -o BatchMode=yes $MACBOOK_SSH 'true'" 2>/dev/null; then
+            # Stop old daemon
+            ncu_exec "ssh $SSH_OPTS $MACBOOK_SSH 'P=yoho-remote-daemon; pkill -x \$P 2>/dev/null; sleep 3; if pgrep -x \$P >/dev/null 2>&1; then echo \"  ⚠ SIGTERM failed, SIGKILL...\"; pkill -9 -x \$P 2>/dev/null; sleep 2; fi; pgrep -x \$P >/dev/null 2>&1 && echo \"  ✗ WARNING: still alive\" || echo \"  ✓ Fully stopped\"'"
+
+            # Copy new binaries
+            ncu_exec "scp $SSH_OPTS $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote-daemon $MACBOOK_SSH:/opt/yoho-remote/ && scp $SSH_OPTS $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote $MACBOOK_SSH:/opt/yoho-remote/"
+
+            # macOS 要求重新 ad-hoc 签名
+            ncu_exec "ssh $SSH_OPTS $MACBOOK_SSH 'codesign --force --sign - /opt/yoho-remote/yoho-remote-daemon && codesign --force --sign - /opt/yoho-remote/yoho-remote'"
+
+            # 通过 LaunchAgent 重启
+            ncu_exec "ssh $SSH_OPTS $MACBOOK_SSH 'launchctl stop com.hapi.daemon 2>/dev/null; launchctl start com.hapi.daemon'"
+            sleep 4
+            ALIVE=$(ncu_exec "ssh $SSH_OPTS $MACBOOK_SSH 'pgrep -x yoho-remote-daemon >/dev/null && echo yes || echo no'")
+            if [[ "$ALIVE" == *"yes"* ]]; then
+                ok "macbook daemon restarted"
+            else
+                fail "macbook daemon failed to start — check /tmp/yoho-remote-daemon.log"
+            fi
+        else
+            warn "macbook is unreachable — skipping"
         fi
     fi
 
