@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
 import type { Machine, SpawnLogEntry } from '@/types/api'
 import { Button } from '@/components/ui/button'
@@ -9,9 +9,11 @@ import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
 import { queryKeys } from '@/lib/query-keys'
 import { useAppContext } from '@/lib/app-context'
 import { getMachineTitle } from '@/lib/machines'
+import { getDefaultSessionTypeForMachine, getPersonalWorktreeOwner, isPersonalWorktreeMachine } from '@/lib/personal-worktree'
 
 type AgentType = 'claude' | 'codex' | 'codez' | 'droid'
 type ClaudeModelMode = 'sonnet' | 'opus' | 'glm-5.1'
+type SessionType = 'simple' | 'worktree'
 
 /** 上次创建 session 时的偏好设置，存储在 localStorage */
 interface SpawnPrefs {
@@ -157,7 +159,6 @@ export function NewSession(props: {
 }) {
     const { userEmail, currentOrgId } = useAppContext()
     const { haptic } = usePlatform()
-    const queryClient = useQueryClient()
     const { spawnSession, isPending, error: spawnError } = useSpawnSession(props.api)
     const isFormDisabled = isPending || props.isLoading
 
@@ -170,15 +171,16 @@ export function NewSession(props: {
     const [codexReasoningEffort, setCodexReasoningEffort] = useState<'low' | 'medium' | 'high' | 'xhigh'>(savedPrefs.codexReasoningEffort ?? 'medium')
     const [droidModel, setDroidModel] = useState(savedPrefs.droidModel ?? DROID_MODELS[0].value)
     const [droidReasoningEffort, setDroidReasoningEffort] = useState(savedPrefs.droidReasoningEffort ?? DROID_MODELS[0].defaultEffort)
+    const [sessionType, setSessionType] = useState<SessionType>('simple')
     const [error, setError] = useState<string | null>(null)
     const [isCustomPath, setIsCustomPath] = useState(false)
     const [spawnLogs, setSpawnLogs] = useState<SpawnLogEntry[]>([])
 
-    // Fetch projects for selected machine (includes global projects where machineId is null)
+    // Fetch org-shared projects once a target machine is selected.
     const { data: projectsData, isLoading: projectsLoading } = useQuery({
-        queryKey: ['projects', machineId, currentOrgId],
+        queryKey: ['projects', currentOrgId],
         queryFn: async () => {
-            return await props.api.getProjects(machineId ?? undefined, currentOrgId)
+            return await props.api.getProjects(currentOrgId)
         },
         enabled: machineId !== null
     })
@@ -188,29 +190,16 @@ export function NewSession(props: {
         () => props.machines.find(m => m.id === machineId) ?? null,
         [props.machines, machineId]
     )
+    const personalWorktreeOwner = useMemo(
+        () => isPersonalWorktreeMachine(currentMachine) ? getPersonalWorktreeOwner(userEmail) : null,
+        [currentMachine, userEmail]
+    )
+    const supportsPersonalWorktree = Boolean(personalWorktreeOwner)
+    const effectiveSessionType: SessionType = supportsPersonalWorktree ? sessionType : 'simple'
 
-    // Filter projects: machine-specific projects + platform-compatible global projects
     const projects = useMemo(() => {
-        const allProjects = Array.isArray(projectsData?.projects) ? projectsData.projects : []
-        const platform = currentMachine?.metadata?.platform ?? ''
-
-        return allProjects.filter(project => {
-            // If project has machineId, only show if it matches current machine
-            if (project.machineId) {
-                return project.machineId === machineId
-            }
-            // Global project: check if path is compatible with current platform
-            if (platform === 'darwin') {
-                // macOS: paths start with /Users
-                return project.path.startsWith('/Users/')
-            } else {
-                // Linux: paths start with /home or /root or /opt
-                return project.path.startsWith('/home/') ||
-                       project.path.startsWith('/root/') ||
-                       project.path.startsWith('/opt/')
-            }
-        })
-    }, [projectsData, machineId, currentMachine])
+        return Array.isArray(projectsData?.projects) ? projectsData.projects : []
+    }, [projectsData])
 
     const selectedProject = useMemo(
         () => projects.find((p) => p.path === projectPath.trim()) ?? null,
@@ -234,6 +223,10 @@ export function NewSession(props: {
             setMachineId(props.machines[0].id)
         }
     }, [props.machines, machineId])
+
+    useEffect(() => {
+        setSessionType(getDefaultSessionTypeForMachine(currentMachine, userEmail))
+    }, [currentMachine, userEmail])
 
     // Reset project path when machine changes (different machine may have different projects)
     const [initialProjectRestored, setInitialProjectRestored] = useState(false)
@@ -291,7 +284,8 @@ export function NewSession(props: {
                 directory,
                 agent,
                 yolo: true,
-                sessionType: 'simple',
+                sessionType: effectiveSessionType,
+                worktreeName: effectiveSessionType === 'worktree' ? (personalWorktreeOwner ?? undefined) : undefined,
                 claudeModel: agent === 'claude' ? claudeModel : undefined,
                 codexModel: agent === 'codex' ? codexModel : undefined,
                 modelReasoningEffort: agent === 'codex' ? codexReasoningEffort : undefined,
@@ -415,6 +409,50 @@ export function NewSession(props: {
                     </>
                 )}
             </div>
+
+            {supportsPersonalWorktree ? (
+                <div className="flex flex-col gap-1.5 px-3 py-3">
+                    <label className="text-xs font-medium text-[var(--app-hint)]">
+                        Workspace
+                    </label>
+                    <div className="flex flex-col gap-2">
+                        <label className="flex items-start gap-2 cursor-pointer">
+                            <input
+                                type="radio"
+                                name="sessionType"
+                                value="worktree"
+                                checked={sessionType === 'worktree'}
+                                onChange={() => setSessionType('worktree')}
+                                disabled={isFormDisabled}
+                                className="mt-0.5 accent-[var(--app-link)] w-3.5 h-3.5"
+                            />
+                            <div className="flex-1">
+                                <div className="text-sm">Personal worktree</div>
+                                <div className="text-xs text-[var(--app-hint)]">
+                                    Reuse or create <span className="font-mono">{personalWorktreeOwner}</span> for this repo
+                                </div>
+                            </div>
+                        </label>
+                        <label className="flex items-start gap-2 cursor-pointer">
+                            <input
+                                type="radio"
+                                name="sessionType"
+                                value="simple"
+                                checked={sessionType === 'simple'}
+                                onChange={() => setSessionType('simple')}
+                                disabled={isFormDisabled}
+                                className="mt-0.5 accent-[var(--app-link)] w-3.5 h-3.5"
+                            />
+                            <div className="flex-1">
+                                <div className="text-sm">Base repo</div>
+                                <div className="text-xs text-[var(--app-hint)]">
+                                    Open the selected directory directly without creating a worktree
+                                </div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+            ) : null}
 
             {/* Agent Selector */}
             <div className="flex flex-col gap-1.5 px-3 py-3">

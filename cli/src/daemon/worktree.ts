@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { access, mkdir } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { access, mkdir, stat } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -52,7 +52,7 @@ async function resolveRepoRoot(basePath: string): Promise<string> {
 function toSlug(value: string): string {
   const cleaned = value
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/[^a-z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return cleaned;
 }
@@ -101,8 +101,9 @@ async function branchExists(repoRoot: string, branch: string): Promise<boolean> 
 export async function createWorktree(options: {
   basePath: string;
   nameHint?: string;
+  reuseExisting?: boolean;
 }): Promise<WorktreeResult> {
-  const { basePath, nameHint } = options;
+  const { basePath, nameHint, reuseExisting = false } = options;
   let repoRoot: string;
 
   try {
@@ -120,7 +121,45 @@ export async function createWorktree(options: {
   const repoWorktreesRoot = join(repoParent, `${repoName}-worktrees`);
   await mkdir(repoWorktreesRoot, { recursive: true });
 
-  const baseName = normalizeNameHint(nameHint) ?? makeDefaultBaseName();
+  const normalizedNameHint = normalizeNameHint(nameHint);
+  const baseName = normalizedNameHint ?? makeDefaultBaseName();
+
+  if (reuseExisting && normalizedNameHint) {
+    const branch = `yr-${normalizedNameHint}`;
+    const worktreePath = join(repoWorktreesRoot, normalizedNameHint);
+
+    if (await pathExists(worktreePath)) {
+      const existing = await readExistingWorktree(repoRoot, worktreePath, normalizedNameHint);
+      if (existing) {
+        return { ok: true, info: existing };
+      }
+      return {
+        ok: false,
+        error: `Existing worktree path is invalid: ${worktreePath}`
+      };
+    }
+
+    if (await branchExists(repoRoot, branch)) {
+      try {
+        await runGit(['worktree', 'add', worktreePath, branch], repoRoot);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          ok: false,
+          error: `Failed to restore worktree: ${message}`
+        };
+      }
+
+      const restored = await readExistingWorktree(repoRoot, worktreePath, normalizedNameHint);
+      if (restored) {
+        return { ok: true, info: restored };
+      }
+      return {
+        ok: false,
+        error: `Failed to validate restored worktree: ${worktreePath}`
+      };
+    }
+  }
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     const name = attempt === 0 ? baseName : `${baseName}-${randomBytes(2).toString('hex')}`;
@@ -160,6 +199,66 @@ export async function createWorktree(options: {
     ok: false,
     error: 'Failed to create worktree after multiple attempts. Try again.'
   };
+}
+
+async function readExistingWorktree(repoRoot: string, worktreePath: string, name: string): Promise<WorktreeInfo | null> {
+  try {
+    const resolvedWorktreeRoot = await resolveRepoRoot(worktreePath);
+    if (resolvedWorktreeRoot !== worktreePath) {
+      return null;
+    }
+
+    const commonDirResult = await runGit(['rev-parse', '--git-common-dir'], worktreePath);
+    const commonDir = commonDirResult.stdout.trim();
+    if (!commonDir) {
+      return null;
+    }
+
+    const resolvedCommonDir = normalizeGitPath(commonDir, worktreePath);
+    if (dirname(resolvedCommonDir) !== repoRoot) {
+      return null;
+    }
+
+    const branchResult = await runGit(['symbolic-ref', '--short', 'HEAD'], worktreePath)
+      .catch(() => runGit(['rev-parse', '--short', 'HEAD'], worktreePath));
+    const branch = branchResult.stdout.trim();
+    if (!branch) {
+      return null;
+    }
+
+    return {
+      basePath: repoRoot,
+      worktreePath,
+      branch,
+      name,
+      createdAt: await readCreatedAt(worktreePath)
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeGitPath(rawPath: string, cwd: string): string {
+  return isAbsolute(rawPath) ? rawPath : resolve(cwd, rawPath);
+}
+
+async function readCreatedAt(worktreePath: string): Promise<number> {
+  try {
+    const info = await stat(worktreePath);
+    const birthtimeMs = Math.round(info.birthtimeMs);
+    if (Number.isFinite(birthtimeMs) && birthtimeMs > 0) {
+      return birthtimeMs;
+    }
+
+    const ctimeMs = Math.round(info.ctimeMs);
+    if (Number.isFinite(ctimeMs) && ctimeMs > 0) {
+      return ctimeMs;
+    }
+  } catch {
+    return Date.now();
+  }
+
+  return Date.now();
 }
 
 export async function removeWorktree(options: {

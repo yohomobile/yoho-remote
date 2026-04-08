@@ -582,27 +582,26 @@ export class ApiClient {
     }
 
     // 项目管理
-    async getProjects(machineId?: string | null, orgId?: string | null): Promise<ProjectsResponse> {
+    async getProjects(orgId?: string | null): Promise<ProjectsResponse> {
         const params = new URLSearchParams()
-        if (machineId !== undefined && machineId !== null) params.set('machineId', machineId)
         if (orgId) params.set('orgId', orgId)
         const qs = params.toString()
         return await this.request<ProjectsResponse>(`/api/settings/projects${qs ? `?${qs}` : ''}`)
     }
 
-    async addProject(name: string, path: string, description?: string, machineId?: string | null, orgId?: string | null): Promise<AddProjectResponse> {
+    async addProject(name: string, path: string, description?: string, orgId?: string | null): Promise<AddProjectResponse> {
         const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
         return await this.request<AddProjectResponse>(`/api/settings/projects${qs}`, {
             method: 'POST',
-            body: JSON.stringify({ name, path, description, machineId })
+            body: JSON.stringify({ name, path, description })
         })
     }
 
-    async updateProject(id: string, name: string, path: string, description?: string, machineId?: string | null, orgId?: string | null): Promise<UpdateProjectResponse> {
+    async updateProject(id: string, name: string, path: string, description?: string, orgId?: string | null): Promise<UpdateProjectResponse> {
         const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
         return await this.request<UpdateProjectResponse>(`/api/settings/projects/${encodeURIComponent(id)}${qs}`, {
             method: 'PUT',
-            body: JSON.stringify({ name, path, description, machineId })
+            body: JSON.stringify({ name, path, description })
         })
     }
 

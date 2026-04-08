@@ -320,7 +320,7 @@ export function SessionHeader(props: {
     // 查询项目列表
     const { data: projectsData } = useQuery({
         queryKey: ['projects', currentOrgId],
-        queryFn: async () => api.getProjects(undefined, currentOrgId)
+        queryFn: async () => api.getProjects(currentOrgId)
     })
     const projects = Array.isArray(projectsData?.projects) ? projectsData.projects : []
     const project = useMemo(() => matchSessionToProject(props.session, projects), [props.session, projects])

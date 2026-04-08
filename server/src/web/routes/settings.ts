@@ -28,13 +28,10 @@ export function createSettingsRoutes(
 
     // ==================== 项目管理 ====================
 
-    // 获取所有项目（支持按 machineId 和 orgId 过滤）
+    // 获取组织共享项目列表（兼容接收 machineId，但不再按机器过滤）
     app.get('/settings/projects', async (c) => {
-        const machineId = c.req.query('machineId')
         const orgId = c.req.query('orgId')
-        // machineId 参数为空字符串时当作 null 处理（获取通用项目）
-        const filterMachineId = machineId === '' ? null : machineId
-        const projects = await store.getProjects(filterMachineId, orgId)
+        const projects = await store.getProjects(undefined, orgId)
         return c.json({ projects })
     })
 
@@ -77,7 +74,8 @@ export function createSettingsRoutes(
             parsed.data.name,
             parsed.data.path,
             parsed.data.description,
-            parsed.data.machineId
+            parsed.data.machineId,
+            orgId
         )
         if (!project) {
             return c.json({ error: 'Project not found or path already exists' }, 404)

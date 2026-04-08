@@ -533,6 +533,9 @@ export class PostgresStore implements IStore {
             -- Migration: Add org_id to projects
             ALTER TABLE projects ADD COLUMN IF NOT EXISTS org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL;
             CREATE INDEX IF NOT EXISTS idx_projects_org_id ON projects(org_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_shared_org_path_unique
+                ON projects ((COALESCE(org_id, '')), path)
+                WHERE machine_id IS NULL;
 
             -- Migration: Add org_id to input_presets
             ALTER TABLE input_presets ADD COLUMN IF NOT EXISTS org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL;
@@ -946,7 +949,7 @@ export class PostgresStore implements IStore {
             'UPDATE machines SET org_id = $1 WHERE id = $2 AND namespace = $3',
             [orgId, id, namespace]
         )
-        return result.rowCount > 0
+        return (result.rowCount ?? 0) > 0
     }
 
     // ========== Message 操作 ==========
@@ -1291,20 +1294,14 @@ export class PostgresStore implements IStore {
 
     // ========== Project 操作 ==========
 
-    async getProjects(machineId?: string | null, orgId?: string | null): Promise<StoredProject[]> {
+    async getProjects(_machineId?: string | null, orgId?: string | null): Promise<StoredProject[]> {
         const conditions: string[] = []
         const params: (string | null)[] = []
         let idx = 1
 
-        if (machineId !== undefined) {
-            if (machineId === null) {
-                conditions.push('machine_id IS NULL')
-            } else {
-                conditions.push(`(machine_id = $${idx} OR machine_id IS NULL)`)
-                params.push(machineId)
-                idx++
-            }
-        }
+        // Projects are now org-scoped shared entries. Legacy machine-bound rows
+        // remain in the database for recovery, but active lists only use global rows.
+        conditions.push('machine_id IS NULL')
 
         if (orgId !== undefined) {
             if (orgId === null) {
@@ -1351,25 +1348,59 @@ export class PostgresStore implements IStore {
         }
     }
 
-    async addProject(name: string, path: string, description?: string, machineId?: string | null, orgId?: string | null): Promise<StoredProject | null> {
+    async addProject(name: string, path: string, description?: string, _machineId?: string | null, orgId?: string | null): Promise<StoredProject | null> {
         const id = randomUUID()
         const now = Date.now()
         try {
+            const conflict = await this.pool.query(
+                `SELECT 1
+                 FROM projects
+                 WHERE path = $1
+                   AND machine_id IS NULL
+                   AND org_id IS NOT DISTINCT FROM $2
+                 LIMIT 1`,
+                [path, orgId ?? null]
+            )
+            if (conflict.rows.length > 0) {
+                return null
+            }
+
             await this.pool.query(
                 'INSERT INTO projects (id, name, path, description, machine_id, org_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-                [id, name, path, description || null, machineId || null, orgId || null, now, now]
+                [id, name, path, description || null, null, orgId || null, now, now]
             )
-            return { id, name, path, description: description || null, machineId: machineId || null, orgId: orgId || null, createdAt: now, updatedAt: now }
+            return { id, name, path, description: description || null, machineId: null, orgId: orgId || null, createdAt: now, updatedAt: now }
         } catch {
             return null
         }
     }
 
-    async updateProject(id: string, name: string, path: string, description?: string, machineId?: string | null): Promise<StoredProject | null> {
+    async updateProject(id: string, name: string, path: string, description?: string, _machineId?: string | null, orgId?: string | null): Promise<StoredProject | null> {
         const now = Date.now()
+        const current = await this.pool.query(
+            'SELECT org_id FROM projects WHERE id = $1',
+            [id]
+        )
+        if (current.rows.length === 0) return null
+
+        const effectiveOrgId = orgId !== undefined ? orgId : (current.rows[0].org_id as string | null)
+        const conflict = await this.pool.query(
+            `SELECT 1
+             FROM projects
+             WHERE id <> $1
+               AND path = $2
+               AND machine_id IS NULL
+               AND org_id IS NOT DISTINCT FROM $3
+             LIMIT 1`,
+            [id, path, effectiveOrgId ?? null]
+        )
+        if (conflict.rows.length > 0) {
+            return null
+        }
+
         const result = await this.pool.query(
             'UPDATE projects SET name = $1, path = $2, description = $3, machine_id = $4, updated_at = $5 WHERE id = $6 RETURNING *',
-            [name, path, description || null, machineId || null, now, id]
+            [name, path, description || null, null, now, id]
         )
         if (result.rows.length === 0) return null
         const row = result.rows[0]

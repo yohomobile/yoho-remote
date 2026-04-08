@@ -4,6 +4,7 @@ import type { DecryptedMessage, Session, SyncEngine } from '../../sync/syncEngin
 import type { SSEManager } from '../../sse/sseManager'
 import type { IStore, UserRole, StoredSession } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
+import { resolvePersonalWorktreeSpawnOptions } from '../personalWorktree'
 import { requireMachine, requireSessionFromParam, requireSessionFromParamWithShareCheck, requireSyncEngine } from './guards'
 import { buildInitPrompt, buildBrainInitPrompt, buildVijnaptiInitPrompt } from '../prompts/initPrompt'
 
@@ -536,6 +537,13 @@ export function createSessionsRoutes(
 
         const rawSource = parsed.data.source?.trim()
         const source = rawSource ? rawSource : 'external-api'
+        const email = c.get('email')
+        const spawnTarget = resolvePersonalWorktreeSpawnOptions({
+            machine,
+            email,
+            sessionType: parsed.data.sessionType,
+            worktreeName: parsed.data.worktreeName,
+        })
 
         // 将 claudeModel/codexModel 转换为 modelMode
         let modelMode = parsed.data.modelMode
@@ -553,8 +561,8 @@ export function createSessionsRoutes(
             parsed.data.directory,
             parsed.data.agent,
             parsed.data.yolo,
-            parsed.data.sessionType,
-            parsed.data.worktreeName,
+            spawnTarget.sessionType,
+            spawnTarget.worktreeName,
             {
                 openrouterModel: parsed.data.openrouterModel,
                 droidModel: parsed.data.droidModel,
@@ -562,12 +570,12 @@ export function createSessionsRoutes(
                 permissionMode: parsed.data.permissionMode,
                 modelMode,
                 modelReasoningEffort: parsed.data.modelReasoningEffort,
-                source
+                source,
+                reuseExistingWorktree: spawnTarget.reuseExistingWorktree,
             }
         )
 
         if (result.type === 'success') {
-            const email = c.get('email')
             const namespace = c.get('namespace')
             const role = c.get('role')  // Role from Keycloak token
             const userName = c.get('name')

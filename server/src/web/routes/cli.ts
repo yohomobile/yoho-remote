@@ -340,7 +340,7 @@ export function createCliRoutes(
 
         // Inherit org_id from main (brain) session
         if (result.type === 'success' && parsed.data.mainSessionId && store) {
-            const mainSession = await store.getSession(parsed.data.mainSessionId, namespace)
+            const mainSession = await store.getSession(parsed.data.mainSessionId)
             if (mainSession?.orgId) {
                 await store.setSessionOrgId(result.sessionId, mainSession.orgId, namespace)
             }
@@ -480,18 +480,16 @@ export function createCliRoutes(
         return session?.orgId ?? null
     }
 
-    // List projects (query: machineId, sessionId)
+    // List org-shared projects (query: machineId, sessionId). machineId is accepted for compatibility only.
     app.get('/projects', async (c) => {
         if (!store) return c.json({ error: 'Store not available' }, 503)
-        const machineId = c.req.query('machineId')
         const sessionId = c.req.query('sessionId')
         const orgId = await resolveOrgId(sessionId)
-        const filterMachineId = machineId === '' ? null : machineId
-        const projects = await store.getProjects(filterMachineId, orgId)
+        const projects = await store.getProjects(undefined, orgId)
         return c.json({ projects })
     })
 
-    // Create project (query: sessionId, body: name, path, description?, machineId?)
+    // Create org-shared project (query: sessionId, body: name, path, description?, machineId?)
     app.post('/projects', async (c) => {
         if (!store) return c.json({ error: 'Store not available' }, 503)
         const json = await c.req.json().catch(() => null)
@@ -513,25 +511,26 @@ export function createCliRoutes(
         return c.json({ ok: true, project, projects })
     })
 
-    // Update project (param: id, query: sessionId, body: name, path, description?, machineId?)
+    // Update org-shared project (param: id, query: sessionId, body: name, path, description?, machineId?)
     app.put('/projects/:id', async (c) => {
         if (!store) return c.json({ error: 'Store not available' }, 503)
         const id = c.req.param('id')
         const json = await c.req.json().catch(() => null)
         const parsed = updateProjectSchema.safeParse(json)
         if (!parsed.success) return c.json({ error: 'Invalid project data' }, 400)
+        const sessionId = c.req.query('sessionId')
+        const orgId = await resolveOrgId(sessionId)
 
         const project = await store.updateProject(
             id,
             parsed.data.name,
             parsed.data.path,
             parsed.data.description,
-            parsed.data.machineId
+            parsed.data.machineId,
+            orgId
         )
         if (!project) return c.json({ error: 'Project not found or path already exists' }, 404)
 
-        const sessionId = c.req.query('sessionId')
-        const orgId = await resolveOrgId(sessionId)
         const projects = await store.getProjects(undefined, orgId)
         return c.json({ ok: true, project, projects })
     })

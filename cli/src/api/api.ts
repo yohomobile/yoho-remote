@@ -380,9 +380,8 @@ export class ApiClient {
 
     // ===== Project API methods =====
 
-    async getProjects(sessionId: string, machineId?: string): Promise<Project[]> {
+    async getProjects(sessionId: string, _machineId?: string): Promise<Project[]> {
         const params = new URLSearchParams({ sessionId })
-        if (machineId) params.set('machineId', machineId)
         const response = await axios.get(
             `${configuration.serverUrl}/cli/projects?${params}`,
             {
@@ -403,9 +402,14 @@ export class ApiClient {
         machineId?: string | null
     }): Promise<Project> {
         const params = new URLSearchParams({ sessionId })
+        const payload = {
+            name: opts.name,
+            path: opts.path,
+            description: opts.description,
+        }
         const response = await axios.post(
             `${configuration.serverUrl}/cli/projects?${params}`,
-            opts,
+            payload,
             {
                 headers: {
                     Authorization: `Bearer ${this.token}`,
@@ -424,9 +428,14 @@ export class ApiClient {
         machineId?: string | null
     }): Promise<Project> {
         const params = new URLSearchParams({ sessionId })
+        const payload = {
+            name: opts.name,
+            path: opts.path,
+            description: opts.description,
+        }
         const response = await axios.put(
             `${configuration.serverUrl}/cli/projects/${encodeURIComponent(id)}?${params}`,
-            opts,
+            payload,
             {
                 headers: {
                     Authorization: `Bearer ${this.token}`,
