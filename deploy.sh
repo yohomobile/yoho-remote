@@ -130,17 +130,26 @@ echo "  Yoho Remote Deploy — mode: $MODE"
 echo "  Running on: $SELF_HOSTNAME"
 echo "========================================="
 
-# ==================== Step 1: Commit & Push ====================
-log "Committing and pushing changes..."
+# ==================== Step 1: Commit ====================
+log "Committing changes..."
 git add -A
 git commit -m "deploy" --allow-empty || true
-git push
 
 # ==================== Step 2: Sync code to ncu ====================
-if ! is_ncu; then
+if is_ncu; then
+    # 在 ncu 上直接运行，push 到 GitHub
+    log "Pushing to GitHub..."
+    git push || warn "git push failed (non-fatal)"
+else
     CURRENT_BRANCH=$(git branch --show-current)
-    log "Syncing code to ncu (fetching branch: $CURRENT_BRANCH)..."
-    ncu_exec "cd $NCU_REPO && git fetch origin $CURRENT_BRANCH && git checkout $CURRENT_BRANCH 2>/dev/null || git checkout -b $CURRENT_BRANCH origin/$CURRENT_BRANCH && git reset --hard origin/$CURRENT_BRANCH"
+    log "Syncing code to ncu via SSH (branch: $CURRENT_BRANCH)..."
+
+    # 通过 SSH 把代码直接推到 ncu 的 repo（不依赖 GitHub）
+    git remote add ncu "ssh://$NCU_SSH$NCU_REPO" 2>/dev/null || git remote set-url ncu "ssh://$NCU_SSH$NCU_REPO"
+    git push ncu "$CURRENT_BRANCH" --force
+
+    # ncu 上切到对应分支
+    ncu_exec "cd $NCU_REPO && git checkout $CURRENT_BRANCH 2>/dev/null || git checkout -b $CURRENT_BRANCH"
     ok "ncu synced to $CURRENT_BRANCH"
 fi
 
