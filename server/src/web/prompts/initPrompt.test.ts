@@ -11,8 +11,9 @@ describe('buildInitPrompt', () => {
         expect(prompt).toContain('当前会话工作目录：/workspace/yoho-remote')
         expect(prompt).not.toContain('当前会话基仓库目录：')
         expect(prompt).not.toContain('当前会话使用 Git worktree 隔离开发')
-        expect(prompt).toContain('部署前必须确认待部署代码已经合入 `dev-release`')
-        expect(prompt).toContain('部署前必须确认待部署代码已经合入 `main`')
+        // 部署规则现在在 section 5 开发规范中
+        expect(prompt).toContain('部署 dev 环境前，必须确认代码已合入 `dev-release`')
+        expect(prompt).toContain('部署线上环境前，必须确认代码已合入 `main`')
         expect(prompt).toContain('如果当前改动只存在于 worktree / feature 分支，先合并到目标发布分支，再执行部署')
     })
 
@@ -48,8 +49,8 @@ describe('buildInitPrompt', () => {
 
         expect(prompt).toContain('当前会话基仓库目录：/vm/shared/yoho-remote')
         expect(prompt).toContain('当前会话使用 Git worktree 隔离开发：名称 guang_yang，分支 yr-guang_yang，路径 /vm/shared/yoho-remote-worktrees/guang_yang')
-        expect(prompt).toContain('所有查看、编辑、测试、提交都必须在当前 worktree 目录进行')
-        expect(prompt).toContain('部署前必须确认待部署代码已经合入 `dev-release`')
-        expect(prompt).toContain('部署前必须确认待部署代码已经合入 `main`')
+        // worktree 行为规则在 brain prompt 中以精简形式出现在规则部分
+        expect(prompt).toContain('部署 dev 必须先合入 dev-release')
+        expect(prompt).toContain('部署线上必须先合入 main')
     })
 })

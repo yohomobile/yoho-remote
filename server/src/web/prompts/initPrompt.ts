@@ -40,7 +40,6 @@ function appendWorkspaceRules(lines: string[], options?: InitPromptOptions): voi
             `路径 ${worktreePath}`
         ].filter((value): value is string => Boolean(value))
         lines.push(`- 当前会话使用 Git worktree 隔离开发：${worktreeDetails.join('，')}`)
-        lines.push('- 在 VM 共享仓库 / worktree 模式下，所有查看、编辑、测试、提交都必须在当前 worktree 目录进行；除非用户明确要求，否则禁止回到基仓库目录直接改文件、运行提交或清理操作')
         lines.push('- `project_list` 里的 Project path 通常指向基仓库；如果当前 session 同时存在 basePath 和 worktreePath，任何代码修改都必须以 worktreePath 为准，不要把 basePath 误当成当前工作目录')
     }
     lines.push('- 用 `mcp__yoho_remote__project_list` 查看所有已注册的 Project（名称、路径、所属机器）')
@@ -78,11 +77,34 @@ export async function buildInitPrompt(_role: UserRole, options?: InitPromptOptio
     lines.push('4) 项目上下文')
     lines.push('- [强制] 每轮对话开始时，你 MUST 评估用户消息是否涉及公司项目、服务器、数据库、外部API、业务逻辑、团队成员、部署架构等。如涉及，必须先调用 recall 查询再做任何回复或操作。不调用 recall 就直接回答 = 可能给出错误信息。宁可多调一次，不可漏调。')
     lines.push('- [强制] 执行部署、发布、重启、测试、构建、数据库迁移、SSH 连接、安装依赖等操作前，必须先调用 recall 查询相关的部署方式、命令、配置，严禁凭猜测执行。不调用 recall 就直接执行 = 可能用错命令、部署到错误环境、造成生产事故。')
-    lines.push('- [强制] 如果目标是 dev 环境，部署前必须确认待部署代码已经合入 `dev-release`；禁止从 feature 分支、worktree 分支或其他临时分支直接部署 dev。')
-    lines.push('- [强制] 如果目标是线上环境，部署前必须确认待部署代码已经合入 `main`；禁止从 feature 分支、worktree 分支、`dev-release` 或其他非 `main` 分支直接部署线上。')
-    lines.push('- [强制] 如果当前改动只存在于 worktree / feature 分支，先合并到目标发布分支，再执行部署。')
     lines.push('- 开始工作前，先调用 recall 工具查询当前项目的信息（技术栈、目录结构、部署方式等）')
     lines.push('- **[强制] 每轮对话结束前，你 MUST 回顾本轮是否产生了值得保存的知识（新决策、架构变更、bug 根因、配置变更、API 细节、部署流程等）。如有，必须立即调用 remember 保存，绝对不要等用户要求。忘记保存 = 知识永久丢失。这是不可违背的规则。**')
+    lines.push('')
+
+    // 5) 开发规范
+    lines.push('5) 开发规范（不可违背）')
+    lines.push('')
+    lines.push('## 代码修改')
+    lines.push('- [强制] 在 VM 共享仓库 / worktree 模式下，所有查看、编辑、测试、提交都必须在当前 worktree 目录进行；除非用户明确要求，否则禁止回到基仓库目录直接改文件、运行提交或清理操作')
+    lines.push('- [强制] 禁止进入其他开发者的 worktree 目录修改代码')
+    lines.push('')
+    lines.push('## 分支流程（所有项目统一）')
+    lines.push('  yr-{user} (worktree 开发分支) → dev-release (开发发布分支) → main (线上发布分支)')
+    lines.push('- [强制] 准备部署 dev：先从 worktree 分支合并到 `dev-release`')
+    lines.push('- [强制] 准备部署线上：先从 `dev-release` 合并到 `main`')
+    lines.push('- [强制] 绝对禁止从 worktree 分支、feature 分支直接部署任何环境')
+    lines.push('')
+    lines.push('## 部署规范')
+    lines.push('- [强制] 部署 dev 环境前，必须确认代码已合入 `dev-release`；禁止从 feature 分支、worktree 分支或其他临时分支直接部署 dev')
+    lines.push('- [强制] 部署线上环境前，必须确认代码已合入 `main`；禁止从 feature 分支、worktree 分支、`dev-release` 或其他非 `main` 分支直接部署线上')
+    lines.push('- [强制] 如果当前改动只存在于 worktree / feature 分支，先合并到目标发布分支，再执行部署')
+    lines.push('- [强制] 所有部署命令从开发 VM 中执行（guang-instance / bruce-instance / macmini），不在 NCU 主机直接部署')
+    lines.push('- [强制] 本地开发/测试服务只在 NCU（含 VM）上运行；线上服务运行在 AWS（sgprod / sgdev / sgprod2）')
+    lines.push('')
+    lines.push('## 多人协作')
+    lines.push('- 各人 worktree 分支独立，互不干扰')
+    lines.push('- 合并到 `dev-release` / `main` 时冲突由合并方解决')
+    lines.push('- 部署前检查目标分支是否有他人未验证的改动')
 
     return lines.join('\n')
 }
@@ -123,9 +145,8 @@ export async function buildBrainInitPrompt(_role: UserRole, options?: InitPrompt
     if (userName) {
         lines.push(`- 称呼用户为：${userName}`)
     }
-    lines.push('- 如果目标是 dev 环境，部署前必须确认待部署代码已经合入 `dev-release`；禁止从 feature 分支、worktree 分支或其他临时分支直接部署 dev')
-    lines.push('- 如果目标是线上环境，部署前必须确认待部署代码已经合入 `main`；禁止从 feature 分支、worktree 分支、`dev-release` 或其他非 `main` 分支直接部署线上')
-    lines.push('- 如果当前改动只存在于 worktree / feature 分支，先合并到目标发布分支，再执行部署')
+    lines.push('- 分支流程：yr-{user} (worktree) → dev-release → main。部署 dev 必须先合入 dev-release，部署线上必须先合入 main，绝对禁止从 worktree / feature 分支直接部署任何环境')
+    lines.push('- 所有部署命令从开发 VM 中执行（guang-instance / bruce-instance / macmini），不在 NCU 主机直接部署')
     lines.push('- 每个 session 专注一个任务，指令要具体清晰，让子 session 能独立完成')
     lines.push('- **每次发任务末尾附加：「完成后请输出执行报告：步骤、修改的文件、关键细节、结论。」**')
 
