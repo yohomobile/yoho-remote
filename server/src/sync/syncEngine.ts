@@ -1387,9 +1387,6 @@ export class SyncEngine {
                     if (typeof rawId !== 'string' || !rawId) continue
 
                     const directory = session.metadata!.path
-                    const sessionType = session.metadata!.worktree ? 'worktree' as const : 'simple' as const
-                    const worktreeName = session.metadata!.worktree?.name
-
                     // Pre-activate so heartbeats are accepted
                     const activateTime = Date.now()
                     await this.store.setSessionActive(session.id, true, activateTime, namespace)
@@ -1399,7 +1396,6 @@ export class SyncEngine {
 
                     const result = await this.spawnSession(
                         machineId, directory, flavor, undefined,
-                        sessionType, worktreeName,
                         {
                             sessionId: session.id,
                             resumeSessionId: rawId,
@@ -1885,8 +1881,6 @@ export class SyncEngine {
         directory: string,
         agent: string = 'claude',
         yolo?: boolean,
-        sessionType?: 'simple' | 'worktree',
-        worktreeName?: string,
         options?: {
             sessionId?: string
             resumeSessionId?: string
@@ -1905,7 +1899,6 @@ export class SyncEngine {
             source?: string
             mainSessionId?: string
             caller?: string
-            reuseExistingWorktree?: boolean
         }
     ): Promise<{ type: 'success'; sessionId: string; logs?: unknown[] } | { type: 'error'; message: string; logs?: unknown[] }> {
         try {
@@ -1917,8 +1910,6 @@ export class SyncEngine {
                     directory,
                     agent,
                     yolo,
-                    sessionType,
-                    worktreeName,
                     sessionId: options?.sessionId,
                     resumeSessionId: options?.resumeSessionId,
                     token: options?.token,
@@ -1936,7 +1927,6 @@ export class SyncEngine {
                     source: options?.source,
                     mainSessionId: options?.mainSessionId,
                     caller: options?.caller,
-                    reuseExistingWorktree: options?.reuseExistingWorktree,
                 }
             )
             if (result && typeof result === 'object') {

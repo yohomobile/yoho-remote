@@ -2,7 +2,7 @@ import type { ComponentType } from 'react'
 import type { ToolCallBlock } from '@/chat/types'
 import type { SessionMetadataSummary } from '@/types/api'
 import { CodexDiffCompactView, CodexDiffFullView } from '@/components/ToolCard/views/CodexDiffView'
-import { CodexPatchView } from '@/components/ToolCard/views/CodexPatchView'
+import { CodexPatchCompactView, CodexPatchView } from '@/components/ToolCard/views/CodexPatchView'
 import { EditView } from '@/components/ToolCard/views/EditView'
 import { AskUserQuestionView } from '@/components/ToolCard/views/AskUserQuestionView'
 import { ExitPlanModeView } from '@/components/ToolCard/views/ExitPlanModeView'
@@ -23,6 +23,7 @@ export const toolViewRegistry: Record<string, ToolViewComponent> = {
     Write: WriteView,
     TodoWrite: TodoWriteView,
     CodexDiff: CodexDiffCompactView,
+    CodexPatch: CodexPatchCompactView,
     AskUserQuestion: AskUserQuestionView,
     ExitPlanMode: ExitPlanModeView,
     ask_user_question: AskUserQuestionView,

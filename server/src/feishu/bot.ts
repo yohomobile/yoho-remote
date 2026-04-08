@@ -1072,8 +1072,6 @@ export class FeishuBot {
                 brainDirectory,
                 'claude',
                 true,  // yolo
-                'simple',
-                undefined,
                 {
                     source: 'brain',
                     permissionMode: 'bypassPermissions',
@@ -1294,8 +1292,6 @@ export class FeishuBot {
                 brainDirectory,
                 'claude',
                 true,  // yolo
-                'simple',
-                undefined,
                 {
                     sessionId: oldSessionId,           // reuse YR session ID
                     resumeSessionId: claudeSessionId,  // resume Claude conversation

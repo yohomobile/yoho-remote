@@ -6,14 +6,11 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/Spinner'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
-import { queryKeys } from '@/lib/query-keys'
 import { useAppContext } from '@/lib/app-context'
 import { getMachineStatusLabel, getMachineTitle } from '@/lib/machines'
-import { getDefaultSessionTypeForMachine, getPersonalWorktreeOwner, isPersonalWorktreeMachine } from '@/lib/personal-worktree'
 
 type AgentType = 'claude' | 'codex' | 'codez' | 'droid'
 type ClaudeModelMode = 'sonnet' | 'opus' | 'glm-5.1'
-type SessionType = 'simple' | 'worktree'
 
 /** 上次创建 session 时的偏好设置，存储在 localStorage */
 interface SpawnPrefs {
@@ -171,7 +168,6 @@ export function NewSession(props: {
     const [codexReasoningEffort, setCodexReasoningEffort] = useState<'low' | 'medium' | 'high' | 'xhigh'>(savedPrefs.codexReasoningEffort ?? 'medium')
     const [droidModel, setDroidModel] = useState(savedPrefs.droidModel ?? DROID_MODELS[0].value)
     const [droidReasoningEffort, setDroidReasoningEffort] = useState(savedPrefs.droidReasoningEffort ?? DROID_MODELS[0].defaultEffort)
-    const [sessionType, setSessionType] = useState<SessionType>('simple')
     const [error, setError] = useState<string | null>(null)
     const [isCustomPath, setIsCustomPath] = useState(false)
     const [spawnLogs, setSpawnLogs] = useState<SpawnLogEntry[]>([])
@@ -180,11 +176,11 @@ export function NewSession(props: {
         [props.machines]
     )
 
-    // Fetch projects for selected machine (shared + machine-specific).
+    // Projects are org-shared; switching machine should not change the project list.
     const { data: projectsData, isLoading: projectsLoading } = useQuery({
-        queryKey: ['projects', currentOrgId, machineId],
+        queryKey: ['projects', currentOrgId],
         queryFn: async () => {
-            return await props.api.getProjects(currentOrgId, machineId)
+            return await props.api.getProjects(currentOrgId)
         },
         enabled: machineId !== null
     })
@@ -194,13 +190,6 @@ export function NewSession(props: {
         () => props.machines.find(m => m.id === machineId) ?? null,
         [props.machines, machineId]
     )
-    const personalWorktreeOwner = useMemo(
-        () => isPersonalWorktreeMachine(currentMachine) ? getPersonalWorktreeOwner(userEmail) : null,
-        [currentMachine, userEmail]
-    )
-    const supportsPersonalWorktree = Boolean(personalWorktreeOwner)
-    const effectiveSessionType: SessionType = supportsPersonalWorktree ? sessionType : 'simple'
-
     const projects = useMemo(() => {
         return Array.isArray(projectsData?.projects) ? projectsData.projects : []
     }, [projectsData])
@@ -231,11 +220,7 @@ export function NewSession(props: {
         }
     }, [onlineMachines, machineId])
 
-    useEffect(() => {
-        setSessionType(getDefaultSessionTypeForMachine(currentMachine, userEmail))
-    }, [currentMachine, userEmail])
-
-    // Reset project path when machine changes (different machine may have different projects)
+    // Restore a previously selected shared project when possible.
     const [initialProjectRestored, setInitialProjectRestored] = useState(false)
     useEffect(() => {
         if (projects.length === 0) {
@@ -250,7 +235,7 @@ export function NewSession(props: {
         }
         setInitialProjectRestored(true)
         setProjectPath(projects[0].path)
-    }, [machineId, projects])
+    }, [projects, savedPrefs.projectPath, initialProjectRestored])
 
     // Droid: get available reasoning efforts for the selected model
     const selectedDroidModel = useMemo(
@@ -268,7 +253,7 @@ export function NewSession(props: {
 
     const handleMachineChange = useCallback((newMachineId: string) => {
         setMachineId(newMachineId)
-        setInitialProjectRestored(true) // 手动切换机器时不再尝试恢复旧项目
+        setInitialProjectRestored(true)
     }, [])
 
     async function handleCreate() {
@@ -291,8 +276,6 @@ export function NewSession(props: {
                 directory,
                 agent,
                 yolo: true,
-                sessionType: effectiveSessionType,
-                worktreeName: effectiveSessionType === 'worktree' ? (personalWorktreeOwner ?? undefined) : undefined,
                 claudeModel: agent === 'claude' ? claudeModel : undefined,
                 codexModel: agent === 'codex' ? codexModel : undefined,
                 modelReasoningEffort: agent === 'codex' ? codexReasoningEffort : undefined,
@@ -416,50 +399,6 @@ export function NewSession(props: {
                     </>
                 )}
             </div>
-
-            {supportsPersonalWorktree ? (
-                <div className="flex flex-col gap-1.5 px-3 py-3">
-                    <label className="text-xs font-medium text-[var(--app-hint)]">
-                        Workspace
-                    </label>
-                    <div className="flex flex-col gap-2">
-                        <label className="flex items-start gap-2 cursor-pointer">
-                            <input
-                                type="radio"
-                                name="sessionType"
-                                value="worktree"
-                                checked={sessionType === 'worktree'}
-                                onChange={() => setSessionType('worktree')}
-                                disabled={isFormDisabled}
-                                className="mt-0.5 accent-[var(--app-link)] w-3.5 h-3.5"
-                            />
-                            <div className="flex-1">
-                                <div className="text-sm">Personal worktree</div>
-                                <div className="text-xs text-[var(--app-hint)]">
-                                    Reuse or create <span className="font-mono">{personalWorktreeOwner}</span> for this repo
-                                </div>
-                            </div>
-                        </label>
-                        <label className="flex items-start gap-2 cursor-pointer">
-                            <input
-                                type="radio"
-                                name="sessionType"
-                                value="simple"
-                                checked={sessionType === 'simple'}
-                                onChange={() => setSessionType('simple')}
-                                disabled={isFormDisabled}
-                                className="mt-0.5 accent-[var(--app-link)] w-3.5 h-3.5"
-                            />
-                            <div className="flex-1">
-                                <div className="text-sm">Base repo</div>
-                                <div className="text-xs text-[var(--app-hint)]">
-                                    Open the selected directory directly without creating a worktree
-                                </div>
-                            </div>
-                        </label>
-                    </div>
-                </div>
-            ) : null}
 
             {/* Agent Selector */}
             <div className="flex flex-col gap-1.5 px-3 py-3">

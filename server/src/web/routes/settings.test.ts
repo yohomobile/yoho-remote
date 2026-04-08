@@ -81,10 +81,10 @@ describe('createSettingsRoutes projects', () => {
         expect(updateResponse.status).toBe(200)
 
         expect(addCalls).toEqual([
-            { machineId: null, orgId: 'org-a' },
+            { machineId: undefined, orgId: 'org-a' },
         ])
         expect(updateCalls).toEqual([
-            { machineId: null },
+            { machineId: undefined },
         ])
     })
 })

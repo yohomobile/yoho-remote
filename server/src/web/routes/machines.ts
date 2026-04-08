@@ -4,7 +4,6 @@ import type { Session, SyncEngine } from '../../sync/syncEngine'
 import type { IStore, UserRole } from '../../store'
 import type { SSEManager } from '../../sse/sseManager'
 import type { WebAppEnv } from '../middleware/auth'
-import { resolvePersonalWorktreeSpawnOptions } from '../personalWorktree'
 import { buildInitPrompt } from '../prompts/initPrompt'
 import { requireMachine } from './guards'
 import { isMachineBlocked } from './blocklist'
@@ -14,8 +13,6 @@ const spawnBodySchema = z.object({
     directory: z.string().min(1),
     agent: z.enum(['claude', 'codex', 'codez', 'opencode', 'gemini', 'glm', 'minimax', 'grok', 'openrouter', 'aider-cli', 'droid']).optional(),
     yolo: z.boolean().optional(),
-    sessionType: z.enum(['simple', 'worktree']).optional(),
-    worktreeName: z.string().optional(),
     claudeSettingsType: z.enum(['litellm', 'claude']).optional(),
     claudeAgent: z.string().min(1).optional(),
     opencodeModel: z.string().min(1).optional(),
@@ -40,13 +37,10 @@ const pathsExistsSchema = z.object({
 async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null, machineId?: string): Promise<void> {
     try {
         const session = engine.getSession(sessionId)
-        const worktree = session?.metadata?.worktree
-        const projectRoot = session?.metadata?.path?.trim()
-            || worktree?.basePath?.trim()
-            || null
+        const projectRoot = session?.metadata?.path?.trim() || null
 
         console.log(`[machines/sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}`)
-        const prompt = await buildInitPrompt(role, { projectRoot, userName, worktree })
+        const prompt = await buildInitPrompt(role, { projectRoot, userName })
         if (!prompt.trim()) {
             console.warn(`[machines/sendInitPrompt] Empty prompt for session ${sessionId}, skipping`)
             return
@@ -141,12 +135,6 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
         const rawSource = parsed.data.source?.trim()
         const source = rawSource ? rawSource : 'external-api'
         const email = c.get('email')
-        const spawnTarget = resolvePersonalWorktreeSpawnOptions({
-            machine,
-            email,
-            sessionType: parsed.data.sessionType,
-            worktreeName: parsed.data.worktreeName,
-        })
 
         // 将 claudeModel / codexModel 转换为 modelMode
         let modelMode: Session['modelMode'] | undefined
@@ -159,22 +147,11 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
             }
         }
 
-        // Default worktreeName to caller's email slug when not specified
-        let worktreeName = parsed.data.worktreeName
-        if (parsed.data.sessionType === 'worktree' && !worktreeName) {
-            const email = c.get('email')
-            if (email) {
-                worktreeName = email.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-            }
-        }
-
         const result = await engine.spawnSession(
             machineId,
             parsed.data.directory,
             parsed.data.agent,
             parsed.data.yolo,
-            spawnTarget.sessionType,
-            spawnTarget.worktreeName,
             {
                 claudeSettingsType: parsed.data.claudeSettingsType,
                 claudeAgent: parsed.data.claudeAgent,
@@ -183,10 +160,9 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
                 codexModel: parsed.data.codexModel,
                 droidModel: parsed.data.droidModel,
                 droidReasoningEffort: parsed.data.droidReasoningEffort,
-                modelMode,
+                modelMode: modelMode as Session['modelMode'] | undefined,
                 modelReasoningEffort: parsed.data.modelReasoningEffort,
                 source,
-                reuseExistingWorktree: spawnTarget.reuseExistingWorktree,
             }
         )
 

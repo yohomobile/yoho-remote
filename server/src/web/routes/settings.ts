@@ -6,15 +6,13 @@ import type { IStore, UserRole } from '../../store'
 const addProjectSchema = z.object({
     name: z.string().min(1).max(100),
     path: z.string().min(1).max(500),
-    description: z.string().max(500).optional(),
-    machineId: z.string().nullable().optional()
+    description: z.string().max(500).optional()
 })
 
 const updateProjectSchema = z.object({
     name: z.string().min(1).max(100),
     path: z.string().min(1).max(500),
-    description: z.string().max(500).optional(),
-    machineId: z.string().nullable().optional()
+    description: z.string().max(500).optional()
 })
 
 const setRolePromptSchema = z.object({
@@ -28,11 +26,10 @@ export function createSettingsRoutes(
 
     // ==================== 项目管理 ====================
 
-    // 获取项目列表：共享项目 + 当前机器的私有项目
+    // 获取项目列表：统一返回当前组织共享目录
     app.get('/settings/projects', async (c) => {
         const orgId = c.req.query('orgId')
-        const machineId = c.req.query('machineId')
-        const projects = await store.getProjects(machineId, orgId)
+        const projects = await store.getProjects(undefined, orgId)
         return c.json({ projects })
     })
 
@@ -49,7 +46,7 @@ export function createSettingsRoutes(
             parsed.data.name,
             parsed.data.path,
             parsed.data.description,
-            parsed.data.machineId,
+            undefined,
             orgId
         )
         if (!project) {
@@ -75,7 +72,7 @@ export function createSettingsRoutes(
             parsed.data.name,
             parsed.data.path,
             parsed.data.description,
-            parsed.data.machineId,
+            undefined,
             orgId
         )
         if (!project) {

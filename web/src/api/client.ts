@@ -533,8 +533,6 @@ export class ApiClient {
         directory: string,
         agent?: 'claude' | 'codex' | 'codez' | 'droid',
         yolo?: boolean,
-        sessionType?: 'simple' | 'worktree',
-        worktreeName?: string,
         claudeModel?: 'sonnet' | 'opus' | 'glm-5.1',
         codexModel?: string,
         modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh',
@@ -545,7 +543,7 @@ export class ApiClient {
         const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
         return await this.request<SpawnResponse>(`/api/machines/${encodeURIComponent(machineId)}/spawn${qs}`, {
             method: 'POST',
-            body: JSON.stringify({ directory, agent, yolo, sessionType, worktreeName, claudeModel, codexModel, modelReasoningEffort, droidModel, droidReasoningEffort, source: 'webapp' })
+            body: JSON.stringify({ directory, agent, yolo, claudeModel, codexModel, modelReasoningEffort, droidModel, droidReasoningEffort, source: 'webapp' })
         })
     }
 

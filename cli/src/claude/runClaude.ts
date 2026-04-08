@@ -24,7 +24,6 @@ import { registerKillSessionHandler } from './registerKillSessionHandler';
 import { runtimePath } from '../projectPath';
 import { resolve } from 'node:path';
 import type { Session } from './session';
-import { readWorktreeEnv } from '@/utils/worktreeEnv';
 import { readModeEnv } from '@/utils/modeEnv';
 import { getYohoAuxMcpServers } from '@/utils/yohoMcpServers';
 
@@ -108,7 +107,6 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         metadata: initialMachineMetadata
     });
 
-    const worktreeInfo = readWorktreeEnv();
     let metadata: Metadata = {
         path: workingDirectory,
         host: os.hostname(),
@@ -129,7 +127,6 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         lifecycleStateSince: Date.now(),
         flavor: options.isCodez ? 'codez' : 'claude',
         runtimeAgent: runtimeAgent ?? undefined,
-        worktree: worktreeInfo ?? undefined,
     };
     let response: Awaited<ReturnType<typeof api.getOrCreateSession>> | null = null;
     const yohoRemoteSessionId = options.yohoRemoteSessionId?.trim() || null;

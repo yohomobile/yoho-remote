@@ -1,5 +1,7 @@
 import type { ToolViewProps } from '@/components/ToolCard/views/_all'
+import { CodeBlock } from '@/components/CodeBlock'
 import { DiffView } from '@/components/DiffView'
+import { getCodexDiffUnified, truncatePreview } from '@/components/ToolCard/codexArtifacts'
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object'
@@ -73,7 +75,10 @@ function renderDiff(block: ToolViewProps['block'], showFileHeader: boolean) {
 }
 
 export function CodexDiffCompactView(props: ToolViewProps) {
-    return renderDiff(props.block, false)
+    const unifiedDiff = getCodexDiffUnified(props.block.tool.input)
+    if (!unifiedDiff) return null
+
+    return <CodeBlock code={truncatePreview(unifiedDiff)} language="diff" />
 }
 
 export function CodexDiffFullView(props: ToolViewProps) {

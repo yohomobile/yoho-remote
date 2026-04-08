@@ -152,26 +152,12 @@ function ProjectForm(props: {
 
     const handleSubmit = useCallback((e: React.FormEvent) => {
         e.preventDefault()
-        if (!name.trim() || !path.trim() || !machineId) return
-        props.onSubmit({ name: name.trim(), path: path.trim(), description: description.trim(), machineId })
-    }, [name, path, description, machineId, props])
+        if (!name.trim() || !path.trim()) return
+        props.onSubmit({ name: name.trim(), path: path.trim(), description: description.trim() })
+    }, [name, path, description, props])
 
     return (
         <form onSubmit={handleSubmit} className="px-3 py-2 space-y-2 border-b border-[var(--app-divider)]">
-            {/* Machine selector - first */}
-            <select
-                value={machineId ?? ''}
-                onChange={(e) => setMachineId(e.target.value || null)}
-                disabled={props.isPending}
-                className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)] disabled:opacity-50"
-            >
-                <option value="" disabled>Select machine...</option>
-                {props.machines.map((m) => (
-                    <option key={m.id} value={m.id}>
-                        {getMachineTitle(m)}{m.metadata?.platform ? ` (${m.metadata.platform})` : ''} · {getMachineStatusLabel(m)}
-                    </option>
-                ))}
-            </select>
             <input
                 type="text"
                 value={name}
