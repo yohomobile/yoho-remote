@@ -62,7 +62,6 @@ export interface StartOptions {
     startedBy?: 'daemon' | 'terminal'
     yohoRemoteSessionId?: string
     resumeSessionId?: string
-    isCodez?: boolean
 }
 
 export async function runClaude(options: StartOptions = {}): Promise<void> {
@@ -127,7 +126,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         // Initialize lifecycle state
         lifecycleState: 'running',
         lifecycleStateSince: Date.now(),
-        flavor: options.isCodez ? 'codez' : 'claude',
+        flavor: 'claude',
         runtimeAgent: runtimeAgent ?? undefined,
         worktree: worktreeInfo ?? undefined,
     };
@@ -542,7 +541,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         claudeArgs: options.claudeArgs,
         startedBy,
         hookSettingsPath,
-        executableCommand: options.isCodez ? 'codez' : 'claude'
+        executableCommand: 'claude'
     });
 
     const localFailure = currentSessionRef.current?.localLaunchFailure;

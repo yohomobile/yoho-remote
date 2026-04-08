@@ -12,7 +12,7 @@ import { serializeMachine, sortMachinesForDisplay } from './machinePayload'
 
 const spawnBodySchema = z.object({
     directory: z.string().min(1),
-    agent: z.enum(['claude', 'codex', 'codez', 'opencode', 'gemini', 'glm', 'minimax', 'grok', 'openrouter', 'aider-cli', 'droid']).optional(),
+    agent: z.enum(['claude', 'codex', 'opencode', 'gemini', 'glm', 'minimax', 'grok', 'openrouter', 'aider-cli']).optional(),
     yolo: z.boolean().optional(),
     sessionType: z.enum(['simple', 'worktree']).optional(),
     worktreeName: z.string().optional(),
@@ -22,8 +22,6 @@ const spawnBodySchema = z.object({
     opencodeVariant: z.string().min(1).optional(),
     claudeModel: z.enum(['sonnet', 'opus', 'glm-5.1']).optional(),
     codexModel: z.string().min(1).optional(),
-    droidModel: z.string().min(1).optional(),
-    droidReasoningEffort: z.string().min(1).optional(),
     modelReasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
     source: z.string().min(1).max(100).optional()
 })
@@ -172,8 +170,6 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
                 opencodeModel: parsed.data.opencodeModel,
                 opencodeVariant: parsed.data.opencodeVariant,
                 codexModel: parsed.data.codexModel,
-                droidModel: parsed.data.droidModel,
-                droidReasoningEffort: parsed.data.droidReasoningEffort,
                 modelMode,
                 modelReasoningEffort: parsed.data.modelReasoningEffort,
                 source,

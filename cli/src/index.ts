@@ -157,50 +157,6 @@ import { getCliArgs } from './utils/cliArgs'
       process.exit(1)
     }
     return;
-  } else if (subcommand === 'codez') {
-    // Handle codez command (OpenAI-powered Claude Code fork)
-    try {
-      // Set OpenAI mode environment variable
-      process.env.CLAUDE_CODE_USE_OPENAI = '1';
-
-      const options: StartOptions = { isCodez: true };
-      const unknownArgs: string[] = [];
-      for (let i = 1; i < args.length; i++) {
-        const arg = args[i];
-        if (arg === '--started-by') {
-          options.startedBy = args[++i] as 'daemon' | 'terminal';
-        } else if (arg === '--yoho-remote-starting-mode') {
-          options.startingMode = z.enum(['local', 'remote']).parse(args[++i]);
-        } else if (arg === '--yoho-remote-session-id') {
-          options.yohoRemoteSessionId = args[++i];
-        } else if (arg === '--yoho-remote-resume-session-id') {
-          options.resumeSessionId = args[++i];
-        } else if (arg === '--yolo' || arg === '--dangerously-skip-permissions') {
-          options.permissionMode = 'bypassPermissions';
-          unknownArgs.push('--dangerously-skip-permissions');
-        } else {
-          unknownArgs.push(arg);
-          if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
-            unknownArgs.push(args[++i]);
-          }
-        }
-      }
-      if (unknownArgs.length > 0) {
-        options.claudeArgs = unknownArgs;
-      }
-
-      await initializeToken();
-      await authAndSetupMachineIfNeeded();
-      const { runClaude } = await import('@/claude/runClaude');
-      await runClaude(options);
-    } catch (error) {
-      console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error')
-      if (process.env.DEBUG) {
-        console.error(error)
-      }
-      process.exit(1)
-    }
-    return;
   } else if (subcommand === 'gemini') {
     // Handle gemini command
     try {
@@ -355,34 +311,6 @@ import { getCliArgs } from './utils/cliArgs'
       await initializeToken();
       await authAndSetupMachineIfNeeded();
       await runAgentSession({ agentType: 'cursor', startedBy });
-    } catch (error) {
-      console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error')
-      if (process.env.DEBUG) {
-        console.error(error)
-      }
-      process.exit(1)
-    }
-    return;
-  } else if (subcommand === 'droid') {
-    // Handle droid command (Factory Droid CLI)
-    try {
-      let startedBy: 'daemon' | 'terminal' | undefined = undefined;
-      let yolo = false;
-      for (let i = 1; i < args.length; i++) {
-        if (args[i] === '--started-by') {
-          startedBy = args[++i] as 'daemon' | 'terminal';
-        } else if (args[i] === '--yolo') {
-          yolo = true;
-        }
-      }
-
-      const { registerDroidAgent } = await import('./agent/runners/droid');
-      const { runAgentSession } = await import('./agent/runners/runAgentSession');
-      registerDroidAgent(yolo);
-
-      await initializeToken();
-      await authAndSetupMachineIfNeeded();
-      await runAgentSession({ agentType: 'droid', startedBy });
     } catch (error) {
       console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error')
       if (process.env.DEBUG) {
@@ -645,7 +573,6 @@ ${chalk.bold('Usage:')}
   hapi [options]         Start Claude with Telegram control (direct-connect)
   hapi auth              Manage authentication
   hapi codex             Start Codex mode
-  hapi codez             Start Codez mode (OpenAI-powered)
   hapi gemini            Start Gemini ACP mode
   hapi glm               Start GLM-4.7 mode (NVIDIA NIM)
   hapi minimax           Start MiniMax-M2.1 mode (NVIDIA NIM)

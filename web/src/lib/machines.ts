@@ -7,6 +7,16 @@ export function getMachineTitle(machine: Machine | null | undefined): string {
     return machine.id.slice(0, 8)
 }
 
+export function getMobileSessionAgentSummary(input: {
+    agentLabel: string
+    machineName?: string | null
+    projectName?: string | null
+}): string {
+    return [input.agentLabel, input.machineName, input.projectName]
+        .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+        .join(' · ')
+}
+
 export function getMachineIp(machine: Machine | null | undefined): string | null {
     if (!machine?.metadata) return null
     return machine.metadata.publicIp ?? machine.metadata.ip ?? null

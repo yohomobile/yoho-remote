@@ -389,13 +389,6 @@ export async function startDaemon(): Promise<void> {
               CODEX_HOME: codexHomeDir
             };
             addLog('env', `Codex authentication configured`, 'success');
-          } else if (options.agent === 'codez') {
-            addLog('env', `Setting up Codez authentication`, 'running');
-            extraEnv = {
-              OPENAI_API_KEY: options.token,
-              CLAUDE_CODE_USE_OPENAI: '1'
-            };
-            addLog('env', `Codez authentication configured`, 'success');
           } else if (options.agent === 'claude' || !options.agent) {
             addLog('env', `Setting up Claude authentication`, 'running');
             extraEnv = {
@@ -403,11 +396,6 @@ export async function startDaemon(): Promise<void> {
             };
             addLog('env', `Claude authentication configured`, 'success');
           }
-        }
-
-        // For codez agent, always set CLAUDE_CODE_USE_OPENAI even without token
-        if (options.agent === 'codez' && !extraEnv.CLAUDE_CODE_USE_OPENAI) {
-          extraEnv = { ...extraEnv, CLAUDE_CODE_USE_OPENAI: '1' };
         }
 
         if (worktreeInfo) {
@@ -452,9 +440,7 @@ export async function startDaemon(): Promise<void> {
         const agentCommand = (() => {
           switch (agent) {
             case 'codex': return 'codex';
-            case 'codez': return 'codez';
             case 'opencode': return 'opencode';
-            case 'droid': return 'droid';
             default: return 'claude';
           }
         })();
@@ -478,15 +464,6 @@ export async function startDaemon(): Promise<void> {
         // Always use highest reasoning effort for OpenCode
         if (agent === 'opencode') {
           extraEnv = { ...extraEnv, OPENCODE_VARIANT: 'max' };
-        }
-        // Pass Droid model and reasoning effort via environment variables
-        const droidModel = typeof options.droidModel === 'string' ? options.droidModel.trim() : '';
-        if (agent === 'droid' && droidModel) {
-          extraEnv = { ...extraEnv, YR_DROID_MODEL: droidModel };
-        }
-        const droidReasoningEffort = typeof options.droidReasoningEffort === 'string' ? options.droidReasoningEffort.trim() : '';
-        if (agent === 'droid' && droidReasoningEffort) {
-          extraEnv = { ...extraEnv, YR_DROID_REASONING_EFFORT: droidReasoningEffort };
         }
         if (options.sessionId) {
           args.push('--yoho-remote-session-id', options.sessionId);

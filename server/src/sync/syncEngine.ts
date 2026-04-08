@@ -1897,8 +1897,6 @@ export class SyncEngine {
             opencodeVariant?: string
             openrouterModel?: string
             codexModel?: string
-            droidModel?: string
-            droidReasoningEffort?: string
             permissionMode?: Session['permissionMode']
             modelMode?: Session['modelMode']
             modelReasoningEffort?: Session['modelReasoningEffort']
@@ -1928,8 +1926,6 @@ export class SyncEngine {
                     opencodeVariant: options?.opencodeVariant,
                     openrouterModel: options?.openrouterModel,
                     codexModel: options?.codexModel,
-                    droidModel: options?.droidModel,
-                    droidReasoningEffort: options?.droidReasoningEffort,
                     permissionMode: options?.permissionMode,
                     modelMode: options?.modelMode,
                     modelReasoningEffort: options?.modelReasoningEffort,
