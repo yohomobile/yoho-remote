@@ -191,16 +191,19 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
         yohoRemoteSessionId: session.client.sessionId,
     });
     const bridgeCommand = getYohoRemoteCliCommand(['mcp', '--url', yohoRemoteServer.url]);
+    const auxServers = await getYohoAuxMcpServers('codex', {
+        apiClient: session.api,
+        sessionId: session.client.sessionId,
+    });
     const mcpServers: Record<string, { command: string; args: string[]; cwd?: string; env?: Record<string, string> }> = {
         yoho_remote: {
             command: bridgeCommand.command,
             args: bridgeCommand.args
         },
-        ...getYohoAuxMcpServers('codex')
+        ...auxServers
     };
 
     // Add stdio bridges for remote aux MCP servers when local files are absent
-    const auxServers = getYohoAuxMcpServers('codex');
     if (!auxServers.yoho_memory) {
         try {
             const host = new URL(process.env.YOHO_REMOTE_URL || '').hostname;
