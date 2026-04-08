@@ -120,7 +120,8 @@ export type Project = {
     name: string
     path: string
     description: string | null
-    machineId: string | null  // 兼容旧数据，组织共享项目固定为 null
+    machineId: string | null  // 非 null = machine-local
+    workspaceGroupId: string | null  // null = global shared / local；非 null = shared workspace group
     createdAt: number
     updatedAt: number
 }
@@ -129,6 +130,7 @@ export type ProjectsResponse = { projects: Project[] }
 export type AddProjectResponse = { ok: true; project: Project; projects: Project[] }
 export type UpdateProjectResponse = { ok: true; project: Project; projects: Project[] }
 export type RemoveProjectResponse = { ok: true; projects: Project[] }
+export type UpdateMachineResponse = { ok: true; machine: Machine }
 
 export type RolePrompt = {
     role: UserRole
@@ -179,6 +181,7 @@ export type Machine = {
         platform: string
         yohoRemoteCliVersion: string
         displayName?: string
+        workspaceGroupId?: string | null
         arch?: string | null
         ip?: string | null
         publicIp?: string | null

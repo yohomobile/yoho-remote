@@ -192,13 +192,17 @@ export class PostgresStore implements IStore {
                 path TEXT NOT NULL,
                 description TEXT,
                 machine_id TEXT,
+                workspace_group_id TEXT,
                 created_at BIGINT NOT NULL,
                 updated_at BIGINT NOT NULL,
                 UNIQUE(path, machine_id)
             );
             CREATE INDEX IF NOT EXISTS idx_projects_machine_id ON projects(machine_id);
+            CREATE INDEX IF NOT EXISTS idx_projects_workspace_group_id ON projects(workspace_group_id);
             -- Migration: Add machine_id column if not exists (for existing databases)
             ALTER TABLE projects ADD COLUMN IF NOT EXISTS machine_id TEXT;
+            ALTER TABLE projects ADD COLUMN IF NOT EXISTS workspace_group_id TEXT;
+            ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_path_machine_id_key;
             -- Drop old unique constraint on path only (if exists)
             -- Note: PostgreSQL doesn't support IF EXISTS for constraints, so we use DO block
 
@@ -533,9 +537,13 @@ export class PostgresStore implements IStore {
             -- Migration: Add org_id to projects
             ALTER TABLE projects ADD COLUMN IF NOT EXISTS org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL;
             CREATE INDEX IF NOT EXISTS idx_projects_org_id ON projects(org_id);
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_shared_org_path_unique
-                ON projects ((COALESCE(org_id, '')), path)
+            DROP INDEX IF EXISTS idx_projects_shared_org_path_unique;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_shared_org_path_group_unique
+                ON projects ((COALESCE(org_id, '')), path, (COALESCE(workspace_group_id, '')))
                 WHERE machine_id IS NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_local_org_machine_path_unique
+                ON projects ((COALESCE(org_id, '')), machine_id, path)
+                WHERE machine_id IS NOT NULL;
 
             -- Migration: Add org_id to input_presets
             ALTER TABLE input_presets ADD COLUMN IF NOT EXISTS org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL;
@@ -873,15 +881,20 @@ export class PostgresStore implements IStore {
     }
 
     async updateMachineMetadata(id: string, metadata: unknown, expectedVersion: number, namespace: string): Promise<VersionedUpdateResult<unknown | null>> {
-        // Preserve displayName from existing metadata if not provided in new metadata
+        // Preserve manually configured metadata fields when daemon heartbeats do not send them.
         const currentMetadata = await this.pool.query('SELECT metadata FROM machines WHERE id = $1 AND namespace = $2', [id, namespace])
         let finalMetadata = metadata
 
         if (currentMetadata.rows.length > 0 && metadata && typeof metadata === 'object') {
             const existing = currentMetadata.rows[0].metadata
-            if (existing && typeof existing === 'object' && 'displayName' in existing && !('displayName' in metadata)) {
-                // Preserve displayName from existing metadata
-                finalMetadata = { ...metadata as Record<string, unknown>, displayName: existing.displayName }
+            if (existing && typeof existing === 'object') {
+                const nextMetadata = { ...metadata as Record<string, unknown> }
+                for (const key of ['displayName', 'workspaceGroupId'] as const) {
+                    if (key in existing && !(key in nextMetadata)) {
+                        nextMetadata[key] = (existing as Record<string, unknown>)[key]
+                    }
+                }
+                finalMetadata = nextMetadata
             }
         }
 
@@ -1299,11 +1312,36 @@ export class PostgresStore implements IStore {
         const params: (string | null)[] = []
         let idx = 1
 
-        // 返回共享项目 (machine_id IS NULL) + 当前机器的私有项目 (machine_id = ?)
+        let workspaceGroupId: string | null = null
         if (machineId) {
-            conditions.push(`(machine_id IS NULL OR machine_id = $${idx})`)
-            params.push(machineId)
-            idx++
+            const machineResult = await this.pool.query(
+                `SELECT metadata->>'workspaceGroupId' AS workspace_group_id
+                 FROM machines
+                 WHERE id = $1
+                 LIMIT 1`,
+                [machineId]
+            )
+            const rawWorkspaceGroupId = machineResult.rows[0]?.workspace_group_id
+            workspaceGroupId = typeof rawWorkspaceGroupId === 'string' && rawWorkspaceGroupId.trim()
+                ? rawWorkspaceGroupId.trim()
+                : null
+
+            if (workspaceGroupId) {
+                conditions.push(`(
+                    machine_id = $${idx}
+                    OR (machine_id IS NULL AND workspace_group_id IS NULL)
+                    OR (machine_id IS NULL AND workspace_group_id = $${idx + 1})
+                )`)
+                params.push(machineId, workspaceGroupId)
+                idx += 2
+            } else {
+                conditions.push(`(
+                    machine_id = $${idx}
+                    OR (machine_id IS NULL AND workspace_group_id IS NULL)
+                )`)
+                params.push(machineId)
+                idx++
+            }
         } else {
             conditions.push('machine_id IS NULL')
         }
@@ -1331,6 +1369,7 @@ export class PostgresStore implements IStore {
             path: row.path,
             description: row.description,
             machineId: row.machine_id as string | null,
+            workspaceGroupId: row.workspace_group_id as string | null,
             orgId: row.org_id as string | null,
             createdAt: Number(row.created_at),
             updatedAt: Number(row.updated_at)
@@ -1347,40 +1386,64 @@ export class PostgresStore implements IStore {
             path: row.path,
             description: row.description,
             machineId: row.machine_id as string | null,
+            workspaceGroupId: row.workspace_group_id as string | null,
             orgId: row.org_id as string | null,
             createdAt: Number(row.created_at),
             updatedAt: Number(row.updated_at)
         }
     }
 
-    async addProject(name: string, path: string, description?: string, _machineId?: string | null, orgId?: string | null): Promise<StoredProject | null> {
+    async addProject(name: string, path: string, description?: string, machineId?: string | null, orgId?: string | null, workspaceGroupId?: string | null): Promise<StoredProject | null> {
         const id = randomUUID()
         const now = Date.now()
+        const normalizedMachineId = machineId?.trim() || null
+        const normalizedWorkspaceGroupId = normalizedMachineId ? null : (workspaceGroupId?.trim() || null)
         try {
-            const conflict = await this.pool.query(
-                `SELECT 1
-                 FROM projects
-                 WHERE path = $1
-                   AND machine_id IS NULL
-                   AND org_id IS NOT DISTINCT FROM $2
-                 LIMIT 1`,
-                [path, orgId ?? null]
-            )
+            const conflict = normalizedMachineId
+                ? await this.pool.query(
+                    `SELECT 1
+                     FROM projects
+                     WHERE path = $1
+                       AND machine_id = $2
+                       AND org_id IS NOT DISTINCT FROM $3
+                     LIMIT 1`,
+                    [path, normalizedMachineId, orgId ?? null]
+                )
+                : await this.pool.query(
+                    `SELECT 1
+                     FROM projects
+                     WHERE path = $1
+                       AND machine_id IS NULL
+                       AND org_id IS NOT DISTINCT FROM $2
+                       AND workspace_group_id IS NOT DISTINCT FROM $3
+                     LIMIT 1`,
+                    [path, orgId ?? null, normalizedWorkspaceGroupId]
+                )
             if (conflict.rows.length > 0) {
                 return null
             }
 
             await this.pool.query(
-                'INSERT INTO projects (id, name, path, description, machine_id, org_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-                [id, name, path, description || null, null, orgId || null, now, now]
+                'INSERT INTO projects (id, name, path, description, machine_id, workspace_group_id, org_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+                [id, name, path, description || null, normalizedMachineId, normalizedWorkspaceGroupId, orgId || null, now, now]
             )
-            return { id, name, path, description: description || null, machineId: null, orgId: orgId || null, createdAt: now, updatedAt: now }
+            return {
+                id,
+                name,
+                path,
+                description: description || null,
+                machineId: normalizedMachineId,
+                workspaceGroupId: normalizedWorkspaceGroupId,
+                orgId: orgId || null,
+                createdAt: now,
+                updatedAt: now
+            }
         } catch {
             return null
         }
     }
 
-    async updateProject(id: string, name: string, path: string, description?: string, _machineId?: string | null, orgId?: string | null): Promise<StoredProject | null> {
+    async updateProject(id: string, name: string, path: string, description?: string, machineId?: string | null, orgId?: string | null, workspaceGroupId?: string | null): Promise<StoredProject | null> {
         const now = Date.now()
         const current = await this.pool.query(
             'SELECT org_id FROM projects WHERE id = $1',
@@ -1389,23 +1452,37 @@ export class PostgresStore implements IStore {
         if (current.rows.length === 0) return null
 
         const effectiveOrgId = orgId !== undefined ? orgId : (current.rows[0].org_id as string | null)
-        const conflict = await this.pool.query(
-            `SELECT 1
-             FROM projects
-             WHERE id <> $1
-               AND path = $2
-               AND machine_id IS NULL
-               AND org_id IS NOT DISTINCT FROM $3
-             LIMIT 1`,
-            [id, path, effectiveOrgId ?? null]
-        )
+        const normalizedMachineId = machineId?.trim() || null
+        const normalizedWorkspaceGroupId = normalizedMachineId ? null : (workspaceGroupId?.trim() || null)
+        const conflict = normalizedMachineId
+            ? await this.pool.query(
+                `SELECT 1
+                 FROM projects
+                 WHERE id <> $1
+                   AND path = $2
+                   AND machine_id = $3
+                   AND org_id IS NOT DISTINCT FROM $4
+                 LIMIT 1`,
+                [id, path, normalizedMachineId, effectiveOrgId ?? null]
+            )
+            : await this.pool.query(
+                `SELECT 1
+                 FROM projects
+                 WHERE id <> $1
+                   AND path = $2
+                   AND machine_id IS NULL
+                   AND org_id IS NOT DISTINCT FROM $3
+                   AND workspace_group_id IS NOT DISTINCT FROM $4
+                 LIMIT 1`,
+                [id, path, effectiveOrgId ?? null, normalizedWorkspaceGroupId]
+            )
         if (conflict.rows.length > 0) {
             return null
         }
 
         const result = await this.pool.query(
-            'UPDATE projects SET name = $1, path = $2, description = $3, machine_id = $4, updated_at = $5 WHERE id = $6 RETURNING *',
-            [name, path, description || null, null, now, id]
+            'UPDATE projects SET name = $1, path = $2, description = $3, machine_id = $4, workspace_group_id = $5, updated_at = $6 WHERE id = $7 RETURNING *',
+            [name, path, description || null, normalizedMachineId, normalizedWorkspaceGroupId, now, id]
         )
         if (result.rows.length === 0) return null
         const row = result.rows[0]
@@ -1415,6 +1492,7 @@ export class PostgresStore implements IStore {
             path: row.path,
             description: row.description,
             machineId: row.machine_id as string | null,
+            workspaceGroupId: row.workspace_group_id as string | null,
             orgId: row.org_id as string | null,
             createdAt: Number(row.created_at),
             updatedAt: Number(row.updated_at)

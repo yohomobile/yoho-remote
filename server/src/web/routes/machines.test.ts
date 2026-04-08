@@ -89,4 +89,64 @@ describe('createMachinesRoutes', () => {
             arch: 'arm64',
         })
     })
+
+    it('updates machine workspace group metadata', async () => {
+        const machine = createMachine({
+            id: 'machine-workspace',
+            metadata: {
+                host: 'workspace-host',
+                platform: 'darwin',
+                yohoRemoteCliVersion: 'v2.1.0',
+                displayName: 'MacBook',
+            },
+            metadataVersion: 3,
+        })
+
+        const updateCalls: Array<{ id: string; metadata: Record<string, unknown>; version: number; namespace: string }> = []
+        const fakeEngine = {
+            getMachinesByNamespace: () => [machine],
+            getMachine: (id: string) => id === machine.id ? machine : undefined,
+            emit: () => {},
+        }
+        const store = {
+            updateMachineMetadata: async (id: string, metadata: unknown, version: number, namespace: string) => {
+                updateCalls.push({ id, metadata: metadata as Record<string, unknown>, version, namespace })
+                return { result: 'success' as const, version: version + 1, value: metadata }
+            },
+            getMachineByNamespace: async () => null,
+        }
+
+        const app = new Hono<{ Variables: { namespace: string } }>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            await next()
+        })
+        app.route('/api', createMachinesRoutes(() => fakeEngine as any, store as any))
+
+        const response = await app.request('/api/machines/machine-workspace/workspace-group', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ workspaceGroupId: 'laptops' }),
+        })
+        expect(response.status).toBe(200)
+
+        expect(updateCalls).toEqual([
+            {
+                id: 'machine-workspace',
+                metadata: {
+                    host: 'workspace-host',
+                    platform: 'darwin',
+                    yohoRemoteCliVersion: 'v2.1.0',
+                    displayName: 'MacBook',
+                    workspaceGroupId: 'laptops',
+                },
+                version: 3,
+                namespace: 'default',
+            },
+        ])
+
+        const payload = await response.json() as { ok: boolean; machine: { metadata: { workspaceGroupId: string | null } } }
+        expect(payload.ok).toBe(true)
+        expect(payload.machine.metadata.workspaceGroupId).toBe('laptops')
+    })
 })

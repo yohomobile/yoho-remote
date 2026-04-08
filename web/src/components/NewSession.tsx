@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/Spinner'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
-import { queryKeys } from '@/lib/query-keys'
 import { useAppContext } from '@/lib/app-context'
 import { getMachineStatusLabel, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
 import { getDefaultSessionTypeForMachine, getPersonalWorktreeOwner, isPersonalWorktreeMachine } from '@/lib/personal-worktree'
@@ -49,6 +48,15 @@ function saveSpawnPrefs(userEmail: string | null, prefs: SpawnPrefs): void {
     } catch {
         // Ignore storage errors
     }
+}
+
+function normalizeWorkspaceGroupId(value: string | null | undefined): string | null {
+    const trimmed = value?.trim()
+    return trimmed ? trimmed : null
+}
+
+function getMachineWorkspaceGroupId(machine: Machine | null | undefined): string | null {
+    return normalizeWorkspaceGroupId(machine?.metadata?.workspaceGroupId)
 }
 
 // Claude 模型选项
@@ -179,22 +187,44 @@ export function NewSession(props: {
     )
     const supportsPersonalWorktree = Boolean(personalWorktreeOwner)
     const effectiveSessionType: SessionType = supportsPersonalWorktree ? sessionType : 'simple'
+    const currentMachineWorkspaceGroupId = useMemo(
+        () => getMachineWorkspaceGroupId(currentMachine),
+        [currentMachine]
+    )
 
     const projects = useMemo(() => {
         return Array.isArray(projectsData?.projects) ? projectsData.projects : []
     }, [projectsData])
+    const machineLocalProjects = useMemo(
+        () => projects.filter((project) => project.machineId === machineId),
+        [machineId, projects]
+    )
+    const workspaceSharedProjects = useMemo(
+        () => projects.filter((project) => project.machineId === null && Boolean(project.workspaceGroupId)),
+        [projects]
+    )
+    const globalSharedProjects = useMemo(
+        () => projects.filter((project) => project.machineId === null && !project.workspaceGroupId),
+        [projects]
+    )
 
     const selectedProject = useMemo(
         () => projects.find((p) => p.path === projectPath.trim()) ?? null,
         [projects, projectPath]
     )
 
-    const projectSuggestions = useMemo(() => {
-        return projects.map((project) => ({
-            value: project.path,
-            label: project.name
-        }))
-    }, [projects])
+    const selectedProjectScopeText = useMemo(() => {
+        if (!selectedProject) return null
+        if (selectedProject.machineId) {
+            return currentMachine
+                ? `Machine local to ${getMachineTitle(currentMachine)}`
+                : 'Machine local project'
+        }
+        if (selectedProject.workspaceGroupId) {
+            return `Shared with workspace group ${selectedProject.workspaceGroupId}`
+        }
+        return 'Global shared project'
+    }, [currentMachine, selectedProject])
 
     // Initialize with saved machine or first available
     useEffect(() => {
@@ -360,20 +390,51 @@ export function NewSession(props: {
                             {projectsLoading && (
                                 <option value="">Loading projects…</option>
                             )}
-                            {!projectsLoading && projectSuggestions.length === 0 && (
+                            {!projectsLoading && projects.length === 0 && (
                                 <option value="">No projects available</option>
                             )}
-                            {projectSuggestions.map((suggestion) => (
-                                <option key={suggestion.value} value={suggestion.value}>
-                                    {suggestion.label ?? suggestion.value}
-                                </option>
-                            ))}
+                            {machineLocalProjects.length > 0 ? (
+                                <optgroup label={currentMachine ? `Machine Local · ${getMachineTitle(currentMachine)}` : 'Machine Local'}>
+                                    {machineLocalProjects.map((project) => (
+                                        <option key={project.id} value={project.path}>
+                                            {project.name}
+                                        </option>
+                                    ))}
+                                </optgroup>
+                            ) : null}
+                            {workspaceSharedProjects.length > 0 ? (
+                                <optgroup label={currentMachineWorkspaceGroupId ? `Workspace Shared · ${currentMachineWorkspaceGroupId}` : 'Workspace Shared'}>
+                                    {workspaceSharedProjects.map((project) => (
+                                        <option key={project.id} value={project.path}>
+                                            {project.name}
+                                        </option>
+                                    ))}
+                                </optgroup>
+                            ) : null}
+                            {globalSharedProjects.length > 0 ? (
+                                <optgroup label="Global Shared (Legacy)">
+                                    {globalSharedProjects.map((project) => (
+                                        <option key={project.id} value={project.path}>
+                                            {project.name}
+                                        </option>
+                                    ))}
+                                </optgroup>
+                            ) : null}
                         </select>
-                        {selectedProject?.description && (
-                            <div className="text-xs text-[var(--app-hint)]">
-                                {selectedProject.description}
+                        {selectedProject ? (
+                            <div className="space-y-1 text-xs text-[var(--app-hint)]">
+                                <div>{selectedProjectScopeText}</div>
+                                {selectedProject.description ? (
+                                    <div>{selectedProject.description}</div>
+                                ) : null}
                             </div>
-                        )}
+                        ) : !projectsLoading && currentMachine ? (
+                            <div className="text-xs text-[var(--app-hint)]">
+                                {currentMachineWorkspaceGroupId
+                                    ? `No saved projects visible on ${getMachineTitle(currentMachine)} yet. Add a machine-local project or a shared project for workspace group ${currentMachineWorkspaceGroupId} in Settings.`
+                                    : `No saved projects for ${getMachineTitle(currentMachine)}. For standalone machines like a MacBook, add a machine-local project in Settings.`}
+                            </div>
+                        ) : null}
                     </>
                 )}
             </div>

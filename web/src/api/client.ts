@@ -29,6 +29,7 @@ import type {
     RemoveSessionShareResponse,
     SessionResponse,
     SessionsResponse,
+    UpdateMachineResponse,
     UpdateProjectResponse,
     UpdateUserPreferencesResponse,
     UserPreferencesResponse,
@@ -515,6 +516,16 @@ export class ApiClient {
         return await this.request<MachinesResponse>(`/api/machines${qs}`)
     }
 
+    async updateMachineWorkspaceGroup(machineId: string, workspaceGroupId: string | null): Promise<UpdateMachineResponse> {
+        return await this.request<UpdateMachineResponse>(
+            `/api/machines/${encodeURIComponent(machineId)}/workspace-group`,
+            {
+                method: 'PUT',
+                body: JSON.stringify({ workspaceGroupId })
+            }
+        )
+    }
+
     async checkMachinePathsExists(
         machineId: string,
         paths: string[]
@@ -588,19 +599,19 @@ export class ApiClient {
         return await this.request<ProjectsResponse>(`/api/settings/projects${qs ? `?${qs}` : ''}`)
     }
 
-    async addProject(name: string, path: string, description?: string, orgId?: string | null): Promise<AddProjectResponse> {
+    async addProject(name: string, path: string, description?: string, orgId?: string | null, machineId?: string | null, workspaceGroupId?: string | null): Promise<AddProjectResponse> {
         const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
         return await this.request<AddProjectResponse>(`/api/settings/projects${qs}`, {
             method: 'POST',
-            body: JSON.stringify({ name, path, description })
+            body: JSON.stringify({ name, path, description, machineId, workspaceGroupId })
         })
     }
 
-    async updateProject(id: string, name: string, path: string, description?: string, orgId?: string | null): Promise<UpdateProjectResponse> {
+    async updateProject(id: string, name: string, path: string, description?: string, orgId?: string | null, machineId?: string | null, workspaceGroupId?: string | null): Promise<UpdateProjectResponse> {
         const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
         return await this.request<UpdateProjectResponse>(`/api/settings/projects/${encodeURIComponent(id)}${qs}`, {
             method: 'PUT',
-            body: JSON.stringify({ name, path, description })
+            body: JSON.stringify({ name, path, description, machineId, workspaceGroupId })
         })
     }
 

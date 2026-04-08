@@ -7,14 +7,16 @@ const addProjectSchema = z.object({
     name: z.string().min(1).max(100),
     path: z.string().min(1).max(500),
     description: z.string().max(500).optional(),
-    machineId: z.string().nullable().optional()
+    machineId: z.string().nullable().optional(),
+    workspaceGroupId: z.string().nullable().optional()
 })
 
 const updateProjectSchema = z.object({
     name: z.string().min(1).max(100),
     path: z.string().min(1).max(500),
     description: z.string().max(500).optional(),
-    machineId: z.string().nullable().optional()
+    machineId: z.string().nullable().optional(),
+    workspaceGroupId: z.string().nullable().optional()
 })
 
 const setRolePromptSchema = z.object({
@@ -50,7 +52,8 @@ export function createSettingsRoutes(
             parsed.data.path,
             parsed.data.description,
             parsed.data.machineId,
-            orgId
+            orgId,
+            parsed.data.workspaceGroupId
         )
         if (!project) {
             return c.json({ error: 'Failed to add project. Path may already exist.' }, 400)
@@ -76,7 +79,8 @@ export function createSettingsRoutes(
             parsed.data.path,
             parsed.data.description,
             parsed.data.machineId,
-            orgId
+            orgId,
+            parsed.data.workspaceGroupId
         )
         if (!project) {
             return c.json({ error: 'Project not found or path already exists' }, 404)
