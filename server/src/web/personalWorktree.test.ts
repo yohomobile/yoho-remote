@@ -2,12 +2,12 @@ import { describe, expect, it } from 'bun:test'
 import { getPersonalWorktreeOwner } from './personalWorktree'
 
 describe('getPersonalWorktreeOwner', () => {
-    it('normalizes email prefixes to underscore-separated owners', () => {
-        expect(getPersonalWorktreeOwner('guang.yang@yohomobile.com')).toBe('guang_yang')
-        expect(getPersonalWorktreeOwner('Guang+Yang@yohomobile.com')).toBe('guang_yang')
+    it('normalizes full email to underscore-separated owners preserving domain', () => {
+        expect(getPersonalWorktreeOwner('guang.yang@yohomobile.com')).toBe('guang_yang_yohomobile_com')
+        expect(getPersonalWorktreeOwner('Guang+Yang@yohomobile.com')).toBe('guang_yang_yohomobile_com')
     })
 
     it('trims empty normalized owners to null', () => {
-        expect(getPersonalWorktreeOwner('___@yohomobile.com')).toBeNull()
+        expect(getPersonalWorktreeOwner('___@___.___')).toBeNull()
     })
 })

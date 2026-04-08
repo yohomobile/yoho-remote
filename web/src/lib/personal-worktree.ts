@@ -35,12 +35,7 @@ export function getPersonalWorktreeOwner(email: string | null | undefined): stri
         return null
     }
 
-    const prefix = trimmed.split('@')[0]?.trim()
-    if (!prefix) {
-        return null
-    }
-
-    const normalized = prefix
+    const normalized = trimmed
         .replace(/[^a-z0-9]+/g, '_')
         .replace(/^_+|_+$/g, '')
 

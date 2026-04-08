@@ -45,7 +45,7 @@ describe('createWorktree naming', () => {
         }
 
         expect(result.info.name).toBe('guang_yang');
-        expect(result.info.branch).toBe('yr-guang_yang');
+        expect(result.info.branch).toBe('guang_yang');
         expect(result.info.worktreePath).toBe(join(tempDir, 'repo-worktrees', 'guang_yang'));
 
         const removed = await removeWorktree({
@@ -67,7 +67,7 @@ describe('createWorktree naming', () => {
         }
 
         expect(result.info.name).toBe('feature-test');
-        expect(result.info.branch).toBe('yr-feature-test');
+        expect(result.info.branch).toBe('feature-test');
 
         const removed = await removeWorktree({
             repoRoot,
