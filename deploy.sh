@@ -352,9 +352,12 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
             # Copy new binaries
             ncu_exec "scp $SSH_OPTS $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote-daemon $MACMINI_SSH:$INSTALL_DIR/ && scp $SSH_OPTS $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote $MACMINI_SSH:$INSTALL_DIR/"
 
-            # Start new daemon
-            ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'nohup env $MACMINI_DAEMON_ENV $INSTALL_DIR/yoho-remote-daemon > /tmp/yoho-remote-daemon.log 2>&1 &'"
-            sleep 3
+            # macOS 要求重新 ad-hoc 签名（SCP 后签名失效，LaunchAgent 会 SIGKILL 未签名二进制）
+            ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'codesign --force --sign - $INSTALL_DIR/yoho-remote-daemon && codesign --force --sign - $INSTALL_DIR/yoho-remote'"
+
+            # 通过 LaunchAgent 重启（macOS 不能用 nohup via SSH）
+            ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'launchctl stop com.hapi.daemon 2>/dev/null; launchctl start com.hapi.daemon'"
+            sleep 4
             ALIVE=$(ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'pgrep -x yoho-remote-daemon >/dev/null && echo yes || echo no'")
             if [[ "$ALIVE" == *"yes"* ]]; then
                 ok "macmini daemon restarted"
