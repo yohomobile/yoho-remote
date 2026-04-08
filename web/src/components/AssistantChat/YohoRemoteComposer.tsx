@@ -279,6 +279,8 @@ export function YohoRemoteComposer(props: {
     contextSize?: number
     outputTokens?: number
     modelContextWindow?: number
+    reasoningOutputTokens?: number
+    rateLimitUsedPercent?: number
     runtimeModel?: string | null
     controlledByUser?: boolean
     agentFlavor?: string | null
@@ -307,6 +309,8 @@ export function YohoRemoteComposer(props: {
         contextSize,
         outputTokens,
         modelContextWindow,
+        reasoningOutputTokens,
+        rateLimitUsedPercent,
         runtimeModel,
         controlledByUser = false,
         agentFlavor,
@@ -1576,6 +1580,8 @@ export function YohoRemoteComposer(props: {
                         contextSize={contextSize}
                         outputTokens={outputTokens}
                         modelContextWindow={modelContextWindow}
+                        reasoningOutputTokens={reasoningOutputTokens}
+                        rateLimitUsedPercent={rateLimitUsedPercent}
                         modelMode={modelMode}
                         runtimeModel={runtimeModel}
                         agentFlavor={agentFlavor}

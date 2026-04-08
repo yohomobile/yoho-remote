@@ -749,6 +749,10 @@ export type LatestUsage = {
     // For Codex new format: model_context_window from token_count event.
     // When present, contextSize / modelContextWindow gives the context usage percentage.
     modelContextWindow?: number
+    // reasoning tokens used in the last turn (new Codex format)
+    reasoningOutputTokens?: number
+    // rate limit primary window usage 0–100 (from token_count rate_limits)
+    rateLimitUsedPercent?: number
 }
 
 export function reduceChatBlocks(
@@ -874,7 +878,12 @@ export function reduceChatBlocks(
             const isTokenCount = msg.role === 'event' && msg.content && typeof msg.content === 'object' && 'type' in msg.content && msg.content.type === 'token-count'
             if (isTokenCount) {
                 if (!lastTokenCount) {
-                    lastTokenCount = { ...usage, modelContextWindow: msg.usage.model_context_window }
+                    lastTokenCount = {
+                        ...usage,
+                        modelContextWindow: msg.usage.model_context_window,
+                        reasoningOutputTokens: msg.usage.reasoning_output_tokens || undefined,
+                        rateLimitUsedPercent: msg.usage.rate_limit_used_percent
+                    }
                 }
                 continue
             }

@@ -215,7 +215,8 @@ function formatCodexPlanEntries(value: unknown): string | null {
             return []
         }
 
-        const content = asString(entry.content)?.trim()
+        // Support both old format (entries[].content) and new Codex format (plan[].step)
+        const content = (asString(entry.content) ?? asString(entry.step))?.trim()
         if (!content) {
             return []
         }
@@ -726,7 +727,9 @@ function normalizeAgentRecord(
         if (!data || typeof data.type !== 'string') return null
 
         if (data.type === 'plan') {
-            const planText = formatCodexPlanEntries(data.entries)
+            // Support old format (data.entries) and new Codex format (data.plan)
+            const planEntries = Array.isArray(data.entries) ? data.entries : Array.isArray(data.plan) ? data.plan : data.entries
+            const planText = formatCodexPlanEntries(planEntries)
             if (!planText) {
                 return null
             }
@@ -775,6 +778,14 @@ function normalizeAgentRecord(
             let cacheReadTokens: number
             let cacheCreationTokens: number
 
+            // reasoning tokens (new format only, from last_token_usage)
+            const reasoningOutputTokens = lastUsage ? (asNumber(lastUsage.reasoning_output_tokens) ?? undefined) : undefined
+
+            // rate limit: TokenCountEvent.rate_limits.primary.used_percent (0–100)
+            const rateLimits = isObject(data.rate_limits) ? (data.rate_limits as Record<string, unknown>) : null
+            const rateLimitPrimary = isObject(rateLimits?.primary) ? (rateLimits.primary as Record<string, unknown>) : null
+            const rateLimitUsedPercent = asNumber(rateLimitPrimary?.used_percent) ?? undefined
+
             if (lastUsage) {
                 // New format: use total_tokens (= input + output) as context window usage.
                 // This matches how the Codex TUI computes context percentage:
@@ -811,7 +822,9 @@ function normalizeAgentRecord(
                     output_tokens: outputTokens ?? 0,
                     cache_creation_input_tokens: cacheCreationTokens,
                     cache_read_input_tokens: cacheReadTokens,
-                    model_context_window: modelContextWindow
+                    model_context_window: modelContextWindow,
+                    reasoning_output_tokens: reasoningOutputTokens,
+                    rate_limit_used_percent: rateLimitUsedPercent
                 }
             }
         }

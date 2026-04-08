@@ -7,6 +7,8 @@ export type UsageData = {
     cache_read_input_tokens?: number
     service_tier?: string
     model_context_window?: number
+    reasoning_output_tokens?: number
+    rate_limit_used_percent?: number
 }
 
 export type AgentEvent =
