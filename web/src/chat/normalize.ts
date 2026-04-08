@@ -13,6 +13,10 @@ function asNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
+function asBoolean(value: unknown): boolean | null {
+    return typeof value === 'boolean' ? value : null
+}
+
 function safeStringify(value: unknown): string {
     if (typeof value === 'string') return value
     try {
@@ -20,6 +24,56 @@ function safeStringify(value: unknown): string {
     } catch {
         return String(value)
     }
+}
+
+function hasToolUseErrorTag(value: unknown): boolean {
+    return typeof value === 'string' && /<tool_use_error>[\s\S]*<\/tool_use_error>/i.test(value)
+}
+
+function inferCodexToolResultIsError(output: unknown): boolean {
+    if (hasToolUseErrorTag(output)) {
+        return true
+    }
+
+    if (Array.isArray(output)) {
+        return output.some(inferCodexToolResultIsError)
+    }
+
+    if (!isObject(output)) {
+        return false
+    }
+
+    if (asBoolean(output.is_error) === true || asBoolean(output.isError) === true) {
+        return true
+    }
+
+    if (typeof output.error === 'string' && output.error.trim().length > 0) {
+        return true
+    }
+
+    if (typeof output.message === 'string' && hasToolUseErrorTag(output.message)) {
+        return true
+    }
+
+    const status = asString(output.status)?.toLowerCase()
+    if (status === 'error' || status === 'failed') {
+        return true
+    }
+
+    const exitCode = asNumber(output.exit_code) ?? asNumber(output.exitCode)
+    if (exitCode !== null && exitCode !== 0) {
+        return true
+    }
+
+    if ('output' in output && inferCodexToolResultIsError(output.output)) {
+        return true
+    }
+
+    if ('content' in output && inferCodexToolResultIsError(output.content)) {
+        return true
+    }
+
+    return false
 }
 
 function isSkippableAgentContent(content: unknown): boolean {
@@ -149,6 +203,44 @@ function normalizeAssistantOutput(
             service_tier: asString(usage?.service_tier) ?? undefined
         } : undefined
     }
+}
+
+function formatCodexPlanEntries(value: unknown): string | null {
+    if (!Array.isArray(value) || value.length === 0) {
+        return null
+    }
+
+    const lines = value.flatMap((entry) => {
+        if (!isObject(entry)) {
+            return []
+        }
+
+        const content = asString(entry.content)?.trim()
+        if (!content) {
+            return []
+        }
+
+        const status = asString(entry.status)
+        const priority = asString(entry.priority)
+        const checkbox = status === 'completed' ? '[x]' : '[ ]'
+        const suffixes: string[] = []
+
+        if (status === 'in_progress') {
+            suffixes.push('in progress')
+        }
+        if (priority === 'high' || priority === 'low') {
+            suffixes.push(`${priority} priority`)
+        }
+
+        const suffix = suffixes.length > 0 ? ` (${suffixes.join(', ')})` : ''
+        return [`- ${checkbox} ${content}${suffix}`]
+    })
+
+    if (lines.length === 0) {
+        return null
+    }
+
+    return ['Plan', '', ...lines].join('\n')
 }
 
 function normalizeUserOutput(
@@ -633,6 +725,71 @@ function normalizeAgentRecord(
         const data = isObject(content.data) ? content.data : null
         if (!data || typeof data.type !== 'string') return null
 
+        if (data.type === 'plan') {
+            const planText = formatCodexPlanEntries(data.entries)
+            if (!planText) {
+                return null
+            }
+
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'agent',
+                isSidechain: false,
+                content: [{ type: 'text', text: planText, uuid: messageId, parentUUID: null }],
+                meta
+            }
+        }
+
+        if (data.type === 'error') {
+            const errorMessage = asString(data.message)?.trim()
+            if (!errorMessage) {
+                return null
+            }
+
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'event',
+                content: {
+                    type: 'message',
+                    message: `Error: ${errorMessage}`
+                },
+                isSidechain: false,
+                meta
+            }
+        }
+
+        if (data.type === 'token_count') {
+            const info = isObject(data.info) ? data.info : null
+            const inputTokens = asNumber(info?.input_tokens)
+            const outputTokens = asNumber(info?.output_tokens)
+            const cacheReadTokens = asNumber(info?.cached_input_tokens) ?? asNumber(info?.cache_read_input_tokens) ?? 0
+            const cacheCreationTokens = asNumber(info?.cache_creation_input_tokens) ?? 0
+
+            if (inputTokens === null && outputTokens === null && cacheReadTokens === 0 && cacheCreationTokens === 0) {
+                return null
+            }
+
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'event',
+                content: { type: 'token-count' },
+                isSidechain: false,
+                meta,
+                usage: {
+                    input_tokens: inputTokens ?? 0,
+                    output_tokens: outputTokens ?? 0,
+                    cache_creation_input_tokens: cacheCreationTokens,
+                    cache_read_input_tokens: cacheReadTokens
+                }
+            }
+        }
+
         if (data.type === 'message' && typeof data.message === 'string') {
             return {
                 id: messageId,
@@ -706,7 +863,7 @@ function normalizeAgentRecord(
                     type: 'tool-result',
                     tool_use_id: data.callId,
                     content: data.output,
-                    is_error: false,
+                    is_error: inferCodexToolResultIsError(data.output),
                     uuid,
                     parentUUID: null
                 }],

@@ -135,7 +135,7 @@ function SessionsPage() {
 
     const { data: projectsData } = useQuery({
         queryKey: ['projects', currentOrgId],
-        queryFn: async () => api.getProjects(undefined, currentOrgId)
+        queryFn: async () => api.getProjects(currentOrgId)
     })
     const projects = Array.isArray(projectsData?.projects) ? projectsData.projects : []
 

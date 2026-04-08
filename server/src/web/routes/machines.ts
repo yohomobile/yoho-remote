@@ -4,6 +4,7 @@ import type { Session, SyncEngine } from '../../sync/syncEngine'
 import type { IStore, UserRole } from '../../store'
 import type { SSEManager } from '../../sse/sseManager'
 import type { WebAppEnv } from '../middleware/auth'
+import { resolvePersonalWorktreeSpawnOptions } from '../personalWorktree'
 import { buildInitPrompt } from '../prompts/initPrompt'
 import { requireMachine } from './guards'
 import { isMachineBlocked } from './blocklist'
@@ -39,12 +40,13 @@ const pathsExistsSchema = z.object({
 async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null, machineId?: string): Promise<void> {
     try {
         const session = engine.getSession(sessionId)
+        const worktree = session?.metadata?.worktree
         const projectRoot = session?.metadata?.path?.trim()
-            || session?.metadata?.worktree?.basePath?.trim()
+            || worktree?.basePath?.trim()
             || null
 
         console.log(`[machines/sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}`)
-        const prompt = await buildInitPrompt(role, { projectRoot, userName })
+        const prompt = await buildInitPrompt(role, { projectRoot, userName, worktree })
         if (!prompt.trim()) {
             console.warn(`[machines/sendInitPrompt] Empty prompt for session ${sessionId}, skipping`)
             return
@@ -138,6 +140,13 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
 
         const rawSource = parsed.data.source?.trim()
         const source = rawSource ? rawSource : 'external-api'
+        const email = c.get('email')
+        const spawnTarget = resolvePersonalWorktreeSpawnOptions({
+            machine,
+            email,
+            sessionType: parsed.data.sessionType,
+            worktreeName: parsed.data.worktreeName,
+        })
 
         // 将 claudeModel / codexModel 转换为 modelMode
         let modelMode: Session['modelMode'] | undefined
@@ -164,14 +173,25 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
             parsed.data.directory,
             parsed.data.agent,
             parsed.data.yolo,
-            parsed.data.sessionType,
-            worktreeName,
-            { claudeSettingsType: parsed.data.claudeSettingsType, claudeAgent: parsed.data.claudeAgent, opencodeModel: parsed.data.opencodeModel, opencodeVariant: parsed.data.opencodeVariant, codexModel: parsed.data.codexModel, droidModel: parsed.data.droidModel, droidReasoningEffort: parsed.data.droidReasoningEffort, modelMode, modelReasoningEffort: parsed.data.modelReasoningEffort, source }
+            spawnTarget.sessionType,
+            spawnTarget.worktreeName,
+            {
+                claudeSettingsType: parsed.data.claudeSettingsType,
+                claudeAgent: parsed.data.claudeAgent,
+                opencodeModel: parsed.data.opencodeModel,
+                opencodeVariant: parsed.data.opencodeVariant,
+                codexModel: parsed.data.codexModel,
+                droidModel: parsed.data.droidModel,
+                droidReasoningEffort: parsed.data.droidReasoningEffort,
+                modelMode,
+                modelReasoningEffort: parsed.data.modelReasoningEffort,
+                source,
+                reuseExistingWorktree: spawnTarget.reuseExistingWorktree,
+            }
         )
 
         // 如果 spawn 成功，等 session online 后设置 createdBy 并发送初始化 prompt
         if (result.type === 'success') {
-            const email = c.get('email')
             const namespace = c.get('namespace')
             const role = c.get('role')  // Role from Keycloak token
             const userName = c.get('name')

@@ -25,35 +25,40 @@ const PLATFORMS = [
         os: 'darwin',
         cpu: 'arm64',
         buildTarget: 'bun-darwin-arm64',
-        binName: 'hapi'
+        sourceBinCandidates: ['yoho-remote', 'hapi'],
+        packageBinName: 'hapi'
     },
     {
         name: 'darwin-x64',
         os: 'darwin',
         cpu: 'x64',
         buildTarget: 'bun-darwin-x64',
-        binName: 'hapi'
+        sourceBinCandidates: ['yoho-remote', 'hapi'],
+        packageBinName: 'hapi'
     },
     {
         name: 'linux-arm64',
         os: 'linux',
         cpu: 'arm64',
         buildTarget: 'bun-linux-arm64',
-        binName: 'hapi'
+        sourceBinCandidates: ['yoho-remote', 'hapi'],
+        packageBinName: 'hapi'
     },
     {
         name: 'linux-x64',
         os: 'linux',
         cpu: 'x64',
         buildTarget: 'bun-linux-x64',
-        binName: 'hapi'
+        sourceBinCandidates: ['yoho-remote', 'hapi'],
+        packageBinName: 'hapi'
     },
     {
         name: 'win32-x64',
         os: 'win32',
         cpu: 'x64',
         buildTarget: 'bun-windows-x64',
-        binName: 'hapi.exe'
+        sourceBinCandidates: ['yoho-remote.exe', 'hapi.exe'],
+        packageBinName: 'hapi.exe'
     }
 ] as const;
 
@@ -83,9 +88,9 @@ function generatePlatformPackageJson(
         os: [platform.os],
         cpu: [platform.cpu],
         bin: {
-            hapi: `bin/${platform.binName}`
+            hapi: `bin/${platform.packageBinName}`
         },
-        files: [`bin/${platform.binName}`],
+        files: [`bin/${platform.packageBinName}`],
         license: mainPkg.license ?? 'MIT',
         repository: mainPkg.repository
     };
@@ -110,11 +115,16 @@ async function preparePlatform(
     console.log(`Generated: ${pkgJsonPath}`);
 
     // Copy binary
-    const srcBin = join(distExeDir, platform.buildTarget, platform.binName);
-    const destBin = join(binDir, platform.binName);
+    const srcBin = platform.sourceBinCandidates
+        .map(candidate => join(distExeDir, platform.buildTarget, candidate))
+        .find(candidate => existsSync(candidate));
+    const destBin = join(binDir, platform.packageBinName);
 
-    if (!existsSync(srcBin)) {
-        console.warn(`Warning: Binary not found: ${srcBin}`);
+    if (!srcBin) {
+        const expectedBins = platform.sourceBinCandidates
+            .map(candidate => join(distExeDir, platform.buildTarget, candidate))
+            .join(', ');
+        console.warn(`Warning: Binary not found. Tried: ${expectedBins}`);
         console.warn(`  Run 'bun run build:exe:all' first to build binaries.`);
         return;
     }

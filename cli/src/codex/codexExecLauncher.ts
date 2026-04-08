@@ -22,6 +22,7 @@ import { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 import { restoreTerminalState } from '@/ui/terminalState';
 import { hasCodexCliOverrides } from './utils/codexCliOverrides';
 import { buildCodexStartConfig, TITLE_INSTRUCTION } from './utils/codexStartConfig';
+import { buildCommandExecutionResult, getCommandExecutionPreview } from './utils/commandExecutionResult';
 import { resolveCodexBinary } from './codexBinary';
 import { getYohoAuxMcpServers, MEMORY_HTTP_PORT, CREDENTIALS_HTTP_PORT } from '@/utils/yohoMcpServers';
 import type { CodexSession } from './session';
@@ -59,8 +60,9 @@ interface ExecMcpToolCallItem extends ExecItemBase {
 interface ExecCommandExecutionItem extends ExecItemBase {
     type: 'command_execution';
     command: string;
-    output?: string;
+    output?: unknown;
     exit_code?: number;
+    [key: string]: unknown;
 }
 
 interface ExecFileEditItem extends ExecItemBase {
@@ -711,17 +713,15 @@ function handleItemCompleted(item: ExecItem, ctx: EventHandlerContext): void {
 
         case 'command_execution': {
             const cmdItem = item as ExecCommandExecutionItem;
-            const output = cmdItem.output ?? `exit code ${cmdItem.exit_code ?? '?'}`;
+            const commandResult = buildCommandExecutionResult(cmdItem);
+            const output = getCommandExecutionPreview(cmdItem)
+                ?? `exit code ${cmdItem.exit_code ?? '?'}`;
             const truncated = output.substring(0, 200);
             messageBuffer.addMessage(`Result: ${truncated}${output.length > 200 ? '...' : ''}`, 'result');
             session.sendCodexMessage({
                 type: 'tool-call-result',
                 callId,
-                output: {
-                    output: cmdItem.output,
-                    exit_code: cmdItem.exit_code,
-                    command: cmdItem.command
-                },
+                output: commandResult,
                 id: randomUUID()
             });
             break;

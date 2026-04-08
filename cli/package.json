@@ -1,6 +1,6 @@
 {
   "name": "@twsxtd/hapi",
-  "version": "v2026.04.07.1304",
+  "version": "v2026.04.08.1506",
   "description": "App for agentic coding - access coding agent anywhere",
   "author": "Kirill Dubovitskiy & weishu",
   "license": "LGPL-3.0-or-later",
@@ -26,11 +26,11 @@
     }
   },
   "optionalDependencies": {
-    "@twsxtd/hapi-darwin-arm64": "v2026.03.30.0156",
-    "@twsxtd/hapi-darwin-x64": "v2026.03.30.0156",
-    "@twsxtd/hapi-linux-arm64": "v2026.03.30.0156",
-    "@twsxtd/hapi-linux-x64": "v2026.03.30.0156",
-    "@twsxtd/hapi-win32-x64": "v2026.03.30.0156"
+    "@twsxtd/hapi-darwin-arm64": "v2026.04.07.1452",
+    "@twsxtd/hapi-darwin-x64": "v2026.04.07.1452",
+    "@twsxtd/hapi-linux-arm64": "v2026.04.07.1452",
+    "@twsxtd/hapi-linux-x64": "v2026.04.07.1452",
+    "@twsxtd/hapi-win32-x64": "v2026.04.07.1452"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

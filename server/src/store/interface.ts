@@ -134,7 +134,7 @@ export interface IStore {
     getProjects(machineId?: string | null, orgId?: string | null): Promise<StoredProject[]>
     getProject(id: string): Promise<StoredProject | null>
     addProject(name: string, path: string, description?: string, machineId?: string | null, orgId?: string | null): Promise<StoredProject | null>
-    updateProject(id: string, name: string, path: string, description?: string, machineId?: string | null): Promise<StoredProject | null>
+    updateProject(id: string, name: string, path: string, description?: string, machineId?: string | null, orgId?: string | null): Promise<StoredProject | null>
     removeProject(id: string): Promise<boolean>
 
     // === Role Prompt 操作 ===

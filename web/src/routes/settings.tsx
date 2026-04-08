@@ -1,4 +1,4 @@
-import { useCallback, useState, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useState, useMemo, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useAppContext } from '@/lib/app-context'
@@ -26,6 +26,13 @@ const ROLE_COLORS: Record<OrgRole, string> = {
     owner: 'from-amber-500 to-orange-600',
     admin: 'from-blue-500 to-indigo-600',
     member: 'from-gray-400 to-gray-500',
+}
+
+function getProjectScopeBadge(_project: Project): { label: string; title: string } {
+    return {
+        label: 'Org Shared',
+        title: 'Shared project for the current organization'
+    }
 }
 
 function BackIcon(props: { className?: string }) {
@@ -130,7 +137,6 @@ type ProjectFormData = {
     name: string
     path: string
     description: string
-    machineId: string | null
 }
 
 function ProjectForm(props: {
@@ -139,12 +145,10 @@ function ProjectForm(props: {
     onCancel: () => void
     isPending: boolean
     submitLabel: string
-    machines: Machine[]
 }) {
     const [name, setName] = useState(props.initial?.name ?? '')
     const [path, setPath] = useState(props.initial?.path ?? '')
     const [description, setDescription] = useState(props.initial?.description ?? '')
-    const [machineId, setMachineId] = useState<string | null>(props.initial?.machineId ?? null)
 
     const handleSubmit = useCallback((e: React.FormEvent) => {
         e.preventDefault()
@@ -203,7 +207,7 @@ function ProjectForm(props: {
                 </button>
                 <button
                     type="submit"
-                    disabled={props.isPending || !name.trim() || !path.trim() || !machineId}
+                    disabled={props.isPending || !name.trim() || !path.trim()}
                     className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium rounded bg-[var(--app-button)] text-[var(--app-button-text)] disabled:opacity-50 hover:opacity-90 transition-opacity"
                 >
                     {props.isPending && <Spinner size="sm" label={null} />}
@@ -449,7 +453,7 @@ export default function SettingsPage() {
         }
     }, [removeMember])
 
-    // Machines (for project form)
+    // Machines
     const { data: machinesData } = useQuery({
         queryKey: ['machines', currentOrgId],
         queryFn: async () => {
@@ -460,15 +464,12 @@ export default function SettingsPage() {
     })
     const machines = machinesData?.machines ?? []
 
-    // Machine filter for projects
-    const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null)
-
     // Projects
     const { data: projectsData, isLoading: projectsLoading } = useQuery({
-        queryKey: ['projects', selectedMachineId, currentOrgId],
+        queryKey: ['projects', currentOrgId],
         queryFn: async () => {
             if (!api) throw new Error('API unavailable')
-            return await api.getProjects(selectedMachineId ?? undefined, currentOrgId)
+            return await api.getProjects(currentOrgId)
         },
         enabled: Boolean(api)
     })
@@ -476,7 +477,7 @@ export default function SettingsPage() {
     const addProjectMutation = useMutation({
         mutationFn: async (data: ProjectFormData) => {
             if (!api) throw new Error('API unavailable')
-            return await api.addProject(data.name, data.path, data.description || undefined, data.machineId, currentOrgId)
+            return await api.addProject(data.name, data.path, data.description || undefined, currentOrgId)
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['projects'] })
@@ -491,7 +492,7 @@ export default function SettingsPage() {
     const updateProjectMutation = useMutation({
         mutationFn: async ({ id, data }: { id: string; data: ProjectFormData }) => {
             if (!api) throw new Error('API unavailable')
-            return await api.updateProject(id, data.name, data.path, data.description || undefined, data.machineId, currentOrgId)
+            return await api.updateProject(id, data.name, data.path, data.description || undefined, currentOrgId)
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['projects'] })
@@ -568,36 +569,9 @@ export default function SettingsPage() {
         }
     }, [baseUrl])
 
-    // Filter projects by platform for global projects (machineId = null)
     const projects = useMemo(() => {
-        const allProjects = Array.isArray(projectsData?.projects) ? projectsData.projects : []
-
-        // If no machine filter selected, return all projects
-        if (!selectedMachineId) {
-            return allProjects
-        }
-
-        // Find the selected machine's platform
-        const selectedMachine = machines.find(m => m.id === selectedMachineId)
-        const platform = selectedMachine?.metadata?.platform ?? ''
-
-        return allProjects.filter(project => {
-            // If project has machineId, only show if it matches selected machine
-            if (project.machineId) {
-                return project.machineId === selectedMachineId
-            }
-            // Global project: check if path is compatible with selected platform
-            if (platform === 'darwin') {
-                // macOS: paths start with /Users
-                return project.path.startsWith('/Users/')
-            } else {
-                // Linux: paths start with /home or /root or /opt
-                return project.path.startsWith('/home/') ||
-                       project.path.startsWith('/root/') ||
-                       project.path.startsWith('/opt/')
-            }
-        })
-    }, [projectsData, selectedMachineId, machines])
+        return Array.isArray(projectsData?.projects) ? projectsData.projects : []
+    }, [projectsData])
 
     // Notification settings
     const {
@@ -1055,23 +1029,11 @@ export default function SettingsPage() {
                                     <div>
                                         <h3 className="text-sm font-medium">Projects</h3>
                                         <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
-                                            Saved project paths for quick access
+                                            Shared project paths for this organization
                                         </p>
                                     </div>
                                     {!showAddProject && !editingProject && (
                                         <div className="flex items-center gap-2">
-                                            <select
-                                                value={selectedMachineId ?? ''}
-                                                onChange={(e) => setSelectedMachineId(e.target.value || null)}
-                                                className="text-xs px-2 py-1 rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
-                                            >
-                                                <option value="">All machines</option>
-                                                {machines.map((m) => (
-                                                    <option key={m.id} value={m.id}>
-                                                        {m.metadata?.displayName || m.metadata?.host || m.id.slice(0, 8)}
-                                                    </option>
-                                                ))}
-                                            </select>
                                             <button
                                                 type="button"
                                                 onClick={() => setShowAddProject(true)}
@@ -1092,7 +1054,6 @@ export default function SettingsPage() {
                                         }}
                                         isPending={addProjectMutation.isPending}
                                         submitLabel="Add Project"
-                                        machines={machines}
                                     />
                                 )}
                                 {projectError && (
@@ -1117,8 +1078,7 @@ export default function SettingsPage() {
                                                     initial={{
                                                         name: project.name,
                                                         path: project.path,
-                                                        description: project.description ?? '',
-                                                        machineId: project.machineId
+                                                        description: project.description ?? ''
                                                     }}
                                                     onSubmit={handleUpdateProject}
                                                     onCancel={() => {
@@ -1127,7 +1087,6 @@ export default function SettingsPage() {
                                                     }}
                                                     isPending={updateProjectMutation.isPending}
                                                     submitLabel="Save"
-                                                    machines={machines}
                                                 />
                                             ) : (
                                                 <div key={project.id} className="px-3 py-2">
@@ -1135,6 +1094,19 @@ export default function SettingsPage() {
                                                         <div className="min-w-0 flex-1">
                                                             <div className="text-sm font-medium truncate">{project.name}</div>
                                                             <div className="text-xs text-[var(--app-hint)] font-mono truncate mt-0.5">{project.path}</div>
+                                                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                                                {(() => {
+                                                                    const badge = getProjectScopeBadge(project)
+                                                                    return (
+                                                                        <span
+                                                                            title={badge.title}
+                                                                            className="inline-flex items-center rounded-full border border-[var(--app-border)] bg-[var(--app-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--app-hint)]"
+                                                                        >
+                                                                            {badge.label}
+                                                                        </span>
+                                                                    )
+                                                                })()}
+                                                            </div>
                                                             {project.description && (
                                                                 <div className="text-xs text-[var(--app-hint)] mt-0.5 line-clamp-2">{project.description}</div>
                                                             )}

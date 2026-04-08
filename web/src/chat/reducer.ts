@@ -520,6 +520,9 @@ function reduceTimeline(
                 hasReadyEvent = true
                 continue
             }
+            if (msg.content.type === 'token-count') {
+                continue
+            }
             blocks.push({
                 kind: 'agent-event',
                 id: msg.id,
@@ -829,6 +832,7 @@ export function reduceChatBlocks(
     // Skip messages where usage exists but all values are 0
     let resultUsage: LatestUsage | null = null
     let assistantUsage: LatestUsage | null = null
+    let fallbackUsage: LatestUsage | null = null
 
     for (let i = normalized.length - 1; i >= 0; i--) {
         const msg = normalized[i]
@@ -870,23 +874,35 @@ export function reduceChatBlocks(
                 timestamp: msg.createdAt
             }
 
+            if (!fallbackUsage) {
+                fallbackUsage = usage
+            }
+
             // Check if this is a result message (contains cumulative usage)
             if (msg.role === 'event' && msg.content && typeof msg.content === 'object' && 'type' in msg.content && msg.content.type === 'session-result') {
                 console.log('[Context Debug] Found result message (cumulative usage)')
-                resultUsage = usage
-                break // Result message found, use it immediately
+                if (!resultUsage) {
+                    resultUsage = usage
+                }
+                if (assistantUsage) {
+                    break
+                }
+                continue
             }
 
             // Store assistant message usage as fallback
             if (!assistantUsage && msg.role === 'agent') {
                 console.log('[Context Debug] Found assistant message (per-turn usage)')
                 assistantUsage = usage
+                if (resultUsage) {
+                    break
+                }
             }
         }
     }
 
-    // Prefer cumulative result usage over per-turn assistant usage
-    latestUsage = resultUsage ?? assistantUsage
+    // Prefer assistant turn usage over session-result cumulative usage.
+    latestUsage = assistantUsage ?? resultUsage ?? fallbackUsage
 
     console.log('[Context Debug] Final usage decision:', {
         resultUsage: resultUsage ? {

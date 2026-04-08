@@ -108,6 +108,64 @@ describe('Codex frontend support', () => {
         expect(reduced.latestUsage?.contextSize).toBe(123_456)
     })
 
+    test('renders Codex plan messages as assistant text instead of dropping them', () => {
+        const normalized = normalize(makeMessage({
+            id: 'plan-message',
+            createdAt: 100,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'plan',
+                        entries: [
+                            { content: 'Inspect the repo', priority: 'high', status: 'completed' },
+                            { content: 'Patch the UI', priority: 'medium', status: 'in_progress' }
+                        ]
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(1)
+        expect(normalized[0]?.role).toBe('agent')
+        if (normalized[0]?.role !== 'agent') {
+            throw new Error('Expected agent message')
+        }
+        expect(normalized[0].content[0]).toMatchObject({
+            type: 'text'
+        })
+        expect(normalized[0].content[0]?.type === 'text' ? normalized[0].content[0].text : '').toContain('Plan')
+        expect(normalized[0].content[0]?.type === 'text' ? normalized[0].content[0].text : '').toContain('Inspect the repo')
+        expect(normalized[0].content[0]?.type === 'text' ? normalized[0].content[0].text : '').toContain('Patch the UI')
+    })
+
+    test('renders Codex error messages as visible timeline events', () => {
+        const normalized = normalize(makeMessage({
+            id: 'error-message',
+            createdAt: 101,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'error',
+                        message: 'Tool chain exploded'
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(1)
+        expect(normalized[0]).toMatchObject({
+            role: 'event',
+            content: {
+                type: 'message',
+                message: 'Error: Tool chain exploded'
+            }
+        })
+    })
+
     test('prefers Claude assistant usage over cumulative session-result usage', () => {
         const normalized: NormalizedMessage[] = [
             {

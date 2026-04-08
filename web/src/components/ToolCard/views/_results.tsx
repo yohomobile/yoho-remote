@@ -15,6 +15,21 @@ function safeStringify(value: unknown): string {
     }
 }
 
+type MarkdownSection = {
+    key: string
+    label: string
+    text: string
+}
+
+const YOHO_MEMORY_MARKDOWN_PATHS: Array<{ path: string[]; label: string }> = [
+    { path: ['answer'], label: 'Answer' },
+    { path: ['message'], label: 'Message' },
+    { path: ['summary'], label: 'Summary' },
+    { path: ['content'], label: 'Content' },
+    { path: ['checks'], label: 'Checks' },
+    { path: ['current_step', 'content'], label: 'Current Step' }
+]
+
 function parseToolUseError(message: string): { isToolUseError: boolean; errorMessage: string | null } {
     const regex = /<tool_use_error>(.*?)<\/tool_use_error>/s
     const match = message.match(regex)
@@ -37,47 +52,71 @@ function extractTextFromContentBlock(block: unknown): string | null {
     return null
 }
 
-function extractTextFromResult(result: unknown, depth: number = 0): string | null {
-    if (depth > 2) return null
-    if (result === null || result === undefined) return null
-    if (typeof result === 'string') {
-        const toolUseError = parseToolUseError(result)
-        return toolUseError.isToolUseError ? (toolUseError.errorMessage ?? '') : result
+const RESULT_TEXT_KEYS = [
+    'content',
+    'text',
+    'output',
+    'error',
+    'message',
+    'aggregated_output',
+    'combined_output',
+    'output_text',
+    'stdout',
+    'stderr'
+] as const
+
+function extractTextFromArray(result: unknown[]): string | null {
+    const parts = result
+        .map(extractTextFromContentBlock)
+        .filter((part): part is string => typeof part === 'string' && part.length > 0)
+    return parts.length > 0 ? parts.join('\n') : null
+}
+
+function extractTextCandidate(value: unknown, depth: number): string | null {
+    if (typeof value === 'string') {
+        const toolUseError = parseToolUseError(value)
+        return toolUseError.isToolUseError ? (toolUseError.errorMessage ?? '') : value
     }
 
+    if (Array.isArray(value)) {
+        return extractTextFromArray(value)
+    }
+
+    if (isObject(value)) {
+        return extractTextFromResult(value, depth + 1)
+    }
+
+    return null
+}
+
+export function extractTextFromResult(result: unknown, depth: number = 0): string | null {
+    if (depth > 3) return null
+    if (result === null || result === undefined) return null
+    if (typeof result === 'string') return extractTextCandidate(result, depth)
+
     if (Array.isArray(result)) {
-        const parts = result
-            .map(extractTextFromContentBlock)
-            .filter((part): part is string => typeof part === 'string' && part.length > 0)
-        return parts.length > 0 ? parts.join('\n') : null
+        return extractTextFromArray(result)
     }
 
     if (!isObject(result)) return null
 
-    if (typeof result.content === 'string') return result.content
-    if (typeof result.text === 'string') return result.text
-    if (typeof result.output === 'string') return result.output
-    if (typeof result.error === 'string') return result.error
-    if (typeof result.message === 'string') return result.message
-
-    const contentArray = Array.isArray(result.content) ? result.content : null
-    if (contentArray) {
-        const parts = contentArray
-            .map(extractTextFromContentBlock)
-            .filter((part): part is string => typeof part === 'string' && part.length > 0)
-        return parts.length > 0 ? parts.join('\n') : null
+    for (const key of RESULT_TEXT_KEYS) {
+        const text = extractTextCandidate(result[key], depth)
+        if (text) {
+            return text
+        }
     }
 
     const nestedOutput = isObject(result.output) ? result.output : null
     if (nestedOutput) {
-        if (typeof nestedOutput.content === 'string') return nestedOutput.content
-        if (typeof nestedOutput.text === 'string') return nestedOutput.text
+        const nestedText = extractTextFromResult(nestedOutput, depth + 1)
+        if (nestedText) return nestedText
     }
 
     const nestedError = isObject(result.error) ? result.error : null
     if (nestedError) {
-        if (typeof nestedError.message === 'string') return nestedError.message
-        if (typeof nestedError.error === 'string') return nestedError.error
+        const nestedText = extractTextFromResult(nestedError, depth + 1)
+        if (nestedText) return nestedText
     }
 
     const nestedResult = isObject(result.result) ? result.result : null
@@ -103,6 +142,18 @@ function looksLikeHtml(text: string): boolean {
 function looksLikeJson(text: string): boolean {
     const trimmed = text.trim()
     return (trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))
+}
+
+function tryParseJson(text: string): unknown | null {
+    if (!looksLikeJson(text)) {
+        return null
+    }
+
+    try {
+        return JSON.parse(text)
+    } catch {
+        return null
+    }
 }
 
 function renderText(text: string, opts: { mode: 'markdown' | 'code' | 'auto'; language?: string } = { mode: 'auto' }) {
@@ -164,6 +215,35 @@ function extractStdoutStderr(result: unknown): { stdout: string | null; stderr: 
     return null
 }
 
+function extractExitInfo(result: unknown): { exitCode: number | null } | null {
+    if (!isObject(result)) {
+        return null
+    }
+
+    const exitCode = typeof result.exit_code === 'number'
+        ? result.exit_code
+        : typeof result.exitCode === 'number'
+            ? result.exitCode
+            : null
+
+    if (exitCode !== null) {
+        return { exitCode }
+    }
+
+    const nested = isObject(result.output) ? result.output : null
+    if (!nested) {
+        return null
+    }
+
+    const nestedExitCode = typeof nested.exit_code === 'number'
+        ? nested.exit_code
+        : typeof nested.exitCode === 'number'
+            ? nested.exitCode
+            : null
+
+    return nestedExitCode !== null ? { exitCode: nestedExitCode } : null
+}
+
 function extractReadFileContent(result: unknown): { filePath: string | null; content: string } | null {
     if (!isObject(result)) return null
     const file = isObject(result.file) ? result.file : null
@@ -179,6 +259,129 @@ function extractReadFileContent(result: unknown): { filePath: string | null; con
             : null
 
     return { filePath, content }
+}
+
+function isYohoMemoryToolName(toolName: string): boolean {
+    return toolName === 'yoho_memory__recall'
+        || toolName === 'yoho_memory__remember'
+        || toolName === 'yoho_memory__get_playbook'
+        || toolName === 'mcp__yoho_memory__recall'
+        || toolName === 'mcp__yoho_memory__remember'
+        || toolName === 'mcp__yoho_memory__get_playbook'
+}
+
+function cloneJsonValue(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.map(cloneJsonValue)
+    }
+
+    if (!isObject(value)) {
+        return value
+    }
+
+    const clone: Record<string, unknown> = {}
+    for (const [key, nested] of Object.entries(value)) {
+        clone[key] = cloneJsonValue(nested)
+    }
+    return clone
+}
+
+function readStringAtPath(value: unknown, path: string[]): string | null {
+    let current: unknown = value
+    for (const key of path) {
+        if (!isObject(current)) {
+            return null
+        }
+        current = current[key]
+    }
+    return typeof current === 'string' ? current : null
+}
+
+function deletePath(value: unknown, path: string[]): void {
+    if (!isObject(value) || path.length === 0) {
+        return
+    }
+
+    const [head, ...rest] = path
+    if (rest.length === 0) {
+        delete value[head]
+        return
+    }
+
+    deletePath(value[head], rest)
+}
+
+function compactJsonValue(value: unknown): unknown | null {
+    if (Array.isArray(value)) {
+        const next = value
+            .map(compactJsonValue)
+            .filter((item): item is Exclude<typeof item, null> => item !== null)
+        return next.length > 0 ? next : null
+    }
+
+    if (isObject(value)) {
+        const nextEntries = Object.entries(value)
+            .map(([key, nested]) => [key, compactJsonValue(nested)] as const)
+            .filter((entry): entry is readonly [string, Exclude<(typeof entry)[1], null>] => entry[1] !== null)
+        return nextEntries.length > 0 ? Object.fromEntries(nextEntries) : null
+    }
+
+    return value === undefined ? null : value
+}
+
+function extractStructuredJsonPayload(result: unknown): unknown | null {
+    if (typeof result === 'string') {
+        return tryParseJson(result)
+    }
+
+    const text = extractTextFromResult(result)
+    if (text) {
+        const parsed = tryParseJson(text)
+        if (parsed !== null) {
+            return parsed
+        }
+    }
+
+    if (Array.isArray(result) || isObject(result)) {
+        return result
+    }
+
+    return null
+}
+
+export function extractYohoMemoryDisplayData(result: unknown): { markdownSections: MarkdownSection[]; jsonValue: unknown | null } {
+    const payload = extractStructuredJsonPayload(result)
+    if (payload === null) {
+        return { markdownSections: [], jsonValue: null }
+    }
+
+    if (!Array.isArray(payload) && !isObject(payload)) {
+        return { markdownSections: [], jsonValue: payload }
+    }
+
+    const working = cloneJsonValue(payload)
+    const seenMarkdown = new Set<string>()
+    const markdownSections: MarkdownSection[] = []
+
+    for (const spec of YOHO_MEMORY_MARKDOWN_PATHS) {
+        const text = readStringAtPath(working, spec.path)?.trim()
+        if (!text || seenMarkdown.has(text)) {
+            continue
+        }
+
+        seenMarkdown.add(text)
+        markdownSections.push({
+            key: spec.path.join('.'),
+            label: spec.label,
+            text
+        })
+        deletePath(working, spec.path)
+    }
+
+    return {
+        markdownSections,
+        jsonValue: compactJsonValue(working)
+    }
 }
 
 function extractLineList(text: string): string[] {
@@ -208,6 +411,14 @@ const AskUserQuestionResultView: ToolViewComponent = (props: ToolViewProps) => {
 
 const BashResultView: ToolViewComponent = (props: ToolViewProps) => {
     const result = props.block.tool.result
+    const exitInfo = extractExitInfo(result)
+    const exitCodeBanner = exitInfo && exitInfo.exitCode !== null && exitInfo.exitCode !== 0
+        ? (
+            <div className="text-sm font-medium text-red-600">
+                Exit code {exitInfo.exitCode}
+            </div>
+        )
+        : null
 
     if (result === undefined || result === null) {
         return <div className="text-sm text-[var(--app-hint)]">{placeholderForState(props.block.tool.state)}</div>
@@ -218,7 +429,10 @@ const BashResultView: ToolViewComponent = (props: ToolViewProps) => {
         const display = toolUseError.isToolUseError ? (toolUseError.errorMessage ?? '') : result
         return (
             <>
-                <CodeBlock code={display} language="text" />
+                <div className="flex flex-col gap-2">
+                    {exitCodeBanner}
+                    <CodeBlock code={display} language="text" />
+                </div>
                 <RawJsonDevOnly value={result} />
             </>
         )
@@ -229,6 +443,7 @@ const BashResultView: ToolViewComponent = (props: ToolViewProps) => {
         return (
             <>
                 <div className="flex flex-col gap-2">
+                    {exitCodeBanner}
                     {stdio.stdout ? <CodeBlock code={stdio.stdout} language="text" /> : null}
                     {stdio.stderr ? <CodeBlock code={stdio.stderr} language="text" /> : null}
                 </div>
@@ -241,7 +456,19 @@ const BashResultView: ToolViewComponent = (props: ToolViewProps) => {
     if (text) {
         return (
             <>
-                {renderText(text, { mode: 'code', language: 'text' })}
+                <div className="flex flex-col gap-2">
+                    {exitCodeBanner}
+                    {renderText(text, { mode: 'code', language: 'text' })}
+                </div>
+                <RawJsonDevOnly value={result} />
+            </>
+        )
+    }
+
+    if (exitCodeBanner) {
+        return (
+            <>
+                {exitCodeBanner}
                 <RawJsonDevOnly value={result} />
             </>
         )
@@ -542,6 +769,53 @@ const TodoWriteResultView: ToolViewComponent = (props: ToolViewProps) => {
     )
 }
 
+const YohoMemoryResultView: ToolViewComponent = (props: ToolViewProps) => {
+    const result = props.block.tool.result
+
+    if (result === undefined || result === null) {
+        return <div className="text-sm text-[var(--app-hint)]">{placeholderForState(props.block.tool.state)}</div>
+    }
+
+    const display = extractYohoMemoryDisplayData(result)
+    if (display.markdownSections.length > 0 || display.jsonValue !== null) {
+        return (
+            <>
+                <div className="flex flex-col gap-3">
+                    {display.markdownSections.map((section) => (
+                        <div key={section.key}>
+                            <div className="mb-1 text-xs font-medium text-[var(--app-hint)]">
+                                {section.label}
+                            </div>
+                            <MarkdownRenderer content={section.text} />
+                        </div>
+                    ))}
+                    {display.jsonValue !== null ? (
+                        <div>
+                            <div className="mb-1 text-xs font-medium text-[var(--app-hint)]">
+                                Structured Data
+                            </div>
+                            <CodeBlock code={safeStringify(display.jsonValue)} language="json" />
+                        </div>
+                    ) : null}
+                </div>
+                <RawJsonDevOnly value={result} />
+            </>
+        )
+    }
+
+    const text = extractTextFromResult(result)
+    if (text) {
+        return (
+            <>
+                {renderText(text, { mode: 'auto' })}
+                {typeof result === 'object' ? <RawJsonDevOnly value={result} /> : null}
+            </>
+        )
+    }
+
+    return <CodeBlock code={safeStringify(result)} language="json" />
+}
+
 const GenericResultView: ToolViewComponent = (props: ToolViewProps) => {
     const result = props.block.tool.result
 
@@ -592,6 +866,9 @@ export const toolResultViewRegistry: Record<string, ToolViewComponent> = {
 }
 
 export function getToolResultViewComponent(toolName: string): ToolViewComponent {
+    if (isYohoMemoryToolName(toolName)) {
+        return YohoMemoryResultView
+    }
     if (toolName.startsWith('mcp__')) {
         return GenericResultView
     }

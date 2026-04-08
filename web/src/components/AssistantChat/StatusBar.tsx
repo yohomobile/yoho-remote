@@ -3,6 +3,19 @@ import type { AgentState, ModelMode, TypingUser } from '@/types/api'
 import { getContextBudgetTokens } from '@/chat/modelConfig'
 import { useVibingMessage } from '@/hooks/useVibingMessage'
 
+function formatCompactTokenCount(value: number): string {
+    if (value >= 1_000_000) {
+        const compact = value >= 10_000_000 ? Math.round(value / 1_000_000) : Math.round((value / 100_000)) / 10
+        return `${compact}M`
+    }
+
+    if (value >= 1_000) {
+        const compact = value >= 100_000 ? Math.round(value / 1_000) : Math.round((value / 100)) / 10
+        return `${compact}K`
+    }
+
+    return String(value)
+}
 
 function getConnectionStatus(
     active: boolean,
@@ -91,6 +104,9 @@ export function StatusBar(props: {
     const contextWarning = useMemo(
         () => {
             if (props.contextSize === undefined) return null
+            if (props.agentFlavor === 'codex') {
+                return { text: `${formatCompactTokenCount(props.contextSize)} input tokens`, color: 'text-[var(--app-hint)]' }
+            }
             if (props.agentFlavor && props.agentFlavor !== 'claude') return null
             const maxContextSize = getContextBudgetTokens(props.modelMode)
             if (!maxContextSize) return null

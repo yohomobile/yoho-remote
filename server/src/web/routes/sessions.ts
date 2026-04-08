@@ -4,6 +4,7 @@ import type { DecryptedMessage, Session, SyncEngine } from '../../sync/syncEngin
 import type { SSEManager } from '../../sse/sseManager'
 import type { IStore, UserRole, StoredSession } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
+import { resolvePersonalWorktreeSpawnOptions } from '../personalWorktree'
 import { requireMachine, requireSessionFromParam, requireSessionFromParamWithShareCheck, requireSyncEngine } from './guards'
 import { buildInitPrompt, buildBrainInitPrompt, buildVijnaptiInitPrompt } from '../prompts/initPrompt'
 
@@ -298,17 +299,18 @@ async function waitForSessionInactive(engine: SyncEngine, sessionId: string, tim
 
 async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null): Promise<void> {
     const session = engine.getSession(sessionId)
+    const worktree = session?.metadata?.worktree
     const projectRoot = session?.metadata?.path?.trim()
-        || session?.metadata?.worktree?.basePath?.trim()
+        || worktree?.basePath?.trim()
         || null
     const source = session?.metadata?.source
     console.log(`[sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}, source=${source}`)
     const isVijnapti = source === 'brain' && projectRoot?.includes('vijnapti-workspace')
     const prompt = isVijnapti
-        ? await buildVijnaptiInitPrompt(role, { projectRoot, userName })
+        ? await buildVijnaptiInitPrompt(role, { projectRoot, userName, worktree })
         : source === 'brain'
-            ? await buildBrainInitPrompt(role, { projectRoot, userName })
-            : await buildInitPrompt(role, { projectRoot, userName })
+            ? await buildBrainInitPrompt(role, { projectRoot, userName, worktree })
+            : await buildInitPrompt(role, { projectRoot, userName, worktree })
     if (!prompt.trim()) {
         console.warn(`[sendInitPrompt] Empty prompt for session ${sessionId}, skipping`)
         return
@@ -536,6 +538,13 @@ export function createSessionsRoutes(
 
         const rawSource = parsed.data.source?.trim()
         const source = rawSource ? rawSource : 'external-api'
+        const email = c.get('email')
+        const spawnTarget = resolvePersonalWorktreeSpawnOptions({
+            machine,
+            email,
+            sessionType: parsed.data.sessionType,
+            worktreeName: parsed.data.worktreeName,
+        })
 
         // 将 claudeModel/codexModel 转换为 modelMode
         let modelMode = parsed.data.modelMode
@@ -562,8 +571,8 @@ export function createSessionsRoutes(
             parsed.data.directory,
             parsed.data.agent,
             parsed.data.yolo,
-            parsed.data.sessionType,
-            worktreeName,
+            spawnTarget.sessionType,
+            spawnTarget.worktreeName,
             {
                 openrouterModel: parsed.data.openrouterModel,
                 droidModel: parsed.data.droidModel,
@@ -571,12 +580,12 @@ export function createSessionsRoutes(
                 permissionMode: parsed.data.permissionMode,
                 modelMode,
                 modelReasoningEffort: parsed.data.modelReasoningEffort,
-                source
+                source,
+                reuseExistingWorktree: spawnTarget.reuseExistingWorktree,
             }
         )
 
         if (result.type === 'success') {
-            const email = c.get('email')
             const namespace = c.get('namespace')
             const role = c.get('role')  // Role from Keycloak token
             const userName = c.get('name')

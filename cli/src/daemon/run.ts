@@ -226,6 +226,7 @@ export async function startDaemon(): Promise<void> {
       const yolo = options.yolo === true;
       const sessionType = options.sessionType ?? 'simple';
       const worktreeName = options.worktreeName;
+      const reuseExistingWorktree = options.reuseExistingWorktree === true;
       let directoryCreated = false;
       let spawnDirectory = directory;
       let worktreeInfo: WorktreeInfo | null = null;
@@ -318,10 +319,14 @@ export async function startDaemon(): Promise<void> {
       }
 
       if (sessionType === 'worktree') {
-        addLog('worktree', `Creating worktree from base: ${directory}`, 'running');
+        const worktreeAction = reuseExistingWorktree
+          ? `Resolving named worktree from base: ${directory}`
+          : `Creating worktree from base: ${directory}`;
+        addLog('worktree', worktreeAction, 'running');
         const worktreeResult = await createWorktree({
           basePath: directory,
-          nameHint: worktreeName
+          nameHint: worktreeName,
+          reuseExisting: reuseExistingWorktree
         });
         if (!worktreeResult.ok) {
           logger.debug(`[DAEMON RUN] Worktree creation failed: ${worktreeResult.error}`);
@@ -334,8 +339,8 @@ export async function startDaemon(): Promise<void> {
         }
         worktreeInfo = worktreeResult.info;
         spawnDirectory = worktreeInfo.worktreePath;
-        logger.debug(`[DAEMON RUN] Created worktree ${worktreeInfo.worktreePath} (branch ${worktreeInfo.branch})`);
-        addLog('worktree', `Created worktree: ${worktreeInfo.worktreePath} (branch: ${worktreeInfo.branch})`, 'success');
+        logger.debug(`[DAEMON RUN] Ready worktree ${worktreeInfo.worktreePath} (branch ${worktreeInfo.branch})`);
+        addLog('worktree', `Using worktree: ${worktreeInfo.worktreePath} (branch: ${worktreeInfo.branch})`, 'success');
       }
 
       const cleanupWorktree = async () => {

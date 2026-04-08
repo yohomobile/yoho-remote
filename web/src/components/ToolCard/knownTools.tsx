@@ -54,6 +54,26 @@ function formatMCPTitle(toolName: string): string {
     return `MCP: ${snakeToTitleWithSpaces(withoutPrefix)}`
 }
 
+function isNamespacedToolName(toolName: string): boolean {
+    return toolName.includes('__')
+}
+
+function getGenericToolSubtitle(input: unknown): string | null {
+    return getInputStringAny(input, [
+        'input',
+        'prompt',
+        'query',
+        'pattern',
+        'url',
+        'file_path',
+        'path',
+        'filePath',
+        'file',
+        'command',
+        'cmd'
+    ])
+}
+
 type ToolOpts = {
     toolName: string
     input: unknown
@@ -380,6 +400,15 @@ export function getToolPresentation(opts: Omit<ToolOpts, 'metadata'> & { metadat
         }
     }
 
+    if (isNamespacedToolName(opts.toolName)) {
+        return {
+            icon: <PuzzleIcon className={DEFAULT_ICON_CLASS} />,
+            title: formatMCPTitle(opts.toolName),
+            subtitle: getGenericToolSubtitle(opts.input),
+            minimal: true
+        }
+    }
+
     const known = knownTools[opts.toolName]
     if (known) {
         const minimal = typeof known.minimal === 'function' ? known.minimal(opts) : (known.minimal ?? false)
@@ -391,13 +420,7 @@ export function getToolPresentation(opts: Omit<ToolOpts, 'metadata'> & { metadat
         }
     }
 
-    const filePath = getInputStringAny(opts.input, ['file_path', 'path', 'filePath', 'file'])
-    const command = getInputStringAny(opts.input, ['command', 'cmd'])
-    const pattern = getInputStringAny(opts.input, ['pattern'])
-    const url = getInputStringAny(opts.input, ['url'])
-    const query = getInputStringAny(opts.input, ['query'])
-
-    const subtitle = filePath ?? command ?? pattern ?? url ?? query
+    const subtitle = getGenericToolSubtitle(opts.input)
 
     return {
         icon: <WrenchIcon className={DEFAULT_ICON_CLASS} />,

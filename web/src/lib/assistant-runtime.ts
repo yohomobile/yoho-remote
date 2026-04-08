@@ -26,98 +26,137 @@ export type YohoRemoteChatMessageMetadata = {
     source?: CliOutputBlock['source']
 }
 
-function toThreadMessageLike(block: ChatBlock): ThreadMessageLike {
-    if (block.kind === 'user-text') {
-        const messageId = `user:${block.id}`
-        return {
-            role: 'user',
-            id: messageId,
-            createdAt: new Date(block.createdAt),
-            content: [{ type: 'text', text: block.text }],
-            metadata: {
-                custom: {
-                    kind: 'user',
-                    status: block.status,
-                    localId: block.localId,
-                    originalText: block.originalText
-                } satisfies YohoRemoteChatMessageMetadata
-            }
+type ThreadMessageParts = Exclude<ThreadMessageLike['content'], string>
+
+function createUserThreadMessage(block: Extract<ChatBlock, { kind: 'user-text' }>): ThreadMessageLike {
+    return {
+        role: 'user',
+        id: `user:${block.id}`,
+        createdAt: new Date(block.createdAt),
+        content: [{ type: 'text', text: block.text }],
+        metadata: {
+            custom: {
+                kind: 'user',
+                status: block.status,
+                localId: block.localId,
+                originalText: block.originalText
+            } satisfies YohoRemoteChatMessageMetadata
         }
+    }
+}
+
+function createEventThreadMessage(block: Extract<ChatBlock, { kind: 'agent-event' }>): ThreadMessageLike {
+    return {
+        role: 'system',
+        id: `event:${block.id}`,
+        createdAt: new Date(block.createdAt),
+        content: [{ type: 'text', text: renderEventLabel(block.event) }],
+        metadata: {
+            custom: { kind: 'event', event: block.event } satisfies YohoRemoteChatMessageMetadata
+        }
+    }
+}
+
+function createCliOutputThreadMessage(block: Extract<ChatBlock, { kind: 'cli-output' }>): ThreadMessageLike {
+    return {
+        role: block.source === 'user' ? 'user' : 'assistant',
+        id: `cli:${block.id}`,
+        createdAt: new Date(block.createdAt),
+        content: [{ type: 'text', text: block.text }],
+        metadata: {
+            custom: { kind: 'cli-output', source: block.source } satisfies YohoRemoteChatMessageMetadata
+        }
+    }
+}
+
+function createAssistantThreadMessage(block: Extract<ChatBlock, { kind: 'agent-text' | 'agent-reasoning' | 'tool-call' }>): ThreadMessageLike {
+    const message: ThreadMessageLike = {
+        role: 'assistant',
+        id: `assistant:${block.id}`,
+        createdAt: new Date(block.createdAt),
+        content: [] as ThreadMessageParts,
+        metadata: {
+            custom: { kind: 'assistant' } satisfies YohoRemoteChatMessageMetadata
+        }
+    }
+
+    appendAssistantBlock(message, block)
+    return message
+}
+
+function appendAssistantBlock(
+    message: ThreadMessageLike,
+    block: Extract<ChatBlock, { kind: 'agent-text' | 'agent-reasoning' | 'tool-call' }>
+): void {
+    if (message.role !== 'assistant') {
+        return
+    }
+
+    if (!Array.isArray(message.content)) {
+        return
     }
 
     if (block.kind === 'agent-text') {
-        const messageId = `assistant:${block.id}`
-        return {
-            role: 'assistant',
-            id: messageId,
-            createdAt: new Date(block.createdAt),
-            content: [{ type: 'text', text: block.text }],
-            metadata: {
-                custom: { kind: 'assistant' } satisfies YohoRemoteChatMessageMetadata
-            }
-        }
+        message.content.push({ type: 'text', text: block.text })
+        return
     }
 
     if (block.kind === 'agent-reasoning') {
-        const messageId = `assistant:${block.id}`
-        return {
-            role: 'assistant',
-            id: messageId,
-            createdAt: new Date(block.createdAt),
-            content: [{ type: 'reasoning', text: block.text }],
-            metadata: {
-                custom: { kind: 'assistant' } satisfies YohoRemoteChatMessageMetadata
-            }
-        }
-    }
-
-    if (block.kind === 'agent-event') {
-        const messageId = `event:${block.id}`
-        return {
-            role: 'system',
-            id: messageId,
-            createdAt: new Date(block.createdAt),
-            content: [{ type: 'text', text: renderEventLabel(block.event) }],
-            metadata: {
-                custom: { kind: 'event', event: block.event } satisfies YohoRemoteChatMessageMetadata
-            }
-        }
-    }
-
-    if (block.kind === 'cli-output') {
-        const messageId = `cli:${block.id}`
-        return {
-            role: block.source === 'user' ? 'user' : 'assistant',
-            id: messageId,
-            createdAt: new Date(block.createdAt),
-            content: [{ type: 'text', text: block.text }],
-            metadata: {
-                custom: { kind: 'cli-output', source: block.source } satisfies YohoRemoteChatMessageMetadata
-            }
-        }
+        message.content.push({ type: 'reasoning', text: block.text })
+        return
     }
 
     const toolBlock: ToolCallBlock = block
-    const messageId = `tool:${toolBlock.id}`
-    const inputText = safeStringify(toolBlock.tool.input)
+    message.content.push({
+        type: 'tool-call',
+        toolCallId: toolBlock.id,
+        toolName: toolBlock.tool.name,
+        argsText: safeStringify(toolBlock.tool.input),
+        result: toolBlock.tool.result,
+        isError: toolBlock.tool.state === 'error',
+        artifact: toolBlock
+    })
+}
 
-    return {
-        role: 'assistant',
-        id: messageId,
-        createdAt: new Date(toolBlock.createdAt),
-        content: [{
-            type: 'tool-call',
-            toolCallId: toolBlock.id,
-            toolName: toolBlock.tool.name,
-            argsText: inputText,
-            result: toolBlock.tool.result,
-            isError: toolBlock.tool.state === 'error',
-            artifact: toolBlock
-        }],
-        metadata: {
-            custom: { kind: 'tool', toolCallId: toolBlock.id } satisfies YohoRemoteChatMessageMetadata
+export function convertBlocksToThreadMessages(blocks: readonly ChatBlock[]): ThreadMessageLike[] {
+    const messages: ThreadMessageLike[] = []
+    let pendingAssistant: ThreadMessageLike | null = null
+
+    const flushAssistant = () => {
+        if (!pendingAssistant) {
+            return
         }
+        messages.push(pendingAssistant)
+        pendingAssistant = null
     }
+
+    for (const block of blocks) {
+        if (block.kind === 'agent-text' || block.kind === 'agent-reasoning' || block.kind === 'tool-call') {
+            if (!pendingAssistant) {
+                pendingAssistant = createAssistantThreadMessage(block)
+            } else {
+                appendAssistantBlock(pendingAssistant, block)
+            }
+            continue
+        }
+
+        flushAssistant()
+
+        if (block.kind === 'user-text') {
+            messages.push(createUserThreadMessage(block))
+            continue
+        }
+
+        if (block.kind === 'agent-event') {
+            messages.push(createEventThreadMessage(block))
+            continue
+        }
+
+        messages.push(createCliOutputThreadMessage(block))
+    }
+
+    flushAssistant()
+    return messages
 }
 
 function getTextFromAppendMessage(message: AppendMessage): string | null {
@@ -140,11 +179,13 @@ export function useYohoRemoteRuntime(props: {
     onSendMessage: (text: string) => void
     onAbort: () => Promise<void>
 }) {
-    // Use cached message converter for performance optimization
-    // This prevents re-converting all messages on every render
-    const convertedMessages = useExternalMessageConverter<ChatBlock>({
-        callback: toThreadMessageLike,
-        messages: props.blocks as ChatBlock[],
+    const groupedMessages = useMemo(
+        () => convertBlocksToThreadMessages(props.blocks),
+        [props.blocks]
+    )
+    const convertedMessages = useExternalMessageConverter<ThreadMessageLike>({
+        callback: (message) => message,
+        messages: groupedMessages,
         isRunning: props.session.thinking,
     })
 
