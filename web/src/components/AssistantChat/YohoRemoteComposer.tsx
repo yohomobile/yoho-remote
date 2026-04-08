@@ -277,6 +277,7 @@ export function YohoRemoteComposer(props: {
     thinking?: boolean
     agentState?: AgentState | null
     contextSize?: number
+    runtimeModel?: string | null
     controlledByUser?: boolean
     agentFlavor?: string | null
     onRequestResume?: () => void
@@ -302,6 +303,7 @@ export function YohoRemoteComposer(props: {
         thinking = false,
         agentState,
         contextSize,
+        runtimeModel,
         controlledByUser = false,
         agentFlavor,
         onRequestResume,
@@ -1569,6 +1571,7 @@ export function YohoRemoteComposer(props: {
                         agentState={agentState}
                         contextSize={contextSize}
                         modelMode={modelMode}
+                        runtimeModel={runtimeModel}
                         agentFlavor={agentFlavor}
                         otherUserTyping={otherUserTyping}
                     />
