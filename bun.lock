@@ -45,11 +45,11 @@
         "vitest": "^4.0.16",
       },
       "optionalDependencies": {
-        "@twsxtd/hapi-darwin-arm64": "v2026.03.30.0156",
-        "@twsxtd/hapi-darwin-x64": "v2026.03.30.0156",
-        "@twsxtd/hapi-linux-arm64": "v2026.03.30.0156",
-        "@twsxtd/hapi-linux-x64": "v2026.03.30.0156",
-        "@twsxtd/hapi-win32-x64": "v2026.03.30.0156",
+        "@twsxtd/hapi-darwin-arm64": "v2026.04.07.1452",
+        "@twsxtd/hapi-darwin-x64": "v2026.04.07.1452",
+        "@twsxtd/hapi-linux-arm64": "v2026.04.07.1452",
+        "@twsxtd/hapi-linux-x64": "v2026.04.07.1452",
+        "@twsxtd/hapi-win32-x64": "v2026.04.07.1452",
       },
     },
     "server": {
