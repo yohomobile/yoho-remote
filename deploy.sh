@@ -103,30 +103,78 @@ force_kill_process() {
 
 
 # ==================== Parse arguments ====================
+# 所有合法的 daemon 目标名
+ALL_DAEMON_TARGET_NAMES="ncu guang-instance bruce-instance macmini"
+
 MODE="${1:-}"
+shift 2>/dev/null || true
+DAEMON_FILTER=("$@")  # 剩余参数作为 daemon 目标过滤器
+
 if [[ -z "$MODE" || ! "$MODE" =~ ^(server|daemon|all)$ ]]; then
     cat << 'USAGE'
-Usage: deploy.sh <server|daemon|all>
+Usage: deploy.sh <server|daemon|all> [target...]
 
-  server  Build & deploy server + CLI to ncu only
-  daemon  Build & deploy daemon + CLI to all machines:
-          - ncu (本机 systemd)
-          - guang-instance (VM systemd)
-          - bruce-instance (VM systemd)
-          - macmini (darwin-arm64)
-  all     Deploy both server and daemon
+  server              Build & deploy server + CLI to ncu only
+  daemon              Build & deploy daemon + CLI to all machines
+  daemon <target...>  Build & deploy daemon only to specified targets
+  all                 Deploy both server and daemon
+
+Daemon targets:
+  ncu             ncu 本机 (systemd)
+  guang-instance  VM (systemd)
+  bruce-instance  VM (systemd)
+  macmini         macOS (darwin-arm64)
+
+Examples:
+  deploy.sh daemon                        # 部署到全部 4 台
+  deploy.sh daemon guang-instance         # 只部署到 guang-instance
+  deploy.sh daemon ncu macmini            # 部署到 ncu 和 macmini
 USAGE
     exit 1
 fi
+
+# 验证 daemon 目标名是否合法
+for t in "${DAEMON_FILTER[@]}"; do
+    if ! echo " $ALL_DAEMON_TARGET_NAMES " | grep -q " $t "; then
+        echo "ERROR: Unknown daemon target '$t'"
+        echo "Valid targets: $ALL_DAEMON_TARGET_NAMES"
+        exit 1
+    fi
+done
 
 DEPLOY_SERVER=false
 DEPLOY_DAEMON=false
 [[ "$MODE" == "server" || "$MODE" == "all" ]] && DEPLOY_SERVER=true
 [[ "$MODE" == "daemon" || "$MODE" == "all" ]] && DEPLOY_DAEMON=true
 
+# 判断某个 daemon 目标是否需要部署
+should_deploy_daemon() {
+    local target_name="$1"
+    [[ "$DEPLOY_DAEMON" != "true" ]] && return 1
+    # 无过滤器 → 部署全部
+    [[ ${#DAEMON_FILTER[@]} -eq 0 ]] && return 0
+    # 有过滤器 → 检查是否在列表中
+    for t in "${DAEMON_FILTER[@]}"; do
+        [[ "$t" == "$target_name" ]] && return 0
+    done
+    return 1
+}
+
+# 是否需要构建 macmini 的 darwin-arm64 二进制
+NEED_DARWIN_BUILD=false
+if should_deploy_daemon macmini; then
+    NEED_DARWIN_BUILD=true
+fi
+
+# 显示信息
+DEPLOY_INFO="$MODE"
+if [[ ${#DAEMON_FILTER[@]} -gt 0 ]]; then
+    DEPLOY_INFO="$MODE → ${DAEMON_FILTER[*]}"
+fi
+
 echo ""
 echo "========================================="
-echo "  Yoho Remote Deploy — mode: $MODE"
+echo "  Yoho Remote Deploy — $DEPLOY_INFO"
 echo "  Running on: $SELF_HOSTNAME"
 echo "========================================="
 
@@ -178,11 +226,16 @@ log "Building CLI (linux-x64)..."
 ncu_exec "cd $NCU_REPO/cli && $BUN run build:exe:cli"
 
 if [[ "$DEPLOY_DAEMON" == "true" ]]; then
-    log "Building daemon (linux-x64)..."
-    ncu_exec "cd $NCU_REPO/cli && $BUN run build:exe:daemon"
+    # 只要有任一 linux 目标就构建 linux-x64 daemon
+    if should_deploy_daemon ncu || should_deploy_daemon guang-instance || should_deploy_daemon bruce-instance; then
+        log "Building daemon (linux-x64)..."
+        ncu_exec "cd $NCU_REPO/cli && $BUN run build:exe:daemon"
+    fi
 
-    log "Building daemon + CLI (darwin-arm64) for macmini..."
-    ncu_exec "cd $NCU_REPO/cli && $BUN run scripts/build-executable.ts --name yoho-remote-daemon --target bun-darwin-arm64 && $BUN run scripts/build-executable.ts --name yoho-remote --target bun-darwin-arm64"
+    if [[ "$NEED_DARWIN_BUILD" == "true" ]]; then
+        log "Building daemon + CLI (darwin-arm64) for macmini..."
+        ncu_exec "cd $NCU_REPO/cli && $BUN run scripts/build-executable.ts --name yoho-remote-daemon --target bun-darwin-arm64 && $BUN run scripts/build-executable.ts --name yoho-remote --target bun-darwin-arm64"
+    fi
 fi
 
 # ==================== Step 5: Verify builds ====================
@@ -192,7 +245,12 @@ if [[ "$DEPLOY_SERVER" == "true" ]]; then
     VERIFY_FILES="$VERIFY_FILES bun-linux-x64/yoho-remote-server"
 fi
 if [[ "$DEPLOY_DAEMON" == "true" ]]; then
-    VERIFY_FILES="$VERIFY_FILES bun-linux-x64/yoho-remote-daemon bun-darwin-arm64/yoho-remote-daemon bun-darwin-arm64/yoho-remote"
+    if should_deploy_daemon ncu || should_deploy_daemon guang-instance || should_deploy_daemon bruce-instance; then
+        VERIFY_FILES="$VERIFY_FILES bun-linux-x64/yoho-remote-daemon"
+    fi
+    if [[ "$NEED_DARWIN_BUILD" == "true" ]]; then
+        VERIFY_FILES="$VERIFY_FILES bun-darwin-arm64/yoho-remote-daemon bun-darwin-arm64/yoho-remote"
+    fi
 fi
 
 ncu_exec "cd $NCU_EXE_DIR && NOW=\$(date +%s) && ALL_OK=true && for f in $VERIFY_FILES; do if [ ! -f \"\$f\" ]; then echo \"  ✗ \$f not found\"; ALL_OK=false; elif [ \$(( NOW - \$(stat -c %Y \"\$f\") )) -gt 120 ]; then echo \"  ✗ \$f is stale\"; ALL_OK=false; else echo \"  ✓ \$f\"; fi; done && \$ALL_OK"
@@ -228,13 +286,18 @@ if [[ "$DEPLOY_SERVER" == "true" ]]; then
     ncu_exec "systemctl is-active --quiet yoho-remote-server.service && echo '  ✓ Server restarted' || echo '  ✗ Server failed to start'"
 fi
 
-# --- 6b: Deploy daemon to all targets ---
+# --- 6b: Deploy daemon ---
 if [[ "$DEPLOY_DAEMON" == "true" ]]; then
 
     # 6b-1: Deploy to linux VMs (via ncu as relay)
     for entry in "${DAEMON_TARGETS[@]}"; do
         SSH_TARGET="${entry%%|*}"
         TARGET_NAME="${entry##*|}"
+
+        # 检查是否在部署目标列表中
+        if ! should_deploy_daemon "$TARGET_NAME"; then
+            continue
+        fi
 
         log "Deploying daemon to $TARGET_NAME ($SSH_TARGET)..."
 
@@ -271,29 +334,31 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
     done
 
     # 6b-2: Deploy to macmini
-    log "Deploying daemon to macmini..."
-    if ncu_exec "ssh $SSH_OPTS -o BatchMode=yes $MACMINI_SSH 'true'" 2>/dev/null; then
-        # Stop old daemon (处理假死/僵尸 — macOS，无 sudo)
-        ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'P=yoho-remote-daemon; pkill -x \$P 2>/dev/null; sleep 3; if pgrep -x \$P >/dev/null 2>&1; then echo \"  ⚠ SIGTERM failed, SIGKILL...\"; pkill -9 -x \$P 2>/dev/null; sleep 2; fi; R=\$(pgrep -x \$P 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -x \$P >/dev/null 2>&1 && echo \"  ✗ WARNING: still alive\" || echo \"  ✓ Fully stopped\"'"
+    if should_deploy_daemon macmini; then
+        log "Deploying daemon to macmini..."
+        if ncu_exec "ssh $SSH_OPTS -o BatchMode=yes $MACMINI_SSH 'true'" 2>/dev/null; then
+            # Stop old daemon (处理假死/僵尸 — macOS，无 sudo)
+            ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'P=yoho-remote-daemon; pkill -x \$P 2>/dev/null; sleep 3; if pgrep -x \$P >/dev/null 2>&1; then echo \"  ⚠ SIGTERM failed, SIGKILL...\"; pkill -9 -x \$P 2>/dev/null; sleep 2; fi; R=\$(pgrep -x \$P 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -x \$P >/dev/null 2>&1 && echo \"  ✗ WARNING: still alive\" || echo \"  ✓ Fully stopped\"'"
 
-        # Copy new binaries
-        ncu_exec "scp $SSH_OPTS $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote-daemon $MACMINI_SSH:$INSTALL_DIR/ && scp $SSH_OPTS $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote $MACMINI_SSH:$INSTALL_DIR/"
+            # Copy new binaries
+            ncu_exec "scp $SSH_OPTS $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote-daemon $MACMINI_SSH:$INSTALL_DIR/ && scp $SSH_OPTS $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote $MACMINI_SSH:$INSTALL_DIR/"
 
-        # Start new daemon
-        ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'nohup env $MACMINI_DAEMON_ENV $INSTALL_DIR/yoho-remote-daemon > /tmp/yoho-remote-daemon.log 2>&1 &'"
-        sleep 3
-        ALIVE=$(ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'pgrep -x yoho-remote-daemon >/dev/null && echo yes || echo no'")
-        if [[ "$ALIVE" == *"yes"* ]]; then
-            ok "macmini daemon restarted"
+            # Start new daemon
+            ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'nohup env $MACMINI_DAEMON_ENV $INSTALL_DIR/yoho-remote-daemon > /tmp/yoho-remote-daemon.log 2>&1 &'"
+            sleep 3
+            ALIVE=$(ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'pgrep -x yoho-remote-daemon >/dev/null && echo yes || echo no'")
+            if [[ "$ALIVE" == *"yes"* ]]; then
+                ok "macmini daemon restarted"
+            else
+                fail "macmini daemon failed to start — check /tmp/yoho-remote-daemon.log"
+            fi
         else
-            fail "macmini daemon failed to start — check /tmp/yoho-remote-daemon.log"
+            warn "macmini is unreachable — skipping"
         fi
-    else
-        warn "macmini is unreachable — skipping"
     fi
 
     # 6b-3: Deploy daemon to ncu (从 VM 远程操作时，无需排除本机进程)
-    if ! is_ncu; then
+    if should_deploy_daemon ncu && ! is_ncu; then
         log "Restarting daemon on ncu..."
         # Stop (处理假死/僵尸)
         ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl stop yoho-remote-daemon.service 2>/dev/null || true"
