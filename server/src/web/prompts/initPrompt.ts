@@ -5,9 +5,9 @@ type InitPromptOptions = {
     userName?: string | null
     worktree?: {
         basePath?: string | null
-        worktreePath?: string | null
         branch?: string | null
         name?: string | null
+        worktreePath?: string | null
     } | null
 }
 
@@ -18,29 +18,12 @@ export type FeishuBrainInitPromptOptions = InitPromptOptions & {
 
 function appendWorkspaceRules(lines: string[], options?: InitPromptOptions): void {
     const projectRoot = options?.projectRoot || null
-    const worktree = options?.worktree || null
 
     lines.push('2) Yoho Remote 工作空间')
-    lines.push('Yoho Remote 在数据库中维护一份 Project 列表，每个 Project 对应一个代码目录（path），可绑定到特定机器（machineId）或设为全局（machineId = null）。')
+    lines.push('Yoho Remote 在数据库中维护一份 Project 列表，每个 Project 对应一个共享代码目录（path），默认按组织共享。')
     lines.push('')
     if (projectRoot) {
         lines.push(`- 当前会话工作目录：${projectRoot}`)
-    }
-    const worktreePath = worktree?.worktreePath?.trim() || null
-    const worktreeBasePath = worktree?.basePath?.trim() || null
-    const worktreeName = worktree?.name?.trim() || null
-    const worktreeBranch = worktree?.branch?.trim() || null
-    if (worktreePath) {
-        if (worktreeBasePath && worktreeBasePath !== worktreePath) {
-            lines.push(`- 当前会话基仓库目录：${worktreeBasePath}`)
-        }
-        const worktreeDetails = [
-            worktreeName ? `名称 ${worktreeName}` : null,
-            worktreeBranch ? `分支 ${worktreeBranch}` : null,
-            `路径 ${worktreePath}`
-        ].filter((value): value is string => Boolean(value))
-        lines.push(`- 当前会话使用 Git worktree 隔离开发：${worktreeDetails.join('，')}`)
-        lines.push('- `project_list` 里的 Project path 通常指向基仓库；如果当前 session 同时存在 basePath 和 worktreePath，任何代码修改都必须以 worktreePath 为准，不要把 basePath 误当成当前工作目录')
     }
     lines.push('- 用 `mcp__yoho_remote__project_list` 查看所有已注册的 Project（名称、路径、所属机器）')
     lines.push('- 可以切换到其他 Project 的目录去工作，用完再切回来')
@@ -85,24 +68,23 @@ export async function buildInitPrompt(_role: UserRole, options?: InitPromptOptio
     lines.push('5) 开发规范（不可违背）')
     lines.push('')
     lines.push('## 代码修改')
-    lines.push('- [强制] 在 VM 共享仓库 / worktree 模式下，所有查看、编辑、测试、提交都必须在当前 worktree 目录进行；除非用户明确要求，否则禁止回到基仓库目录直接改文件、运行提交或清理操作')
-    lines.push('- [强制] 禁止进入其他开发者的 worktree 目录修改代码')
+    lines.push('- [强制] 在 VM 共享仓库单目录模式下，所有查看、编辑、测试、提交都必须在当前会话目录进行；除非用户明确要求，否则禁止切换到其他开发者目录直接改文件、运行提交或清理操作')
     lines.push('')
     lines.push('## 分支流程（所有项目统一）')
-    lines.push('  {user} (worktree 开发分支) → dev-release (开发发布分支) → main (线上发布分支)')
-    lines.push('- [强制] 准备部署 dev：先从 worktree 分支合并到 `dev-release`')
+    lines.push('  {user} (个人开发分支) → dev-release (开发发布分支) → main (线上发布分支)')
+    lines.push('- [强制] 准备部署 dev：先从个人开发分支合并到 `dev-release`')
     lines.push('- [强制] 准备部署线上：先从 `dev-release` 合并到 `main`')
-    lines.push('- [强制] 绝对禁止从 worktree 分支、feature 分支直接部署任何环境')
+    lines.push('- [强制] 绝对禁止从个人开发分支、feature 分支直接部署任何环境')
     lines.push('')
     lines.push('## 部署规范')
-    lines.push('- [强制] 部署 dev 环境前，必须确认代码已合入 `dev-release`；禁止从 feature 分支、worktree 分支或其他临时分支直接部署 dev')
-    lines.push('- [强制] 部署线上环境前，必须确认代码已合入 `main`；禁止从 feature 分支、worktree 分支、`dev-release` 或其他非 `main` 分支直接部署线上')
-    lines.push('- [强制] 如果当前改动只存在于 worktree / feature 分支，先合并到目标发布分支，再执行部署')
+    lines.push('- [强制] 部署 dev 环境前，必须确认代码已合入 `dev-release`；禁止从 feature 分支、个人开发分支或其他临时分支直接部署 dev')
+    lines.push('- [强制] 部署线上环境前，必须确认代码已合入 `main`；禁止从 feature 分支、个人开发分支、`dev-release` 或其他非 `main` 分支直接部署线上')
+    lines.push('- [强制] 如果当前改动只存在于个人开发分支 / feature 分支，先合并到目标发布分支，再执行部署')
     lines.push('- [强制] 所有部署命令从开发 VM 中执行（guang-instance / bruce-instance / macmini），不在 NCU 主机直接部署')
     lines.push('- [强制] 本地开发/测试服务只在 NCU（含 VM）上运行；线上服务运行在 AWS（sgprod / sgdev / sgprod2）')
     lines.push('')
     lines.push('## 多人协作')
-    lines.push('- 各人 worktree 分支独立，互不干扰')
+    lines.push('- 各人开发分支独立，互不干扰')
     lines.push('- 合并到 `dev-release` / `main` 时冲突由合并方解决')
     lines.push('- 部署前检查目标分支是否有他人未验证的改动')
 
@@ -145,7 +127,7 @@ export async function buildBrainInitPrompt(_role: UserRole, options?: InitPrompt
     if (userName) {
         lines.push(`- 称呼用户为：${userName}`)
     }
-    lines.push('- 分支流程：{user} (worktree) → dev-release → main。部署 dev 必须先合入 dev-release，部署线上必须先合入 main，绝对禁止从 worktree / feature 分支直接部署任何环境')
+    lines.push('- 分支流程：{user} (个人开发分支) → dev-release → main。部署 dev 必须先合入 dev-release，部署线上必须先合入 main，绝对禁止从个人开发分支 / feature 分支直接部署任何环境')
     lines.push('- 所有部署命令从开发 VM 中执行（guang-instance / bruce-instance / macmini），不在 NCU 主机直接部署')
     lines.push('- 每个 session 专注一个任务，指令要具体清晰，让子 session 能独立完成')
     lines.push('- **每次发任务末尾附加：「完成后请输出执行报告：步骤、修改的文件、关键细节、结论。」**')

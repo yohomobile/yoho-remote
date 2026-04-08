@@ -6,13 +6,15 @@ import { queryKeys } from '@/lib/query-keys'
 type SpawnInput = {
     machineId: string
     directory: string
-    agent?: 'claude' | 'codex'
+    agent?: 'claude' | 'codex' | 'codez' | 'droid'
     yolo?: boolean
     sessionType?: 'simple' | 'worktree'
     worktreeName?: string
     claudeModel?: 'sonnet' | 'opus' | 'glm-5.1'
     codexModel?: string
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
+    droidModel?: string
+    droidReasoningEffort?: string
     orgId?: string | null
 }
 
@@ -38,6 +40,8 @@ export function useSpawnSession(api: ApiClient | null): {
                 input.claudeModel,
                 input.codexModel,
                 input.modelReasoningEffort,
+                input.droidModel,
+                input.droidReasoningEffort,
                 input.orgId
             )
         },

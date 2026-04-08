@@ -4,7 +4,6 @@ import type { DecryptedMessage, Session, SyncEngine } from '../../sync/syncEngin
 import type { SSEManager } from '../../sse/sseManager'
 import type { IStore, UserRole, StoredSession } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
-import { resolvePersonalWorktreeSpawnOptions } from '../personalWorktree'
 import { requireMachine, requireSessionFromParam, requireSessionFromParamWithShareCheck, requireSyncEngine } from './guards'
 import { buildInitPrompt, buildBrainInitPrompt, buildVijnaptiInitPrompt } from '../prompts/initPrompt'
 
@@ -44,7 +43,8 @@ type SessionSummary = {
     metadata: SessionSummaryMetadata | null
     todoProgress: { completed: number; total: number } | null
     pendingRequestsCount: number
-    modelMode?: 'default' | 'sonnet' | 'opus' | 'gpt-5.3-codex' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
+    thinking: boolean
+    modelMode?: Session['modelMode']
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     fastMode?: boolean
     viewers?: SessionViewer[]
@@ -64,7 +64,7 @@ function toSessionSummary(session: Session): SessionSummary {
         runtimeModel: session.metadata.runtimeModel,
         runtimeModelReasoningEffort: session.metadata.runtimeModelReasoningEffort,
         worktree: session.metadata.worktree,
-        privacyMode: session.metadata.privacyMode,
+        privacyMode: session.metadata.privacyMode === true ? true : undefined,
     } : null
 
     const todoProgress = session.todos?.length ? {
@@ -106,7 +106,8 @@ function storedSessionToSummary(stored: StoredSession): SessionSummary {
         createdBy: stored.createdBy ?? undefined,
         metadata: meta,
         todoProgress,
-        pendingRequestsCount: 0  // Offline sessions have no pending requests
+        pendingRequestsCount: 0,  // Offline sessions have no pending requests
+        thinking: false,
     }
 }
 
@@ -128,8 +129,6 @@ const createSessionSchema = z.object({
     directory: z.string().min(1),
     agent: z.enum(['claude', 'codex']).optional(),
     yolo: z.boolean().optional(),
-    sessionType: z.enum(['simple', 'worktree']).optional(),
-    worktreeName: z.string().optional(),
     claudeModel: z.enum(['sonnet', 'opus']).optional(),
     codexModel: z.string().min(1).optional(),
     openrouterModel: z.string().min(1).optional(),
@@ -297,18 +296,15 @@ async function waitForSessionInactive(engine: SyncEngine, sessionId: string, tim
 
 async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null): Promise<void> {
     const session = engine.getSession(sessionId)
-    const worktree = session?.metadata?.worktree
-    const projectRoot = session?.metadata?.path?.trim()
-        || worktree?.basePath?.trim()
-        || null
+    const projectRoot = session?.metadata?.path?.trim() || null
     const source = session?.metadata?.source
     console.log(`[sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}, source=${source}`)
     const isVijnapti = source === 'brain' && projectRoot?.includes('vijnapti-workspace')
     const prompt = isVijnapti
-        ? await buildVijnaptiInitPrompt(role, { projectRoot, userName, worktree })
+        ? await buildVijnaptiInitPrompt(role, { projectRoot, userName })
         : source === 'brain'
-            ? await buildBrainInitPrompt(role, { projectRoot, userName, worktree })
-            : await buildInitPrompt(role, { projectRoot, userName, worktree })
+            ? await buildBrainInitPrompt(role, { projectRoot, userName })
+            : await buildInitPrompt(role, { projectRoot, userName })
     if (!prompt.trim()) {
         console.warn(`[sendInitPrompt] Empty prompt for session ${sessionId}, skipping`)
         return
@@ -349,7 +345,7 @@ async function resolveSpawnTarget(
     engine: SyncEngine,
     machineId: string,
     session: Session
-): Promise<{ ok: true; directory: string; sessionType?: 'simple' | 'worktree'; worktreeName?: string } | { ok: false; error: string }> {
+): Promise<{ ok: true; directory: string } | { ok: false; error: string }> {
     const metadata = session.metadata
     if (!metadata) {
         return { ok: false, error: 'Session metadata missing' }
@@ -361,7 +357,7 @@ async function resolveSpawnTarget(
         try {
             const exists = await engine.checkPathsExist(machineId, [worktreePath])
             if (exists[worktreePath]) {
-                return { ok: true, directory: worktreePath, sessionType: 'simple' }
+                return { ok: true, directory: worktreePath }
             }
         } catch (error) {
             return { ok: false, error: error instanceof Error ? error.message : 'Failed to check worktree path' }
@@ -378,7 +374,7 @@ async function resolveSpawnTarget(
         } catch (error) {
             return { ok: false, error: error instanceof Error ? error.message : 'Failed to check worktree base path' }
         }
-        return { ok: true, directory: worktreeBase, sessionType: 'worktree', worktreeName: worktree?.name }
+        return { ok: true, directory: worktreeBase }
     }
 
     const sessionPath = metadata.path?.trim()
@@ -395,7 +391,7 @@ async function resolveSpawnTarget(
         return { ok: false, error: error instanceof Error ? error.message : 'Failed to check session path' }
     }
 
-    return { ok: true, directory: sessionPath, sessionType: 'simple' }
+    return { ok: true, directory: sessionPath }
 }
 
 function extractUserText(content: unknown): string | null {
@@ -537,13 +533,6 @@ export function createSessionsRoutes(
         const rawSource = parsed.data.source?.trim()
         const source = rawSource ? rawSource : 'external-api'
         const email = c.get('email')
-        const spawnTarget = resolvePersonalWorktreeSpawnOptions({
-            machine,
-            email,
-            sessionType: parsed.data.sessionType,
-            worktreeName: parsed.data.worktreeName,
-        })
-
         // 将 claudeModel/codexModel 转换为 modelMode
         let modelMode = parsed.data.modelMode
         if (parsed.data.claudeModel) {
@@ -560,15 +549,12 @@ export function createSessionsRoutes(
             parsed.data.directory,
             parsed.data.agent,
             parsed.data.yolo,
-            spawnTarget.sessionType,
-            spawnTarget.worktreeName,
             {
                 openrouterModel: parsed.data.openrouterModel,
                 permissionMode: parsed.data.permissionMode,
-                modelMode,
+                modelMode: modelMode as Session['modelMode'] | undefined,
                 modelReasoningEffort: parsed.data.modelReasoningEffort,
                 source,
-                reuseExistingWorktree: spawnTarget.reuseExistingWorktree,
             }
         )
 
@@ -633,8 +619,6 @@ export function createSessionsRoutes(
             brainDirectory,
             'claude',
             true,        // yolo
-            'simple',
-            undefined,
             {
                 source: 'brain',
                 permissionMode: 'bypassPermissions',
@@ -697,8 +681,6 @@ export function createSessionsRoutes(
             vijnaptiDirectory,
             'claude',
             true,        // yolo
-            'simple',
-            undefined,
             {
                 source: 'brain',
                 permissionMode: 'bypassPermissions',
@@ -1040,8 +1022,6 @@ export function createSessionsRoutes(
             spawnTarget.directory,
             flavor,
             undefined,
-            spawnTarget.sessionType,
-            spawnTarget.worktreeName,
             { sessionId, resumeSessionId, ...modeSettings }
         )
 
@@ -1064,8 +1044,6 @@ export function createSessionsRoutes(
             spawnTarget.directory,
             flavor,
             undefined,
-            spawnTarget.sessionType,
-            spawnTarget.worktreeName,
             { resumeSessionId, ...modeSettings }
         )
 
@@ -1185,8 +1163,6 @@ export function createSessionsRoutes(
             spawnTarget.directory,
             flavor,
             undefined,
-            spawnTarget.sessionType,
-            spawnTarget.worktreeName,
             { sessionId, resumeSessionId, ...modeSettings }
         )
 

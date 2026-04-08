@@ -20,7 +20,6 @@ import { initialMachineMetadata } from '@/daemon/run';
 import { startYohoRemoteServer } from '@/claude/utils/startYohoRemoteServer';
 import { getYohoRemoteCliCommand } from '@/utils/spawnYohoRemoteCLI';
 import { registerKillSessionHandler } from '@/claude/registerKillSessionHandler';
-import { readWorktreeEnv } from '@/utils/worktreeEnv';
 
 function extractHistoryFromStoredMessages(messages: StoredMessage[]): HistoryMessage[] {
     const history: HistoryMessage[] = [];
@@ -82,7 +81,6 @@ export async function runAgentSession(opts: {
         controlledByUser: false
     };
 
-    const worktreeInfo = readWorktreeEnv();
     const metadata: Metadata = {
         path: process.cwd(),
         host: os.hostname(),
@@ -100,7 +98,6 @@ export async function runAgentSession(opts: {
         lifecycleState: 'running',
         lifecycleStateSince: Date.now(),
         flavor: opts.agentType,
-        worktree: worktreeInfo ?? undefined
     };
 
     const response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });

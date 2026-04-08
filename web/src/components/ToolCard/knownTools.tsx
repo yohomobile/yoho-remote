@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { getCodexDiffUnified, getCodexPatchEntries, getCodexPatchPrimaryPath, getUnifiedDiffFilePath } from '@/components/ToolCard/codexArtifacts'
 import type { SessionMetadataSummary } from '@/types/api'
 import { BulbIcon, ClipboardIcon, EyeIcon, FileDiffIcon, GlobeIcon, PuzzleIcon, QuestionIcon, RocketIcon, SearchIcon, TerminalIcon, WrenchIcon } from '@/components/ToolCard/icons'
 import { basename, resolveDisplayPath } from '@/components/ToolCard/path'
@@ -285,38 +286,31 @@ export const knownTools: Record<string, {
         icon: () => <FileDiffIcon className={DEFAULT_ICON_CLASS} />,
         title: () => 'Apply changes',
         subtitle: (opts) => {
-            if (isObject(opts.input) && isObject(opts.input.changes)) {
-                const files = Object.keys(opts.input.changes)
-                if (files.length === 0) return null
-                const first = files[0]
-                const display = resolveDisplayPath(first, opts.metadata)
-                const name = basename(display)
-                return files.length > 1 ? `${name} (+${files.length - 1})` : name
-            }
-            return null
+            const entries = getCodexPatchEntries(opts.input, opts.result)
+            if (entries.length === 0) return null
+
+            const firstPath = getCodexPatchPrimaryPath(opts.input, opts.result)
+            if (!firstPath) return null
+
+            const display = resolveDisplayPath(firstPath, opts.metadata)
+            const name = basename(display)
+            return entries.length > 1 ? `${name} (+${entries.length - 1})` : name
         },
-        minimal: true
+        minimal: (opts) => getCodexPatchEntries(opts.input, opts.result).length === 0
     },
     CodexDiff: {
         icon: () => <FileDiffIcon className={DEFAULT_ICON_CLASS} />,
         title: () => 'Diff',
         subtitle: (opts) => {
-            const unified = getInputStringAny(opts.input, ['unified_diff'])
+            const unified = getCodexDiffUnified(opts.input)
             if (!unified) return null
-            const lines = unified.split('\n')
-            for (const line of lines) {
-                if (line.startsWith('+++ b/') || line.startsWith('+++ ')) {
-                    const fileName = line.replace(/^\+\+\+ (b\/)?/, '')
-                    return fileName.split('/').pop() ?? fileName
-                }
-            }
-            return null
+
+            const filePath = getUnifiedDiffFilePath(unified)
+            if (!filePath) return null
+
+            return filePath.split('/').pop() ?? filePath
         },
-        minimal: (opts) => {
-            const unified = getInputStringAny(opts.input, ['unified_diff'])
-            if (!unified) return true
-            return unified.length >= 2000 || countLines(unified) >= 50
-        }
+        minimal: (opts) => !getCodexDiffUnified(opts.input)
     },
     ExitPlanMode: {
         icon: () => <ClipboardIcon className={DEFAULT_ICON_CLASS} />,

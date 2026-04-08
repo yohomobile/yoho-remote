@@ -18,7 +18,6 @@ import packageJson from '../../package.json';
 import { runtimePath } from '@/projectPath';
 import type { CodexSession } from './session';
 import { parseCodexCliOverrides } from './utils/codexCliOverrides';
-import { readWorktreeEnv } from '@/utils/worktreeEnv';
 import { readModeEnv } from '@/utils/modeEnv';
 
 export { emitReadyIfIdle } from './utils/emitReadyIfIdle';
@@ -56,7 +55,6 @@ export async function runCodex(opts: {
         controlledByUser: false
     };
 
-    const worktreeInfo = readWorktreeEnv();
     const metadata: Metadata = {
         path: workingDirectory,
         host: os.hostname(),
@@ -74,7 +72,6 @@ export async function runCodex(opts: {
         lifecycleState: 'running',
         lifecycleStateSince: Date.now(),
         flavor: 'codex',
-        worktree: worktreeInfo ?? undefined
     };
 
     let response: Awaited<ReturnType<typeof api.getOrCreateSession>> | null = null;
