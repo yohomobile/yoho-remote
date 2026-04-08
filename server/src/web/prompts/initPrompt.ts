@@ -89,7 +89,7 @@ export async function buildInitPrompt(_role: UserRole, options?: InitPromptOptio
     lines.push('- [强制] 禁止进入其他开发者的 worktree 目录修改代码')
     lines.push('')
     lines.push('## 分支流程（所有项目统一）')
-    lines.push('  yr-{user} (worktree 开发分支) → dev-release (开发发布分支) → main (线上发布分支)')
+    lines.push('  {user} (worktree 开发分支) → dev-release (开发发布分支) → main (线上发布分支)')
     lines.push('- [强制] 准备部署 dev：先从 worktree 分支合并到 `dev-release`')
     lines.push('- [强制] 准备部署线上：先从 `dev-release` 合并到 `main`')
     lines.push('- [强制] 绝对禁止从 worktree 分支、feature 分支直接部署任何环境')
@@ -145,7 +145,7 @@ export async function buildBrainInitPrompt(_role: UserRole, options?: InitPrompt
     if (userName) {
         lines.push(`- 称呼用户为：${userName}`)
     }
-    lines.push('- 分支流程：yr-{user} (worktree) → dev-release → main。部署 dev 必须先合入 dev-release，部署线上必须先合入 main，绝对禁止从 worktree / feature 分支直接部署任何环境')
+    lines.push('- 分支流程：{user} (worktree) → dev-release → main。部署 dev 必须先合入 dev-release，部署线上必须先合入 main，绝对禁止从 worktree / feature 分支直接部署任何环境')
     lines.push('- 所有部署命令从开发 VM 中执行（guang-instance / bruce-instance / macmini），不在 NCU 主机直接部署')
     lines.push('- 每个 session 专注一个任务，指令要具体清晰，让子 session 能独立完成')
     lines.push('- **每次发任务末尾附加：「完成后请输出执行报告：步骤、修改的文件、关键细节、结论。」**')

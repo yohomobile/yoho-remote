@@ -125,7 +125,7 @@ export async function createWorktree(options: {
   const baseName = normalizedNameHint ?? makeDefaultBaseName();
 
   if (reuseExisting && normalizedNameHint) {
-    const branch = `yr-${normalizedNameHint}`;
+    const branch = normalizedNameHint;
     const worktreePath = join(repoWorktreesRoot, normalizedNameHint);
 
     if (await pathExists(worktreePath)) {
@@ -163,7 +163,7 @@ export async function createWorktree(options: {
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     const name = attempt === 0 ? baseName : `${baseName}-${randomBytes(2).toString('hex')}`;
-    const branch = `yr-${name}`;
+    const branch = name;
     const worktreePath = join(repoWorktreesRoot, name);
 
     // If both directory and branch already exist, reuse the existing worktree
