@@ -3,229 +3,444 @@ set -e
 
 cd "$(dirname "$0")"
 
-export PATH="$HOME/.bun/bin:$PATH"
+# ==================== Configuration ====================
+NCU_SSH="guang@192.168.122.1"
+NCU_REPO="/home/guang/softwares/yoho-remote"
+NCU_EXE_DIR="$NCU_REPO/cli/dist-exe"
+NCU_SUDO_PASS="guang"
 
-SERVER_EXE="cli/dist-exe/bun-linux-x64/yoho-remote-server"
-DAEMON_EXE="cli/dist-exe/bun-linux-x64/yoho-remote-daemon"
+DAEMON_TARGETS=(
+    "ubuntu@192.168.122.101|guang-instance"
+    "ubuntu@192.168.122.102|bruce-instance"
+)
+MACMINI_SSH="guang@192.168.0.236"
+MACMINI_DAEMON_ENV="CLI_API_TOKEN=rDhnX0JCPIki0s6t1kNsHJkSLCvpAEt3wNCb_dkEyOc YOHO_REMOTE_URL=https://remote.yohomobile.dev YOHO_MACHINE_NAME=macmini-daemon YOHO_MACHINE_IP=192.168.0.236"
 
-# 解析参数
-BUILD_DAEMON=false
-MACMINO_ONLY=false
-for arg in "$@"; do
-    case $arg in
-        --daemon)
-            BUILD_DAEMON=true
-            ;;
-        --macmini)
-            MACMINO_ONLY=true
-            ;;
-    esac
-done
+INSTALL_DIR="/opt/yoho-remote"
+SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3"
 
-# 如果是 --macmini 模式，跳过本地构建，只部署到 macmini
-if [[ "$MACMINO_ONLY" == "true" ]]; then
-    echo "=== Deploying to macmini only (skipping local builds)..."
+SELF_HOSTNAME=$(hostname)
+SELF_DEPLOY_TARGET=""
 
-    # 同步 daemon 到 macmini
-    echo "=== Syncing source files to macmini..."
-    sshpass -p 'guang' ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password guang@192.168.0.236 'mkdir -p ~/softwares/yoho-remote'
+# ==================== Helpers ====================
+is_ncu() { [[ "$SELF_HOSTNAME" == "ncu" ]]; }
 
-    # 同步源文件到 macmini
-    rsync -avz -e 'sshpass -p guang ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password' \
-        --exclude='node_modules' --exclude='dist' --exclude='dist-exe' \
-        --exclude='.git' --exclude='test-fixtures' --exclude='.cache' \
-        cli/src/ \
-        guang@192.168.0.236:~/softwares/yoho-remote/cli/src/ 2>/dev/null || true
+ncu_exec() {
+    if is_ncu; then
+        bash -c "$1"
+    else
+        ssh $SSH_OPTS "$NCU_SSH" "$1"
+    fi
+}
 
-    rsync -avz -e 'sshpass -p guang ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password' \
-        --exclude='node_modules' --exclude='dist' --exclude='dist-exe' \
-        --exclude='.git' --exclude='.cache' \
-        server/src/ \
-        guang@192.168.0.236:~/softwares/yoho-remote/server/src/ 2>/dev/null || true
+log()  { echo ""; echo "=== $1"; }
+ok()   { echo "  ✓ $1"; }
+warn() { echo "  ⚠ $1"; }
+fail() { echo "  ✗ $1"; }
 
-    # 同步 package.json 和 scripts（构建脚本依赖这些）
-    rsync -avz -e 'sshpass -p guang ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password' \
-        cli/package.json \
-        guang@192.168.0.236:~/softwares/yoho-remote/cli/package.json 2>/dev/null || true
+# 获取当前进程的所有祖先 PID（daemon → yoho-remote → claude → bash）
+# 用于 kill 时排除自己的进程链，避免误杀当前会话
+get_ancestor_pids() {
+    local pid=$$
+    local ancestors=""
+    while [ "$pid" -gt 1 ] 2>/dev/null; do
+        ancestors="$ancestors $pid"
+        pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ') || break
+    done
+    echo "$ancestors"
+}
+SELF_ANCESTORS=$(get_ancestor_pids)
 
-    rsync -avz -e 'sshpass -p guang ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password' \
-        cli/scripts/ \
-        guang@192.168.0.236:~/softwares/yoho-remote/cli/scripts/ 2>/dev/null || true
+# 安全 kill：找到目标进程，排除当前进程链，逐个发送信号
+# 用法: safe_kill <process_name> <signal> <sudo_cmd>
+# 返回: 输出被 kill 的 PID 列表
+safe_kill() {
+    local proc_name="$1"
+    local signal="${2:--TERM}"
+    local sudo_cmd="$3"
+    local pids
+    pids=$(pgrep -x "$proc_name" 2>/dev/null || true)
+    [ -z "$pids" ] && return 0
+    for pid in $pids; do
+        # 跳过自己的祖先进程
+        if echo " $SELF_ANCESTORS " | grep -q " $pid "; then
+            echo "  · Skipping PID $pid (current process ancestor)"
+            continue
+        fi
+        $sudo_cmd kill "$signal" "$pid" 2>/dev/null || true
+        echo "  · Sent $signal to PID $pid"
+    done
+}
 
-    # 在 macmini 上重新构建 daemon
-    echo "=== Building daemon on macmini..."
-    sshpass -p 'guang' ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password guang@192.168.0.236 \
-        'cd ~/softwares/yoho-remote/cli && ~/.bun/bin/bun run build:exe:daemon'
+# 通用的进程强杀流程
+# 用法: force_kill_process <process_name> <sudo_cmd>
+# 处理：SIGTERM → 等3秒 → SIGKILL → 等2秒 → 逐 PID 强杀 → 确认
+force_kill_process() {
+    local proc_name="$1"
+    local sudo_cmd="$2"
+    # 1. SIGTERM（优雅关闭）
+    safe_kill "$proc_name" "-TERM" "$sudo_cmd"
+    sleep 3
+    # 2. 检查存活 → SIGKILL
+    local remaining
+    remaining=$(pgrep -x "$proc_name" 2>/dev/null || true)
+    # 排除祖先
+    for a in $SELF_ANCESTORS; do remaining=$(echo "$remaining" | grep -v "^${a}$"); done
+    if [ -n "$remaining" ]; then
+        echo "  ⚠ $proc_name did not exit after SIGTERM, sending SIGKILL..."
+        safe_kill "$proc_name" "-9" "$sudo_cmd"
+        sleep 2
+    fi
+    # 3. 最终确认（排除祖先后）
+    remaining=$(pgrep -x "$proc_name" 2>/dev/null || true)
+    for a in $SELF_ANCESTORS; do remaining=$(echo "$remaining" | grep -v "^${a}$"); done
+    if [ -n "$remaining" ]; then
+        echo "  ✗ WARNING: $proc_name still alive (PIDs: $remaining)"
+    else
+        echo "  ✓ $proc_name fully stopped"
+    fi
+}
 
-    # 重启 macmini 上的 daemon
-    echo "=== Restarting daemon on macmini..."
-    sshpass -p 'guang' ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password guang@192.168.0.236 \
-        'pkill -f yoho-remote-daemon || true; sleep 1; ~/softwares/yoho-remote/start-daemon.sh > /dev/null 2>&1 &'
 
-    echo "=== macmini daemon updated and restarted"
-    exit 0
+# ==================== Parse arguments ====================
+MODE="${1:-}"
+if [[ -z "$MODE" || ! "$MODE" =~ ^(server|daemon|all)$ ]]; then
+    cat << 'USAGE'
+Usage: deploy.sh <server|daemon|all>
+
+  server  Build & deploy server + CLI to ncu only
+  daemon  Build & deploy daemon + CLI to all machines:
+          - ncu (本机 systemd)
+          - guang-instance (VM systemd)
+          - bruce-instance (VM systemd)
+          - macmini (darwin-arm64)
+  all     Deploy both server and daemon
+USAGE
+    exit 1
 fi
 
-echo "=== Committing and pushing changes..."
+DEPLOY_SERVER=false
+DEPLOY_DAEMON=false
+[[ "$MODE" == "server" || "$MODE" == "all" ]] && DEPLOY_SERVER=true
+[[ "$MODE" == "daemon" || "$MODE" == "all" ]] && DEPLOY_DAEMON=true
+
+echo ""
+echo "========================================="
+echo "  Yoho Remote Deploy — mode: $MODE"
+echo "  Running on: $SELF_HOSTNAME"
+echo "========================================="
+
+# ==================== Step 1: Commit & Push ====================
+log "Committing and pushing changes..."
 git add -A
 git commit -m "deploy" --allow-empty || true
 git push
 
-# 生成东八区时间戳版本号 (v2026.01.02.1344)
+# ==================== Step 2: Sync code to ncu ====================
+if ! is_ncu; then
+    CURRENT_BRANCH=$(git branch --show-current)
+    log "Syncing code to ncu (fetching branch: $CURRENT_BRANCH)..."
+    ncu_exec "cd $NCU_REPO && git fetch origin $CURRENT_BRANCH && git checkout $CURRENT_BRANCH 2>/dev/null || git checkout -b $CURRENT_BRANCH origin/$CURRENT_BRANCH && git reset --hard origin/$CURRENT_BRANCH"
+    ok "ncu synced to $CURRENT_BRANCH"
+fi
+
+# ==================== Step 3: Version ====================
 VERSION="v$(TZ='Asia/Shanghai' date '+%Y.%m.%d.%H%M')"
-echo "=== Updating version to $VERSION..."
-cd cli
-# 使用 node 来更新 package.json 的版本号
-node -e "
+log "Updating version to $VERSION..."
+ncu_exec "cd $NCU_REPO/cli && node -e \"
 const fs = require('fs');
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 pkg.version = '$VERSION';
 fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-console.log('Updated cli/package.json version to $VERSION');
-"
-cd ..
+\" && echo 'Version set to $VERSION'"
 
-# 构建 web 前端
-echo "=== Building web assets..."
-bun run build:web
-(cd server && bun run generate:embedded-web-assets)
+# ==================== Step 4: Build on ncu ====================
+BUN="\$HOME/.bun/bin/bun"
 
-# 构建 server
-echo "=== Building yoho-remote-server..."
-(cd cli && bun run build:exe:server)
-sync
+if [[ "$DEPLOY_SERVER" == "true" ]]; then
+    log "Building web assets..."
+    ncu_exec "cd $NCU_REPO && $BUN run build:web && (cd server && $BUN run generate:embedded-web-assets)"
 
-# 验证 server 构建成功
-if [[ ! -f "$SERVER_EXE" ]]; then
-    echo "ERROR: Server build failed - executable not found"
-    exit 1
+    log "Building server (linux-x64)..."
+    ncu_exec "cd $NCU_REPO/cli && $BUN run build:exe:server"
 fi
 
-SERVER_TIME=$(stat -c %Y "$SERVER_EXE")
-NOW=$(date +%s)
-SERVER_AGE=$((NOW - SERVER_TIME))
+log "Building CLI (linux-x64)..."
+ncu_exec "cd $NCU_REPO/cli && $BUN run build:exe:cli"
 
-if [[ $SERVER_AGE -gt 60 ]]; then
-    echo "ERROR: Server executable is $SERVER_AGE seconds old - build may have failed"
-    exit 1
+if [[ "$DEPLOY_DAEMON" == "true" ]]; then
+    log "Building daemon (linux-x64)..."
+    ncu_exec "cd $NCU_REPO/cli && $BUN run build:exe:daemon"
+
+    log "Building daemon + CLI (darwin-arm64) for macmini..."
+    ncu_exec "cd $NCU_REPO/cli && $BUN run scripts/build-executable.ts --name yoho-remote-daemon --target bun-darwin-arm64 && $BUN run scripts/build-executable.ts --name yoho-remote --target bun-darwin-arm64"
 fi
 
-echo "=== Server build verified (age: ${SERVER_AGE}s)"
+# ==================== Step 5: Verify builds ====================
+log "Verifying builds..."
+VERIFY_FILES="bun-linux-x64/yoho-remote"
+if [[ "$DEPLOY_SERVER" == "true" ]]; then
+    VERIFY_FILES="$VERIFY_FILES bun-linux-x64/yoho-remote-server"
+fi
+if [[ "$DEPLOY_DAEMON" == "true" ]]; then
+    VERIFY_FILES="$VERIFY_FILES bun-linux-x64/yoho-remote-daemon bun-darwin-arm64/yoho-remote-daemon bun-darwin-arm64/yoho-remote"
+fi
 
-# 构建主 CLI (用于 spawn session，不会触发 daemon 重启)
-echo "=== Building yoho-remote CLI..."
-(cd cli && bun run build:exe:cli)
-sync
+ncu_exec "cd $NCU_EXE_DIR && NOW=\$(date +%s) && ALL_OK=true && for f in $VERIFY_FILES; do if [ ! -f \"\$f\" ]; then echo \"  ✗ \$f not found\"; ALL_OK=false; elif [ \$(( NOW - \$(stat -c %Y \"\$f\") )) -gt 120 ]; then echo \"  ✗ \$f is stale\"; ALL_OK=false; else echo \"  ✓ \$f\"; fi; done && \$ALL_OK"
 
-# 如果需要，构建 daemon
-if [[ "$BUILD_DAEMON" == "true" ]]; then
-    echo "=== Building yoho-remote-daemon..."
-    (cd cli && bun run build:exe:daemon)
-    sync
+# ==================== Step 6: Deploy ====================
 
-    if [[ ! -f "$DAEMON_EXE" ]]; then
-        echo "ERROR: Daemon build failed - executable not found"
-        exit 1
+# --- 6a: Deploy server to ncu ---
+if [[ "$DEPLOY_SERVER" == "true" ]]; then
+    log "Deploying server to ncu..."
+
+    # Ensure systemd EnvironmentFile is configured
+    ncu_exec "
+        SERVICE_FILE=/etc/systemd/system/yoho-remote-server.service
+        ENV_FILE=$NCU_REPO/.env
+        if ! echo $NCU_SUDO_PASS | sudo -S grep -q 'EnvironmentFile=' \$SERVICE_FILE 2>/dev/null; then
+            echo $NCU_SUDO_PASS | sudo -S sed -i \"/^ExecStart=/i EnvironmentFile=\$ENV_FILE\" \$SERVICE_FILE
+            echo $NCU_SUDO_PASS | sudo -S systemctl daemon-reload
+            echo '  ✓ Added EnvironmentFile to server service'
+        fi
+    "
+
+    # Stop server (处理假死/僵尸)
+    ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl stop yoho-remote-server.service 2>/dev/null || true"
+    sleep 2
+    if is_ncu; then
+        force_kill_process yoho-remote-server "echo $NCU_SUDO_PASS | sudo -S"
+    else
+        ncu_exec "P=yoho-remote-server; S='echo $NCU_SUDO_PASS | sudo -S'; \$S pkill -x \$P 2>/dev/null; sleep 3; if pgrep -x \$P >/dev/null 2>&1; then echo '  ⚠ SIGTERM failed, SIGKILL...'; \$S pkill -9 -x \$P 2>/dev/null; sleep 2; fi; R=\$(pgrep -x \$P 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do \$S kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -x \$P >/dev/null 2>&1 && echo '  ✗ WARNING: still alive' || echo '  ✓ Fully stopped'"
+    fi
+    # Start server
+    ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl start yoho-remote-server.service"
+    sleep 2
+    ncu_exec "systemctl is-active --quiet yoho-remote-server.service && echo '  ✓ Server restarted' || echo '  ✗ Server failed to start'"
+fi
+
+# --- 6b: Deploy daemon to all targets ---
+if [[ "$DEPLOY_DAEMON" == "true" ]]; then
+
+    # 6b-1: Deploy to linux VMs (via ncu as relay)
+    for entry in "${DAEMON_TARGETS[@]}"; do
+        SSH_TARGET="${entry%%|*}"
+        TARGET_NAME="${entry##*|}"
+
+        log "Deploying daemon to $TARGET_NAME ($SSH_TARGET)..."
+
+        # Check connectivity
+        if ! ncu_exec "ssh $SSH_OPTS -o BatchMode=yes $SSH_TARGET 'true'" 2>/dev/null; then
+            warn "$TARGET_NAME is unreachable — skipping"
+            continue
+        fi
+
+        # If this is the machine we're running on, defer to last
+        if [[ "$TARGET_NAME" == "$SELF_HOSTNAME" ]]; then
+            SELF_DEPLOY_TARGET="$SSH_TARGET"
+            ok "Self detected — will deploy last"
+            continue
+        fi
+
+        # Stop old daemon (处理假死/僵尸 — 远程机器，无需排除本机进程)
+        ncu_exec "ssh $SSH_OPTS $SSH_TARGET 'sudo systemctl stop yoho-remote-daemon.service 2>/dev/null || true'"
+        sleep 2
+        ncu_exec "ssh $SSH_OPTS $SSH_TARGET 'P=yoho-remote-daemon; sudo pkill -x \$P 2>/dev/null; sleep 3; if pgrep -x \$P >/dev/null 2>&1; then echo \"  ⚠ SIGTERM failed, SIGKILL...\"; sudo pkill -9 -x \$P 2>/dev/null; sleep 2; fi; R=\$(pgrep -x \$P 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do sudo kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -x \$P >/dev/null 2>&1 && echo \"  ✗ WARNING: still alive\" || echo \"  ✓ Fully stopped\"'"
+
+        # Copy new binaries
+        ncu_exec "scp $SSH_OPTS $NCU_EXE_DIR/bun-linux-x64/yoho-remote-daemon $SSH_TARGET:$INSTALL_DIR/ && scp $SSH_OPTS $NCU_EXE_DIR/bun-linux-x64/yoho-remote $SSH_TARGET:$INSTALL_DIR/"
+
+        # Start daemon
+        ncu_exec "ssh $SSH_OPTS $SSH_TARGET 'sudo systemctl start yoho-remote-daemon.service'"
+        sleep 3
+        ACTIVE=$(ncu_exec "ssh $SSH_OPTS $SSH_TARGET 'systemctl is-active yoho-remote-daemon.service 2>/dev/null || echo inactive'")
+        if [[ "$ACTIVE" == "active" ]]; then
+            ok "$TARGET_NAME daemon restarted"
+        else
+            fail "$TARGET_NAME daemon failed to start"
+        fi
+    done
+
+    # 6b-2: Deploy to macmini
+    log "Deploying daemon to macmini..."
+    if ncu_exec "ssh $SSH_OPTS -o BatchMode=yes $MACMINI_SSH 'true'" 2>/dev/null; then
+        # Stop old daemon (处理假死/僵尸 — macOS，无 sudo)
+        ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'P=yoho-remote-daemon; pkill -x \$P 2>/dev/null; sleep 3; if pgrep -x \$P >/dev/null 2>&1; then echo \"  ⚠ SIGTERM failed, SIGKILL...\"; pkill -9 -x \$P 2>/dev/null; sleep 2; fi; R=\$(pgrep -x \$P 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -x \$P >/dev/null 2>&1 && echo \"  ✗ WARNING: still alive\" || echo \"  ✓ Fully stopped\"'"
+
+        # Copy new binaries
+        ncu_exec "scp $SSH_OPTS $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote-daemon $MACMINI_SSH:$INSTALL_DIR/ && scp $SSH_OPTS $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote $MACMINI_SSH:$INSTALL_DIR/"
+
+        # Start new daemon
+        ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'nohup env $MACMINI_DAEMON_ENV $INSTALL_DIR/yoho-remote-daemon > /tmp/yoho-remote-daemon.log 2>&1 &'"
+        sleep 3
+        ALIVE=$(ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'pgrep -x yoho-remote-daemon >/dev/null && echo yes || echo no'")
+        if [[ "$ALIVE" == *"yes"* ]]; then
+            ok "macmini daemon restarted"
+        else
+            fail "macmini daemon failed to start — check /tmp/yoho-remote-daemon.log"
+        fi
+    else
+        warn "macmini is unreachable — skipping"
     fi
 
-    DAEMON_TIME=$(stat -c %Y "$DAEMON_EXE")
-    DAEMON_AGE=$((NOW - DAEMON_TIME))
-
-    if [[ $DAEMON_AGE -gt 60 ]]; then
-        echo "ERROR: Daemon executable is $DAEMON_AGE seconds old - build may have failed"
-        exit 1
+    # 6b-3: Deploy daemon to ncu (从 VM 远程操作时，无需排除本机进程)
+    if ! is_ncu; then
+        log "Restarting daemon on ncu..."
+        # Stop (处理假死/僵尸)
+        ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl stop yoho-remote-daemon.service 2>/dev/null || true"
+        sleep 2
+        ncu_exec "P=yoho-remote-daemon; S='echo $NCU_SUDO_PASS | sudo -S'; \$S pkill -x \$P 2>/dev/null; sleep 3; if pgrep -x \$P >/dev/null 2>&1; then echo '  ⚠ SIGTERM failed, SIGKILL...'; \$S pkill -9 -x \$P 2>/dev/null; sleep 2; fi; R=\$(pgrep -x \$P 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do \$S kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -x \$P >/dev/null 2>&1 && echo '  ✗ WARNING: still alive' || echo '  ✓ Fully stopped'"
+        # Start
+        ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl start yoho-remote-daemon.service"
+        sleep 3
+        ACTIVE=$(ncu_exec "systemctl is-active yoho-remote-daemon.service 2>/dev/null || echo inactive")
+        if [[ "$ACTIVE" == "active" ]]; then
+            ok "ncu daemon restarted"
+        else
+            fail "ncu daemon failed to start"
+        fi
     fi
 
-    echo "=== Daemon build verified (age: ${DAEMON_AGE}s)"
-fi
+    # 6b-4: Deploy self (LAST — this will kill current session)
+    if [[ -n "$SELF_DEPLOY_TARGET" ]]; then
+        log "Deploying daemon to self ($SELF_HOSTNAME) — session will restart..."
 
-# 确保 systemd service 包含 EnvironmentFile（加载 .env 中的 LITELLM 等变量）
-YR_ENV_FILE="/home/guang/softwares/yoho-remote/.env"
-SERVICE_FILE="/etc/systemd/system/yoho-remote-server.service"
-if ! echo "guang" | sudo -S grep -q "EnvironmentFile=" "$SERVICE_FILE" 2>/dev/null; then
-    echo "=== Adding EnvironmentFile to systemd service..."
-    echo "guang" | sudo -S sed -i "/^ExecStart=/i EnvironmentFile=$YR_ENV_FILE" "$SERVICE_FILE"
-    echo "guang" | sudo -S systemctl daemon-reload
-fi
+        # Copy new binaries from ncu
+        ncu_exec "scp $SSH_OPTS $NCU_EXE_DIR/bun-linux-x64/yoho-remote-daemon $SELF_DEPLOY_TARGET:$INSTALL_DIR/ && scp $SSH_OPTS $NCU_EXE_DIR/bun-linux-x64/yoho-remote $SELF_DEPLOY_TARGET:$INSTALL_DIR/"
+        ok "Binaries updated"
 
-# 重启服务：用独立后台脚本执行，避免 stop daemon 杀掉当前会话导致脚本中断
-RESTART_SCRIPT=$(mktemp /tmp/yr-restart-XXXXXX.sh)
-cat > "$RESTART_SCRIPT" << 'RESTART_EOF'
+        # Restart via systemd-run to survive daemon shutdown
+        # 传入当前进程链的 PID，restart 脚本在独立 cgroup 中运行时排除这些 PID
+        RESTART_SCRIPT=$(mktemp /tmp/yr-restart-XXXXXX.sh)
+        cat > "$RESTART_SCRIPT" << RESTART_EOF
 #!/bin/bash
 exec > /tmp/yr-restart.log 2>&1
-BUILD_DAEMON="$1"
+PROC=yoho-remote-daemon
+SKIP_PIDS="$SELF_ANCESTORS"
 
-# 1. 停止服务（先 daemon 后 server）
-if [[ "$BUILD_DAEMON" == "true" ]]; then
-    echo "guang" | sudo -S systemctl stop yoho-remote-daemon.service 2>/dev/null || true
-fi
-echo "guang" | sudo -S systemctl stop yoho-remote-server.service 2>/dev/null || true
-sleep 1
+echo "\$(date): Stopping daemon..."
+sudo systemctl stop yoho-remote-daemon.service 2>/dev/null || true
+sleep 2
 
-# 2. 确保无残留进程（用完整路径 pkill 兜底，不会误杀脚本自身）
-EXE_DIR="/home/guang/softwares/yoho-remote/cli/dist-exe/bun-linux-x64"
-if [[ "$BUILD_DAEMON" == "true" ]]; then
-    pkill -f "$EXE_DIR/yoho-remote-daemon" 2>/dev/null || true
-fi
-pkill -f "$EXE_DIR/yoho-remote-server" 2>/dev/null || true
-sleep 1
-
-# 确认被停止的进程已全部退出
-REMAINING=$(pgrep -f "$EXE_DIR/yoho-remote-server" 2>/dev/null || true)
-if [[ "$BUILD_DAEMON" == "true" ]]; then
-    REMAINING="$REMAINING $(pgrep -f "$EXE_DIR/yoho-remote-daemon" 2>/dev/null || true)"
-fi
-REMAINING=$(echo "$REMAINING" | xargs)
-if [[ -n "$REMAINING" ]]; then
-    echo "WARNING: Remaining processes found (PIDs: $REMAINING), force killing..."
-    kill -9 $REMAINING 2>/dev/null || true
-    sleep 1
-fi
-
-# 3. 先启动 server（daemon 依赖 server）
-echo "guang" | sudo -S systemctl start yoho-remote-server.service
-
-# 等待 server 就绪
-for i in {1..10}; do
-    if systemctl is-active --quiet yoho-remote-server.service; then
-        echo "=== Server started (attempt $i)"
-        break
+# SIGTERM（排除当前会话的进程链）
+echo "\$(date): Sending SIGTERM..."
+for pid in \$(pgrep -x "\$PROC" 2>/dev/null || true); do
+    if echo " \$SKIP_PIDS " | grep -q " \$pid "; then
+        echo "\$(date): Skipping PID \$pid (deploy session ancestor)"
+        continue
     fi
-    sleep 1
+    sudo kill -TERM "\$pid" 2>/dev/null || true
+    echo "\$(date): Sent SIGTERM to PID \$pid"
 done
+sleep 3
 
-if ! systemctl is-active --quiet yoho-remote-server.service; then
-    echo "ERROR: yoho-remote-server.service failed to start"
-    echo "guang" | sudo -S journalctl -u yoho-remote-server.service -n 20 --no-pager
-    rm -f "$0"
-    exit 1
+# 假死 → SIGKILL（同样排除当前进程链）
+for pid in \$(pgrep -x "\$PROC" 2>/dev/null || true); do
+    if echo " \$SKIP_PIDS " | grep -q " \$pid "; then continue; fi
+    echo "\$(date): WARNING — PID \$pid did not exit, sending SIGKILL..."
+    sudo kill -9 "\$pid" 2>/dev/null || true
+done
+sleep 2
+
+# 最终确认（排除后）
+REMAIN=""
+for pid in \$(pgrep -x "\$PROC" 2>/dev/null || true); do
+    echo " \$SKIP_PIDS " | grep -q " \$pid " || REMAIN="\$REMAIN \$pid"
+done
+if [ -n "\$REMAIN" ]; then
+    echo "\$(date): CRITICAL — still alive: \$REMAIN"
+else
+    echo "\$(date): ✓ \$PROC fully stopped"
 fi
 
-# 4. 再启动 daemon
-if [[ "$BUILD_DAEMON" == "true" ]]; then
-    echo "guang" | sudo -S systemctl start yoho-remote-daemon.service
-    sleep 2
-    if systemctl is-active --quiet yoho-remote-daemon.service; then
-        echo "=== Daemon started successfully"
-    else
-        echo "ERROR: yoho-remote-daemon.service failed to start"
-        echo "guang" | sudo -S journalctl -u yoho-remote-daemon.service -n 20 --no-pager
+# Start
+echo "\$(date): Starting daemon..."
+sudo systemctl start yoho-remote-daemon.service
+sleep 3
+if systemctl is-active --quiet yoho-remote-daemon.service; then
+    echo "\$(date): ✓ Daemon restarted successfully"
+else
+    echo "\$(date): ERROR — daemon failed to start"
+    sudo journalctl -u yoho-remote-daemon.service -n 20 --no-pager
+fi
+rm -f "\$0"
+RESTART_EOF
+        chmod +x "$RESTART_SCRIPT"
+
+        sudo systemctl reset-failed yr-daemon-restart.service 2>/dev/null || true
+        sudo systemd-run --unit=yr-daemon-restart bash "$RESTART_SCRIPT"
+        ok "Restart dispatched (log: /tmp/yr-restart.log)"
+    fi
+
+    # 6b-5: If running on ncu, restart ncu daemon last (will kill session)
+    if is_ncu; then
+        log "Restarting daemon on ncu (self) — session will restart..."
+
+        RESTART_SCRIPT=$(mktemp /tmp/yr-restart-XXXXXX.sh)
+        cat > "$RESTART_SCRIPT" << RESTART_EOF
+#!/bin/bash
+exec > /tmp/yr-restart.log 2>&1
+SUDO_PASS="guang"
+PROC=yoho-remote-daemon
+SKIP_PIDS="$SELF_ANCESTORS"
+S() { echo "\$SUDO_PASS" | sudo -S "\$@"; }
+
+echo "\$(date): Stopping ncu daemon..."
+S systemctl stop yoho-remote-daemon.service 2>/dev/null || true
+sleep 2
+
+# SIGTERM（排除当前会话的进程链）
+echo "\$(date): Sending SIGTERM..."
+for pid in \$(pgrep -x "\$PROC" 2>/dev/null || true); do
+    if echo " \$SKIP_PIDS " | grep -q " \$pid "; then
+        echo "\$(date): Skipping PID \$pid (deploy session ancestor)"
+        continue
+    fi
+    S kill -TERM "\$pid" 2>/dev/null || true
+    echo "\$(date): Sent SIGTERM to PID \$pid"
+done
+sleep 3
+
+# 假死 → SIGKILL（同样排除）
+for pid in \$(pgrep -x "\$PROC" 2>/dev/null || true); do
+    if echo " \$SKIP_PIDS " | grep -q " \$pid "; then continue; fi
+    echo "\$(date): WARNING — PID \$pid did not exit, sending SIGKILL..."
+    S kill -9 "\$pid" 2>/dev/null || true
+done
+sleep 2
+
+# 最终确认（排除后）
+REMAIN=""
+for pid in \$(pgrep -x "\$PROC" 2>/dev/null || true); do
+    echo " \$SKIP_PIDS " | grep -q " \$pid " || REMAIN="\$REMAIN \$pid"
+done
+if [ -n "\$REMAIN" ]; then
+    echo "\$(date): CRITICAL — still alive: \$REMAIN"
+else
+    echo "\$(date): ✓ \$PROC fully stopped"
+fi
+
+# Start
+echo "\$(date): Starting ncu daemon..."
+S systemctl start yoho-remote-daemon.service
+sleep 3
+if systemctl is-active --quiet yoho-remote-daemon.service; then
+    echo "\$(date): ✓ Daemon restarted successfully"
+else
+    echo "\$(date): ERROR — daemon failed to start"
+    S journalctl -u yoho-remote-daemon.service -n 20 --no-pager
+fi
+rm -f "\$0"
+RESTART_EOF
+        chmod +x "$RESTART_SCRIPT"
+
+        echo "$NCU_SUDO_PASS" | sudo -S systemctl reset-failed yr-daemon-restart.service 2>/dev/null || true
+        echo "$NCU_SUDO_PASS" | sudo -S systemd-run --unit=yr-daemon-restart bash "$RESTART_SCRIPT"
+        ok "Restart dispatched (log: /tmp/yr-restart.log)"
     fi
 fi
 
-echo "=== Done! Services restarted successfully."
-rm -f "$0"
-RESTART_EOF
-chmod +x "$RESTART_SCRIPT"
-
-echo "=== Restarting services in background..."
-if [[ "$BUILD_DAEMON" == "true" ]]; then
-    echo "    (with daemon restart)"
-else
-    echo "    (daemon was NOT rebuilt - sessions should remain online)"
-fi
-# systemd-run 在独立的 transient unit 中运行重启脚本，完全脱离 daemon 的 cgroup，
-# 避免 systemctl stop daemon 时把重启脚本也杀掉
-echo "guang" | sudo -S systemctl reset-failed yr-restart.service 2>/dev/null || true
-echo "guang" | sudo -S systemd-run --unit=yr-restart bash "$RESTART_SCRIPT" "$BUILD_DAEMON"
-echo "=== Restart dispatched (log: /tmp/yr-restart.log)"
+echo ""
+echo "========================================="
+echo "  Deploy completed — mode: $MODE"
+echo "========================================="
