@@ -28,10 +28,11 @@ export function createSettingsRoutes(
 
     // ==================== 项目管理 ====================
 
-    // 获取组织共享项目列表（兼容接收 machineId，但不再按机器过滤）
+    // 获取项目列表：共享项目 + 当前机器的私有项目
     app.get('/settings/projects', async (c) => {
         const orgId = c.req.query('orgId')
-        const projects = await store.getProjects(undefined, orgId)
+        const machineId = c.req.query('machineId')
+        const projects = await store.getProjects(machineId, orgId)
         return c.json({ projects })
     })
 

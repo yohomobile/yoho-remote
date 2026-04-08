@@ -582,9 +582,10 @@ export class ApiClient {
     }
 
     // 项目管理
-    async getProjects(orgId?: string | null): Promise<ProjectsResponse> {
+    async getProjects(orgId?: string | null, machineId?: string | null): Promise<ProjectsResponse> {
         const params = new URLSearchParams()
         if (orgId) params.set('orgId', orgId)
+        if (machineId) params.set('machineId', machineId)
         const qs = params.toString()
         return await this.request<ProjectsResponse>(`/api/settings/projects${qs ? `?${qs}` : ''}`)
     }
