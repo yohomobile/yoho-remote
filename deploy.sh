@@ -310,16 +310,16 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
 
         log "Deploying daemon to $TARGET_NAME ($SSH_TARGET)..."
 
-        # Check connectivity
-        if ! ncu_exec "ssh $SSH_OPTS -o BatchMode=yes $SSH_TARGET 'true'" 2>/dev/null; then
-            warn "$TARGET_NAME is unreachable — skipping"
-            continue
-        fi
-
         # If this is the machine we're running on, defer to last
         if [[ "$TARGET_NAME" == "$SELF_HOSTNAME" ]]; then
             SELF_DEPLOY_TARGET="$SSH_TARGET"
             ok "Self detected — will deploy last"
+            continue
+        fi
+
+        # Check connectivity
+        if ! ncu_exec "ssh $SSH_OPTS -o BatchMode=yes $SSH_TARGET 'true'" 2>/dev/null; then
+            warn "$TARGET_NAME is unreachable — skipping"
             continue
         fi
 
