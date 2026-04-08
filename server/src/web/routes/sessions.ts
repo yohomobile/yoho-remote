@@ -548,13 +548,22 @@ export function createSessionsRoutes(
             modelMode = codexModelValue
         }
 
+        // Default worktreeName to caller's email slug when not specified
+        let worktreeName = parsed.data.worktreeName
+        if (parsed.data.sessionType === 'worktree' && !worktreeName) {
+            const email = c.get('email')
+            if (email) {
+                worktreeName = email.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+            }
+        }
+
         const result = await engine.spawnSession(
             parsed.data.machineId,
             parsed.data.directory,
             parsed.data.agent,
             parsed.data.yolo,
             parsed.data.sessionType,
-            parsed.data.worktreeName,
+            worktreeName,
             {
                 openrouterModel: parsed.data.openrouterModel,
                 droidModel: parsed.data.droidModel,

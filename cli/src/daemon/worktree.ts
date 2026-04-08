@@ -52,7 +52,7 @@ async function resolveRepoRoot(basePath: string): Promise<string> {
 function toSlug(value: string): string {
   const cleaned = value
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/[^a-z0-9_]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return cleaned;
 }
@@ -127,11 +127,22 @@ export async function createWorktree(options: {
     const branch = `yr-${name}`;
     const worktreePath = join(repoWorktreesRoot, name);
 
-    if (await pathExists(worktreePath)) {
-      continue;
+    // If both directory and branch already exist, reuse the existing worktree
+    if (await pathExists(worktreePath) && await branchExists(repoRoot, branch)) {
+      return {
+        ok: true,
+        info: {
+          basePath: repoRoot,
+          worktreePath,
+          branch,
+          name,
+          createdAt: Date.now()
+        }
+      };
     }
 
-    if (await branchExists(repoRoot, branch)) {
+    // Only one of them exists — collision, try next name
+    if (await pathExists(worktreePath) || await branchExists(repoRoot, branch)) {
       continue;
     }
 

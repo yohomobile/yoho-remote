@@ -150,13 +150,22 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
             }
         }
 
+        // Default worktreeName to caller's email slug when not specified
+        let worktreeName = parsed.data.worktreeName
+        if (parsed.data.sessionType === 'worktree' && !worktreeName) {
+            const email = c.get('email')
+            if (email) {
+                worktreeName = email.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+            }
+        }
+
         const result = await engine.spawnSession(
             machineId,
             parsed.data.directory,
             parsed.data.agent,
             parsed.data.yolo,
             parsed.data.sessionType,
-            parsed.data.worktreeName,
+            worktreeName,
             { claudeSettingsType: parsed.data.claudeSettingsType, claudeAgent: parsed.data.claudeAgent, opencodeModel: parsed.data.opencodeModel, opencodeVariant: parsed.data.opencodeVariant, codexModel: parsed.data.codexModel, droidModel: parsed.data.droidModel, droidReasoningEffort: parsed.data.droidReasoningEffort, modelMode, modelReasoningEffort: parsed.data.modelReasoningEffort, source }
         )
 
