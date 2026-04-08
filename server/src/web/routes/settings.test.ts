@@ -3,7 +3,7 @@ import { Hono } from 'hono'
 import { createSettingsRoutes } from './settings'
 
 describe('createSettingsRoutes projects', () => {
-    it('ignores machineId when listing shared projects', async () => {
+    it('passes machineId through when listing projects', async () => {
         const calls: Array<{ machineId: string | null | undefined; orgId: string | null | undefined }> = []
         const store = {
             getProjects: async (machineId?: string | null, orgId?: string | null) => {
@@ -18,11 +18,11 @@ describe('createSettingsRoutes projects', () => {
         const response = await app.request('/api/settings/projects?machineId=machine-a&orgId=org-a')
         expect(response.status).toBe(200)
         expect(calls).toEqual([
-            { machineId: undefined, orgId: 'org-a' },
+            { machineId: 'machine-a', orgId: 'org-a' },
         ])
     })
 
-    it('stores created and updated projects as org-shared items', async () => {
+    it('stores created and updated projects with the requested machine scope', async () => {
         const addCalls: Array<{ machineId: string | null | undefined; orgId: string | null | undefined }> = []
         const updateCalls: Array<{ machineId: string | null | undefined }> = []
         const store = {
@@ -81,10 +81,10 @@ describe('createSettingsRoutes projects', () => {
         expect(updateResponse.status).toBe(200)
 
         expect(addCalls).toEqual([
-            { machineId: null, orgId: 'org-a' },
+            { machineId: 'machine-a', orgId: 'org-a' },
         ])
         expect(updateCalls).toEqual([
-            { machineId: null },
+            { machineId: 'machine-b' },
         ])
     })
 })
