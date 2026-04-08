@@ -299,17 +299,18 @@ async function waitForSessionInactive(engine: SyncEngine, sessionId: string, tim
 
 async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null): Promise<void> {
     const session = engine.getSession(sessionId)
+    const worktree = session?.metadata?.worktree
     const projectRoot = session?.metadata?.path?.trim()
-        || session?.metadata?.worktree?.basePath?.trim()
+        || worktree?.basePath?.trim()
         || null
     const source = session?.metadata?.source
     console.log(`[sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}, source=${source}`)
     const isVijnapti = source === 'brain' && projectRoot?.includes('vijnapti-workspace')
     const prompt = isVijnapti
-        ? await buildVijnaptiInitPrompt(role, { projectRoot, userName })
+        ? await buildVijnaptiInitPrompt(role, { projectRoot, userName, worktree })
         : source === 'brain'
-            ? await buildBrainInitPrompt(role, { projectRoot, userName })
-            : await buildInitPrompt(role, { projectRoot, userName })
+            ? await buildBrainInitPrompt(role, { projectRoot, userName, worktree })
+            : await buildInitPrompt(role, { projectRoot, userName, worktree })
     if (!prompt.trim()) {
         console.warn(`[sendInitPrompt] Empty prompt for session ${sessionId}, skipping`)
         return

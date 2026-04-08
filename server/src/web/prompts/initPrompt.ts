@@ -3,6 +3,12 @@ import type { UserRole } from '../../store'
 type InitPromptOptions = {
     projectRoot?: string | null
     userName?: string | null
+    worktree?: {
+        basePath?: string | null
+        worktreePath?: string | null
+        branch?: string | null
+        name?: string | null
+    } | null
 }
 
 export type FeishuBrainInitPromptOptions = InitPromptOptions & {
@@ -14,6 +20,7 @@ export async function buildInitPrompt(_role: UserRole, options?: InitPromptOptio
     const lines: string[] = []
     const userName = options?.userName || null
     const projectRoot = options?.projectRoot || null
+    const worktree = options?.worktree || null
 
     // 标识头
     lines.push('#InitPrompt-Yoho开发规范（最高优先级）')
@@ -36,6 +43,23 @@ export async function buildInitPrompt(_role: UserRole, options?: InitPromptOptio
     if (projectRoot) {
         lines.push(`- 当前会话工作目录：${projectRoot}`)
     }
+    const worktreePath = worktree?.worktreePath?.trim() || null
+    const worktreeBasePath = worktree?.basePath?.trim() || null
+    const worktreeName = worktree?.name?.trim() || null
+    const worktreeBranch = worktree?.branch?.trim() || null
+    if (worktreePath) {
+        if (worktreeBasePath && worktreeBasePath !== worktreePath) {
+            lines.push(`- 当前会话基仓库目录：${worktreeBasePath}`)
+        }
+        const worktreeDetails = [
+            worktreeName ? `名称 ${worktreeName}` : null,
+            worktreeBranch ? `分支 ${worktreeBranch}` : null,
+            `路径 ${worktreePath}`
+        ].filter((value): value is string => Boolean(value))
+        lines.push(`- 当前会话使用 Git worktree 隔离开发：${worktreeDetails.join('，')}`)
+        lines.push('- 在 VM 共享仓库 / worktree 模式下，所有查看、编辑、测试、提交都必须在当前 worktree 目录进行；除非用户明确要求，否则禁止回到基仓库目录直接改文件、运行提交或清理操作')
+        lines.push('- `project_list` 里的 Project path 通常指向基仓库；如果当前 session 同时存在 basePath 和 worktreePath，任何代码修改都必须以 worktreePath 为准，不要把 basePath 误当成当前工作目录')
+    }
     lines.push('- 用 `mcp__yoho_remote__project_list` 查看所有已注册的 Project（名称、路径、所属机器）')
     lines.push('- 可以切换到其他 Project 的目录去工作，用完再切回来')
     lines.push('- 可以用 `project_create` / `project_update` / `project_delete` 管理 Project 列表（注册新项目、修改名称描述、删除废弃项目）')
@@ -50,6 +74,9 @@ export async function buildInitPrompt(_role: UserRole, options?: InitPromptOptio
     lines.push('4) 项目上下文')
     lines.push('- [强制] 每轮对话开始时，你 MUST 评估用户消息是否涉及公司项目、服务器、数据库、外部API、业务逻辑、团队成员、部署架构等。如涉及，必须先调用 recall 查询再做任何回复或操作。不调用 recall 就直接回答 = 可能给出错误信息。宁可多调一次，不可漏调。')
     lines.push('- [强制] 执行部署、发布、重启、测试、构建、数据库迁移、SSH 连接、安装依赖等操作前，必须先调用 recall 查询相关的部署方式、命令、配置，严禁凭猜测执行。不调用 recall 就直接执行 = 可能用错命令、部署到错误环境、造成生产事故。')
+    lines.push('- [强制] 如果目标是 dev 环境，部署前必须确认待部署代码已经合入 `dev-release`；禁止从 feature 分支、worktree 分支或其他临时分支直接部署 dev。')
+    lines.push('- [强制] 如果目标是线上环境，部署前必须确认待部署代码已经合入 `main`；禁止从 feature 分支、worktree 分支、`dev-release` 或其他非 `main` 分支直接部署线上。')
+    lines.push('- [强制] 如果当前改动只存在于 worktree / feature 分支，先合并到目标发布分支，再执行部署。')
     lines.push('- 开始工作前，先调用 recall 工具查询当前项目的信息（技术栈、目录结构、部署方式等）')
     lines.push('- **[强制] 每轮对话结束前，你 MUST 回顾本轮是否产生了值得保存的知识（新决策、架构变更、bug 根因、配置变更、API 细节、部署流程等）。如有，必须立即调用 remember 保存，绝对不要等用户要求。忘记保存 = 知识永久丢失。这是不可违背的规则。**')
 

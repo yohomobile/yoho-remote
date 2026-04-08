@@ -39,12 +39,13 @@ const pathsExistsSchema = z.object({
 async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null, machineId?: string): Promise<void> {
     try {
         const session = engine.getSession(sessionId)
+        const worktree = session?.metadata?.worktree
         const projectRoot = session?.metadata?.path?.trim()
-            || session?.metadata?.worktree?.basePath?.trim()
+            || worktree?.basePath?.trim()
             || null
 
         console.log(`[machines/sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}`)
-        const prompt = await buildInitPrompt(role, { projectRoot, userName })
+        const prompt = await buildInitPrompt(role, { projectRoot, userName, worktree })
         if (!prompt.trim()) {
             console.warn(`[machines/sendInitPrompt] Empty prompt for session ${sessionId}, skipping`)
             return
