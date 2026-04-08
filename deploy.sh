@@ -226,7 +226,7 @@ if is_ncu; then
 else
     log "Syncing $CURRENT_BRANCH to ncu and merging into $DEPLOY_BRANCH..."
     if [[ "$CURRENT_BRANCH" == "$DEPLOY_BRANCH" ]]; then
-        ncu_exec "cd $NCU_REPO && git checkout $DEPLOY_BRANCH 2>/dev/null || git checkout -b $DEPLOY_BRANCH && git remote add workspace-sync $SOURCE_REPO 2>/dev/null || git remote set-url workspace-sync $SOURCE_REPO && git fetch workspace-sync $CURRENT_BRANCH && git merge FETCH_HEAD --no-edit"
+        ncu_exec "cd $NCU_REPO && (git checkout $DEPLOY_BRANCH 2>/dev/null || git checkout -b $DEPLOY_BRANCH) && if ! git diff --quiet -- cli/package.json; then git stash push -m deploy-cli-version cli/package.json >/dev/null; fi && (git remote add workspace-sync $SOURCE_REPO 2>/dev/null || git remote set-url workspace-sync $SOURCE_REPO) && git fetch workspace-sync $CURRENT_BRANCH && git merge FETCH_HEAD --no-edit"
         ok "ncu: synced $CURRENT_BRANCH from shared workspace into $DEPLOY_BRANCH"
     else
         git remote add ncu "ssh://$NCU_SSH$NCU_REPO" 2>/dev/null || git remote set-url ncu "ssh://$NCU_SSH$NCU_REPO"

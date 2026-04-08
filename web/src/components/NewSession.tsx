@@ -8,7 +8,7 @@ import { usePlatform } from '@/hooks/usePlatform'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
 import { queryKeys } from '@/lib/query-keys'
 import { useAppContext } from '@/lib/app-context'
-import { getMachineStatusLabel, getMachineTitle } from '@/lib/machines'
+import { getMachineStatusLabel, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
 import { getDefaultSessionTypeForMachine, getPersonalWorktreeOwner, isPersonalWorktreeMachine } from '@/lib/personal-worktree'
 
 type AgentType = 'claude' | 'codex'
@@ -155,7 +155,7 @@ export function NewSession(props: {
     const [isCustomPath, setIsCustomPath] = useState(false)
     const [spawnLogs, setSpawnLogs] = useState<SpawnLogEntry[]>([])
     const onlineMachines = useMemo(
-        () => props.machines.filter((machine) => machine.active),
+        () => sortMachinesForStableDisplay(props.machines).filter((machine) => machine.active),
         [props.machines]
     )
 
