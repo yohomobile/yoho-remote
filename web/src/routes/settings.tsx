@@ -14,7 +14,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { useMyOrgs, useOrg } from '@/hooks/queries/useOrgs'
 import { useCreateOrg, useInviteMember, useUpdateMemberRole, useRemoveMember } from '@/hooks/mutations/useOrgMutations'
 import { CRSApiKeyManager } from '@/components/CRSApiKeyManager'
-import { formatMachineTimestamp, getMachineIp, sortMachinesForStableDisplay } from '@/lib/machines'
+import { formatMachineTimestamp, getMachineIp, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
 
 const ROLE_LABELS: Record<OrgRole, string> = {
     owner: 'Owner',
