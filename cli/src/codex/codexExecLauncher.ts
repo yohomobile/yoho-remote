@@ -10,7 +10,7 @@
 import { render } from 'ink';
 import React from 'react';
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
 import { logger } from '@/ui/logger';
@@ -141,6 +141,7 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
     let exitReason: 'switch' | 'exit' | null = null;
     let shouldExit = false;
     let activeChild: ChildProcess | null = null;
+    let activeChildExited = false;
 
     if (hasTTY) {
         console.clear();
@@ -174,12 +175,14 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
     }
 
     function killActiveChild(): void {
-        if (activeChild && !activeChild.killed) {
+        if (activeChild && !activeChildExited) {
             logger.debug('[codex-exec] Killing active child process');
             activeChild.kill('SIGTERM');
+            const ref = activeChild;
             setTimeout(() => {
-                if (activeChild && !activeChild.killed) {
-                    activeChild.kill('SIGKILL');
+                if (!activeChildExited) {
+                    logger.debug('[codex-exec] SIGTERM did not work, sending SIGKILL');
+                    ref.kill('SIGKILL');
                 }
             }, 3000);
         }
@@ -328,6 +331,10 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
                     messageBuffer,
                     turnTimeoutMs: TURN_TIMEOUT_MS,
                     onThreadId: (id) => { threadId = id; },
+                    onChildSpawned: (child) => {
+                        activeChild = child;
+                        activeChildExited = false;
+                    },
                     shouldExit: () => shouldExit,
                 });
 
@@ -349,6 +356,7 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
                 currentModeHash = null;
             } finally {
                 activeChild = null;
+                activeChildExited = true;
                 session.onThinkingChange(false);
                 emitReadyIfIdle({
                     pending,
@@ -397,6 +405,7 @@ interface SpawnCodexExecOptions {
     messageBuffer: MessageBuffer;
     turnTimeoutMs: number;
     onThreadId: (id: string) => void;
+    onChildSpawned: (child: ChildProcess) => void;
     shouldExit: () => boolean;
 }
 
@@ -407,8 +416,8 @@ interface SpawnCodexExecResult {
 async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexExecResult> {
     const {
         codexBin, startConfig, mcpServers, threadId, prompt,
-        session, messageBuffer, turnTimeoutMs, onThreadId, shouldExit,
-        permissionMode
+        session, messageBuffer, turnTimeoutMs, onThreadId, onChildSpawned,
+        shouldExit, permissionMode
     } = opts;
 
     const args: string[] = [];
@@ -469,6 +478,8 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
             env: codexBin.env,
             stdio: ['pipe', 'pipe', 'pipe']
         });
+
+        onChildSpawned(child);
 
         // Close stdin immediately — exec mode reads prompt from args
         child.stdin?.end();
