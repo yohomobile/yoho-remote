@@ -75,4 +75,41 @@ describe('createWorktree naming', () => {
         });
         expect(removed.ok).toBe(true);
     });
+
+    it('migrates legacy yr- prefixed branch on reuse', async () => {
+        // Simulate old code: create worktree with yr- prefixed branch
+        const worktreesRoot = join(tempDir, 'repo-worktrees');
+        const worktreePath = join(worktreesRoot, 'guang_yang');
+        await mkdir(worktreesRoot, { recursive: true });
+        await runGit(['worktree', 'add', '-b', 'yr-guang_yang', worktreePath], repoRoot);
+
+        // Verify the legacy branch exists
+        const { stdout: branchBefore } = await execFileAsync('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: worktreePath });
+        expect(branchBefore.trim()).toBe('yr-guang_yang');
+
+        // Reuse the existing worktree — should auto-rename the branch
+        const result = await createWorktree({
+            basePath: repoRoot,
+            nameHint: 'guang_yang',
+            reuseExisting: true
+        });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) {
+            throw new Error(result.error);
+        }
+
+        expect(result.info.branch).toBe('guang_yang');
+        expect(result.info.name).toBe('guang_yang');
+
+        // Verify the git branch was actually renamed
+        const { stdout: branchAfter } = await execFileAsync('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: worktreePath });
+        expect(branchAfter.trim()).toBe('guang_yang');
+
+        const removed = await removeWorktree({
+            repoRoot,
+            worktreePath: result.info.worktreePath
+        });
+        expect(removed.ok).toBe(true);
+    });
 })

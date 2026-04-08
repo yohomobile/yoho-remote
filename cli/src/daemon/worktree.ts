@@ -131,6 +131,15 @@ export async function createWorktree(options: {
     if (await pathExists(worktreePath)) {
       const existing = await readExistingWorktree(repoRoot, worktreePath, normalizedNameHint);
       if (existing) {
+        // Migrate legacy yr- prefixed branches to plain name
+        if (existing.branch === `yr-${normalizedNameHint}`) {
+          try {
+            await runGit(['branch', '-m', existing.branch, normalizedNameHint], worktreePath);
+            existing.branch = normalizedNameHint;
+          } catch {
+            // Rename failed (e.g. target branch already exists) — continue with old name
+          }
+        }
         return { ok: true, info: existing };
       }
       return {
