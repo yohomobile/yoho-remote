@@ -10,7 +10,7 @@ NCU_EXE_DIR="$NCU_REPO/cli/dist-exe"
 NCU_SUDO_PASS="guang"
 
 DAEMON_TARGETS=(
-    "ubuntu@192.168.122.101|guang-instance"
+    "ubuntu@192.168.122.100|guang-instance"
     "ubuntu@192.168.122.102|bruce-instance"
 )
 MACMINI_SSH="guang@192.168.0.236"
@@ -329,7 +329,7 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
         # Stop old daemon (处理假死/僵尸 — 远程机器，无需排除本机进程)
         ncu_exec "ssh $SSH_OPTS $SSH_TARGET 'sudo systemctl stop yoho-remote-daemon.service 2>/dev/null || true'"
         sleep 2
-        ncu_exec "ssh $SSH_OPTS $SSH_TARGET 'P=yoho-remote-daemon; sudo pkill -x \$P 2>/dev/null; sleep 3; if pgrep -x \$P >/dev/null 2>&1; then echo \"  ⚠ SIGTERM failed, SIGKILL...\"; sudo pkill -9 -x \$P 2>/dev/null; sleep 2; fi; R=\$(pgrep -x \$P 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do sudo kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -x \$P >/dev/null 2>&1 && echo \"  ✗ WARNING: still alive\" || echo \"  ✓ Fully stopped\"'"
+        ncu_exec "ssh $SSH_OPTS $SSH_TARGET 'P=\"[y]oho-remote-daemon\"; sudo pkill -f \$P 2>/dev/null; sleep 3; if pgrep -f \$P >/dev/null 2>&1; then echo \"  ⚠ SIGTERM failed, SIGKILL...\"; sudo pkill -9 -f \$P 2>/dev/null; sleep 2; fi; R=\$(pgrep -f \$P 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do sudo kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -f \$P >/dev/null 2>&1 && echo \"  ✗ WARNING: still alive\" || echo \"  ✓ Fully stopped\"'"
 
         # Copy new binaries
         ncu_exec "scp $SSH_OPTS $NCU_EXE_DIR/bun-linux-x64/yoho-remote-daemon $SSH_TARGET:$INSTALL_DIR/ && scp $SSH_OPTS $NCU_EXE_DIR/bun-linux-x64/yoho-remote $SSH_TARGET:$INSTALL_DIR/"
@@ -405,7 +405,7 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
         # Stop (处理假死/僵尸)
         ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl stop yoho-remote-daemon.service 2>/dev/null || true"
         sleep 2
-        ncu_exec "P=yoho-remote-daemon; S='echo $NCU_SUDO_PASS | sudo -S'; \$S pkill -x \$P 2>/dev/null; sleep 3; if pgrep -x \$P >/dev/null 2>&1; then echo '  ⚠ SIGTERM failed, SIGKILL...'; \$S pkill -9 -x \$P 2>/dev/null; sleep 2; fi; R=\$(pgrep -x \$P 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do \$S kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -x \$P >/dev/null 2>&1 && echo '  ✗ WARNING: still alive' || echo '  ✓ Fully stopped'"
+        ncu_exec "P='[y]oho-remote-daemon'; S='echo $NCU_SUDO_PASS | sudo -S'; \$S pkill -f \$P 2>/dev/null; sleep 3; if pgrep -f \$P >/dev/null 2>&1; then echo '  ⚠ SIGTERM failed, SIGKILL...'; \$S pkill -9 -f \$P 2>/dev/null; sleep 2; fi; R=\$(pgrep -f \$P 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do \$S kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -f \$P >/dev/null 2>&1 && echo '  ✗ WARNING: still alive' || echo '  ✓ Fully stopped'"
         # Start
         ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl start yoho-remote-daemon.service"
         sleep 3
@@ -489,7 +489,7 @@ RESTART_EOF
     fi
 
     # 6b-5: If running on ncu, restart ncu daemon last (will kill session)
-    if is_ncu; then
+    if is_ncu && should_deploy_daemon ncu; then
         log "Restarting daemon on ncu (self) — session will restart..."
 
         RESTART_SCRIPT=$(mktemp /tmp/yr-restart-XXXXXX.sh)
@@ -497,7 +497,7 @@ RESTART_EOF
 #!/bin/bash
 exec > /tmp/yr-restart.log 2>&1
 SUDO_PASS="guang"
-PROC=yoho-remote-daemon
+PROC_PATTERN='[y]oho-remote-daemon'
 SKIP_PIDS="$SELF_ANCESTORS"
 S() { echo "\$SUDO_PASS" | sudo -S "\$@"; }
 
@@ -507,7 +507,7 @@ sleep 2
 
 # SIGTERM（排除当前会话的进程链）
 echo "\$(date): Sending SIGTERM..."
-for pid in \$(pgrep -x "\$PROC" 2>/dev/null || true); do
+for pid in \$(pgrep -f "\$PROC_PATTERN" 2>/dev/null || true); do
     if echo " \$SKIP_PIDS " | grep -q " \$pid "; then
         echo "\$(date): Skipping PID \$pid (deploy session ancestor)"
         continue
@@ -518,7 +518,7 @@ done
 sleep 3
 
 # 假死 → SIGKILL（同样排除）
-for pid in \$(pgrep -x "\$PROC" 2>/dev/null || true); do
+for pid in \$(pgrep -f "\$PROC_PATTERN" 2>/dev/null || true); do
     if echo " \$SKIP_PIDS " | grep -q " \$pid "; then continue; fi
     echo "\$(date): WARNING — PID \$pid did not exit, sending SIGKILL..."
     S kill -9 "\$pid" 2>/dev/null || true
@@ -527,13 +527,13 @@ sleep 2
 
 # 最终确认（排除后）
 REMAIN=""
-for pid in \$(pgrep -x "\$PROC" 2>/dev/null || true); do
+for pid in \$(pgrep -f "\$PROC_PATTERN" 2>/dev/null || true); do
     echo " \$SKIP_PIDS " | grep -q " \$pid " || REMAIN="\$REMAIN \$pid"
 done
 if [ -n "\$REMAIN" ]; then
     echo "\$(date): CRITICAL — still alive: \$REMAIN"
 else
-    echo "\$(date): ✓ \$PROC fully stopped"
+    echo "\$(date): ✓ yoho-remote-daemon fully stopped"
 fi
 
 # Start
