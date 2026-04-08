@@ -353,13 +353,13 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
             ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'P=yoho-remote-daemon; pkill -x \$P 2>/dev/null; sleep 3; if pgrep -x \$P >/dev/null 2>&1; then echo \"  ⚠ SIGTERM failed, SIGKILL...\"; pkill -9 -x \$P 2>/dev/null; sleep 2; fi; R=\$(pgrep -x \$P 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -x \$P >/dev/null 2>&1 && echo \"  ✗ WARNING: still alive\" || echo \"  ✓ Fully stopped\"'"
 
             # Copy new binaries
-            ncu_exec "scp $SSH_OPTS $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote-daemon $MACMINI_SSH:$INSTALL_DIR/ && scp $SSH_OPTS $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote $MACMINI_SSH:$INSTALL_DIR/"
+            ncu_exec "rsync -az -e 'ssh $SSH_OPTS' $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote-daemon $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote $MACMINI_SSH:$INSTALL_DIR/"
 
             # macOS 要求重新 ad-hoc 签名（SCP 后签名失效，LaunchAgent 会 SIGKILL 未签名二进制）
             ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'codesign --force --sign - $INSTALL_DIR/yoho-remote-daemon && codesign --force --sign - $INSTALL_DIR/yoho-remote'"
 
             # 通过 LaunchAgent 重启（macOS 不能用 nohup via SSH）
-            ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'launchctl stop com.hapi.daemon 2>/dev/null; launchctl start com.hapi.daemon'"
+            ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'launchctl unload /Users/guang/Library/LaunchAgents/com.hapi.daemon.plist 2>/dev/null; launchctl load /Users/guang/Library/LaunchAgents/com.hapi.daemon.plist'"
             sleep 4
             ALIVE=$(ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'pgrep -x yoho-remote-daemon >/dev/null && echo yes || echo no'")
             if [[ "$ALIVE" == *"yes"* ]]; then
@@ -380,13 +380,13 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
             ncu_exec "ssh $SSH_OPTS $MACBOOK_SSH 'P=yoho-remote-daemon; pkill -x \$P 2>/dev/null; sleep 3; if pgrep -x \$P >/dev/null 2>&1; then echo \"  ⚠ SIGTERM failed, SIGKILL...\"; pkill -9 -x \$P 2>/dev/null; sleep 2; fi; pgrep -x \$P >/dev/null 2>&1 && echo \"  ✗ WARNING: still alive\" || echo \"  ✓ Fully stopped\"'"
 
             # Copy new binaries
-            ncu_exec "scp $SSH_OPTS $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote-daemon $MACBOOK_SSH:/opt/yoho-remote/ && scp $SSH_OPTS $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote $MACBOOK_SSH:/opt/yoho-remote/"
+            ncu_exec "rsync -az -e 'ssh $SSH_OPTS' $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote-daemon $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote $MACBOOK_SSH:/opt/yoho-remote/"
 
             # macOS 要求重新 ad-hoc 签名
             ncu_exec "ssh $SSH_OPTS $MACBOOK_SSH 'codesign --force --sign - /opt/yoho-remote/yoho-remote-daemon && codesign --force --sign - /opt/yoho-remote/yoho-remote'"
 
             # 通过 LaunchAgent 重启
-            ncu_exec "ssh $SSH_OPTS $MACBOOK_SSH 'launchctl stop com.hapi.daemon 2>/dev/null; launchctl start com.hapi.daemon'"
+            ncu_exec "ssh $SSH_OPTS $MACBOOK_SSH 'launchctl unload /Users/guang/Library/LaunchAgents/com.hapi.daemon.plist 2>/dev/null; launchctl load /Users/guang/Library/LaunchAgents/com.hapi.daemon.plist'"
             sleep 4
             ALIVE=$(ncu_exec "ssh $SSH_OPTS $MACBOOK_SSH 'pgrep -x yoho-remote-daemon >/dev/null && echo yes || echo no'")
             if [[ "$ALIVE" == *"yes"* ]]; then
