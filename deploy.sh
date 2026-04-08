@@ -197,12 +197,16 @@ if is_ncu; then
 else
     log "Syncing $CURRENT_BRANCH to ncu and merging into $DEPLOY_BRANCH..."
 
-    # 通过 SSH 把 worktree 分支推到 ncu 的 repo（不依赖 GitHub）
     git remote add ncu "ssh://$NCU_SSH$NCU_REPO" 2>/dev/null || git remote set-url ncu "ssh://$NCU_SSH$NCU_REPO"
+
+    # 先让 ncu 切到 dev-release，避免 push worktree 分支时被拒绝
+    ncu_exec "cd $NCU_REPO && git checkout $DEPLOY_BRANCH 2>/dev/null || git checkout -b $DEPLOY_BRANCH"
+
+    # 推送 worktree 分支到 ncu
     git push ncu "$CURRENT_BRANCH" --force
 
-    # ncu 上：切到 dev-release，合并 worktree 分支
-    ncu_exec "cd $NCU_REPO && git checkout $DEPLOY_BRANCH 2>/dev/null || git checkout -b $DEPLOY_BRANCH && git merge $CURRENT_BRANCH --no-edit"
+    # ncu 上合并 worktree 分支到 dev-release
+    ncu_exec "cd $NCU_REPO && git merge $CURRENT_BRANCH --no-edit"
     ok "ncu: $CURRENT_BRANCH merged into $DEPLOY_BRANCH"
 fi
 
