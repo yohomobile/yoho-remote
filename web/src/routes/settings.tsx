@@ -14,7 +14,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { useMyOrgs, useOrg } from '@/hooks/queries/useOrgs'
 import { useCreateOrg, useInviteMember, useUpdateMemberRole, useRemoveMember } from '@/hooks/mutations/useOrgMutations'
 import { CRSApiKeyManager } from '@/components/CRSApiKeyManager'
-import { formatMachineTimestamp, getMachineIp, getMachineStatusLabel, getMachineTitle } from '@/lib/machines'
+import { formatMachineTimestamp, getMachineIp, sortMachinesForStableDisplay } from '@/lib/machines'
 
 const ROLE_LABELS: Record<OrgRole, string> = {
     owner: 'Owner',
@@ -152,26 +152,12 @@ function ProjectForm(props: {
 
     const handleSubmit = useCallback((e: React.FormEvent) => {
         e.preventDefault()
-        if (!name.trim() || !path.trim() || !machineId) return
-        props.onSubmit({ name: name.trim(), path: path.trim(), description: description.trim(), machineId })
-    }, [name, path, description, machineId, props])
+        if (!name.trim() || !path.trim()) return
+        props.onSubmit({ name: name.trim(), path: path.trim(), description: description.trim() })
+    }, [name, path, description, props])
 
     return (
         <form onSubmit={handleSubmit} className="px-3 py-2 space-y-2 border-b border-[var(--app-divider)]">
-            {/* Machine selector - first */}
-            <select
-                value={machineId ?? ''}
-                onChange={(e) => setMachineId(e.target.value || null)}
-                disabled={props.isPending}
-                className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)] disabled:opacity-50"
-            >
-                <option value="" disabled>Select machine...</option>
-                {props.machines.map((m) => (
-                    <option key={m.id} value={m.id}>
-                        {getMachineTitle(m)}{m.metadata?.platform ? ` (${m.metadata.platform})` : ''} · {getMachineStatusLabel(m)}
-                    </option>
-                ))}
-            </select>
             <input
                 type="text"
                 value={name}
@@ -463,6 +449,7 @@ export default function SettingsPage() {
         enabled: Boolean(api)
     })
     const machines = machinesData?.machines ?? []
+    const displayMachines = useMemo(() => sortMachinesForStableDisplay(machines), [machines])
 
     // Projects
     const { data: projectsData, isLoading: projectsLoading } = useQuery({
@@ -1145,20 +1132,20 @@ export default function SettingsPage() {
                                     <div>
                                         <h3 className="text-sm font-medium">Machines</h3>
                                         <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
-                                            {machines.filter((machine) => machine.active).length} / {machines.length} online · runtime and path details
+                                            {displayMachines.filter((machine) => machine.active).length} / {displayMachines.length} online · runtime and path details
                                         </p>
                                     </div>
                                     <div className="shrink-0 rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/70 px-2.5 py-1 text-[10px] font-semibold text-[var(--app-hint)]">
-                                        {machines.length} total
+                                        {displayMachines.length} total
                                     </div>
                                 </div>
-                                {machines.length === 0 ? (
+                                {displayMachines.length === 0 ? (
                                     <div className="px-3 py-4 text-center text-sm text-[var(--app-hint)]">
                                         No machines connected yet.
                                     </div>
                                 ) : (
                                     <div className="space-y-3 p-3">
-                                        {machines.map((machine) => (
+                                        {displayMachines.map((machine) => (
                                             <MachineCard key={machine.id} machine={machine} />
                                         ))}
                                     </div>

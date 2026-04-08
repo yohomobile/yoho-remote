@@ -26,6 +26,28 @@ SELF_DEPLOY_TARGET=""
 # ==================== Helpers ====================
 is_ncu() { [[ "$SELF_HOSTNAME" == "ncu" ]]; }
 
+resolve_ncu_ssh() {
+    if is_ncu; then
+        return 0
+    fi
+
+    local candidates=(
+        "guang@192.168.122.1"
+        "guang@101.100.174.21"
+        "guang@192.168.0.32"
+    )
+
+    for candidate in "${candidates[@]}"; do
+        if ssh $SSH_OPTS -o BatchMode=yes "$candidate" "true" >/dev/null 2>&1; then
+            NCU_SSH="$candidate"
+            return 0
+        fi
+    done
+
+    echo "ERROR: Unable to reach ncu via any configured SSH endpoint" >&2
+    exit 1
+}
+
 ncu_exec() {
     if is_ncu; then
         bash -c "$1"
@@ -180,6 +202,9 @@ echo "========================================="
 echo "  Yoho Remote Deploy — $DEPLOY_INFO"
 echo "  Running on: $SELF_HOSTNAME"
 echo "========================================="
+
+resolve_ncu_ssh
+echo "  NCU SSH: $NCU_SSH"
 
 # ==================== Step 1: Commit ====================
 log "Committing changes..."
