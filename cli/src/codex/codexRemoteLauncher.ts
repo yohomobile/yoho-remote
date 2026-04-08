@@ -900,11 +900,23 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
                             : 'Aborted by user';
                         messageBuffer.addMessage(abortMessage, 'status');
                         session.sendSessionEvent({ type: 'message', message: abortMessage });
-                    }
-                    if (!shouldPreserveSession) {
+
+                        // User-initiated abort: disconnect MCP client to force-kill the Codex child process.
+                        // Without this, the child process keeps running and produces stale output.
                         wasCreated = false;
                         currentModeHash = null;
-                        logger.debug('[Codex] Marked session as not created after abort for proper resume');
+                        client.clearSession();
+                        try {
+                            await client.disconnect();
+                            await client.connect();
+                            logger.debug('[Codex] Reconnected MCP client after user abort');
+                        } catch (reconnectError) {
+                            logger.warn('[Codex] Failed to reconnect MCP client after abort:', reconnectError);
+                        }
+                    } else if (!shouldPreserveSession) {
+                        wasCreated = false;
+                        currentModeHash = null;
+                        logger.debug('[Codex] Marked session as not created after completion abort for proper resume');
                     } else {
                         logger.debug('[Codex] Completion abort; keeping session for next turn');
                     }

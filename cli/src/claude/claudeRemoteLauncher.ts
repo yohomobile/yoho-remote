@@ -631,6 +631,10 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
                 logger.debug('[remote]: launch finally');
 
+                // Flush any buffered assistant message from the previous turn
+                // Without this, it would leak into the next turn when the first message triggers flushPendingAssistant()
+                flushPendingAssistant();
+
                 // Reset thinking state to prevent it from being stuck
                 session.onThinkingChange(false);
 

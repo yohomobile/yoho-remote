@@ -530,8 +530,25 @@ export class SyncEngine {
                 await this.killSession(sessionId)
             }
         } catch (error) {
-            this.deletingSessions.delete(sessionId)
-            throw error
+            // killSession RPC failed — the CLI process is likely dead or unreachable.
+            // Try daemon-level stop as fallback, then proceed with deletion to avoid zombie sessions.
+            console.warn(`[deleteSession] killSession RPC failed for ${sessionId}, attempting daemon fallback:`, error)
+
+            const machineId = session?.metadata?.machineId
+            if (machineId) {
+                try {
+                    await this.machineRpc(machineId, 'stop-session', { sessionId })
+                } catch (fallbackError) {
+                    console.warn(`[deleteSession] Daemon stop-session fallback also failed for ${sessionId}:`, fallbackError)
+                }
+            }
+
+            // Mark session as inactive so heartbeats won't resurrect it
+            if (session) {
+                session.active = false
+                session.thinking = false
+                await this.store.setSessionActive(sessionId, false, Date.now(), session.namespace).catch(() => {})
+            }
         }
 
         const deleted = await this.store.deleteSession(sessionId)
@@ -836,16 +853,15 @@ export class SyncEngine {
         // payload.thinking 是可选字段：未提供时不要覆盖已有 thinking 状态。
         // 否则会把 session 误判为 thinking=false，导致 wasThinking 误触发。
         if (payload.thinking !== undefined) {
-            // After an abort, ignore thinking=true heartbeats for a grace period (5s)
-            // to prevent stale CLI heartbeats from overriding the abort
-            const ABORT_GRACE_MS = 5_000
-            const inAbortGrace = session.abortedAt && (t - session.abortedAt < ABORT_GRACE_MS)
-            if (inAbortGrace && payload.thinking === true) {
-                // Stale heartbeat during abort grace period — ignore thinking=true
+            // While abortedAt is set, block thinking=true heartbeats entirely.
+            // The CLI may not have received the abort, so its heartbeats are stale.
+            // abortedAt is cleared when: (a) CLI sends thinking=false, or (b) user sends a new message.
+            if (session.abortedAt && payload.thinking === true) {
+                // Stale heartbeat while abort is active — ignore thinking=true
                 session.thinkingAt = t
             } else {
-                if (payload.thinking === true && session.abortedAt) {
-                    // CLI confirmed it's thinking again after grace period — clear abort state
+                if (payload.thinking === false && session.abortedAt) {
+                    // CLI confirmed abort was processed — clear abort state
                     session.abortedAt = undefined
                 }
                 session.thinking = payload.thinking
@@ -1615,6 +1631,12 @@ export class SyncEngine {
     }
 
     async sendMessage(sessionId: string, payload: { text: string; localId?: string | null; sentFrom?: 'telegram-bot' | 'webapp' | 'feishu' | 'brain-callback'; meta?: Record<string, unknown> }): Promise<void> {
+        // Clear abort state so the CLI's new thinking heartbeats are accepted
+        const session = this.sessions.get(sessionId)
+        if (session?.abortedAt) {
+            session.abortedAt = undefined
+        }
+
         const sentFrom = payload.sentFrom ?? 'webapp'
 
         const content = {
@@ -1742,9 +1764,21 @@ export class SyncEngine {
         }
 
         // Send abort RPC to CLI (may not respond if process is hung)
-        await this.sessionRpc(sessionId, 'abort', { reason: 'User aborted' }).catch(err => {
-            console.warn(`[abortSession] RPC failed for session ${sessionId}:`, err)
-        })
+        const rpcFailed = await this.sessionRpc(sessionId, 'abort', { reason: 'User aborted' })
+            .then(() => false)
+            .catch(err => {
+                console.warn(`[abortSession] RPC failed for session ${sessionId}:`, err)
+                return true
+            })
+
+        // If RPC failed and abort state is still active (user hasn't sent a new message since),
+        // escalate to daemon-level stop to actually kill the process.
+        // We check abortedAt to avoid killing a process that's already working on a new user message.
+        if (rpcFailed && session?.abortedAt && session?.metadata?.machineId) {
+            await this.machineRpc(session.metadata.machineId, 'stop-session', { sessionId }).catch(err => {
+                console.warn(`[abortSession] Daemon stop-session fallback also failed for ${sessionId}:`, err)
+            })
+        }
     }
 
     async switchSession(sessionId: string, to: 'remote' | 'local'): Promise<void> {
