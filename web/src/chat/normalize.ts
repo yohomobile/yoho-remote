@@ -776,9 +776,12 @@ function normalizeAgentRecord(
             let cacheCreationTokens: number
 
             if (lastUsage) {
-                // New format: last_token_usage.input_tokens is per-turn (single API call).
+                // New format: use total_tokens (= input + output) as context window usage.
+                // This matches how the Codex TUI computes context percentage:
+                //   last_token_usage.percent_of_context_window_remaining(model_context_window)
+                // which internally uses tokens_in_context_window() → self.total_tokens.
                 // cached_input_tokens is a SUBSET of input_tokens — don't add separately.
-                inputTokens = asNumber(lastUsage.input_tokens)
+                inputTokens = asNumber(lastUsage.total_tokens) ?? asNumber(lastUsage.input_tokens)
                 outputTokens = asNumber(lastUsage.output_tokens)
                 cacheReadTokens = 0
                 cacheCreationTokens = 0
