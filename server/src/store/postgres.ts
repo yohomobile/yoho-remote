@@ -197,11 +197,11 @@ export class PostgresStore implements IStore {
                 updated_at BIGINT NOT NULL,
                 UNIQUE(path, machine_id)
             );
-            CREATE INDEX IF NOT EXISTS idx_projects_machine_id ON projects(machine_id);
-            CREATE INDEX IF NOT EXISTS idx_projects_workspace_group_id ON projects(workspace_group_id);
             -- Migration: Add machine_id column if not exists (for existing databases)
             ALTER TABLE projects ADD COLUMN IF NOT EXISTS machine_id TEXT;
             ALTER TABLE projects ADD COLUMN IF NOT EXISTS workspace_group_id TEXT;
+            CREATE INDEX IF NOT EXISTS idx_projects_machine_id ON projects(machine_id);
+            CREATE INDEX IF NOT EXISTS idx_projects_workspace_group_id ON projects(workspace_group_id);
             ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_path_machine_id_key;
             -- Drop old unique constraint on path only (if exists)
             -- Note: PostgreSQL doesn't support IF EXISTS for constraints, so we use DO block
