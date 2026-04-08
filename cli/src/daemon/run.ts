@@ -25,12 +25,36 @@ export const initialMachineMetadata: MachineMetadata = {
   host: process.env.YOHO_MACHINE_NAME || os.hostname(),
   platform: os.platform(),
   yohoRemoteCliVersion: packageJson.version,
+  arch: os.arch(),
+  user: process.env.USER ?? null,
+  shell: process.env.SHELL ?? null,
   homeDir: os.homedir(),
   yohoRemoteHomeDir: configuration.yohoRemoteHomeDir,
   yohoRemoteLibDir: runtimePath(),
-  ...(process.env.YOHO_MACHINE_IP ? { ip: process.env.YOHO_MACHINE_IP } : {}),
+  serverUrl: configuration.serverUrl,
+  cwd: process.cwd(),
+  ...(process.env.YOHO_MACHINE_IP ? { ip: process.env.YOHO_MACHINE_IP, publicIp: process.env.YOHO_MACHINE_IP } : {}),
   ...(process.env.YOHO_MACHINE_NAME ? { displayName: process.env.YOHO_MACHINE_NAME } : {}),
 };
+
+function machineMetadataChanged(currentMetadata: MachineMetadata | null | undefined, nextMetadata: MachineMetadata): boolean {
+  if (!currentMetadata) {
+    return true;
+  }
+
+  const keys = new Set([
+    ...Object.keys(currentMetadata),
+    ...Object.keys(nextMetadata),
+  ]);
+
+  for (const key of keys) {
+    if ((currentMetadata as Record<string, unknown>)[key] !== (nextMetadata as Record<string, unknown>)[key]) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 export async function startDaemon(): Promise<void> {
   // We don't have cleanup function at the time of server construction
@@ -714,11 +738,7 @@ export async function startDaemon(): Promise<void> {
 
     // Check if metadata has changed and update if needed
     const currentMetadata = machine.metadata;
-    const metadataChanged =
-      currentMetadata?.host !== initialMachineMetadata.host ||
-      currentMetadata?.platform !== initialMachineMetadata.platform ||
-      currentMetadata?.yohoRemoteCliVersion !== initialMachineMetadata.yohoRemoteCliVersion ||
-      (currentMetadata as any)?.ip !== (initialMachineMetadata as any).ip;
+    const metadataChanged = machineMetadataChanged(currentMetadata, initialMachineMetadata);
 
     if (metadataChanged) {
       logger.debug(`[DAEMON RUN] Metadata changed, updating...`);

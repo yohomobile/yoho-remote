@@ -171,11 +171,32 @@ export type DecryptedMessage = {
 export type Machine = {
     id: string
     active: boolean
+    activeAt: number
+    createdAt: number
+    updatedAt: number
     metadata: {
         host: string
         platform: string
         yohoRemoteCliVersion: string
         displayName?: string
+        arch?: string | null
+        ip?: string | null
+        publicIp?: string | null
+        user?: string | null
+        shell?: string | null
+        homeDir?: string
+        yohoRemoteHomeDir?: string
+        yohoRemoteLibDir?: string
+        serverUrl?: string
+        cwd?: string
+    } | null
+    daemonState: {
+        status?: string
+        pid?: number
+        httpPort?: number
+        startedAt?: number
+        shutdownRequestedAt?: number
+        shutdownSource?: string
     } | null
 }
 

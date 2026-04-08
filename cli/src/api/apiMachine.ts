@@ -164,6 +164,11 @@ export class ApiMachineClient {
 
     async updateMachineMetadata(handler: (metadata: MachineMetadata | null) => MachineMetadata): Promise<void> {
         await backoff(async () => {
+            const connected = await this.waitForConnected(10_000)
+            if (!connected) {
+                throw new Error('Timed out waiting for machine socket connection')
+            }
+
             const updated = handler(this.machine.metadata)
 
             const answer = await this.socket.emitWithAck('machine-update-metadata', {
@@ -220,6 +225,11 @@ export class ApiMachineClient {
 
     async updateDaemonState(handler: (state: DaemonState | null) => DaemonState): Promise<void> {
         await backoff(async () => {
+            const connected = await this.waitForConnected(10_000)
+            if (!connected) {
+                throw new Error('Timed out waiting for machine socket connection')
+            }
+
             const updated = handler(this.machine.daemonState)
 
             const answer = await this.socket.emitWithAck('machine-update-state', {
@@ -291,6 +301,10 @@ export class ApiMachineClient {
         this.socket.on('connect', () => {
             logger.debug('[API MACHINE] Connected to bot')
             this.rpcHandlerManager.onSocketConnect(this.socket)
+            this.socket.emit('machine-alive', {
+                machineId: this.machine.id,
+                time: Date.now()
+            })
             this.updateDaemonState((state) => ({
                 ...(state ?? {}),
                 status: 'running',
@@ -380,5 +394,38 @@ export class ApiMachineClient {
         if (this.socket) {
             this.socket.close()
         }
+    }
+
+    private async waitForConnected(timeoutMs: number): Promise<boolean> {
+        if (this.socket.connected) {
+            return true
+        }
+
+        this.socket.connect()
+
+        return await new Promise<boolean>((resolve) => {
+            let settled = false
+
+            const cleanup = () => {
+                this.socket.off('connect', onConnect)
+                clearTimeout(timeout)
+            }
+
+            const onConnect = () => {
+                if (settled) return
+                settled = true
+                cleanup()
+                resolve(true)
+            }
+
+            const timeout = setTimeout(() => {
+                if (settled) return
+                settled = true
+                cleanup()
+                resolve(false)
+            }, Math.max(0, timeoutMs))
+
+            this.socket.on('connect', onConnect)
+        })
     }
 }

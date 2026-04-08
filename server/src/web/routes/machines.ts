@@ -7,6 +7,7 @@ import type { WebAppEnv } from '../middleware/auth'
 import { buildInitPrompt } from '../prompts/initPrompt'
 import { requireMachine } from './guards'
 import { isMachineBlocked } from './blocklist'
+import { serializeMachine, sortMachinesForDisplay } from './machinePayload'
 
 const spawnBodySchema = z.object({
     directory: z.string().min(1),
@@ -111,9 +112,10 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
 
         const namespace = c.get('namespace')
         const orgId = c.req.query('orgId')
-        const machines = engine.getOnlineMachinesByNamespace(namespace, orgId ?? undefined)
+        const machines = engine.getMachinesByNamespace(namespace)
+            .filter((machine) => !orgId || machine.orgId === orgId || machine.orgId == null)
             .filter((m) => !isMachineBlocked(m))
-        return c.json({ machines })
+        return c.json({ machines: sortMachinesForDisplay(machines).map(serializeMachine) })
     })
 
     app.post('/machines/:id/spawn', async (c) => {

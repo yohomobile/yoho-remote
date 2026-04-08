@@ -23,7 +23,7 @@ export function registerSessionTools(
     // ===== machine_list =====
     mcp.registerTool<any, any>('machine_list', {
         title: 'List Machines',
-        description: 'List all online machines with their host, platform, and CLI version.',
+        description: 'List all machines with their online status, host, IP, platform, CLI version, and daemon details.',
         inputSchema: z.object({}),
     }, async () => {
         try {

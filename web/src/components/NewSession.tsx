@@ -8,7 +8,7 @@ import { usePlatform } from '@/hooks/usePlatform'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
 import { queryKeys } from '@/lib/query-keys'
 import { useAppContext } from '@/lib/app-context'
-import { getMachineTitle } from '@/lib/machines'
+import { getMachineStatusLabel, getMachineTitle } from '@/lib/machines'
 
 type AgentType = 'claude' | 'codex' | 'codez' | 'droid'
 type ClaudeModelMode = 'sonnet' | 'opus' | 'glm-5.1'
@@ -173,6 +173,10 @@ export function NewSession(props: {
     const [error, setError] = useState<string | null>(null)
     const [isCustomPath, setIsCustomPath] = useState(false)
     const [spawnLogs, setSpawnLogs] = useState<SpawnLogEntry[]>([])
+    const onlineMachines = useMemo(
+        () => props.machines.filter((machine) => machine.active),
+        [props.machines]
+    )
 
     // Fetch projects for selected machine (includes global projects where machineId is null)
     const { data: projectsData, isLoading: projectsLoading } = useQuery({
@@ -226,14 +230,17 @@ export function NewSession(props: {
 
     // Initialize with saved machine or first available
     useEffect(() => {
-        if (props.machines.length === 0) return
-        if (machineId && props.machines.find((m) => m.id === machineId)) return
+        if (onlineMachines.length === 0) {
+            setMachineId(null)
+            return
+        }
+        if (machineId && onlineMachines.find((m) => m.id === machineId)) return
 
         // savedPrefs.machineId 已通过 useState 初始值设置，如果它不在列表中才 fallback
-        if (props.machines[0]) {
-            setMachineId(props.machines[0].id)
+        if (onlineMachines[0]) {
+            setMachineId(onlineMachines[0].id)
         }
-    }, [props.machines, machineId])
+    }, [onlineMachines, machineId])
 
     // Reset project path when machine changes (different machine may have different projects)
     const [initialProjectRestored, setInitialProjectRestored] = useState(false)
@@ -334,7 +341,7 @@ export function NewSession(props: {
         }
     }
 
-    const canCreate = Boolean(machineId && projectPath.trim() && !isFormDisabled)
+    const canCreate = Boolean(machineId && currentMachine?.active && projectPath.trim() && !isFormDisabled)
 
     return (
         <div className="flex flex-col divide-y divide-[var(--app-divider)]">
@@ -352,13 +359,13 @@ export function NewSession(props: {
                     {props.isLoading && (
                         <option value="">Loading machines…</option>
                     )}
-                    {!props.isLoading && props.machines.length === 0 && (
-                        <option value="">No machines available</option>
+                    {!props.isLoading && onlineMachines.length === 0 && (
+                        <option value="">No online machines available</option>
                     )}
-                    {props.machines.map((m) => (
+                    {onlineMachines.map((m) => (
                         <option key={m.id} value={m.id}>
                             {getMachineTitle(m)}
-                            {m.metadata?.platform ? ` (${m.metadata.platform})` : ''}
+                            {m.metadata?.platform ? ` (${m.metadata.platform})` : ''} · {getMachineStatusLabel(m)}
                         </option>
                     ))}
                 </select>

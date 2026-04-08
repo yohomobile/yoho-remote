@@ -7,6 +7,7 @@ import { safeCompareStrings } from '../../utils/crypto'
 import { parseAccessToken } from '../../utils/accessToken'
 import type { Machine, Session, SyncEngine } from '../../sync/syncEngine'
 import type { SSEManager } from '../../sse/sseManager'
+import { serializeMachine, sortMachinesForDisplay } from './machinePayload'
 
 const bearerSchema = z.string().regex(/^Bearer\s+(.+)$/i)
 
@@ -190,18 +191,9 @@ export function createCliRoutes(
             return c.json({ error: 'Not ready' }, 503)
         }
         const namespace = c.get('namespace')
-        const machines = engine.getOnlineMachinesByNamespace(namespace)
+        const machines = sortMachinesForDisplay(engine.getMachinesByNamespace(namespace))
         return c.json({
-            machines: machines.map(m => ({
-                id: m.id,
-                active: m.active,
-                activeAt: m.activeAt,
-                metadata: m.metadata ? {
-                    host: m.metadata.host,
-                    platform: m.metadata.platform,
-                    yohoRemoteCliVersion: m.metadata.yohoRemoteCliVersion,
-                } : null,
-            }))
+            machines: machines.map(serializeMachine)
         })
     })
 

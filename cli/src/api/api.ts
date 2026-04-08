@@ -457,7 +457,10 @@ export class ApiClient {
         id: string
         active: boolean
         activeAt: number
-        metadata: { host: string; platform: string; yohoRemoteCliVersion: string } | null
+        createdAt: number
+        updatedAt: number
+        metadata: MachineMetadata | null
+        daemonState: DaemonState | null
     }>> {
         const response = await axios.get(
             `${configuration.serverUrl}/cli/machines`,

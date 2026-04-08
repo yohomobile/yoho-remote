@@ -14,6 +14,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { useMyOrgs, useOrg } from '@/hooks/queries/useOrgs'
 import { useCreateOrg, useInviteMember, useUpdateMemberRole, useRemoveMember } from '@/hooks/mutations/useOrgMutations'
 import { CRSApiKeyManager } from '@/components/CRSApiKeyManager'
+import { formatMachineTimestamp, getMachineIp, getMachineStatusLabel, getMachineTitle } from '@/lib/machines'
 
 const ROLE_LABELS: Record<OrgRole, string> = {
     owner: 'Owner',
@@ -151,12 +152,6 @@ function ProjectForm(props: {
         props.onSubmit({ name: name.trim(), path: path.trim(), description: description.trim(), machineId })
     }, [name, path, description, machineId, props])
 
-    const getMachineTitle = (machine: Machine): string => {
-        if (machine.metadata?.displayName) return machine.metadata.displayName
-        if (machine.metadata?.host) return machine.metadata.host
-        return machine.id.slice(0, 8)
-    }
-
     return (
         <form onSubmit={handleSubmit} className="px-3 py-2 space-y-2 border-b border-[var(--app-divider)]">
             {/* Machine selector - first */}
@@ -169,7 +164,7 @@ function ProjectForm(props: {
                 <option value="" disabled>Select machine...</option>
                 {props.machines.map((m) => (
                     <option key={m.id} value={m.id}>
-                        {getMachineTitle(m)}{m.metadata?.platform ? ` (${m.metadata.platform})` : ''}
+                        {getMachineTitle(m)}{m.metadata?.platform ? ` (${m.metadata.platform})` : ''} · {getMachineStatusLabel(m)}
                     </option>
                 ))}
             </select>
@@ -216,6 +211,155 @@ function ProjectForm(props: {
                 </button>
             </div>
         </form>
+    )
+}
+
+function MachineDetail(props: {
+    label: string
+    value: React.ReactNode
+    mono?: boolean
+    tone?: 'default' | 'accent'
+    fullWidth?: boolean
+}) {
+    return (
+        <div className={`rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)]/70 px-3 py-2 ${props.fullWidth ? 'sm:col-span-2' : ''}`}>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--app-hint)]">
+                {props.label}
+            </div>
+            <div className={`mt-1 text-[11px] leading-relaxed break-all ${
+                props.mono ? 'font-mono' : ''
+            } ${
+                props.tone === 'accent' ? 'text-[var(--app-fg)] font-medium' : 'text-[var(--app-hint)]'
+            }`}>
+                {props.value}
+            </div>
+        </div>
+    )
+}
+
+function MachineCard(props: { machine: Machine }) {
+    const { machine } = props
+    const machineIp = getMachineIp(machine)
+    const platformLabel = [
+        machine.metadata?.platform || null,
+        machine.metadata?.arch || null,
+    ].filter(Boolean).join(' / ') || '-'
+    const daemonLabel = [
+        machine.daemonState?.status || (machine.active ? 'running' : 'offline'),
+        machine.daemonState?.pid ? `PID ${machine.daemonState.pid}` : null,
+        machine.daemonState?.httpPort ? `Port ${machine.daemonState.httpPort}` : null,
+    ].filter(Boolean).join(' · ') || '-'
+    const machineSubtitle = machine.metadata?.host && machine.metadata?.displayName && machine.metadata.displayName !== machine.metadata.host
+        ? `Host ${machine.metadata.host}`
+        : machine.metadata?.user
+            ? `User ${machine.metadata.user}`
+            : null
+
+    return (
+        <div className={`relative overflow-hidden rounded-2xl border p-3 shadow-sm ${
+            machine.active
+                ? 'border-emerald-500/20 bg-gradient-to-br from-emerald-500/10 via-[var(--app-subtle-bg)] to-sky-500/10'
+                : 'border-[var(--app-border)] bg-gradient-to-br from-[var(--app-subtle-bg)] via-transparent to-[var(--app-subtle-bg)]'
+        }`}>
+            <div className={`absolute inset-x-4 top-0 h-px ${
+                machine.active
+                    ? 'bg-gradient-to-r from-transparent via-emerald-400/80 to-transparent'
+                    : 'bg-gradient-to-r from-transparent via-[var(--app-border)] to-transparent'
+            }`} />
+
+            <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                        <span className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${
+                            machine.active
+                                ? 'bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.14)]'
+                                : 'bg-slate-400 shadow-[0_0_0_4px_rgba(148,163,184,0.14)]'
+                        }`} />
+                        <div className="min-w-0 text-sm font-semibold tracking-tight text-[var(--app-fg)] truncate">
+                            {getMachineTitle(machine)}
+                        </div>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        <span className="rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/70 px-2 py-0.5 text-[10px] font-medium text-[var(--app-hint)]">
+                            {platformLabel}
+                        </span>
+                        <span className="rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/70 px-2 py-0.5 text-[10px] font-mono text-[var(--app-hint)]">
+                            {machine.metadata?.yohoRemoteCliVersion || '-'}
+                        </span>
+                        {machineIp ? (
+                            <span className="rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/70 px-2 py-0.5 text-[10px] font-mono text-[var(--app-hint)]">
+                                {machineIp}
+                            </span>
+                        ) : null}
+                    </div>
+                    {machineSubtitle ? (
+                        <div className="mt-2 text-[11px] text-[var(--app-hint)]">
+                            {machineSubtitle}
+                        </div>
+                    ) : null}
+                </div>
+
+                <div className="shrink-0 text-right">
+                    <div className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold ${
+                        machine.active
+                            ? 'bg-emerald-500/14 text-emerald-700 dark:text-emerald-300'
+                            : 'bg-slate-500/14 text-slate-600 dark:text-slate-300'
+                    }`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${machine.active ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                        {machine.active ? 'Online' : 'Offline'}
+                    </div>
+                    <div className="mt-1 text-[10px] font-mono text-[var(--app-hint)]">
+                        {machine.id.slice(0, 8)}
+                    </div>
+                </div>
+            </div>
+
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <MachineDetail
+                    label="最近活跃"
+                    value={formatMachineTimestamp(machine.activeAt)}
+                    tone="accent"
+                />
+                <MachineDetail
+                    label="Daemon"
+                    value={daemonLabel}
+                    mono
+                    tone="accent"
+                />
+                <MachineDetail
+                    label="Home"
+                    value={machine.metadata?.homeDir || '-'}
+                    mono
+                />
+                <MachineDetail
+                    label="Remote"
+                    value={machine.metadata?.yohoRemoteHomeDir || '-'}
+                    mono
+                />
+                <MachineDetail
+                    label="Runtime"
+                    value={machine.metadata?.yohoRemoteLibDir || '-'}
+                    mono
+                />
+                <MachineDetail
+                    label="CWD"
+                    value={machine.metadata?.cwd || '-'}
+                    mono
+                />
+                <MachineDetail
+                    label="Server"
+                    value={machine.metadata?.serverUrl || '-'}
+                    mono
+                    fullWidth
+                />
+                <MachineDetail
+                    label="Machine ID"
+                    value={machine.id}
+                    mono
+                    fullWidth
+                />
+            </div>
+        </div>
     )
 }
 
@@ -1025,49 +1169,25 @@ export default function SettingsPage() {
 
                             {/* Machines Section */}
                             <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
-                                <div className="px-3 py-2 border-b border-[var(--app-divider)]">
-                                    <h3 className="text-sm font-medium">Machines</h3>
-                                    <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
-                                        Machines connected to this organization
-                                    </p>
+                                <div className="px-3 py-2.5 border-b border-[var(--app-divider)] flex items-center justify-between gap-3">
+                                    <div>
+                                        <h3 className="text-sm font-medium">Machines</h3>
+                                        <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
+                                            {machines.filter((machine) => machine.active).length} / {machines.length} online · runtime and path details
+                                        </p>
+                                    </div>
+                                    <div className="shrink-0 rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/70 px-2.5 py-1 text-[10px] font-semibold text-[var(--app-hint)]">
+                                        {machines.length} total
+                                    </div>
                                 </div>
                                 {machines.length === 0 ? (
                                     <div className="px-3 py-4 text-center text-sm text-[var(--app-hint)]">
                                         No machines connected yet.
                                     </div>
                                 ) : (
-                                    <div className="divide-y divide-[var(--app-divider)]">
+                                    <div className="space-y-3 p-3">
                                         {machines.map((machine) => (
-                                            <div key={machine.id} className="px-3 py-2.5">
-                                                <div className="flex items-start justify-between gap-2">
-                                                    <div className="min-w-0 flex-1">
-                                                        <div className="text-sm font-medium truncate">
-                                                            {machine.metadata?.host || machine.id.slice(0, 8)}
-                                                        </div>
-                                                        <div className="text-xs text-[var(--app-hint)] mt-1 space-y-0.5">
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="text-[10px] font-medium">Platform:</span>
-                                                                <span className="font-mono">{machine.metadata?.platform || '-'}</span>
-                                                            </div>
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="text-[10px] font-medium">Version:</span>
-                                                                <span className="font-mono text-[10px]">{machine.metadata?.yohoRemoteCliVersion || '-'}</span>
-                                                            </div>
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="text-[10px] font-medium">ID:</span>
-                                                                <span className="font-mono text-[10px]">{machine.id}</span>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                    <div className={`shrink-0 px-2 py-1 rounded text-[10px] font-medium ${
-                                                        machine.active
-                                                            ? 'bg-green-500/10 text-green-600 dark:text-green-400'
-                                                            : 'bg-gray-500/10 text-gray-600 dark:text-gray-400'
-                                                    }`}>
-                                                        {machine.active ? 'Active' : 'Inactive'}
-                                                    </div>
-                                                </div>
-                                            </div>
+                                            <MachineCard key={machine.id} machine={machine} />
                                         ))}
                                     </div>
                                 )}
