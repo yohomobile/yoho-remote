@@ -183,22 +183,27 @@ log "Committing changes..."
 git add -A
 git commit -m "deploy" --allow-empty || true
 
-# ==================== Step 2: Sync code to ncu ====================
+# ==================== Step 2: Sync code to ncu & merge into dev-release ====================
+CURRENT_BRANCH=$(git branch --show-current)
+DEPLOY_BRANCH="dev-release"
+
 if is_ncu; then
-    # 在 ncu 上直接运行，push 到 GitHub
-    log "Pushing to GitHub..."
+    # 在 ncu 上直接运行：合并到 dev-release
+    log "Merging $CURRENT_BRANCH into $DEPLOY_BRANCH on ncu..."
+    git checkout "$DEPLOY_BRANCH" 2>/dev/null || git checkout -b "$DEPLOY_BRANCH"
+    git merge "$CURRENT_BRANCH" --no-edit
+    ok "Merged $CURRENT_BRANCH into $DEPLOY_BRANCH"
     git push || warn "git push failed (non-fatal)"
 else
-    CURRENT_BRANCH=$(git branch --show-current)
-    log "Syncing code to ncu via SSH (branch: $CURRENT_BRANCH)..."
+    log "Syncing $CURRENT_BRANCH to ncu and merging into $DEPLOY_BRANCH..."
 
-    # 通过 SSH 把代码直接推到 ncu 的 repo（不依赖 GitHub）
+    # 通过 SSH 把 worktree 分支推到 ncu 的 repo（不依赖 GitHub）
     git remote add ncu "ssh://$NCU_SSH$NCU_REPO" 2>/dev/null || git remote set-url ncu "ssh://$NCU_SSH$NCU_REPO"
     git push ncu "$CURRENT_BRANCH" --force
 
-    # ncu 上切到对应分支
-    ncu_exec "cd $NCU_REPO && git checkout $CURRENT_BRANCH 2>/dev/null || git checkout -b $CURRENT_BRANCH"
-    ok "ncu synced to $CURRENT_BRANCH"
+    # ncu 上：切到 dev-release，合并 worktree 分支
+    ncu_exec "cd $NCU_REPO && git checkout $DEPLOY_BRANCH 2>/dev/null || git checkout -b $DEPLOY_BRANCH && git merge $CURRENT_BRANCH --no-edit"
+    ok "ncu: $CURRENT_BRANCH merged into $DEPLOY_BRANCH"
 fi
 
 # ==================== Step 3: Version ====================
