@@ -388,8 +388,8 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
     if [[ -n "$SELF_DEPLOY_TARGET" ]]; then
         log "Deploying daemon to self ($SELF_HOSTNAME) — session will restart..."
 
-        # Copy new binaries from ncu
-        ncu_exec "scp $SSH_OPTS $NCU_EXE_DIR/bun-linux-x64/yoho-remote-daemon $SELF_DEPLOY_TARGET:$INSTALL_DIR/ && scp $SSH_OPTS $NCU_EXE_DIR/bun-linux-x64/yoho-remote $SELF_DEPLOY_TARGET:$INSTALL_DIR/"
+        # 从 ncu 拉取新二进制到本机（ncu 无法反向 SSH 到 VM，所以从本机主动拉取）
+        scp $SSH_OPTS "$NCU_SSH:$NCU_EXE_DIR/bun-linux-x64/yoho-remote-daemon" "$INSTALL_DIR/" && scp $SSH_OPTS "$NCU_SSH:$NCU_EXE_DIR/bun-linux-x64/yoho-remote" "$INSTALL_DIR/"
         ok "Binaries updated"
 
         # Restart via systemd-run to survive daemon shutdown
