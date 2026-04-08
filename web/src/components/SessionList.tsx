@@ -120,7 +120,6 @@ function getAgentLabel(session: SessionSummary): string {
     const flavor = session.metadata?.flavor?.trim()
     if (flavor === 'claude') return 'Claude'
     if (flavor === 'codex') return 'Codex'
-    if (flavor === 'droid') return 'Droid'
     if (flavor) return flavor
     return 'Agent'
 }

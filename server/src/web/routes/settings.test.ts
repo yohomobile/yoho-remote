@@ -3,7 +3,7 @@ import { Hono } from 'hono'
 import { createSettingsRoutes } from './settings'
 
 describe('createSettingsRoutes projects', () => {
-    it('ignores machineId when listing shared projects', async () => {
+    it('passes machineId through when listing projects', async () => {
         const calls: Array<{ machineId: string | null | undefined; orgId: string | null | undefined }> = []
         const store = {
             getProjects: async (machineId?: string | null, orgId?: string | null) => {
@@ -18,36 +18,42 @@ describe('createSettingsRoutes projects', () => {
         const response = await app.request('/api/settings/projects?machineId=machine-a&orgId=org-a')
         expect(response.status).toBe(200)
         expect(calls).toEqual([
-            { machineId: undefined, orgId: 'org-a' },
+            { machineId: 'machine-a', orgId: 'org-a' },
         ])
     })
 
-    it('stores created and updated projects as org-shared items', async () => {
-        const addCalls: Array<{ machineId: string | null | undefined; orgId: string | null | undefined }> = []
-        const updateCalls: Array<{ machineId: string | null | undefined }> = []
+    it('stores created and updated projects with machine and workspace-group scope', async () => {
+        const addCalls: Array<{
+            machineId: string | null | undefined
+            orgId: string | null | undefined
+            workspaceGroupId: string | null | undefined
+        }> = []
+        const updateCalls: Array<{ machineId: string | null | undefined; workspaceGroupId: string | null | undefined }> = []
         const store = {
             getProjects: async () => [],
-            addProject: async (_name: string, _path: string, _description?: string, machineId?: string | null, orgId?: string | null) => {
-                addCalls.push({ machineId, orgId })
+            addProject: async (_name: string, _path: string, _description?: string, machineId?: string | null, orgId?: string | null, workspaceGroupId?: string | null) => {
+                addCalls.push({ machineId, orgId, workspaceGroupId })
                 return {
                     id: 'project-1',
                     name: 'YohoRemote',
                     path: '/home/workspaces/repos/yoho-remote',
                     description: null,
                     machineId: null,
+                    workspaceGroupId,
                     orgId,
                     createdAt: 1,
                     updatedAt: 1,
                 }
             },
-            updateProject: async (_id: string, _name: string, _path: string, _description?: string, machineId?: string | null) => {
-                updateCalls.push({ machineId })
+            updateProject: async (_id: string, _name: string, _path: string, _description?: string, machineId?: string | null, _orgId?: string | null, workspaceGroupId?: string | null) => {
+                updateCalls.push({ machineId, workspaceGroupId })
                 return {
                     id: 'project-1',
                     name: 'YohoRemote',
                     path: '/home/workspaces/repos/yoho-remote',
                     description: null,
                     machineId: null,
+                    workspaceGroupId,
                     orgId: 'org-a',
                     createdAt: 1,
                     updatedAt: 2,
@@ -64,7 +70,7 @@ describe('createSettingsRoutes projects', () => {
             body: JSON.stringify({
                 name: 'YohoRemote',
                 path: '/home/workspaces/repos/yoho-remote',
-                machineId: 'machine-a',
+                machineId: 'machine-a'
             }),
         })
         expect(createResponse.status).toBe(200)
@@ -75,16 +81,16 @@ describe('createSettingsRoutes projects', () => {
             body: JSON.stringify({
                 name: 'YohoRemote',
                 path: '/home/workspaces/repos/yoho-remote',
-                machineId: 'machine-b',
+                workspaceGroupId: 'workspace-a'
             }),
         })
         expect(updateResponse.status).toBe(200)
 
         expect(addCalls).toEqual([
-            { machineId: undefined, orgId: 'org-a' },
+            { machineId: 'machine-a', orgId: 'org-a', workspaceGroupId: undefined },
         ])
         expect(updateCalls).toEqual([
-            { machineId: undefined },
+            { machineId: undefined, workspaceGroupId: 'workspace-a' },
         ])
     })
 })

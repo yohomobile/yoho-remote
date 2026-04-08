@@ -127,12 +127,10 @@ const modelModeSchema = z.object({
 const createSessionSchema = z.object({
     machineId: z.string().min(1),
     directory: z.string().min(1),
-    agent: z.enum(['claude', 'codex', 'droid']).optional(),
+    agent: z.enum(['claude', 'codex']).optional(),
     yolo: z.boolean().optional(),
     claudeModel: z.enum(['sonnet', 'opus']).optional(),
     codexModel: z.string().min(1).optional(),
-    droidModel: z.string().min(1).optional(),
-    droidReasoningEffort: z.string().min(1).optional(),
     openrouterModel: z.string().min(1).optional(),
     permissionMode: z.enum(permissionModeValues).optional(),
     modelMode: z.enum(modelModeValues).optional(),
@@ -553,8 +551,6 @@ export function createSessionsRoutes(
             parsed.data.yolo,
             {
                 openrouterModel: parsed.data.openrouterModel,
-                droidModel: parsed.data.droidModel,
-                droidReasoningEffort: parsed.data.droidReasoningEffort,
                 permissionMode: parsed.data.permissionMode,
                 modelMode: modelMode as Session['modelMode'] | undefined,
                 modelReasoningEffort: parsed.data.modelReasoningEffort,

@@ -8,6 +8,8 @@ type SpawnInput = {
     directory: string
     agent?: 'claude' | 'codex' | 'codez' | 'droid'
     yolo?: boolean
+    sessionType?: 'simple' | 'worktree'
+    worktreeName?: string
     claudeModel?: 'sonnet' | 'opus' | 'glm-5.1'
     codexModel?: string
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
@@ -33,6 +35,8 @@ export function useSpawnSession(api: ApiClient | null): {
                 input.directory,
                 input.agent,
                 input.yolo,
+                input.sessionType,
+                input.worktreeName,
                 input.claudeModel,
                 input.codexModel,
                 input.modelReasoningEffort,

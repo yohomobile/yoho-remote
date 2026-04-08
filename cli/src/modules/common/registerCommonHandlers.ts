@@ -150,6 +150,9 @@ export interface SpawnSessionOptions {
     agent?: string;
     yolo?: boolean;
     token?: string;
+    sessionType?: 'simple' | 'worktree';
+    worktreeName?: string;
+    reuseExistingWorktree?: boolean;
     claudeSettingsType?: 'litellm' | 'claude';
     claudeAgent?: string;
     opencodeModel?: string;

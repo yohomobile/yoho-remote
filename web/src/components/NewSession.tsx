@@ -7,10 +7,12 @@ import { Spinner } from '@/components/Spinner'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
 import { useAppContext } from '@/lib/app-context'
-import { getMachineStatusLabel, getMachineTitle } from '@/lib/machines'
+import { getMachineStatusLabel, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
+import { getDefaultSessionTypeForMachine, getPersonalWorktreeOwner, isPersonalWorktreeMachine } from '@/lib/personal-worktree'
 
 type AgentType = 'claude' | 'codex' | 'codez' | 'droid'
 type ClaudeModelMode = 'sonnet' | 'opus' | 'glm-5.1'
+type SessionType = 'simple' | 'worktree'
 
 /** 上次创建 session 时的偏好设置，存储在 localStorage */
 interface SpawnPrefs {
@@ -22,6 +24,10 @@ interface SpawnPrefs {
     codexReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     droidModel?: string
     droidReasoningEffort?: string
+}
+
+function sanitizeAgentType(agent: unknown): AgentType | null {
+    return agent === 'claude' || agent === 'codex' || agent === 'codez' || agent === 'droid' ? agent : null
 }
 
 function getSpawnPrefsKey(userEmail: string | null): string {
@@ -44,6 +50,15 @@ function saveSpawnPrefs(userEmail: string | null, prefs: SpawnPrefs): void {
     } catch {
         // Ignore storage errors
     }
+}
+
+function normalizeWorkspaceGroupId(value: string | null | undefined): string | null {
+    const trimmed = value?.trim()
+    return trimmed ? trimmed : null
+}
+
+function getMachineWorkspaceGroupId(machine: Machine | null | undefined): string | null {
+    return normalizeWorkspaceGroupId(machine?.metadata?.workspaceGroupId)
 }
 
 // Claude 模型选项
@@ -73,7 +88,6 @@ const CODEX_REASONING_EFFORTS = [
     { value: 'xhigh' as const, label: 'X-High (最强推理)' },
 ]
 
-// Droid supported models (from `droid exec --help`)
 const DROID_MODELS: { value: string; label: string; reasoningEfforts: string[]; defaultEffort: string }[] = [
     { value: 'claude-opus-4-6', label: 'Claude Opus 4.6', reasoningEfforts: ['off', 'low', 'medium', 'high', 'max'], defaultEffort: 'high' },
     { value: 'claude-opus-4-6-fast', label: 'Claude Opus 4.6 Fast', reasoningEfforts: ['off', 'low', 'medium', 'high', 'max'], defaultEffort: 'high' },
@@ -162,25 +176,26 @@ export function NewSession(props: {
     const [savedPrefs] = useState(() => loadSpawnPrefs(userEmail))
     const [machineId, setMachineId] = useState<string | null>(savedPrefs.machineId ?? null)
     const [projectPath, setProjectPath] = useState(savedPrefs.projectPath ?? '')
-    const [agent, setAgent] = useState<AgentType>(savedPrefs.agent ?? 'claude')
+    const [agent, setAgent] = useState<AgentType>(sanitizeAgentType(savedPrefs.agent) ?? 'claude')
     const [claudeModel, setClaudeModel] = useState<ClaudeModelMode>(savedPrefs.claudeModel ?? 'sonnet')
     const [codexModel, setCodexModel] = useState(savedPrefs.codexModel ?? CODEX_MODELS[0].value)
     const [codexReasoningEffort, setCodexReasoningEffort] = useState<'low' | 'medium' | 'high' | 'xhigh'>(savedPrefs.codexReasoningEffort ?? 'medium')
     const [droidModel, setDroidModel] = useState(savedPrefs.droidModel ?? DROID_MODELS[0].value)
     const [droidReasoningEffort, setDroidReasoningEffort] = useState(savedPrefs.droidReasoningEffort ?? DROID_MODELS[0].defaultEffort)
+    const [sessionType, setSessionType] = useState<SessionType>('simple')
     const [error, setError] = useState<string | null>(null)
     const [isCustomPath, setIsCustomPath] = useState(false)
     const [spawnLogs, setSpawnLogs] = useState<SpawnLogEntry[]>([])
     const onlineMachines = useMemo(
-        () => props.machines.filter((machine) => machine.active),
+        () => sortMachinesForStableDisplay(props.machines).filter((machine) => machine.active),
         [props.machines]
     )
 
-    // Projects are org-shared; switching machine should not change the project list.
+    // Fetch projects for selected machine (shared + machine-specific).
     const { data: projectsData, isLoading: projectsLoading } = useQuery({
-        queryKey: ['projects', currentOrgId],
+        queryKey: ['projects', currentOrgId, machineId],
         queryFn: async () => {
-            return await props.api.getProjects(currentOrgId)
+            return await props.api.getProjects(currentOrgId, machineId)
         },
         enabled: machineId !== null
     })
@@ -190,21 +205,50 @@ export function NewSession(props: {
         () => props.machines.find(m => m.id === machineId) ?? null,
         [props.machines, machineId]
     )
+    const personalWorktreeOwner = useMemo(
+        () => isPersonalWorktreeMachine(currentMachine) ? getPersonalWorktreeOwner(userEmail) : null,
+        [currentMachine, userEmail]
+    )
+    const supportsPersonalWorktree = Boolean(personalWorktreeOwner)
+    const effectiveSessionType: SessionType = supportsPersonalWorktree ? sessionType : 'simple'
+    const currentMachineWorkspaceGroupId = useMemo(
+        () => getMachineWorkspaceGroupId(currentMachine),
+        [currentMachine]
+    )
+
     const projects = useMemo(() => {
         return Array.isArray(projectsData?.projects) ? projectsData.projects : []
     }, [projectsData])
+    const machineLocalProjects = useMemo(
+        () => projects.filter((project) => project.machineId === machineId),
+        [machineId, projects]
+    )
+    const workspaceSharedProjects = useMemo(
+        () => projects.filter((project) => project.machineId === null && Boolean(project.workspaceGroupId)),
+        [projects]
+    )
+    const globalSharedProjects = useMemo(
+        () => projects.filter((project) => project.machineId === null && !project.workspaceGroupId),
+        [projects]
+    )
 
     const selectedProject = useMemo(
         () => projects.find((p) => p.path === projectPath.trim()) ?? null,
         [projects, projectPath]
     )
 
-    const projectSuggestions = useMemo(() => {
-        return projects.map((project) => ({
-            value: project.path,
-            label: project.name
-        }))
-    }, [projects])
+    const selectedProjectScopeText = useMemo(() => {
+        if (!selectedProject) return null
+        if (selectedProject.machineId) {
+            return currentMachine
+                ? `Machine local to ${getMachineTitle(currentMachine)}`
+                : 'Machine local project'
+        }
+        if (selectedProject.workspaceGroupId) {
+            return `Shared with workspace group ${selectedProject.workspaceGroupId}`
+        }
+        return 'Global shared project'
+    }, [currentMachine, selectedProject])
 
     // Initialize with saved machine or first available
     useEffect(() => {
@@ -220,7 +264,11 @@ export function NewSession(props: {
         }
     }, [onlineMachines, machineId])
 
-    // Restore a previously selected shared project when possible.
+    useEffect(() => {
+        setSessionType(getDefaultSessionTypeForMachine(currentMachine, userEmail))
+    }, [currentMachine, userEmail])
+
+    // Reset project path when machine changes (different machine may have different projects)
     const [initialProjectRestored, setInitialProjectRestored] = useState(false)
     useEffect(() => {
         if (projects.length === 0) {
@@ -235,17 +283,16 @@ export function NewSession(props: {
         }
         setInitialProjectRestored(true)
         setProjectPath(projects[0].path)
-    }, [projects, savedPrefs.projectPath, initialProjectRestored])
+    }, [machineId, projects])
 
-    // Droid: get available reasoning efforts for the selected model
     const selectedDroidModel = useMemo(
-        () => DROID_MODELS.find(m => m.value === droidModel) ?? DROID_MODELS[0],
+        () => DROID_MODELS.find((model) => model.value === droidModel) ?? DROID_MODELS[0],
         [droidModel]
     )
 
     const handleDroidModelChange = useCallback((newModel: string) => {
         setDroidModel(newModel)
-        const model = DROID_MODELS.find(m => m.value === newModel)
+        const model = DROID_MODELS.find((entry) => entry.value === newModel)
         if (model) {
             setDroidReasoningEffort(model.defaultEffort)
         }
@@ -253,7 +300,7 @@ export function NewSession(props: {
 
     const handleMachineChange = useCallback((newMachineId: string) => {
         setMachineId(newMachineId)
-        setInitialProjectRestored(true)
+        setInitialProjectRestored(true) // 手动切换机器时不再尝试恢复旧项目
     }, [])
 
     async function handleCreate() {
@@ -276,6 +323,8 @@ export function NewSession(props: {
                 directory,
                 agent,
                 yolo: true,
+                sessionType: effectiveSessionType,
+                worktreeName: effectiveSessionType === 'worktree' ? (personalWorktreeOwner ?? undefined) : undefined,
                 claudeModel: agent === 'claude' ? claudeModel : undefined,
                 codexModel: agent === 'codex' ? codexModel : undefined,
                 modelReasoningEffort: agent === 'codex' ? codexReasoningEffort : undefined,
@@ -382,23 +431,98 @@ export function NewSession(props: {
                             {projectsLoading && (
                                 <option value="">Loading projects…</option>
                             )}
-                            {!projectsLoading && projectSuggestions.length === 0 && (
+                            {!projectsLoading && projects.length === 0 && (
                                 <option value="">No projects available</option>
                             )}
-                            {projectSuggestions.map((suggestion) => (
-                                <option key={suggestion.value} value={suggestion.value}>
-                                    {suggestion.label ?? suggestion.value}
-                                </option>
-                            ))}
+                            {machineLocalProjects.length > 0 ? (
+                                <optgroup label={currentMachine ? `Machine Local · ${getMachineTitle(currentMachine)}` : 'Machine Local'}>
+                                    {machineLocalProjects.map((project) => (
+                                        <option key={project.id} value={project.path}>
+                                            {project.name}
+                                        </option>
+                                    ))}
+                                </optgroup>
+                            ) : null}
+                            {workspaceSharedProjects.length > 0 ? (
+                                <optgroup label={currentMachineWorkspaceGroupId ? `Workspace Shared · ${currentMachineWorkspaceGroupId}` : 'Workspace Shared'}>
+                                    {workspaceSharedProjects.map((project) => (
+                                        <option key={project.id} value={project.path}>
+                                            {project.name}
+                                        </option>
+                                    ))}
+                                </optgroup>
+                            ) : null}
+                            {globalSharedProjects.length > 0 ? (
+                                <optgroup label="Global Shared (Legacy)">
+                                    {globalSharedProjects.map((project) => (
+                                        <option key={project.id} value={project.path}>
+                                            {project.name}
+                                        </option>
+                                    ))}
+                                </optgroup>
+                            ) : null}
                         </select>
-                        {selectedProject?.description && (
-                            <div className="text-xs text-[var(--app-hint)]">
-                                {selectedProject.description}
+                        {selectedProject ? (
+                            <div className="space-y-1 text-xs text-[var(--app-hint)]">
+                                <div>{selectedProjectScopeText}</div>
+                                {selectedProject.description ? (
+                                    <div>{selectedProject.description}</div>
+                                ) : null}
                             </div>
-                        )}
+                        ) : !projectsLoading && currentMachine ? (
+                            <div className="text-xs text-[var(--app-hint)]">
+                                {currentMachineWorkspaceGroupId
+                                    ? `No saved projects visible on ${getMachineTitle(currentMachine)} yet. Add a machine-local project or a shared project for workspace group ${currentMachineWorkspaceGroupId} in Settings.`
+                                    : `No saved projects for ${getMachineTitle(currentMachine)}. For standalone machines like a MacBook, add a machine-local project in Settings.`}
+                            </div>
+                        ) : null}
                     </>
                 )}
             </div>
+
+            {supportsPersonalWorktree ? (
+                <div className="flex flex-col gap-1.5 px-3 py-3">
+                    <label className="text-xs font-medium text-[var(--app-hint)]">
+                        Workspace
+                    </label>
+                    <div className="flex flex-col gap-2">
+                        <label className="flex items-start gap-2 cursor-pointer">
+                            <input
+                                type="radio"
+                                name="sessionType"
+                                value="worktree"
+                                checked={sessionType === 'worktree'}
+                                onChange={() => setSessionType('worktree')}
+                                disabled={isFormDisabled}
+                                className="mt-0.5 accent-[var(--app-link)] w-3.5 h-3.5"
+                            />
+                            <div className="flex-1">
+                                <div className="text-sm">Personal worktree</div>
+                                <div className="text-xs text-[var(--app-hint)]">
+                                    Reuse or create <span className="font-mono">{personalWorktreeOwner}</span> for this repo
+                                </div>
+                            </div>
+                        </label>
+                        <label className="flex items-start gap-2 cursor-pointer">
+                            <input
+                                type="radio"
+                                name="sessionType"
+                                value="simple"
+                                checked={sessionType === 'simple'}
+                                onChange={() => setSessionType('simple')}
+                                disabled={isFormDisabled}
+                                className="mt-0.5 accent-[var(--app-link)] w-3.5 h-3.5"
+                            />
+                            <div className="flex-1">
+                                <div className="text-sm">Base repo</div>
+                                <div className="text-xs text-[var(--app-hint)]">
+                                    Open the selected directory directly without creating a worktree
+                                </div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+            ) : null}
 
             {/* Agent Selector */}
             <div className="flex flex-col gap-1.5 px-3 py-3">
@@ -483,7 +607,6 @@ export function NewSession(props: {
                 </div>
             ) : null}
 
-            {/* Droid Model + Reasoning Effort Selector */}
             {agent === 'droid' ? (
                 <div className="flex flex-col gap-1.5 px-3 pb-3">
                     <label className="text-xs font-medium text-[var(--app-hint)]">
@@ -501,9 +624,9 @@ export function NewSession(props: {
                             </option>
                         ))}
                     </select>
-                    {selectedDroidModel.reasoningEfforts.length > 1 && (
+                    {selectedDroidModel.reasoningEfforts.length > 1 ? (
                         <>
-                            <label className="text-xs font-medium text-[var(--app-hint)] mt-1.5">
+                            <label className="text-xs font-medium text-[var(--app-hint)] mt-2">
                                 Reasoning Effort
                             </label>
                             <select
@@ -519,7 +642,7 @@ export function NewSession(props: {
                                 ))}
                             </select>
                         </>
-                    )}
+                    ) : null}
                 </div>
             ) : null}
 

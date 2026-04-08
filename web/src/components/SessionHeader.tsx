@@ -7,7 +7,7 @@ import { getClientId } from '@/lib/client-identity'
 import { ViewersBadge } from './ViewersBadge'
 import { ShareDialog } from './ShareDialog'
 import { useAppContext } from '@/lib/app-context'
-import { getMachineTitle } from '@/lib/machines'
+import { getMachineTitle, getMobileSessionAgentSummary } from '@/lib/machines'
 import { queryKeys } from '@/lib/query-keys'
 import { useMachines } from '@/hooks/queries/useMachines'
 
@@ -225,7 +225,6 @@ function getAgentLabel(session: Session): string {
     if (flavor === 'claude') return 'Claude'
     if (flavor === 'codex') return 'Codex'
     if (flavor === 'gemini') return 'Gemini'
-    if (flavor === 'droid') return 'Droid'
     if (flavor) return flavor
     return 'Agent'
 }
@@ -347,6 +346,14 @@ export function SessionHeader(props: {
         },
         [agentLabel, runtimeAgent, runtimeModel, project, worktreeBranch, machineName]
     )
+    const mobileAgentSummary = useMemo(
+        () => getMobileSessionAgentSummary({
+            agentLabel,
+            machineName,
+            projectName: project?.name
+        }),
+        [agentLabel, machineName, project?.name]
+    )
 
     // Subscription state - supports both Telegram chatId and Web clientId
     const tg = getTelegramWebApp()
@@ -418,7 +425,7 @@ export function SessionHeader(props: {
                                     onClick={() => setShowAgentDetails(!showAgentDetails)}
                                     className="text-[10px] text-[var(--app-hint)] truncate text-left leading-none"
                                 >
-                                    {[agentLabel, project?.name].filter(Boolean).join(' · ')}
+                                    {mobileAgentSummary}
                                 </button>
                         </div>
                         {/* PC端：标题 */}

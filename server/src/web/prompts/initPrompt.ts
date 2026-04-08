@@ -3,6 +3,12 @@ import type { UserRole } from '../../store'
 type InitPromptOptions = {
     projectRoot?: string | null
     userName?: string | null
+    worktree?: {
+        basePath?: string | null
+        branch?: string | null
+        name?: string | null
+        worktreePath?: string | null
+    } | null
 }
 
 export type FeishuBrainInitPromptOptions = InitPromptOptions & {

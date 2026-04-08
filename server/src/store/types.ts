@@ -356,7 +356,8 @@ export type StoredProject = {
     name: string
     path: string
     description: string | null
-    machineId: string | null  // 关联的机器 ID，null 表示通用项目（所有机器可用）
+    machineId: string | null  // 关联的机器 ID，非 null 表示 machine-local
+    workspaceGroupId: string | null  // 共享工作区组；非 null 表示 shared project 绑定到该组
     orgId: string | null      // 所属组织 ID，null 表示全局项目
     createdAt: number
     updatedAt: number

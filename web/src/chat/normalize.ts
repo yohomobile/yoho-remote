@@ -512,7 +512,7 @@ function normalizeAgentRecord(
                 } : undefined
             }
 
-            // codez (OpenAI) models may not emit a separate assistant text message;
+            // Some OpenAI-style reasoning models may not emit a separate assistant text message;
             // the reply text only appears in result.result.  Surface it as an
             // agent text block so the user can see the response.
             const resultText = typeof data.result === 'string' && data.result.trim() ? data.result as string : null

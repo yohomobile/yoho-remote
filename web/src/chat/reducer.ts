@@ -65,7 +65,7 @@ function collectTitleChanges(messages: NormalizedMessage[]): Map<string, string>
  * Remove result-text blocks when the same turn already has agent-text blocks.
  *
  * normalize.ts extracts result.result text as an extra agent-text message
- * (id ending with ":result-text:0") so that codez responses are visible even
+ * (id ending with ":result-text:0") so OpenAI-style split responses stay visible even
  * when the separate assistant message was lost.  For claude sessions the
  * assistant text message already exists, so we need to strip the duplicate.
  *

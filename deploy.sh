@@ -26,6 +26,28 @@ SELF_DEPLOY_TARGET=""
 # ==================== Helpers ====================
 is_ncu() { [[ "$SELF_HOSTNAME" == "ncu" ]]; }
 
+resolve_ncu_ssh() {
+    if is_ncu; then
+        return 0
+    fi
+
+    local candidates=(
+        "guang@192.168.122.1"
+        "guang@101.100.174.21"
+        "guang@192.168.0.32"
+    )
+
+    for candidate in "${candidates[@]}"; do
+        if ssh $SSH_OPTS -o BatchMode=yes "$candidate" "true" >/dev/null 2>&1; then
+            NCU_SSH="$candidate"
+            return 0
+        fi
+    done
+
+    echo "ERROR: Unable to reach ncu via any configured SSH endpoint" >&2
+    exit 1
+}
+
 ncu_exec() {
     if is_ncu; then
         bash -c "$1"
@@ -181,6 +203,9 @@ echo "  Yoho Remote Deploy — $DEPLOY_INFO"
 echo "  Running on: $SELF_HOSTNAME"
 echo "========================================="
 
+resolve_ncu_ssh
+echo "  NCU SSH: $NCU_SSH"
+
 # ==================== Step 1: Commit ====================
 log "Committing changes..."
 git add -A
@@ -189,6 +214,7 @@ git commit -m "deploy" --allow-empty || true
 # ==================== Step 2: Sync code to ncu & merge into dev-release ====================
 CURRENT_BRANCH=$(git branch --show-current)
 DEPLOY_BRANCH="dev-release"
+SOURCE_REPO=$(pwd)
 
 if is_ncu; then
     # 在 ncu 上直接运行：合并到 dev-release
@@ -199,18 +225,22 @@ if is_ncu; then
     git push || warn "git push failed (non-fatal)"
 else
     log "Syncing $CURRENT_BRANCH to ncu and merging into $DEPLOY_BRANCH..."
+    if [[ "$CURRENT_BRANCH" == "$DEPLOY_BRANCH" ]]; then
+        ncu_exec "cd $NCU_REPO && (git checkout $DEPLOY_BRANCH 2>/dev/null || git checkout -b $DEPLOY_BRANCH) && if ! git diff --quiet -- cli/package.json; then git stash push -m deploy-cli-version cli/package.json >/dev/null; fi && (git remote add workspace-sync $SOURCE_REPO 2>/dev/null || git remote set-url workspace-sync $SOURCE_REPO) && git fetch workspace-sync $CURRENT_BRANCH && git merge FETCH_HEAD --no-edit"
+        ok "ncu: synced $CURRENT_BRANCH from shared workspace into $DEPLOY_BRANCH"
+    else
+        git remote add ncu "ssh://$NCU_SSH$NCU_REPO" 2>/dev/null || git remote set-url ncu "ssh://$NCU_SSH$NCU_REPO"
 
-    git remote add ncu "ssh://$NCU_SSH$NCU_REPO" 2>/dev/null || git remote set-url ncu "ssh://$NCU_SSH$NCU_REPO"
+        # 先让 ncu 切到 dev-release，避免 push worktree 分支时被拒绝
+        ncu_exec "cd $NCU_REPO && git checkout $DEPLOY_BRANCH 2>/dev/null || git checkout -b $DEPLOY_BRANCH"
 
-    # 先让 ncu 切到 dev-release，避免 push worktree 分支时被拒绝
-    ncu_exec "cd $NCU_REPO && git checkout $DEPLOY_BRANCH 2>/dev/null || git checkout -b $DEPLOY_BRANCH"
+        # 推送 worktree 分支到 ncu
+        git push ncu "$CURRENT_BRANCH" --force
 
-    # 推送 worktree 分支到 ncu
-    git push ncu "$CURRENT_BRANCH" --force
-
-    # ncu 上合并 worktree 分支到 dev-release
-    ncu_exec "cd $NCU_REPO && git merge $CURRENT_BRANCH --no-edit"
-    ok "ncu: $CURRENT_BRANCH merged into $DEPLOY_BRANCH"
+        # ncu 上合并 worktree 分支到 dev-release
+        ncu_exec "cd $NCU_REPO && git merge $CURRENT_BRANCH --no-edit"
+        ok "ncu: $CURRENT_BRANCH merged into $DEPLOY_BRANCH"
+    fi
 fi
 
 # ==================== Step 3: Version ====================

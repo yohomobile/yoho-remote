@@ -72,7 +72,8 @@ const machineMetadataSchema = z.object({
     host: z.string().optional(),
     platform: z.string().optional(),
     yohoRemoteCliVersion: z.string().optional(),
-    displayName: z.string().optional()
+    displayName: z.string().optional(),
+    workspaceGroupId: z.string().nullable().optional()
 }).passthrough()
 
 export interface Session {
@@ -112,6 +113,7 @@ export interface Machine {
         platform: string
         yohoRemoteCliVersion: string
         displayName?: string
+        workspaceGroupId?: string | null
         [key: string]: unknown
     } | null
     metadataVersion: number
@@ -1519,7 +1521,10 @@ export class SyncEngine {
             const platform = typeof data.platform === 'string' ? data.platform : 'unknown'
             const yohoRemoteCliVersion = typeof data.yohoRemoteCliVersion === 'string' ? data.yohoRemoteCliVersion : 'unknown'
             const displayName = typeof data.displayName === 'string' ? data.displayName : undefined
-            return { host, platform, yohoRemoteCliVersion, displayName, ...data }
+            const workspaceGroupId = typeof data.workspaceGroupId === 'string' || data.workspaceGroupId === null
+                ? data.workspaceGroupId
+                : undefined
+            return { host, platform, yohoRemoteCliVersion, displayName, workspaceGroupId, ...data }
         })()
 
         const storedActiveAt = stored.activeAt ?? stored.createdAt
@@ -1885,6 +1890,8 @@ export class SyncEngine {
             sessionId?: string
             resumeSessionId?: string
             token?: string
+            sessionType?: 'simple' | 'worktree'
+            worktreeName?: string
             claudeSettingsType?: 'litellm' | 'claude'
             claudeAgent?: string
             opencodeModel?: string
@@ -1899,6 +1906,7 @@ export class SyncEngine {
             source?: string
             mainSessionId?: string
             caller?: string
+            reuseExistingWorktree?: boolean
         }
     ): Promise<{ type: 'success'; sessionId: string; logs?: unknown[] } | { type: 'error'; message: string; logs?: unknown[] }> {
         try {
@@ -1910,6 +1918,8 @@ export class SyncEngine {
                     directory,
                     agent,
                     yolo,
+                    sessionType: options?.sessionType,
+                    worktreeName: options?.worktreeName,
                     sessionId: options?.sessionId,
                     resumeSessionId: options?.resumeSessionId,
                     token: options?.token,
@@ -1927,6 +1937,7 @@ export class SyncEngine {
                     source: options?.source,
                     mainSessionId: options?.mainSessionId,
                     caller: options?.caller,
+                    reuseExistingWorktree: options?.reuseExistingWorktree,
                 }
             )
             if (result && typeof result === 'object') {

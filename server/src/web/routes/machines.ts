@@ -4,6 +4,7 @@ import type { Session, SyncEngine } from '../../sync/syncEngine'
 import type { IStore, UserRole } from '../../store'
 import type { SSEManager } from '../../sse/sseManager'
 import type { WebAppEnv } from '../middleware/auth'
+import { resolvePersonalWorktreeSpawnOptions } from '../personalWorktree'
 import { buildInitPrompt } from '../prompts/initPrompt'
 import { requireMachine } from './guards'
 import { isMachineBlocked } from './blocklist'
@@ -13,6 +14,8 @@ const spawnBodySchema = z.object({
     directory: z.string().min(1),
     agent: z.enum(['claude', 'codex', 'codez', 'opencode', 'gemini', 'glm', 'minimax', 'grok', 'openrouter', 'aider-cli', 'droid']).optional(),
     yolo: z.boolean().optional(),
+    sessionType: z.enum(['simple', 'worktree']).optional(),
+    worktreeName: z.string().optional(),
     claudeSettingsType: z.enum(['litellm', 'claude']).optional(),
     claudeAgent: z.string().min(1).optional(),
     opencodeModel: z.string().min(1).optional(),
@@ -34,13 +37,20 @@ const pathsExistsSchema = z.object({
     paths: z.array(z.string().min(1)).max(1000)
 })
 
+const updateWorkspaceGroupSchema = z.object({
+    workspaceGroupId: z.string().max(100).nullable().optional()
+})
+
 async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null, machineId?: string): Promise<void> {
     try {
         const session = engine.getSession(sessionId)
-        const projectRoot = session?.metadata?.path?.trim() || null
+        const worktree = session?.metadata?.worktree
+        const projectRoot = session?.metadata?.path?.trim()
+            || worktree?.basePath?.trim()
+            || null
 
         console.log(`[machines/sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}`)
-        const prompt = await buildInitPrompt(role, { projectRoot, userName })
+        const prompt = await buildInitPrompt(role, { projectRoot, userName, worktree })
         if (!prompt.trim()) {
             console.warn(`[machines/sendInitPrompt] Empty prompt for session ${sessionId}, skipping`)
             return
@@ -135,6 +145,12 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
         const rawSource = parsed.data.source?.trim()
         const source = rawSource ? rawSource : 'external-api'
         const email = c.get('email')
+        const spawnTarget = resolvePersonalWorktreeSpawnOptions({
+            machine,
+            email,
+            sessionType: parsed.data.sessionType,
+            worktreeName: parsed.data.worktreeName,
+        })
 
         // 将 claudeModel / codexModel 转换为 modelMode
         let modelMode: Session['modelMode'] | undefined
@@ -153,6 +169,8 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
             parsed.data.agent,
             parsed.data.yolo,
             {
+                sessionType: spawnTarget.sessionType,
+                worktreeName: spawnTarget.worktreeName,
                 claudeSettingsType: parsed.data.claudeSettingsType,
                 claudeAgent: parsed.data.claudeAgent,
                 opencodeModel: parsed.data.opencodeModel,
@@ -160,9 +178,10 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
                 codexModel: parsed.data.codexModel,
                 droidModel: parsed.data.droidModel,
                 droidReasoningEffort: parsed.data.droidReasoningEffort,
-                modelMode: modelMode as Session['modelMode'] | undefined,
+                modelMode,
                 modelReasoningEffort: parsed.data.modelReasoningEffort,
                 source,
+                reuseExistingWorktree: spawnTarget.reuseExistingWorktree,
             }
         )
 
@@ -232,6 +251,83 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
         } catch (error) {
             return c.json({ error: error instanceof Error ? error.message : 'Failed to check paths' }, 500)
         }
+    })
+
+    app.put('/machines/:id/workspace-group', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not connected' }, 503)
+        }
+
+        const machineId = c.req.param('id')
+        const machine = requireMachine(c, engine, machineId)
+        if (machine instanceof Response) {
+            return machine
+        }
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = updateWorkspaceGroupSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        const workspaceGroupId = parsed.data.workspaceGroupId?.trim() || null
+        const baseMetadata = machine.metadata && typeof machine.metadata === 'object'
+            ? machine.metadata as Record<string, unknown>
+            : {}
+
+        const writeMetadata = async (expectedVersion: number, currentMetadata: Record<string, unknown>) => {
+            return await store.updateMachineMetadata(
+                machine.id,
+                {
+                    ...currentMetadata,
+                    workspaceGroupId
+                },
+                expectedVersion,
+                machine.namespace
+            )
+        }
+
+        let result = await writeMetadata(machine.metadataVersion, baseMetadata)
+        if (result.result === 'version-mismatch') {
+            const latest = await store.getMachineByNamespace(machine.id, machine.namespace)
+            if (!latest) {
+                return c.json({ error: 'Machine not found' }, 404)
+            }
+            const latestMetadata = latest.metadata && typeof latest.metadata === 'object'
+                ? latest.metadata as Record<string, unknown>
+                : {}
+            result = await writeMetadata(latest.metadataVersion, latestMetadata)
+        }
+
+        if (result.result !== 'success') {
+            return c.json({ error: 'Failed to update workspace group' }, 409)
+        }
+
+        const nextMetadataRecord = result.value && typeof result.value === 'object'
+            ? result.value as Record<string, unknown>
+            : {}
+        const host = typeof nextMetadataRecord.host === 'string' ? nextMetadataRecord.host : (machine.metadata?.host ?? 'unknown')
+        const platform = typeof nextMetadataRecord.platform === 'string' ? nextMetadataRecord.platform : (machine.metadata?.platform ?? 'unknown')
+        const yohoRemoteCliVersion = typeof nextMetadataRecord.yohoRemoteCliVersion === 'string'
+            ? nextMetadataRecord.yohoRemoteCliVersion
+            : (machine.metadata?.yohoRemoteCliVersion ?? 'unknown')
+        const displayName = typeof nextMetadataRecord.displayName === 'string' ? nextMetadataRecord.displayName : machine.metadata?.displayName
+
+        machine.metadata = {
+            host,
+            platform,
+            yohoRemoteCliVersion,
+            displayName,
+            workspaceGroupId,
+            ...nextMetadataRecord,
+        }
+        machine.metadataVersion = result.version
+        machine.updatedAt = Date.now()
+        machine.seq += 1
+
+        engine.emit({ type: 'machine-updated', machineId: machine.id, data: machine })
+        return c.json({ ok: true, machine: serializeMachine(machine) })
     })
 
     return app

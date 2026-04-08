@@ -320,6 +320,8 @@ export function createCliRoutes(
             parsed.data.directory,
             parsed.data.agent as any,
             true,     // yolo
+            'simple',
+            undefined,
             {
                 source: parsed.data.source,
                 mainSessionId: parsed.data.mainSessionId,
@@ -452,13 +454,17 @@ export function createCliRoutes(
     const addProjectSchema = z.object({
         name: z.string().min(1).max(100),
         path: z.string().min(1).max(500),
-        description: z.string().max(500).optional()
+        description: z.string().max(500).optional(),
+        machineId: z.string().nullable().optional(),
+        workspaceGroupId: z.string().nullable().optional()
     })
 
     const updateProjectSchema = z.object({
         name: z.string().min(1).max(100),
         path: z.string().min(1).max(500),
-        description: z.string().max(500).optional()
+        description: z.string().max(500).optional(),
+        machineId: z.string().nullable().optional(),
+        workspaceGroupId: z.string().nullable().optional()
     })
 
     // Helper: resolve orgId from sessionId
@@ -468,7 +474,7 @@ export function createCliRoutes(
         return session?.orgId ?? null
     }
 
-    // List org-shared projects (query: sessionId).
+    // List org-shared projects (query: machineId, sessionId). machineId is accepted for compatibility only.
     app.get('/projects', async (c) => {
         if (!store) return c.json({ error: 'Store not available' }, 503)
         const sessionId = c.req.query('sessionId')
@@ -477,7 +483,7 @@ export function createCliRoutes(
         return c.json({ projects })
     })
 
-    // Create org-shared project (query: sessionId, body: name, path, description?)
+    // Create org-shared project (query: sessionId, body: name, path, description?, machineId?)
     app.post('/projects', async (c) => {
         if (!store) return c.json({ error: 'Store not available' }, 503)
         const json = await c.req.json().catch(() => null)
@@ -490,8 +496,9 @@ export function createCliRoutes(
             parsed.data.name,
             parsed.data.path,
             parsed.data.description,
-            undefined,
-            orgId
+            parsed.data.machineId,
+            orgId,
+            parsed.data.workspaceGroupId
         )
         if (!project) return c.json({ error: 'Failed to add project. Path may already exist.' }, 400)
 
@@ -499,7 +506,7 @@ export function createCliRoutes(
         return c.json({ ok: true, project, projects })
     })
 
-    // Update org-shared project (param: id, query: sessionId, body: name, path, description?)
+    // Update org-shared project (param: id, query: sessionId, body: name, path, description?, machineId?)
     app.put('/projects/:id', async (c) => {
         if (!store) return c.json({ error: 'Store not available' }, 503)
         const id = c.req.param('id')
@@ -514,8 +521,9 @@ export function createCliRoutes(
             parsed.data.name,
             parsed.data.path,
             parsed.data.description,
-            undefined,
-            orgId
+            parsed.data.machineId,
+            orgId,
+            parsed.data.workspaceGroupId
         )
         if (!project) return c.json({ error: 'Project not found or path already exists' }, 404)
 

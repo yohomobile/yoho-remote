@@ -61,7 +61,6 @@ export interface StartOptions {
     startedBy?: 'daemon' | 'terminal'
     yohoRemoteSessionId?: string
     resumeSessionId?: string
-    isCodez?: boolean
 }
 
 export async function runClaude(options: StartOptions = {}): Promise<void> {
@@ -125,7 +124,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         // Initialize lifecycle state
         lifecycleState: 'running',
         lifecycleStateSince: Date.now(),
-        flavor: options.isCodez ? 'codez' : 'claude',
+        flavor: 'claude',
         runtimeAgent: runtimeAgent ?? undefined,
     };
     let response: Awaited<ReturnType<typeof api.getOrCreateSession>> | null = null;
@@ -480,6 +479,11 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
 
     const resumeSessionId = (options.resumeSessionId ?? response.metadata?.claudeSessionId ?? null) || null;
 
+    const auxMcpServers = await getYohoAuxMcpServers('claude', {
+        apiClient: api,
+        sessionId: response.id,
+    });
+
     // Create claude loop
     await loop({
         path: workingDirectory,
@@ -532,14 +536,14 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 type: 'http' as const,
                 url: yohoRemoteServer.url,
             },
-            ...getYohoAuxMcpServers('claude'),
+            ...auxMcpServers,
         },
         session,
         claudeEnvVars: options.claudeEnvVars,
         claudeArgs: options.claudeArgs,
         startedBy,
         hookSettingsPath,
-        executableCommand: options.isCodez ? 'codez' : 'claude'
+        executableCommand: 'claude'
     });
 
     const localFailure = currentSessionRef.current?.localLaunchFailure;

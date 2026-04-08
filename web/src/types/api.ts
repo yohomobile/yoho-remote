@@ -1,5 +1,5 @@
 export type PermissionMode = 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
-export type SpawnAgentType = 'claude' | 'codex' | 'droid'
+export type SpawnAgentType = 'claude' | 'codex' | 'codez' | 'droid'
 export type CodexModelMode = 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.2' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini'
 export type GrokModelMode = 'grok-4-1-fast-reasoning' | 'grok-4-1-fast-non-reasoning' | 'grok-code-fast-1' | 'grok-4-fast-reasoning' | 'grok-4-fast-non-reasoning' | 'grok-4-0709' | 'grok-3-mini' | 'grok-3'
 export type ModelMode = 'sonnet' | 'opus' | 'glm-5.1' | CodexModelMode | GrokModelMode
@@ -120,7 +120,8 @@ export type Project = {
     name: string
     path: string
     description: string | null
-    machineId: string | null  // 兼容旧数据，组织共享项目固定为 null
+    machineId: string | null  // 非 null = machine-local
+    workspaceGroupId: string | null  // null = global shared / local；非 null = shared workspace group
     createdAt: number
     updatedAt: number
 }
@@ -129,6 +130,7 @@ export type ProjectsResponse = { projects: Project[] }
 export type AddProjectResponse = { ok: true; project: Project; projects: Project[] }
 export type UpdateProjectResponse = { ok: true; project: Project; projects: Project[] }
 export type RemoveProjectResponse = { ok: true; projects: Project[] }
+export type UpdateMachineResponse = { ok: true; machine: Machine }
 
 export type RolePrompt = {
     role: UserRole
@@ -179,6 +181,7 @@ export type Machine = {
         platform: string
         yohoRemoteCliVersion: string
         displayName?: string
+        workspaceGroupId?: string | null
         arch?: string | null
         ip?: string | null
         publicIp?: string | null

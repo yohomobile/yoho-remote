@@ -16,6 +16,7 @@ import { isProcessAlive, isWindows, killProcess, killProcessByChildProcess } fro
 
 import { cleanupDaemonState, getInstalledCliMtimeMs, isDaemonRunningCurrentlyInstalledVersion, stopDaemon } from './controlClient';
 import { startDaemonControlServer } from './controlServer';
+import { createWorktree, removeWorktree, type WorktreeInfo } from './worktree';
 import { join } from 'path';
 import { runtimePath } from '@/projectPath';
 
@@ -223,8 +224,12 @@ export async function startDaemon(): Promise<void> {
       const { sessionId, machineId, approvedNewDirectoryCreation = true } = options;
       const agent = options.agent ?? 'claude';
       const yolo = options.yolo === true;
+      const sessionType = options.sessionType ?? 'simple';
+      const worktreeName = options.worktreeName;
+      const reuseExistingWorktree = options.reuseExistingWorktree === true;
       let directoryCreated = false;
       let spawnDirectory = directory;
+      let worktreeInfo: WorktreeInfo | null = null;
       let cliProcess: ReturnType<typeof spawnYohoRemoteCLI> | null = null;
 
       // Apply path mapping if configured
@@ -243,56 +248,127 @@ export async function startDaemon(): Promise<void> {
         logger.debug(`[DAEMON RUN] Failed to read settings for path mapping:`, error);
       }
 
-      addLog('init', `Starting session spawn: agent=${agent}, directory=${directory}`, 'running');
+      addLog('init', `Starting session spawn: agent=${agent}, directory=${directory}, sessionType=${sessionType}`, 'running');
 
-      addLog('directory', `Checking directory: ${directory}`, 'running');
-      try {
-        await fs.access(directory);
-        logger.debug(`[DAEMON RUN] Directory exists: ${directory}`);
-        addLog('directory', `Directory exists: ${directory}`, 'success');
-      } catch (error) {
-        logger.debug(`[DAEMON RUN] Directory doesn't exist, creating: ${directory}`);
-        addLog('directory', `Directory doesn't exist, will create: ${directory}`, 'running');
-
-        if (!approvedNewDirectoryCreation) {
-          logger.debug(`[DAEMON RUN] Directory creation not approved for: ${directory}`);
-          addLog('directory', `Directory creation not approved`, 'error');
-          return {
-            type: 'requestToApproveDirectoryCreation',
-            directory,
-            logs: spawnLogs
-          };
-        }
-
+      if (sessionType === 'simple') {
+        addLog('directory', `Checking directory: ${directory}`, 'running');
         try {
-          await fs.mkdir(directory, { recursive: true });
-          logger.debug(`[DAEMON RUN] Successfully created directory: ${directory}`);
-          directoryCreated = true;
-          addLog('directory', `Successfully created directory: ${directory}`, 'success');
-        } catch (mkdirError: any) {
-          let errorMessage = `Unable to create directory at '${directory}'. `;
+          await fs.access(directory);
+          logger.debug(`[DAEMON RUN] Directory exists: ${directory}`);
+          addLog('directory', `Directory exists: ${directory}`, 'success');
+        } catch (error) {
+          logger.debug(`[DAEMON RUN] Directory doesn't exist, creating: ${directory}`);
+          addLog('directory', `Directory doesn't exist, will create: ${directory}`, 'running');
 
-          if (mkdirError.code === 'EACCES') {
-            errorMessage += `Permission denied. You don't have write access to create a folder at this location. Try using a different path or check your permissions.`;
-          } else if (mkdirError.code === 'ENOTDIR') {
-            errorMessage += `A file already exists at this path or in the parent path. Cannot create a directory here. Please choose a different location.`;
-          } else if (mkdirError.code === 'ENOSPC') {
-            errorMessage += `No space left on device. Your disk is full. Please free up some space and try again.`;
-          } else if (mkdirError.code === 'EROFS') {
-            errorMessage += `The file system is read-only. Cannot create directories here. Please choose a writable location.`;
-          } else {
-            errorMessage += `System error: ${mkdirError.message || mkdirError}. Please verify the path is valid and you have the necessary permissions.`;
+          // Check if directory creation is approved
+          if (!approvedNewDirectoryCreation) {
+            logger.debug(`[DAEMON RUN] Directory creation not approved for: ${directory}`);
+            addLog('directory', `Directory creation not approved`, 'error');
+            return {
+              type: 'requestToApproveDirectoryCreation',
+              directory,
+              logs: spawnLogs
+            };
           }
 
-          logger.debug(`[DAEMON RUN] Directory creation failed: ${errorMessage}`);
-          addLog('directory', `Directory creation failed: ${errorMessage}`, 'error');
+          try {
+            await fs.mkdir(directory, { recursive: true });
+            logger.debug(`[DAEMON RUN] Successfully created directory: ${directory}`);
+            directoryCreated = true;
+            addLog('directory', `Successfully created directory: ${directory}`, 'success');
+          } catch (mkdirError: any) {
+            let errorMessage = `Unable to create directory at '${directory}'. `;
+
+            // Provide more helpful error messages based on the error code
+            if (mkdirError.code === 'EACCES') {
+              errorMessage += `Permission denied. You don't have write access to create a folder at this location. Try using a different path or check your permissions.`;
+            } else if (mkdirError.code === 'ENOTDIR') {
+              errorMessage += `A file already exists at this path or in the parent path. Cannot create a directory here. Please choose a different location.`;
+            } else if (mkdirError.code === 'ENOSPC') {
+              errorMessage += `No space left on device. Your disk is full. Please free up some space and try again.`;
+            } else if (mkdirError.code === 'EROFS') {
+              errorMessage += `The file system is read-only. Cannot create directories here. Please choose a writable location.`;
+            } else {
+              errorMessage += `System error: ${mkdirError.message || mkdirError}. Please verify the path is valid and you have the necessary permissions.`;
+            }
+
+            logger.debug(`[DAEMON RUN] Directory creation failed: ${errorMessage}`);
+            addLog('directory', `Directory creation failed: ${errorMessage}`, 'error');
+            return {
+              type: 'error',
+              errorMessage,
+              logs: spawnLogs
+            };
+          }
+        }
+      } else {
+        addLog('worktree', `Checking worktree base directory: ${directory}`, 'running');
+        try {
+          await fs.access(directory);
+          logger.debug(`[DAEMON RUN] Worktree base directory exists: ${directory}`);
+          addLog('worktree', `Worktree base directory exists`, 'success');
+        } catch (error) {
+          logger.debug(`[DAEMON RUN] Worktree base directory missing: ${directory}`);
+          addLog('worktree', `Worktree base directory missing: ${directory}`, 'error');
           return {
             type: 'error',
-            errorMessage,
+            errorMessage: `Worktree sessions require an existing Git repository. Directory not found: ${directory}`,
             logs: spawnLogs
           };
         }
       }
+
+      if (sessionType === 'worktree') {
+        const worktreeAction = reuseExistingWorktree
+          ? `Resolving named worktree from base: ${directory}`
+          : `Creating worktree from base: ${directory}`;
+        addLog('worktree', worktreeAction, 'running');
+        const worktreeResult = await createWorktree({
+          basePath: directory,
+          nameHint: worktreeName,
+          reuseExisting: reuseExistingWorktree
+        });
+        if (!worktreeResult.ok) {
+          logger.debug(`[DAEMON RUN] Worktree creation failed: ${worktreeResult.error}`);
+          addLog('worktree', `Worktree creation failed: ${worktreeResult.error}`, 'error');
+          return {
+            type: 'error',
+            errorMessage: worktreeResult.error,
+            logs: spawnLogs
+          };
+        }
+        worktreeInfo = worktreeResult.info;
+        spawnDirectory = worktreeInfo.worktreePath;
+        logger.debug(`[DAEMON RUN] Ready worktree ${worktreeInfo.worktreePath} (branch ${worktreeInfo.branch})`);
+        addLog('worktree', `Using worktree: ${worktreeInfo.worktreePath} (branch: ${worktreeInfo.branch})`, 'success');
+      }
+
+      const cleanupWorktree = async () => {
+        if (!worktreeInfo) {
+          return;
+        }
+        const result = await removeWorktree({
+          repoRoot: worktreeInfo.basePath,
+          worktreePath: worktreeInfo.worktreePath
+        });
+        if (!result.ok) {
+          logger.debug(`[DAEMON RUN] Failed to remove worktree ${worktreeInfo.worktreePath}: ${result.error}`);
+        }
+      };
+      const maybeCleanupWorktree = async (reason: string) => {
+        if (!worktreeInfo) {
+          return;
+        }
+        const pid = cliProcess?.pid;
+        if (pid && isProcessAlive(pid)) {
+          logger.debug(`[DAEMON RUN] Skipping worktree cleanup after ${reason}; child still running`, {
+            pid,
+            worktreePath: worktreeInfo.worktreePath
+          });
+          return;
+        }
+        await cleanupWorktree();
+      };
 
       try {
         addLog('env', `Preparing environment for agent: ${agent}`, 'running');
@@ -329,9 +405,19 @@ export async function startDaemon(): Promise<void> {
           }
         }
 
-        // For codez agent, always set CLAUDE_CODE_USE_OPENAI even without token
         if (options.agent === 'codez' && !extraEnv.CLAUDE_CODE_USE_OPENAI) {
           extraEnv = { ...extraEnv, CLAUDE_CODE_USE_OPENAI: '1' };
+        }
+
+        if (worktreeInfo) {
+          extraEnv = {
+            ...extraEnv,
+            YR_WORKTREE_BASE_PATH: worktreeInfo.basePath,
+            YR_WORKTREE_BRANCH: worktreeInfo.branch,
+            YR_WORKTREE_NAME: worktreeInfo.name,
+            YR_WORKTREE_PATH: worktreeInfo.worktreePath,
+            YR_WORKTREE_CREATED_AT: String(worktreeInfo.createdAt)
+          };
         }
 
         // Pass permission mode and model settings from original session
@@ -392,7 +478,6 @@ export async function startDaemon(): Promise<void> {
         if (agent === 'opencode') {
           extraEnv = { ...extraEnv, OPENCODE_VARIANT: 'max' };
         }
-        // Pass Droid model and reasoning effort via environment variables
         const droidModel = typeof options.droidModel === 'string' ? options.droidModel.trim() : '';
         if (agent === 'droid' && droidModel) {
           extraEnv = { ...extraEnv, YR_DROID_MODEL: droidModel };
@@ -472,6 +557,7 @@ export async function startDaemon(): Promise<void> {
         if (!cliProcess.pid) {
           logger.debug('[DAEMON RUN] Failed to spawn process - no PID returned');
           addLog('spawn', `Failed to spawn process - no PID returned`, 'error');
+          await maybeCleanupWorktree('no-pid');
           return {
             type: 'error',
             errorMessage: 'Failed to spawn YR process - no PID returned',
@@ -540,13 +626,14 @@ export async function startDaemon(): Promise<void> {
           });
         });
         if (spawnResult.type !== 'success') {
-          return spawnResult;
+          await maybeCleanupWorktree('spawn-error');
         }
         return spawnResult;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.debug('[DAEMON RUN] Failed to spawn session:', error);
         addLog('error', `Failed to spawn session: ${errorMessage}`, 'error');
+        await maybeCleanupWorktree('exception');
         return {
           type: 'error',
           errorMessage: `Failed to spawn session: ${errorMessage}`,

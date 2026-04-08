@@ -171,6 +171,7 @@ export const MachineMetadataSchema = z.object({
     host: z.string(),
     platform: z.string(),
     yohoRemoteCliVersion: z.string(),
+    workspaceGroupId: z.string().nullable().optional(),
     homeDir: z.string(),
     yohoRemoteHomeDir: z.string(),
     yohoRemoteLibDir: z.string()
@@ -345,6 +346,7 @@ export type Project = {
     path: string
     description: string | null
     machineId: string | null
+    workspaceGroupId: string | null
     orgId: string | null
     createdAt: number
     updatedAt: number

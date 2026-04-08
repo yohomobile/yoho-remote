@@ -150,8 +150,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     const toolProgressLastSent = new Map<string, number>();
     const TOOL_PROGRESS_THROTTLE_MS = 2000;
 
-    // Merge split assistant messages from codez (OpenAI reasoning models)
-    // codez outputs two assistant messages with the same response ID:
+    // Merge split assistant messages from OpenAI-style reasoning models.
+    // Some backends output two assistant messages with the same response ID:
     //   1st: content=[{type:"thinking",...}]  (reasoning, often empty text)
     //   2nd: content=[{type:"text",...}]       (actual reply)
     // We hold the first message and merge the second's content blocks into it.
@@ -183,8 +183,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     }
 
     function onMessage(message: SDKMessage) {
-        // Merge split assistant messages from codez (OpenAI reasoning models).
-        // codez emits two assistant messages with the same message.id:
+        // Merge split assistant messages from OpenAI-style reasoning models.
+        // Some backends emit two assistant messages with the same message.id:
         //   1st: content=[{type:"thinking",...}]
         //   2nd: content=[{type:"text",...}]
         // We buffer the first and merge the second's content blocks into it.

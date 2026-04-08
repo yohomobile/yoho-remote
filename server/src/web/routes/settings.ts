@@ -6,13 +6,17 @@ import type { IStore, UserRole } from '../../store'
 const addProjectSchema = z.object({
     name: z.string().min(1).max(100),
     path: z.string().min(1).max(500),
-    description: z.string().max(500).optional()
+    description: z.string().max(500).optional(),
+    machineId: z.string().nullable().optional(),
+    workspaceGroupId: z.string().nullable().optional()
 })
 
 const updateProjectSchema = z.object({
     name: z.string().min(1).max(100),
     path: z.string().min(1).max(500),
-    description: z.string().max(500).optional()
+    description: z.string().max(500).optional(),
+    machineId: z.string().nullable().optional(),
+    workspaceGroupId: z.string().nullable().optional()
 })
 
 const setRolePromptSchema = z.object({
@@ -26,10 +30,11 @@ export function createSettingsRoutes(
 
     // ==================== 项目管理 ====================
 
-    // 获取项目列表：统一返回当前组织共享目录
+    // 获取项目列表：共享项目 + 当前机器的私有项目
     app.get('/settings/projects', async (c) => {
         const orgId = c.req.query('orgId')
-        const projects = await store.getProjects(undefined, orgId)
+        const machineId = c.req.query('machineId')
+        const projects = await store.getProjects(machineId, orgId)
         return c.json({ projects })
     })
 
@@ -46,8 +51,9 @@ export function createSettingsRoutes(
             parsed.data.name,
             parsed.data.path,
             parsed.data.description,
-            undefined,
-            orgId
+            parsed.data.machineId,
+            orgId,
+            parsed.data.workspaceGroupId
         )
         if (!project) {
             return c.json({ error: 'Failed to add project. Path may already exist.' }, 400)
@@ -72,8 +78,9 @@ export function createSettingsRoutes(
             parsed.data.name,
             parsed.data.path,
             parsed.data.description,
-            undefined,
-            orgId
+            parsed.data.machineId,
+            orgId,
+            parsed.data.workspaceGroupId
         )
         if (!project) {
             return c.json({ error: 'Project not found or path already exists' }, 404)

@@ -1,10 +1,45 @@
 import type { Machine } from '@/types/api'
 
+const machineDisplayNameCollator = new Intl.Collator(undefined, {
+    numeric: true,
+    sensitivity: 'base',
+})
+
 export function getMachineTitle(machine: Machine | null | undefined): string {
     if (!machine) return 'Machine'
     if (machine.metadata?.displayName) return machine.metadata.displayName
     if (machine.metadata?.host) return machine.metadata.host
     return machine.id.slice(0, 8)
+}
+
+export function sortMachinesForStableDisplay(machines: readonly Machine[]): Machine[] {
+    return [...machines].sort((a, b) => {
+        if (a.active !== b.active) {
+            return a.active ? -1 : 1
+        }
+
+        const titleCompare = machineDisplayNameCollator.compare(getMachineTitle(a), getMachineTitle(b))
+        if (titleCompare !== 0) {
+            return titleCompare
+        }
+
+        const hostCompare = machineDisplayNameCollator.compare(a.metadata?.host ?? '', b.metadata?.host ?? '')
+        if (hostCompare !== 0) {
+            return hostCompare
+        }
+
+        return a.id.localeCompare(b.id)
+    })
+}
+
+export function getMobileSessionAgentSummary(input: {
+    agentLabel: string
+    machineName?: string | null
+    projectName?: string | null
+}): string {
+    return [input.agentLabel, input.machineName, input.projectName]
+        .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+        .join(' · ')
 }
 
 export function getMachineIp(machine: Machine | null | undefined): string | null {

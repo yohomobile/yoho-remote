@@ -99,7 +99,7 @@ export async function claudeLocal(opts: {
             onInterruptRegistrar: opts.onInterruptRegistrar,
             logLabel: 'ClaudeLocal',
             spawnName: cmd,
-            installHint: cmd === 'codez' ? 'Codez CLI' : 'Claude CLI',
+            installHint: 'Claude CLI',
             includeCause: true,
             logExit: true,
             shell: process.platform === 'win32'
