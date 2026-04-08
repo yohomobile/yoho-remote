@@ -764,10 +764,32 @@ function normalizeAgentRecord(
 
         if (data.type === 'token_count') {
             const info = isObject(data.info) ? data.info : null
-            const inputTokens = asNumber(info?.input_tokens)
-            const outputTokens = asNumber(info?.output_tokens)
-            const cacheReadTokens = asNumber(info?.cached_input_tokens) ?? asNumber(info?.cache_read_input_tokens) ?? 0
-            const cacheCreationTokens = asNumber(info?.cache_creation_input_tokens) ?? 0
+
+            // New format: nested last_token_usage + model_context_window (per-turn accurate data)
+            // TokenUsageInfo { last_token_usage: TokenUsage, total_token_usage: TokenUsage, model_context_window: i64 }
+            const lastUsage = isObject(info?.last_token_usage) ? (info.last_token_usage as Record<string, unknown>) : null
+            const modelContextWindow = asNumber(info?.model_context_window) ?? undefined
+
+            let inputTokens: number | null
+            let outputTokens: number | null
+            let cacheReadTokens: number
+            let cacheCreationTokens: number
+
+            if (lastUsage) {
+                // New format: last_token_usage.input_tokens is per-turn (single API call).
+                // cached_input_tokens is a SUBSET of input_tokens — don't add separately.
+                inputTokens = asNumber(lastUsage.input_tokens)
+                outputTokens = asNumber(lastUsage.output_tokens)
+                cacheReadTokens = 0
+                cacheCreationTokens = 0
+            } else {
+                // Old format: flat input_tokens (cumulative session billing total).
+                // cached_input_tokens is SUBSET of input_tokens — avoid double-counting.
+                inputTokens = asNumber(info?.input_tokens)
+                outputTokens = asNumber(info?.output_tokens)
+                cacheReadTokens = asNumber(info?.cache_read_input_tokens) ?? 0
+                cacheCreationTokens = asNumber(info?.cache_creation_input_tokens) ?? 0
+            }
 
             if (inputTokens === null && outputTokens === null && cacheReadTokens === 0 && cacheCreationTokens === 0) {
                 return null
@@ -785,7 +807,8 @@ function normalizeAgentRecord(
                     input_tokens: inputTokens ?? 0,
                     output_tokens: outputTokens ?? 0,
                     cache_creation_input_tokens: cacheCreationTokens,
-                    cache_read_input_tokens: cacheReadTokens
+                    cache_read_input_tokens: cacheReadTokens,
+                    model_context_window: modelContextWindow
                 }
             }
         }

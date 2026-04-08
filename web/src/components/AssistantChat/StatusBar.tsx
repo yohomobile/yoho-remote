@@ -62,11 +62,6 @@ function getConnectionStatus(
 function getContextWarning(contextSize: number, maxContextSize: number): { text: string; color: string } | null {
     const percentageUsed = (contextSize / maxContextSize) * 100
 
-    console.log('[StatusBar Debug] Context calculation:')
-    console.log('  - contextSize:', contextSize)
-    console.log('  - maxContextSize:', maxContextSize)
-    console.log('  - percentageUsed:', percentageUsed.toFixed(2) + '%')
-
     if (percentageUsed >= 95) {
         return { text: `${Math.round(percentageUsed)}% used`, color: 'text-red-500' }
     } else if (percentageUsed >= 90) {
@@ -89,6 +84,8 @@ export function StatusBar(props: {
     thinking: boolean
     agentState: AgentState | null | undefined
     contextSize?: number
+    outputTokens?: number
+    modelContextWindow?: number
     modelMode?: ModelMode
     runtimeModel?: string | null
     agentFlavor?: string | null
@@ -104,16 +101,18 @@ export function StatusBar(props: {
 
     const contextWarning = useMemo(
         () => {
-            if (props.contextSize === undefined) return null
             if (props.agentFlavor === 'codex') {
-                return { text: `${formatCompactTokenCount(props.contextSize)} input tokens`, color: 'text-[var(--app-hint)]' }
+                // Codex new format: model_context_window + last_token_usage.input_tokens (per-turn)
+                if (props.contextSize === undefined || !props.modelContextWindow) return null
+                return getContextWarning(props.contextSize, props.modelContextWindow)
             }
+            if (props.contextSize === undefined) return null
             if (props.agentFlavor && props.agentFlavor !== 'claude') return null
             const maxContextSize = getContextBudgetTokens(props.modelMode, props.runtimeModel, props.contextSize)
             if (!maxContextSize) return null
             return getContextWarning(props.contextSize, maxContextSize)
         },
-        [props.contextSize, props.modelMode, props.runtimeModel, props.agentFlavor]
+        [props.contextSize, props.modelContextWindow, props.modelMode, props.runtimeModel, props.agentFlavor]
     )
 
     return (

@@ -746,6 +746,9 @@ export type LatestUsage = {
     cacheRead: number
     contextSize: number
     timestamp: number
+    // For Codex new format: model_context_window from token_count event.
+    // When present, contextSize / modelContextWindow gives the context usage percentage.
+    modelContextWindow?: number
 }
 
 export function reduceChatBlocks(
@@ -833,6 +836,9 @@ export function reduceChatBlocks(
     let resultUsage: LatestUsage | null = null
     let assistantUsage: LatestUsage | null = null
     let fallbackUsage: LatestUsage | null = null
+    // Codex-specific: track the last token-count event.
+    // New format has model_context_window for direct percentage calculation.
+    let lastTokenCount: LatestUsage | null = null
 
     for (let i = normalized.length - 1; i >= 0; i--) {
         const msg = normalized[i]
@@ -841,22 +847,8 @@ export function reduceChatBlocks(
             const cacheCreation = msg.usage.cache_creation_input_tokens || 0
             const cacheRead = msg.usage.cache_read_input_tokens || 0
 
-            console.log('[Context Debug] Found message with usage:', {
-                index: i,
-                role: msg.role,
-                contentType: msg.content && typeof msg.content === 'object' && 'type' in msg.content ? msg.content.type : 'unknown',
-                usage: {
-                    input_tokens: inputTokens,
-                    cache_creation: cacheCreation,
-                    cache_read: cacheRead,
-                    output_tokens: msg.usage.output_tokens
-                },
-                rawUsage: msg.usage
-            })
-
             // Skip if all values are 0 (continue searching)
             if (inputTokens === 0 && cacheCreation === 0 && cacheRead === 0) {
-                console.log('[Context Debug] Skipping message with all zeros')
                 continue
             }
 
@@ -878,9 +870,17 @@ export function reduceChatBlocks(
                 fallbackUsage = usage
             }
 
+            // Track last token-count event for Codex context percentage
+            const isTokenCount = msg.role === 'event' && msg.content && typeof msg.content === 'object' && 'type' in msg.content && msg.content.type === 'token-count'
+            if (isTokenCount) {
+                if (!lastTokenCount) {
+                    lastTokenCount = { ...usage, modelContextWindow: msg.usage.model_context_window }
+                }
+                continue
+            }
+
             // Check if this is a result message (contains cumulative usage)
             if (msg.role === 'event' && msg.content && typeof msg.content === 'object' && 'type' in msg.content && msg.content.type === 'session-result') {
-                console.log('[Context Debug] Found result message (cumulative usage)')
                 if (!resultUsage) {
                     resultUsage = usage
                 }
@@ -892,7 +892,6 @@ export function reduceChatBlocks(
 
             // Store assistant message usage as fallback
             if (!assistantUsage && msg.role === 'agent') {
-                console.log('[Context Debug] Found assistant message (per-turn usage)')
                 assistantUsage = usage
                 if (resultUsage) {
                     break
@@ -902,28 +901,11 @@ export function reduceChatBlocks(
     }
 
     // Prefer assistant turn usage over session-result cumulative usage.
+    // For Codex sessions, fall back to token-count usage (with modelContextWindow if new format).
+    if (lastTokenCount) {
+        fallbackUsage = lastTokenCount
+    }
     latestUsage = assistantUsage ?? resultUsage ?? fallbackUsage
-
-    console.log('[Context Debug] Final usage decision:', {
-        resultUsage: resultUsage ? {
-            contextSize: resultUsage.contextSize,
-            inputTokens: resultUsage.inputTokens,
-            cacheCreation: resultUsage.cacheCreation,
-            cacheRead: resultUsage.cacheRead
-        } : null,
-        assistantUsage: assistantUsage ? {
-            contextSize: assistantUsage.contextSize,
-            inputTokens: assistantUsage.inputTokens,
-            cacheCreation: assistantUsage.cacheCreation,
-            cacheRead: assistantUsage.cacheRead
-        } : null,
-        chosen: latestUsage ? {
-            contextSize: latestUsage.contextSize,
-            inputTokens: latestUsage.inputTokens,
-            cacheCreation: latestUsage.cacheCreation,
-            cacheRead: latestUsage.cacheRead
-        } : null
-    })
 
     // Sort blocks by createdAt to ensure permission-only blocks appear in correct order.
     // We use a stable sort by adding original index as tiebreaker for equal createdAt values.

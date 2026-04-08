@@ -398,6 +398,8 @@ export function SessionChat(props: {
                         thinking={props.session.thinking}
                         agentState={props.session.agentState}
                         contextSize={reduced.latestUsage?.contextSize}
+                        outputTokens={reduced.latestUsage?.outputTokens}
+                        modelContextWindow={reduced.latestUsage?.modelContextWindow}
                         runtimeModel={props.session.metadata?.runtimeModel}
                         controlledByUser={props.session.agentState?.controlledByUser === true}
                         onRequestResume={handleResumeRequest}

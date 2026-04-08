@@ -6,6 +6,7 @@ export type UsageData = {
     cache_creation_input_tokens?: number
     cache_read_input_tokens?: number
     service_tier?: string
+    model_context_window?: number
 }
 
 export type AgentEvent =
