@@ -90,6 +90,7 @@ export function StatusBar(props: {
     agentState: AgentState | null | undefined
     contextSize?: number
     modelMode?: ModelMode
+    runtimeModel?: string | null
     agentFlavor?: string | null
     otherUserTyping?: TypingUser | null
 }) {
@@ -108,11 +109,11 @@ export function StatusBar(props: {
                 return { text: `${formatCompactTokenCount(props.contextSize)} input tokens`, color: 'text-[var(--app-hint)]' }
             }
             if (props.agentFlavor && props.agentFlavor !== 'claude') return null
-            const maxContextSize = getContextBudgetTokens(props.modelMode)
+            const maxContextSize = getContextBudgetTokens(props.modelMode, props.runtimeModel, props.contextSize)
             if (!maxContextSize) return null
             return getContextWarning(props.contextSize, maxContextSize)
         },
-        [props.contextSize, props.modelMode, props.agentFlavor]
+        [props.contextSize, props.modelMode, props.runtimeModel, props.agentFlavor]
     )
 
     return (
