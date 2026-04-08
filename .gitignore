@@ -34,3 +34,4 @@ coverage/
 localdocs/
 execplan/
 .aider*
+.deploy-backups/
