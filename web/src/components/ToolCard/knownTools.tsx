@@ -75,43 +75,32 @@ function extractShellCmdTitle(rawCmd: string): string | null {
     const firstWord = inner.split(/[\s|;&]/)[0] ?? ''
 
     // Detect read-file commands: extract filename and return "Read <file>"
+    const FILE_EXT_RE = /(?:^|\s)((?:[\w./~-]+\/)*[\w.-]+\.(?:ts|tsx|js|jsx|mts|mjs|json|md|sh|py|go|rs|rb|java|kt|swift|yaml|yml|toml|env|lock|txt|csv|html|css|scss))/
+
     const readCmds = new Set(['cat', 'head', 'tail', 'nl', 'sed', 'less', 'more', 'bat', 'awk'])
     if (readCmds.has(firstWord)) {
-        const fileMatch = inner.match(/(?:^|\s)((?:[\w./~-]+\/)*[\w.-]+\.(?:ts|tsx|js|jsx|mts|mjs|json|md|sh|py|go|rs|rb|java|kt|swift|yaml|yml|toml|env|lock|txt|csv|html|css|scss))/)
-        if (fileMatch) {
-            const name = fileMatch[1].split('/').pop() ?? fileMatch[1]
-            return `Read ${name}`
-        }
+        const fileMatch = inner.match(FILE_EXT_RE)
+        if (fileMatch) return fileMatch[1].split('/').pop() ?? fileMatch[1]
         return 'Read file'
     }
 
-    // Detect search commands
-    const searchCmds = new Set(['grep', 'rg', 'ag', 'ack'])
-    if (searchCmds.has(firstWord)) {
-        // Try to extract search pattern (first non-flag argument)
-        const patternMatch = inner.match(/(?:^|\s)(?:-[^\s]+\s+)*(\S+)\s+/)
-        const pattern = patternMatch ? patternMatch[1].replace(/^['"]|['"]$/g, '') : null
-        return pattern && !pattern.startsWith('-') ? `Search: ${pattern.substring(0, 20)}` : 'Search'
-    }
+    // Detect search commands → just "Search"
+    if (new Set(['grep', 'rg', 'ag', 'ack']).has(firstWord)) return 'Search'
 
     // Detect list/find commands
     if (firstWord === 'ls' || firstWord === 'tree') return 'List files'
     if (firstWord === 'find' || firstWord === 'fd') return 'Find files'
 
-    // Look for any file extension in the command as fallback
-    const fileMatch = inner.match(/(?:^|\s)((?:[\w./~-]+\/)*[\w.-]+\.(?:ts|tsx|js|jsx|mts|mjs|json|md|sh|py|go|rs|rb|java|kt|swift|yaml|yml|toml|env|lock|txt|csv|html|css|scss))/)
-    if (fileMatch) {
-        const name = fileMatch[1].split('/').pop() ?? fileMatch[1]
-        return `Run ${name}`
-    }
+    // Any file with known extension in command
+    const fileMatch = inner.match(FILE_EXT_RE)
+    if (fileMatch) return fileMatch[1].split('/').pop() ?? fileMatch[1]
 
-    // Map remaining commands to friendly labels
+    // Map remaining commands to short labels
     const labelMap: Record<string, string> = {
         git: 'Git', npm: 'npm', bun: 'Bun', yarn: 'Yarn', pnpm: 'pnpm',
         python: 'Python', python3: 'Python', node: 'Node',
-        echo: 'Shell', printf: 'Shell', for: 'Shell', while: 'Shell', if: 'Shell',
-        mkdir: 'Create dir', rm: 'Delete', mv: 'Move', cp: 'Copy', chmod: 'chmod',
-        curl: 'HTTP', wget: 'HTTP', jq: 'JSON',
+        mkdir: 'mkdir', rm: 'rm', mv: 'mv', cp: 'cp',
+        curl: 'curl', wget: 'wget', jq: 'jq',
     }
     if (labelMap[firstWord]) return labelMap[firstWord]
 
@@ -227,11 +216,10 @@ export const knownTools: Record<string, {
                 for (const parsed of opts.input.parsed_cmd) {
                     if (!isObject(parsed)) continue
                     if (parsed.type === 'read' && typeof parsed.name === 'string') {
-                        const name = basename(resolveDisplayPath(parsed.name, opts.metadata))
-                        return `Read ${name}`
+                        return basename(resolveDisplayPath(parsed.name, opts.metadata))
                     }
                     if (parsed.type === 'list_files') {
-                        return typeof parsed.path === 'string' && parsed.path ? `List ${parsed.path}` : 'List files'
+                        return typeof parsed.path === 'string' && parsed.path ? parsed.path : 'List files'
                     }
                     if (parsed.type === 'search') {
                         return typeof parsed.query === 'string' && parsed.query
