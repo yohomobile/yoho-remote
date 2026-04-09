@@ -9,7 +9,7 @@ import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
 import { useAppContext } from '@/lib/app-context'
 import { getMachineStatusLabel, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
 
-type AgentType = 'claude' | 'codex' | 'codez' | 'droid'
+type AgentType = 'claude' | 'codex'
 type ClaudeModelMode = 'sonnet' | 'opus' | 'glm-5.1'
 
 /** 上次创建 session 时的偏好设置，存储在 localStorage */
@@ -20,12 +20,10 @@ interface SpawnPrefs {
     claudeModel?: ClaudeModelMode
     codexModel?: string
     codexReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
-    droidModel?: string
-    droidReasoningEffort?: string
 }
 
 function sanitizeAgentType(agent: unknown): AgentType | null {
-    return agent === 'claude' || agent === 'codex' || agent === 'codez' || agent === 'droid' ? agent : null
+    return agent === 'claude' || agent === 'codex' ? agent : null
 }
 
 function getSpawnPrefsKey(userEmail: string | null): string {
@@ -86,25 +84,6 @@ const CODEX_REASONING_EFFORTS = [
     { value: 'xhigh' as const, label: 'X-High (最强推理)' },
 ]
 
-const DROID_MODELS: { value: string; label: string; reasoningEfforts: string[]; defaultEffort: string }[] = [
-    { value: 'claude-opus-4-6', label: 'Claude Opus 4.6', reasoningEfforts: ['off', 'low', 'medium', 'high', 'max'], defaultEffort: 'high' },
-    { value: 'claude-opus-4-6-fast', label: 'Claude Opus 4.6 Fast', reasoningEfforts: ['off', 'low', 'medium', 'high', 'max'], defaultEffort: 'high' },
-    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', reasoningEfforts: ['off', 'low', 'medium', 'high', 'max'], defaultEffort: 'high' },
-    { value: 'claude-opus-4-5-20251101', label: 'Claude Opus 4.5', reasoningEfforts: ['off', 'low', 'medium', 'high'], defaultEffort: 'off' },
-    { value: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5', reasoningEfforts: ['off', 'low', 'medium', 'high'], defaultEffort: 'off' },
-    { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', reasoningEfforts: ['off', 'low', 'medium', 'high'], defaultEffort: 'off' },
-    { value: 'gpt-5.4', label: 'GPT-5.4', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], defaultEffort: 'medium' },
-    { value: 'gpt-5.4-fast', label: 'GPT-5.4 Fast', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], defaultEffort: 'medium' },
-    { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], defaultEffort: 'high' },
-    { value: 'gpt-5.2', label: 'GPT-5.2', reasoningEfforts: ['off', 'low', 'medium', 'high', 'xhigh'], defaultEffort: 'low' },
-    { value: 'gpt-5.2-codex', label: 'GPT-5.2-Codex', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], defaultEffort: 'medium' },
-    { value: 'gpt-5.3-codex', label: 'GPT-5.3-Codex', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], defaultEffort: 'medium' },
-    { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro', reasoningEfforts: ['low', 'medium', 'high'], defaultEffort: 'high' },
-    { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash', reasoningEfforts: ['minimal', 'low', 'medium', 'high'], defaultEffort: 'high' },
-    { value: 'glm-5', label: 'GLM-5', reasoningEfforts: ['none'], defaultEffort: 'none' },
-    { value: 'kimi-k2.5', label: 'Kimi K2.5', reasoningEfforts: ['none'], defaultEffort: 'none' },
-    { value: 'minimax-m2.5', label: 'MiniMax M2.5', reasoningEfforts: ['low', 'medium', 'high'], defaultEffort: 'high' },
-]
 
 function SpawnLogPanel({ logs }: { logs: SpawnLogEntry[] }) {
     if (logs.length === 0) return null
@@ -178,8 +157,6 @@ export function NewSession(props: {
     const [claudeModel, setClaudeModel] = useState<ClaudeModelMode>(savedPrefs.claudeModel ?? 'sonnet')
     const [codexModel, setCodexModel] = useState(savedPrefs.codexModel ?? CODEX_MODELS[0].value)
     const [codexReasoningEffort, setCodexReasoningEffort] = useState<'low' | 'medium' | 'high' | 'xhigh'>(savedPrefs.codexReasoningEffort ?? 'medium')
-    const [droidModel, setDroidModel] = useState(savedPrefs.droidModel ?? DROID_MODELS[0].value)
-    const [droidReasoningEffort, setDroidReasoningEffort] = useState(savedPrefs.droidReasoningEffort ?? DROID_MODELS[0].defaultEffort)
     const [error, setError] = useState<string | null>(null)
     const [isCustomPath, setIsCustomPath] = useState(false)
     const [spawnLogs, setSpawnLogs] = useState<SpawnLogEntry[]>([])
@@ -272,19 +249,6 @@ export function NewSession(props: {
         setProjectPath(projects[0].path)
     }, [machineId, projects])
 
-    const selectedDroidModel = useMemo(
-        () => DROID_MODELS.find((model) => model.value === droidModel) ?? DROID_MODELS[0],
-        [droidModel]
-    )
-
-    const handleDroidModelChange = useCallback((newModel: string) => {
-        setDroidModel(newModel)
-        const model = DROID_MODELS.find((entry) => entry.value === newModel)
-        if (model) {
-            setDroidReasoningEffort(model.defaultEffort)
-        }
-    }, [])
-
     const handleMachineChange = useCallback((newMachineId: string) => {
         setMachineId(newMachineId)
         setInitialProjectRestored(true) // 手动切换机器时不再尝试恢复旧项目
@@ -314,8 +278,6 @@ export function NewSession(props: {
                 claudeModel: agent === 'claude' ? claudeModel : undefined,
                 codexModel: agent === 'codex' ? codexModel : undefined,
                 modelReasoningEffort: agent === 'codex' ? codexReasoningEffort : undefined,
-                droidModel: agent === 'droid' ? droidModel : undefined,
-                droidReasoningEffort: agent === 'droid' ? droidReasoningEffort : undefined,
                 orgId: currentOrgId,
             })
 
@@ -333,8 +295,6 @@ export function NewSession(props: {
                     claudeModel,
                     codexModel,
                     codexReasoningEffort,
-                    droidModel,
-                    droidReasoningEffort,
                 })
                 haptic.notification('success')
                 props.onSuccess(result.sessionId)
@@ -472,7 +432,7 @@ export function NewSession(props: {
                     Agent
                 </label>
                 <div className="flex flex-wrap gap-x-3 gap-y-2">
-                    {(['claude', 'codex', 'codez', 'droid'] as const).map((agentType) => (
+                    {(['claude', 'codex'] as const).map((agentType) => (
                         <label
                             key={agentType}
                             className="flex items-center gap-1 cursor-pointer"
@@ -546,45 +506,6 @@ export function NewSession(props: {
                             </option>
                         ))}
                     </select>
-                </div>
-            ) : null}
-
-            {agent === 'droid' ? (
-                <div className="flex flex-col gap-1.5 px-3 pb-3">
-                    <label className="text-xs font-medium text-[var(--app-hint)]">
-                        Model (Droid)
-                    </label>
-                    <select
-                        value={droidModel}
-                        onChange={(e) => handleDroidModelChange(e.target.value)}
-                        disabled={isFormDisabled}
-                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                    >
-                        {DROID_MODELS.map((model) => (
-                            <option key={model.value} value={model.value}>
-                                {model.label}
-                            </option>
-                        ))}
-                    </select>
-                    {selectedDroidModel.reasoningEfforts.length > 1 ? (
-                        <>
-                            <label className="text-xs font-medium text-[var(--app-hint)] mt-2">
-                                Reasoning Effort
-                            </label>
-                            <select
-                                value={droidReasoningEffort}
-                                onChange={(e) => setDroidReasoningEffort(e.target.value)}
-                                disabled={isFormDisabled}
-                                className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                            >
-                                {selectedDroidModel.reasoningEfforts.map((effort) => (
-                                    <option key={effort} value={effort}>
-                                        {effort}{effort === selectedDroidModel.defaultEffort ? ' (default)' : ''}
-                                    </option>
-                                ))}
-                            </select>
-                        </>
-                    ) : null}
                 </div>
             ) : null}
 
