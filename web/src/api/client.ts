@@ -42,9 +42,6 @@ import type {
     PendingInvitationsResponse,
     OrgActionResponse,
     CreateInvitationResponse,
-    CRSApiKeysResponse,
-    CRSBatchStatsResponse,
-    CRSUsageSummaryResponse,
     BrainConfigResponse,
     UpdateBrainConfigResponse,
     BrainAgent,
@@ -928,46 +925,6 @@ export class ApiClient {
         })
     }
 
-    // ==================== CRS API Key Management ====================
-
-    async getCRSApiKeys(orgId: string, page = 1, pageSize = 20): Promise<CRSApiKeysResponse> {
-        return await this.request<CRSApiKeysResponse>(
-            `/api/orgs/${encodeURIComponent(orgId)}/crs/api-keys?page=${page}&pageSize=${pageSize}`
-        )
-    }
-
-    async createCRSApiKey(orgId: string, data: { name: string; tags?: string[] }): Promise<{ success: boolean; data: unknown }> {
-        return await this.request<{ success: boolean; data: unknown }>(`/api/orgs/${encodeURIComponent(orgId)}/crs/api-keys`, {
-            method: 'POST',
-            body: JSON.stringify(data)
-        })
-    }
-
-    async updateCRSApiKey(orgId: string, keyId: string, data: { name?: string; isActive?: boolean }): Promise<{ success: boolean }> {
-        return await this.request<{ success: boolean }>(`/api/orgs/${encodeURIComponent(orgId)}/crs/api-keys/${encodeURIComponent(keyId)}`, {
-            method: 'PUT',
-            body: JSON.stringify(data)
-        })
-    }
-
-    async deleteCRSApiKey(orgId: string, keyId: string): Promise<{ success: boolean }> {
-        return await this.request<{ success: boolean }>(`/api/orgs/${encodeURIComponent(orgId)}/crs/api-keys/${encodeURIComponent(keyId)}`, {
-            method: 'DELETE'
-        })
-    }
-
-    async getCRSBatchStats(orgId: string, keyIds: string[], timeRange = '7days'): Promise<CRSBatchStatsResponse> {
-        return await this.request<CRSBatchStatsResponse>(`/api/orgs/${encodeURIComponent(orgId)}/crs/api-keys/batch-stats`, {
-            method: 'POST',
-            body: JSON.stringify({ keyIds, timeRange })
-        })
-    }
-
-    async getCRSUsageSummary(orgId: string, timeRange = '7days'): Promise<CRSUsageSummaryResponse> {
-        return await this.request<CRSUsageSummaryResponse>(
-            `/api/orgs/${encodeURIComponent(orgId)}/crs/usage-summary?timeRange=${timeRange}`
-        )
-    }
 
     // ========== Downloads ==========
 

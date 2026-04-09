@@ -12,7 +12,6 @@ import type { Project, Machine, OrgRole } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useMyOrgs, useOrg } from '@/hooks/queries/useOrgs'
 import { useCreateOrg, useInviteMember, useUpdateMemberRole, useRemoveMember } from '@/hooks/mutations/useOrgMutations'
-import { CRSApiKeyManager } from '@/components/CRSApiKeyManager'
 import { formatMachineTimestamp, getMachineIp, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
 
 const ROLE_LABELS: Record<OrgRole, string> = {
@@ -1259,25 +1258,6 @@ export default function SettingsPage() {
                             <h2 className="text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide px-1">
                                 Organization Settings
                             </h2>
-
-                            {/* API Keys Section - Only for owners */}
-                            {api && orgs.find(o => o.id === currentOrgId)?.myRole === 'owner' && (
-                                <div id="section-api-keys" className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
-                                    <div className="px-3 py-2 border-b border-[var(--app-divider)]">
-                                        <h3 className="text-sm font-medium">API Keys</h3>
-                                        <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
-                                            Manage Claude API keys and monitor token usage
-                                        </p>
-                                    </div>
-                                    <div className="p-3">
-                                        <CRSApiKeyManager
-                                            api={api}
-                                            orgId={currentOrgId}
-                                            orgSlug={orgs.find(o => o.id === currentOrgId)?.slug ?? ''}
-                                        />
-                                    </div>
-                                </div>
-                            )}
 
                             {/* Members Section */}
                             <div id="section-members" className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">

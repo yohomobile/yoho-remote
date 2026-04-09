@@ -22,7 +22,6 @@ import { createSettingsRoutes } from './routes/settings'
 import { createPushRoutes } from './routes/push'
 import { createYohoCredentialsRoutes } from './routes/yoho-credentials'
 import { createOrgsRoutes } from './routes/orgs'
-import { createCRSProxyRoutes } from './routes/crs-proxy'
 import { createCodexOpenAIRoutes } from './routes/codex-openai'
 import { createDownloadCliRoutes, createDownloadApiRoutes } from './routes/downloads'
 import type { SSEManager } from '../sse/sseManager'
@@ -117,7 +116,6 @@ function createWebApp(options: {
     app.route('/api', createPushRoutes())
     app.route('/api', createYohoCredentialsRoutes())
     app.route('/api', createOrgsRoutes(options.store))
-    app.route('/api', createCRSProxyRoutes(options.store))
     app.route('/api', createDownloadApiRoutes(options.store))
 
     if (options.embeddedAssetMap) {
