@@ -59,8 +59,9 @@ function isNamespacedToolName(toolName: string): boolean {
     return toolName.includes('__')
 }
 
-/** Extract a meaningful display title from a shell command string.
+/** Extract a semantic display title from a shell command string.
  *  Handles the Codex pattern: /usr/bin/zsh -lc "cd <dir> && <actual cmd>"
+ *  Returns titles like "Read README.md", "Search: pattern", "List files".
  */
 function extractShellCmdTitle(rawCmd: string): string | null {
     // Unwrap shell wrapper: zsh -lc "..." or bash -c "..."
@@ -71,23 +72,48 @@ function extractShellCmdTitle(rawCmd: string): string | null {
     // Strip leading "cd <dir> && "
     inner = inner.replace(/^cd\s+\S+\s*&&\s*/, '').trim()
 
-    // Look for a file path with a known extension
-    const fileMatch = inner.match(/(?:^|\s)((?:[\w./~-]+\/)*[\w.-]+\.(?:ts|tsx|js|jsx|mts|mjs|json|md|sh|py|go|rs|rb|java|kt|swift|yaml|yml|toml|env|lock|txt|csv|html|css|scss))/)
-    if (fileMatch) {
-        return fileMatch[1].split('/').pop() ?? fileMatch[1]
+    const firstWord = inner.split(/[\s|;&]/)[0] ?? ''
+
+    // Detect read-file commands: extract filename and return "Read <file>"
+    const readCmds = new Set(['cat', 'head', 'tail', 'nl', 'sed', 'less', 'more', 'bat', 'awk'])
+    if (readCmds.has(firstWord)) {
+        const fileMatch = inner.match(/(?:^|\s)((?:[\w./~-]+\/)*[\w.-]+\.(?:ts|tsx|js|jsx|mts|mjs|json|md|sh|py|go|rs|rb|java|kt|swift|yaml|yml|toml|env|lock|txt|csv|html|css|scss))/)
+        if (fileMatch) {
+            const name = fileMatch[1].split('/').pop() ?? fileMatch[1]
+            return `Read ${name}`
+        }
+        return 'Read file'
     }
 
-    // Map first command to a friendly verb
-    const firstWord = inner.split(/[\s|;&]/)[0] ?? ''
-    const verbMap: Record<string, string> = {
-        cat: 'Read', head: 'Read', tail: 'Read', nl: 'Read', sed: 'Read', less: 'Read', more: 'Read',
-        grep: 'Search', rg: 'Search', ag: 'Search',
-        find: 'Find files', ls: 'List files', tree: 'List files', fd: 'Find files',
+    // Detect search commands
+    const searchCmds = new Set(['grep', 'rg', 'ag', 'ack'])
+    if (searchCmds.has(firstWord)) {
+        // Try to extract search pattern (first non-flag argument)
+        const patternMatch = inner.match(/(?:^|\s)(?:-[^\s]+\s+)*(\S+)\s+/)
+        const pattern = patternMatch ? patternMatch[1].replace(/^['"]|['"]$/g, '') : null
+        return pattern && !pattern.startsWith('-') ? `Search: ${pattern.substring(0, 20)}` : 'Search'
+    }
+
+    // Detect list/find commands
+    if (firstWord === 'ls' || firstWord === 'tree') return 'List files'
+    if (firstWord === 'find' || firstWord === 'fd') return 'Find files'
+
+    // Look for any file extension in the command as fallback
+    const fileMatch = inner.match(/(?:^|\s)((?:[\w./~-]+\/)*[\w.-]+\.(?:ts|tsx|js|jsx|mts|mjs|json|md|sh|py|go|rs|rb|java|kt|swift|yaml|yml|toml|env|lock|txt|csv|html|css|scss))/)
+    if (fileMatch) {
+        const name = fileMatch[1].split('/').pop() ?? fileMatch[1]
+        return `Run ${name}`
+    }
+
+    // Map remaining commands to friendly labels
+    const labelMap: Record<string, string> = {
         git: 'Git', npm: 'npm', bun: 'Bun', yarn: 'Yarn', pnpm: 'pnpm',
         python: 'Python', python3: 'Python', node: 'Node',
-        echo: 'Shell', printf: 'Shell', for: 'Shell', while: 'Shell',
+        echo: 'Shell', printf: 'Shell', for: 'Shell', while: 'Shell', if: 'Shell',
+        mkdir: 'Create dir', rm: 'Delete', mv: 'Move', cp: 'Copy', chmod: 'chmod',
+        curl: 'HTTP', wget: 'HTTP', jq: 'JSON',
     }
-    if (verbMap[firstWord]) return verbMap[firstWord]
+    if (labelMap[firstWord]) return labelMap[firstWord]
 
     // Fall back to trimmed inner command (capped)
     return inner.substring(0, 35) || null
@@ -189,9 +215,9 @@ export const knownTools: Record<string, {
             const cmdStr = getInputStringAny(opts.input, ['command', 'cmd'])
             if (cmdStr) {
                 const title = extractShellCmdTitle(cmdStr)
-                if (title === 'Search') return <SearchIcon className={DEFAULT_ICON_CLASS} />
-                if (title && (title === 'Read' || /\.\w{1,5}$/.test(title))) return <EyeIcon className={DEFAULT_ICON_CLASS} />
-                if (title === 'Find files' || title === 'List files') return <SearchIcon className={DEFAULT_ICON_CLASS} />
+                if (title?.startsWith('Search')) return <SearchIcon className={DEFAULT_ICON_CLASS} />
+                if (title?.startsWith('Read') || title === 'Read file') return <EyeIcon className={DEFAULT_ICON_CLASS} />
+                if (title === 'Find files' || title === 'List files' || title?.startsWith('List')) return <SearchIcon className={DEFAULT_ICON_CLASS} />
             }
             return <TerminalIcon className={DEFAULT_ICON_CLASS} />
         },
@@ -201,10 +227,11 @@ export const knownTools: Record<string, {
                 for (const parsed of opts.input.parsed_cmd) {
                     if (!isObject(parsed)) continue
                     if (parsed.type === 'read' && typeof parsed.name === 'string') {
-                        return resolveDisplayPath(parsed.name, opts.metadata)
+                        const name = basename(resolveDisplayPath(parsed.name, opts.metadata))
+                        return `Read ${name}`
                     }
                     if (parsed.type === 'list_files') {
-                        return typeof parsed.path === 'string' && parsed.path ? `ls ${parsed.path}` : 'List files'
+                        return typeof parsed.path === 'string' && parsed.path ? `List ${parsed.path}` : 'List files'
                     }
                     if (parsed.type === 'search') {
                         return typeof parsed.query === 'string' && parsed.query
