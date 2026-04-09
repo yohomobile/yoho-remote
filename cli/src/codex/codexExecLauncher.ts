@@ -226,6 +226,13 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
         } catch { /* invalid URL, skip */ }
     }
 
+    logger.debug('[codex-exec] MCP servers configured', {
+        servers: Object.keys(mcpServers),
+        details: Object.fromEntries(
+            Object.entries(mcpServers).map(([k, v]) => [k, { command: v.command, args: v.args, cwd: v.cwd }])
+        )
+    });
+
     // ----- Resolve codex binary -----
     const codexBin = resolveCodexBinary();
     logger.debug(`[codex-exec] Resolved codex binary: ${codexBin.command} (version=${codexBin.version})`);
@@ -345,7 +352,14 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
                 first = false;
                 sendReady();
             } catch (error) {
-                logger.warn('[codex-exec] Error in exec turn:', error);
+                logger.warn('[codex-exec] Error in exec turn', {
+                    error: error instanceof Error ? error.message : String(error),
+                    stack: error instanceof Error ? error.stack : undefined,
+                    threadId,
+                    first,
+                    permissionMode: message.mode.permissionMode,
+                    messagePreview: message.message.slice(0, 200),
+                });
                 const errorMessage = error instanceof Error ? error.message : String(error);
                 const displayMessage = `Process error: ${errorMessage.slice(0, 200)}`;
                 messageBuffer.addMessage(displayMessage, 'status');
@@ -464,7 +478,17 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
     // Prompt
     args.push(prompt);
 
-    logger.debug(`[codex-exec] Spawning: ${codexBin.command} ${args.slice(0, 6).join(' ')} ... (${args.length} args total, permissionMode=${permissionMode})`);
+    logger.debug('[codex-exec] Spawning codex exec', {
+        command: codexBin.command,
+        version: codexBin.version,
+        args,
+        cwd: session.path,
+        permissionMode,
+        threadId,
+        model: startConfig.model ?? '(default)',
+        reasoningEffort: startConfig.model_reasoning_effort ?? '(default)',
+        codexHome: codexBin.env.CODEX_HOME ?? '(not set)',
+    });
 
     let resultThreadId: string | null = threadId;
 
@@ -487,6 +511,8 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
         let stderrChunks: string[] = [];
         let turnTimedOut = false;
         let resolved = false;
+        let eventCount = 0;
+        const eventTypes: string[] = [];
 
         const turnTimer = turnTimeoutMs > 0
             ? setTimeout(() => {
@@ -536,6 +562,9 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
                 return;
             }
 
+            eventCount++;
+            eventTypes.push(event.type);
+
             handleExecEvent(event, {
                 session,
                 messageBuffer,
@@ -552,25 +581,40 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
             finish(err);
         });
 
-        child.on('close', (code) => {
+        child.on('close', (code, signal) => {
             rl.close();
             session.onThinkingChange(false);
 
+            const stderr = stderrChunks.join('').trim();
+            const summary = {
+                exitCode: code,
+                signal,
+                eventCount,
+                eventTypes,
+                threadId: resultThreadId,
+                stderrLength: stderr.length,
+                stderr: stderr ? stderr.slice(0, 1000) : '(empty)',
+                turnTimedOut,
+                permissionMode,
+                model: startConfig.model ?? '(default)',
+            };
+
             if (turnTimedOut) {
+                logger.warn('[codex-exec] Turn timed out', summary);
                 finish(new Error('Turn timed out'));
                 return;
             }
 
             if (code !== 0 && code !== null) {
-                const stderr = stderrChunks.join('').trim();
                 const msg = stderr
                     ? `codex exec exited with code ${code}: ${stderr.slice(0, 500)}`
                     : `codex exec exited with code ${code}`;
-                logger.warn(`[codex-exec] ${msg}`);
+                logger.warn('[codex-exec] Non-zero exit', summary);
                 finish(new Error(msg));
                 return;
             }
 
+            logger.debug('[codex-exec] Process exited normally', { exitCode: code, eventCount });
             finish();
         });
     });
