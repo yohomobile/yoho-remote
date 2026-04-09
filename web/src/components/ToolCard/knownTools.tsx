@@ -69,8 +69,9 @@ function extractShellCmdTitle(rawCmd: string): string | null {
     const lcMatch = inner.match(/-[lc]c\s+"([\s\S]+)"$/) ?? inner.match(/-[lc]c\s+'([\s\S]+)'$/)
     if (lcMatch) inner = lcMatch[1]
 
-    // Strip leading "cd <dir> && "
+    // Strip leading "cd <dir> && " and "sleep N && " prefixes
     inner = inner.replace(/^cd\s+\S+\s*&&\s*/, '').trim()
+    inner = inner.replace(/^sleep\s+\S+\s*&&\s*/, '').trim()
 
     const firstWord = inner.split(/[\s|;&]/)[0] ?? ''
 
@@ -101,11 +102,18 @@ function extractShellCmdTitle(rawCmd: string): string | null {
         python: 'Python', python3: 'Python', node: 'Node',
         mkdir: 'mkdir', rm: 'rm', mv: 'mv', cp: 'cp',
         curl: 'curl', wget: 'wget', jq: 'jq',
+        systemctl: 'systemctl', journalctl: 'journalctl', service: 'service',
+        ssh: 'SSH', scp: 'scp', rsync: 'rsync',
+        docker: 'Docker', kubectl: 'kubectl',
+        make: 'make', cargo: 'cargo',
+        sleep: 'sleep', echo: 'Shell', printf: 'Shell',
     }
     if (labelMap[firstWord]) return labelMap[firstWord]
 
-    // Fall back to trimmed inner command (capped)
-    return inner.substring(0, 35) || null
+    // Return just the first word if it looks like a command name (no spaces/special chars)
+    if (firstWord && /^[\w-]+$/.test(firstWord) && firstWord.length <= 20) return firstWord
+
+    return null
 }
 
 function getGenericToolSubtitle(input: unknown): string | null {
