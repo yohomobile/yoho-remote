@@ -475,6 +475,30 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
                 id: randomUUID()
             });
         }
+        if (msg.type === 'mcp_tool_call_begin') {
+            const { call_id, invocation } = msg as { call_id: string; invocation: { server: string; tool: string; arguments?: unknown } };
+            session.sendCodexMessage({
+                type: 'tool-call',
+                name: `${invocation.server}__${invocation.tool}`,
+                callId: call_id,
+                input: invocation.arguments ?? {},
+                id: randomUUID()
+            });
+        }
+        if (msg.type === 'mcp_tool_call_end') {
+            const { call_id, result } = msg as {
+                call_id: string;
+                result: { Ok?: { content: unknown[]; is_error?: boolean | null }; Err?: string };
+            };
+            const ok = result?.Ok;
+            const err = result?.Err;
+            session.sendCodexMessage({
+                type: 'tool-call-result',
+                callId: call_id,
+                output: ok !== undefined ? ok : { error: err ?? 'MCP tool call failed' },
+                id: randomUUID()
+            });
+        }
         if (msg.type === 'turn_diff') {
             if (msg.unified_diff) {
                 diffProcessor.processDiff(msg.unified_diff);
