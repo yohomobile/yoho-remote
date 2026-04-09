@@ -59,6 +59,40 @@ function isNamespacedToolName(toolName: string): boolean {
     return toolName.includes('__')
 }
 
+/** Extract a meaningful display title from a shell command string.
+ *  Handles the Codex pattern: /usr/bin/zsh -lc "cd <dir> && <actual cmd>"
+ */
+function extractShellCmdTitle(rawCmd: string): string | null {
+    // Unwrap shell wrapper: zsh -lc "..." or bash -c "..."
+    let inner = rawCmd.trim()
+    const lcMatch = inner.match(/-[lc]c\s+"([\s\S]+)"$/) ?? inner.match(/-[lc]c\s+'([\s\S]+)'$/)
+    if (lcMatch) inner = lcMatch[1]
+
+    // Strip leading "cd <dir> && "
+    inner = inner.replace(/^cd\s+\S+\s*&&\s*/, '').trim()
+
+    // Look for a file path with a known extension
+    const fileMatch = inner.match(/(?:^|\s)((?:[\w./~-]+\/)*[\w.-]+\.(?:ts|tsx|js|jsx|mts|mjs|json|md|sh|py|go|rs|rb|java|kt|swift|yaml|yml|toml|env|lock|txt|csv|html|css|scss))/)
+    if (fileMatch) {
+        return fileMatch[1].split('/').pop() ?? fileMatch[1]
+    }
+
+    // Map first command to a friendly verb
+    const firstWord = inner.split(/[\s|;&]/)[0] ?? ''
+    const verbMap: Record<string, string> = {
+        cat: 'Read', head: 'Read', tail: 'Read', nl: 'Read', sed: 'Read', less: 'Read', more: 'Read',
+        grep: 'Search', rg: 'Search', ag: 'Search',
+        find: 'Find files', ls: 'List files', tree: 'List files', fd: 'Find files',
+        git: 'Git', npm: 'npm', bun: 'Bun', yarn: 'Yarn', pnpm: 'pnpm',
+        python: 'Python', python3: 'Python', node: 'Node',
+        echo: 'Shell', printf: 'Shell', for: 'Shell', while: 'Shell',
+    }
+    if (verbMap[firstWord]) return verbMap[firstWord]
+
+    // Fall back to trimmed inner command (capped)
+    return inner.substring(0, 35) || null
+}
+
 function getGenericToolSubtitle(input: unknown): string | null {
     return getInputStringAny(input, [
         'input',
@@ -143,20 +177,47 @@ export const knownTools: Record<string, {
     },
     CodexBash: {
         icon: (opts) => {
+            // parsed_cmd (newer Codex)
             if (isObject(opts.input) && Array.isArray(opts.input.parsed_cmd) && opts.input.parsed_cmd.length > 0) {
                 const first = opts.input.parsed_cmd[0]
                 const type = isObject(first) ? first.type : null
                 if (type === 'read') return <EyeIcon className={DEFAULT_ICON_CLASS} />
                 if (type === 'write') return <FileDiffIcon className={DEFAULT_ICON_CLASS} />
+                if (type === 'search') return <SearchIcon className={DEFAULT_ICON_CLASS} />
+            }
+            // Infer icon from command string (Codex 0.118 style)
+            const cmdStr = getInputStringAny(opts.input, ['command', 'cmd'])
+            if (cmdStr) {
+                const title = extractShellCmdTitle(cmdStr)
+                if (title === 'Search') return <SearchIcon className={DEFAULT_ICON_CLASS} />
+                if (title && (title === 'Read' || /\.\w{1,5}$/.test(title))) return <EyeIcon className={DEFAULT_ICON_CLASS} />
+                if (title === 'Find files' || title === 'List files') return <SearchIcon className={DEFAULT_ICON_CLASS} />
             }
             return <TerminalIcon className={DEFAULT_ICON_CLASS} />
         },
         title: (opts) => {
-            if (isObject(opts.input) && Array.isArray(opts.input.parsed_cmd) && opts.input.parsed_cmd.length === 1) {
-                const parsed = opts.input.parsed_cmd[0]
-                if (isObject(parsed) && parsed.type === 'read' && typeof parsed.name === 'string') {
-                    return resolveDisplayPath(parsed.name, opts.metadata)
+            // parsed_cmd (newer Codex): handle all types, not just single Read
+            if (isObject(opts.input) && Array.isArray(opts.input.parsed_cmd)) {
+                for (const parsed of opts.input.parsed_cmd) {
+                    if (!isObject(parsed)) continue
+                    if (parsed.type === 'read' && typeof parsed.name === 'string') {
+                        return resolveDisplayPath(parsed.name, opts.metadata)
+                    }
+                    if (parsed.type === 'list_files') {
+                        return typeof parsed.path === 'string' && parsed.path ? `ls ${parsed.path}` : 'List files'
+                    }
+                    if (parsed.type === 'search') {
+                        return typeof parsed.query === 'string' && parsed.query
+                            ? `Search: ${parsed.query.substring(0, 25)}`
+                            : 'Search'
+                    }
                 }
+            }
+            // Fallback: extract from command string (Codex 0.118 style)
+            const cmdStr = getInputStringAny(opts.input, ['command', 'cmd'])
+            if (cmdStr) {
+                const title = extractShellCmdTitle(cmdStr)
+                if (title) return title
             }
             return opts.description ?? 'Terminal'
         },
