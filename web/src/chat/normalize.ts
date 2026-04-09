@@ -771,7 +771,8 @@ function normalizeAgentRecord(
             // New format: nested last_token_usage + model_context_window (per-turn accurate data)
             // TokenUsageInfo { last_token_usage: TokenUsage, total_token_usage: TokenUsage, model_context_window: i64 }
             const lastUsage = isObject(info?.last_token_usage) ? (info.last_token_usage as Record<string, unknown>) : null
-            const modelContextWindow = asNumber(info?.model_context_window) ?? undefined
+            // Old format (Codex ≤0.77): no model_context_window — fall back to 200K (o4-mini/o3 context window)
+            const modelContextWindow = asNumber(info?.model_context_window) ?? 200_000
 
             let inputTokens: number | null
             let outputTokens: number | null
