@@ -311,6 +311,7 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
         session.sendCodexMessage(message);
     });
     let loggedReasoningDelta = false;
+    let planCallId: string | null = null;
 
     logger.debug(`[Codex] MCP event logging ${mcpLogEnabled ? 'enabled' : 'disabled'} (sample=${mcpLogSampleRate})`);
 
@@ -337,6 +338,7 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
             }
             if (msg.type === 'task_started' && !inFlight.taskStartedAt) {
                 inFlight.taskStartedAt = Date.now();
+                planCallId = null;
             }
             if (msg.type === 'task_complete' || msg.type === 'turn_aborted') {
                 inFlight.completedAt = Date.now();
@@ -474,6 +476,27 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
                 },
                 id: randomUUID()
             });
+        }
+        if (msg.type === 'plan_update') {
+            const { explanation, plan } = msg as { explanation?: string | null; plan: { step: string; status: string }[] };
+            if (Array.isArray(plan) && plan.length > 0) {
+                if (!planCallId) {
+                    planCallId = randomUUID();
+                    session.sendCodexMessage({
+                        type: 'tool-call',
+                        name: 'CodexPlan',
+                        callId: planCallId,
+                        input: { explanation: explanation ?? null, plan },
+                        id: randomUUID()
+                    });
+                }
+                session.sendCodexMessage({
+                    type: 'tool-call-result',
+                    callId: planCallId,
+                    output: { explanation: explanation ?? null, plan },
+                    id: randomUUID()
+                });
+            }
         }
         if (msg.type === 'mcp_tool_call_begin') {
             const { call_id, invocation } = msg as { call_id: string; invocation: { server: string; tool: string; arguments?: unknown } };

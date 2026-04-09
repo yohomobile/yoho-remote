@@ -3,6 +3,7 @@ import type { ToolCallBlock } from '@/chat/types'
 import type { SessionMetadataSummary } from '@/types/api'
 import { CodexDiffCompactView, CodexDiffFullView } from '@/components/ToolCard/views/CodexDiffView'
 import { CodexPatchCompactView, CodexPatchView } from '@/components/ToolCard/views/CodexPatchView'
+import { CodexPlanView } from '@/components/ToolCard/views/CodexPlanView'
 import { EditView } from '@/components/ToolCard/views/EditView'
 import { AskUserQuestionView } from '@/components/ToolCard/views/AskUserQuestionView'
 import { ExitPlanModeView } from '@/components/ToolCard/views/ExitPlanModeView'
@@ -24,6 +25,7 @@ export const toolViewRegistry: Record<string, ToolViewComponent> = {
     TodoWrite: TodoWriteView,
     CodexDiff: CodexDiffCompactView,
     CodexPatch: CodexPatchCompactView,
+    CodexPlan: CodexPlanView,
     AskUserQuestion: AskUserQuestionView,
     ExitPlanMode: ExitPlanModeView,
     ask_user_question: AskUserQuestionView,
@@ -36,6 +38,7 @@ export const toolFullViewRegistry: Record<string, ToolViewComponent> = {
     Write: WriteView,
     CodexDiff: CodexDiffFullView,
     CodexPatch: CodexPatchView,
+    CodexPlan: CodexPlanView,
     AskUserQuestion: AskUserQuestionView,
     ExitPlanMode: ExitPlanModeView,
     ask_user_question: AskUserQuestionView,

@@ -312,6 +312,11 @@ export const knownTools: Record<string, {
         },
         minimal: (opts) => !getCodexDiffUnified(opts.input)
     },
+    CodexPlan: {
+        icon: () => <ClipboardIcon className={DEFAULT_ICON_CLASS} />,
+        title: () => 'Plan',
+        minimal: false
+    },
     ExitPlanMode: {
         icon: () => <ClipboardIcon className={DEFAULT_ICON_CLASS} />,
         title: () => 'Plan proposal',

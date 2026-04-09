@@ -769,6 +769,43 @@ const TodoWriteResultView: ToolViewComponent = (props: ToolViewProps) => {
     )
 }
 
+type CodexPlanItem = {
+    step: string
+    status: 'pending' | 'in_progress' | 'completed'
+}
+
+function extractCodexPlanItems(input: unknown, result: unknown): CodexPlanItem[] {
+    for (const source of [result, input]) {
+        if (!isObject(source) || !Array.isArray(source.plan)) continue
+        const parsed = (source.plan as unknown[]).flatMap((item): CodexPlanItem[] => {
+            if (!isObject(item) || typeof item.step !== 'string') return []
+            const status = item.status === 'completed' ? 'completed'
+                : item.status === 'in_progress' ? 'in_progress'
+                : 'pending'
+            return [{ step: item.step, status }]
+        })
+        if (parsed.length > 0) return parsed
+    }
+    return []
+}
+
+const CodexPlanResultView: ToolViewComponent = (props: ToolViewProps) => {
+    const items = extractCodexPlanItems(props.block.tool.input, props.block.tool.result)
+    if (items.length === 0) {
+        return <div className="text-sm text-[var(--app-hint)]">{placeholderForState(props.block.tool.state)}</div>
+    }
+
+    return (
+        <div className="flex flex-col gap-1">
+            {items.map((item, idx) => (
+                <div key={idx} className={`text-sm ${todoTone({ status: item.status })}`}>
+                    {todoIcon({ status: item.status })} {item.step}
+                </div>
+            ))}
+        </div>
+    )
+}
+
 const YohoMemoryResultView: ToolViewComponent = (props: ToolViewProps) => {
     const result = props.block.tool.result
 
@@ -858,6 +895,7 @@ export const toolResultViewRegistry: Record<string, ToolViewComponent> = {
     TodoWrite: TodoWriteResultView,
     CodexReasoning: CodexReasoningResultView,
     CodexPatch: CodexPatchResultView,
+    CodexPlan: CodexPlanResultView,
     CodexDiff: CodexDiffResultView,
     AskUserQuestion: AskUserQuestionResultView,
     ExitPlanMode: MarkdownResultView,
