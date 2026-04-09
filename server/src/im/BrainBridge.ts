@@ -765,9 +765,7 @@ export class BrainBridge implements IMBridgeCallbacks {
             chatName = await this.adapter.fetchChatName(chatId) || undefined
         }
         const newSessionId = await this.createBrainSession(chatId, chatType, chatName, senderName)
-        if (newSessionId) {
-            await this.adapter.sendText(chatId, '会话已重置，请继续。')
-        } else {
+        if (!newSessionId) {
             await this.store.updateFeishuChatSessionStatus(chatId, 'dead')
         }
 
