@@ -100,18 +100,20 @@ function extractShellCmdTitle(rawCmd: string): string | null {
     const labelMap: Record<string, string> = {
         git: 'Git', npm: 'npm', bun: 'Bun', yarn: 'Yarn', pnpm: 'pnpm',
         python: 'Python', python3: 'Python', node: 'Node',
-        mkdir: 'mkdir', rm: 'rm', mv: 'mv', cp: 'cp',
-        curl: 'curl', wget: 'wget', jq: 'jq',
-        systemctl: 'systemctl', journalctl: 'journalctl', service: 'service',
-        ssh: 'SSH', scp: 'scp', rsync: 'rsync',
-        docker: 'Docker', kubectl: 'kubectl',
-        make: 'make', cargo: 'cargo',
-        sleep: 'sleep', echo: 'Shell', printf: 'Shell',
+        mkdir: 'Mkdir', rm: 'Rm', mv: 'Mv', cp: 'Cp',
+        curl: 'Curl', wget: 'Wget', jq: 'Jq',
+        systemctl: 'Systemctl', journalctl: 'Journalctl', service: 'Service',
+        ssh: 'SSH', scp: 'Scp', rsync: 'Rsync',
+        docker: 'Docker', kubectl: 'Kubectl',
+        make: 'Make', cargo: 'Cargo',
+        sleep: 'Sleep', echo: 'Shell', printf: 'Shell',
     }
     if (labelMap[firstWord]) return labelMap[firstWord]
 
-    // Return just the first word if it looks like a command name (no spaces/special chars)
-    if (firstWord && /^[\w-]+$/.test(firstWord) && firstWord.length <= 20) return firstWord
+    // Return just the first word capitalized if it looks like a command name
+    if (firstWord && /^[\w-]+$/.test(firstWord) && firstWord.length <= 20) {
+        return firstWord.charAt(0).toUpperCase() + firstWord.slice(1)
+    }
 
     return null
 }
