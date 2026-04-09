@@ -585,6 +585,29 @@ export class SyncEngine {
         }
     }
 
+    /**
+     * Best-effort process termination: tries CLI-level killSession RPC first,
+     * then falls back to daemon-level stop-session (kills by PID).
+     * Swallows all errors — callers use this for cleanup, not for guaranteed kill.
+     */
+    async terminateSessionProcess(sessionId: string): Promise<void> {
+        try {
+            await this.killSession(sessionId)
+            return
+        } catch {
+            // killSession RPC failed — process likely hasn't registered handlers yet
+        }
+        const session = this.sessions.get(sessionId)
+        const machineId = session?.metadata?.machineId
+        if (machineId) {
+            try {
+                await this.machineRpc(machineId, 'stop-session', { sessionId })
+            } catch {
+                // Process may have never started or already exited
+            }
+        }
+    }
+
     getActiveSessions(): Session[] {
         return this.getSessions().filter(s => s.active)
     }

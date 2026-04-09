@@ -248,6 +248,29 @@ export async function startDaemon(): Promise<void> {
         logger.debug(`[DAEMON RUN] Failed to read settings for path mapping:`, error);
       }
 
+      // Dedup guard: if a process is already running for this sessionId, kill it first.
+      // This prevents ghost duplicate processes after daemon restart or failed resume attempts.
+      if (sessionId) {
+        for (const [pid, tracked] of pidToTrackedSession.entries()) {
+          if (tracked.yohoRemoteSessionId === sessionId) {
+            logger.debug(`[DAEMON RUN] Session ${sessionId} already running as PID ${pid}, killing old process before respawn`);
+            addLog('dedup', `Killing existing process PID ${pid} for session ${sessionId}`, 'running');
+            try {
+              if (tracked.startedBy === 'daemon' && tracked.childProcess) {
+                void killProcessByChildProcess(tracked.childProcess);
+              } else {
+                void killProcess(pid);
+              }
+            } catch (error) {
+              logger.debug(`[DAEMON RUN] Failed to kill existing process PID ${pid}:`, error);
+            }
+            pidToTrackedSession.delete(pid);
+            addLog('dedup', `Killed and removed existing process PID ${pid}`, 'success');
+            break;
+          }
+        }
+      }
+
       addLog('init', `Starting session spawn: agent=${agent}, directory=${directory}, sessionType=${sessionType}`, 'running');
 
       if (sessionType === 'simple') {

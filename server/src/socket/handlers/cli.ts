@@ -75,6 +75,11 @@ export type CliHandlersDeps = {
     onWebappEvent?: (event: SyncEvent) => void
 }
 
+// Tracks which socket currently "owns" each session (sessionId → socketId).
+// When a different socket sends session-alive for the same session, the old socket
+// is evicted to prevent duplicate processes from both reporting heartbeats.
+const sessionOwnerSocketId = new Map<string, string>()
+
 type AccessErrorReason = 'namespace-missing' | 'access-denied' | 'not-found'
 type AccessResult<T> =
     | { ok: true; value: T }
@@ -166,6 +171,12 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
 
     socket.on('disconnect', () => {
         rpcRegistry.unregisterAll(socket)
+        // Clean up session ownership for this socket
+        for (const [sid, ownerSocketId] of sessionOwnerSocketId.entries()) {
+            if (ownerSocketId === socket.id) {
+                sessionOwnerSocketId.delete(sid)
+            }
+        }
     })
 
     socket.on('message', async (data: unknown) => {
@@ -337,6 +348,25 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
             emitAccessError('session', data.sid, sessionAccess.reason)
             return
         }
+
+        // Dedup: detect and resolve conflicting sockets for the same session.
+        // If a different socket already owns this session, evict the old one.
+        const existingOwner = sessionOwnerSocketId.get(data.sid)
+        if (existingOwner && existingOwner !== socket.id) {
+            const cliNamespace = io.of('/cli')
+            const oldSocket = cliNamespace.sockets.get(existingOwner)
+            if (oldSocket) {
+                console.warn(
+                    `[cli-socket] Session ${data.sid} conflict: new socket ${socket.id} replacing old socket ${existingOwner}. ` +
+                    `Disconnecting old socket to prevent dual-process heartbeats.`
+                )
+                rpcRegistry.unregisterAll(oldSocket)
+                oldSocket.disconnect(true)
+            }
+            sessionOwnerSocketId.delete(data.sid)
+        }
+        sessionOwnerSocketId.set(data.sid, socket.id)
+
         onSessionAlive?.(data)
     })
 
@@ -348,6 +378,11 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
         if (!sessionAccess.ok) {
             emitAccessError('session', data.sid, sessionAccess.reason)
             return
+        }
+        // Clean up session ownership on session end
+        const endOwner = sessionOwnerSocketId.get(data.sid)
+        if (endOwner === socket.id) {
+            sessionOwnerSocketId.delete(data.sid)
         }
         onSessionEnd?.(data)
     })

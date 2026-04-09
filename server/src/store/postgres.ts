@@ -31,6 +31,8 @@ import type {
     StoredOrgMember,
     StoredOrgInvitation,
     StoredDownloadFile,
+    StoredBrainConfig,
+    BrainAgent,
     OrgRole,
     UserRole,
     VersionedUpdateResult,
@@ -494,6 +496,17 @@ export class PostgresStore implements IStore {
                 created_at BIGINT NOT NULL DEFAULT FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)
             );
             CREATE INDEX IF NOT EXISTS idx_fcm_chat_id_created ON feishu_chat_messages(chat_id, created_at DESC);
+
+            -- Brain Config 表（K1 配置，独立于 IM 平台）
+            CREATE TABLE IF NOT EXISTS brain_config (
+                namespace TEXT PRIMARY KEY,
+                agent TEXT NOT NULL DEFAULT 'claude',
+                claude_model_mode TEXT NOT NULL DEFAULT 'opus',
+                codex_model TEXT NOT NULL DEFAULT 'gpt-5.4',
+                extra JSONB DEFAULT '{}',
+                updated_at BIGINT NOT NULL DEFAULT FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000),
+                updated_by TEXT
+            );
 
             -- Organizations 表
             CREATE TABLE IF NOT EXISTS organizations (
@@ -3513,6 +3526,66 @@ export class PostgresStore implements IStore {
             [cutoff]
         )
         return result.rowCount ?? 0
+    }
+
+    // ========== Brain Config ==========
+
+    async getBrainConfig(namespace: string): Promise<StoredBrainConfig | null> {
+        const result = await this.pool.query(
+            'SELECT * FROM brain_config WHERE namespace = $1',
+            [namespace]
+        )
+        if (result.rows.length === 0) return null
+        const r = result.rows[0]
+        return {
+            namespace: r.namespace,
+            agent: r.agent,
+            claudeModelMode: r.claude_model_mode,
+            codexModel: r.codex_model,
+            extra: r.extra || {},
+            updatedAt: Number(r.updated_at),
+            updatedBy: r.updated_by,
+        }
+    }
+
+    async setBrainConfig(namespace: string, config: {
+        agent: BrainAgent
+        claudeModelMode?: string
+        codexModel?: string
+        extra?: Record<string, unknown>
+        updatedBy?: string | null
+    }): Promise<StoredBrainConfig> {
+        const now = Date.now()
+        const result = await this.pool.query(`
+            INSERT INTO brain_config (namespace, agent, claude_model_mode, codex_model, extra, updated_at, updated_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (namespace) DO UPDATE SET
+                agent = EXCLUDED.agent,
+                claude_model_mode = EXCLUDED.claude_model_mode,
+                codex_model = EXCLUDED.codex_model,
+                extra = EXCLUDED.extra,
+                updated_at = EXCLUDED.updated_at,
+                updated_by = EXCLUDED.updated_by
+            RETURNING *
+        `, [
+            namespace,
+            config.agent,
+            config.claudeModelMode ?? 'opus',
+            config.codexModel ?? 'gpt-5.4',
+            JSON.stringify(config.extra ?? {}),
+            now,
+            config.updatedBy ?? null,
+        ])
+        const r = result.rows[0]
+        return {
+            namespace: r.namespace,
+            agent: r.agent,
+            claudeModelMode: r.claude_model_mode,
+            codexModel: r.codex_model,
+            extra: r.extra || {},
+            updatedAt: Number(r.updated_at),
+            updatedBy: r.updated_by,
+        }
     }
 
     // ========== Organization 操作 ==========

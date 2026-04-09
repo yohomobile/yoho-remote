@@ -1038,6 +1038,15 @@ export function createSessionsRoutes(
             }
         }
 
+        // Primary attempt failed or timed out — kill any orphaned process before fallback
+        // The daemon may have spawned a process that's still starting up but will never
+        // become "online" for this session. Kill it to avoid ghost duplicate processes.
+        await engine.terminateSessionProcess(sessionId)
+        // Reset session to inactive so it doesn't block future operations
+        session.active = false
+        session.thinking = false
+        await store.setSessionActive(sessionId, false, Date.now(), namespace)
+
         // Fallback: spawn a new session with only the native resume ID
         const fallbackResult = await engine.spawnSession(
             machineId,

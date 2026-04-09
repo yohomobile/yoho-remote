@@ -13,7 +13,8 @@ import { PostgresStore } from './store/postgres'
 import type { IStore } from './store/interface'
 import { SyncEngine, type SyncEvent } from './sync/syncEngine'
 import { YohoRemoteBot } from './telegram/bot'
-import { FeishuBot } from './feishu/bot'
+import { BrainBridge } from './im/BrainBridge'
+import { FeishuAdapter } from './im/feishu/FeishuAdapter'
 import { startWebServer } from './web/server'
 import { createSocketServer } from './socket/server'
 import { SSEManager } from './sse/sseManager'
@@ -38,7 +39,7 @@ function formatSource(source: ConfigSource | 'generated'): string {
 
 let syncEngine: SyncEngine | null = null
 let bot: YohoRemoteBot | null = null
-let feishuBot: FeishuBot | null = null
+let brainBridge: BrainBridge | null = null
 let webServer: BunServer<WebSocketData> | null = null
 let sseManager: SSEManager | null = null
 
@@ -178,19 +179,23 @@ async function main() {
         })
     }
 
-    // Initialize Feishu bot (optional - separate credentials from STT)
+    // Initialize IM Brain Bridge (optional - Feishu adapter)
     const feishuBotAppId = process.env.FEISHU_BOT_APP_ID || null
     const feishuBotAppSecret = process.env.FEISHU_BOT_APP_SECRET || null
     if (feishuBotAppId && feishuBotAppSecret) {
-        feishuBot = new FeishuBot({
-            syncEngine,
+        const feishuAdapter = new FeishuAdapter({
             store,
             appId: feishuBotAppId,
             appSecret: feishuBotAppSecret,
         })
-        console.log('[Server] Feishu Bot: enabled')
+        brainBridge = new BrainBridge({
+            syncEngine,
+            store,
+            adapter: feishuAdapter,
+        })
+        console.log('[Server] IM Brain Bridge: enabled (Feishu)')
     } else {
-        console.log('[Server] Feishu Bot: disabled (missing FEISHU_BOT_APP_ID/FEISHU_BOT_APP_SECRET)')
+        console.log('[Server] IM Brain Bridge: disabled (missing FEISHU_BOT_APP_ID/FEISHU_BOT_APP_SECRET)')
     }
 
     // Start HTTP server
@@ -206,9 +211,9 @@ async function main() {
         await bot.start()
     }
 
-    // Start Feishu bot if configured
-    if (feishuBot) {
-        await feishuBot.start()
+    // Start IM Brain Bridge if configured
+    if (brainBridge) {
+        await brainBridge.start()
     }
 
     console.log('\nYR Server is ready!')
@@ -216,7 +221,7 @@ async function main() {
     // Handle shutdown
     const shutdown = async () => {
         console.log('\nShutting down...')
-        await feishuBot?.stop()
+        await brainBridge?.stop()
         await bot?.stop()
         syncEngine?.stop()
         sseManager?.stop()

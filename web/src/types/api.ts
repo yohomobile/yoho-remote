@@ -132,6 +132,21 @@ export type UpdateProjectResponse = { ok: true; project: Project; projects: Proj
 export type RemoveProjectResponse = { ok: true; projects: Project[] }
 export type UpdateMachineResponse = { ok: true; machine: Machine }
 
+export type BrainAgent = 'claude' | 'codex'
+
+export type BrainConfig = {
+    namespace: string
+    agent: BrainAgent
+    claudeModelMode: string
+    codexModel: string
+    extra: Record<string, unknown>
+    updatedAt: number
+    updatedBy: string | null
+}
+
+export type BrainConfigResponse = BrainConfig
+export type UpdateBrainConfigResponse = { ok: true; config: BrainConfig }
+
 export type RolePrompt = {
     role: UserRole
     prompt: string

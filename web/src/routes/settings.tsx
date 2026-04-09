@@ -550,6 +550,17 @@ export default function SettingsPage() {
     const [showInviteForm, setShowInviteForm] = useState(false)
     const canManageMembers = orgRole === 'owner' || orgRole === 'admin'
 
+    // K1 Brain Config
+    const { data: brainConfig, isLoading: brainConfigLoading } = useQuery({
+        queryKey: ['brain-config'],
+        queryFn: () => api.getBrainConfig(),
+    })
+    const brainConfigMutation = useMutation({
+        mutationFn: (config: { agent: 'claude' | 'codex'; claudeModelMode?: string; codexModel?: string }) =>
+            api.updateBrainConfig(config),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['brain-config'] }),
+    })
+
     const handleInvite = useCallback(async () => {
         if (!inviteEmail.trim()) return
         try {
@@ -1038,6 +1049,100 @@ export default function SettingsPage() {
                                 </div>
                             </div>
                         )}
+                    </div>
+
+                    {/* ========== K1 BRAIN CONFIG ========== */}
+                    <div className="space-y-4">
+                        <h2 className="text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide px-1">K1 Brain</h2>
+                        <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
+                            <div className="px-3 py-2 border-b border-[var(--app-divider)]">
+                                <h3 className="text-sm font-medium">Session Agent</h3>
+                                <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
+                                    Configure which AI agent K1 uses for Brain sessions
+                                </p>
+                            </div>
+                            {brainConfigLoading ? (
+                                <div className="px-3 py-4 flex justify-center"><Spinner /></div>
+                            ) : (
+                                <div className="divide-y divide-[var(--app-divider)]">
+                                    {/* Agent selector */}
+                                    <div className="px-3 py-2.5">
+                                        <div className="text-sm mb-2">Agent Type</div>
+                                        <div className="flex gap-2">
+                                            {([
+                                                { value: 'claude' as const, label: 'Claude Code', desc: 'Anthropic Claude' },
+                                                { value: 'codex' as const, label: 'Codex', desc: 'OpenAI Codex' },
+                                            ] as const).map((opt) => {
+                                                const isActive = (brainConfig?.agent ?? 'claude') === opt.value
+                                                return (
+                                                    <button
+                                                        key={opt.value}
+                                                        type="button"
+                                                        disabled={brainConfigMutation.isPending}
+                                                        onClick={() => {
+                                                            const config = opt.value === 'claude'
+                                                                ? { agent: opt.value, claudeModelMode: brainConfig?.claudeModelMode ?? 'opus' }
+                                                                : { agent: opt.value, codexModel: brainConfig?.codexModel ?? 'gpt-5.4' }
+                                                            brainConfigMutation.mutate(config)
+                                                        }}
+                                                        className={`flex-1 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                                                            isActive
+                                                                ? 'border-[var(--app-button)] bg-[var(--app-button)]/10 text-[var(--app-button)]'
+                                                                : 'border-[var(--app-border)] text-[var(--app-hint)] hover:border-[var(--app-fg)]/30'
+                                                        } disabled:opacity-50`}
+                                                    >
+                                                        <div>{opt.label}</div>
+                                                        <div className="text-[10px] font-normal mt-0.5 opacity-70">{opt.desc}</div>
+                                                    </button>
+                                                )
+                                            })}
+                                        </div>
+                                    </div>
+                                    {/* Model config */}
+                                    <div className="px-3 py-2.5">
+                                        <div className="text-sm mb-2">Model</div>
+                                        {(brainConfig?.agent ?? 'claude') === 'claude' ? (
+                                            <select
+                                                value={brainConfig?.claudeModelMode ?? 'opus'}
+                                                disabled={brainConfigMutation.isPending}
+                                                onChange={(e) => brainConfigMutation.mutate({
+                                                    agent: 'claude',
+                                                    claudeModelMode: e.target.value,
+                                                })}
+                                                className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)] disabled:opacity-50"
+                                            >
+                                                <option value="opus">Opus (most capable)</option>
+                                                <option value="sonnet">Sonnet (balanced)</option>
+                                            </select>
+                                        ) : (
+                                            <select
+                                                value={brainConfig?.codexModel ?? 'gpt-5.4'}
+                                                disabled={brainConfigMutation.isPending}
+                                                onChange={(e) => brainConfigMutation.mutate({
+                                                    agent: 'codex',
+                                                    codexModel: e.target.value,
+                                                })}
+                                                className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)] disabled:opacity-50"
+                                            >
+                                                <option value="gpt-5.4">GPT-5.4</option>
+                                            </select>
+                                        )}
+                                    </div>
+                                    {/* Status */}
+                                    {brainConfigMutation.isError && (
+                                        <div className="px-3 py-2 text-xs text-red-500">
+                                            Failed to update: {(brainConfigMutation.error as Error)?.message || 'Unknown error'}
+                                        </div>
+                                    )}
+                                    {brainConfig?.updatedAt ? (
+                                        <div className="px-3 py-2 text-[11px] text-[var(--app-hint)]">
+                                            Last updated: {new Date(brainConfig.updatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}
+                                            {brainConfig.updatedBy ? ` by ${brainConfig.updatedBy}` : ''}
+                                        </div>
+                                    ) : null}
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     {/* ========== ORGANIZATION SWITCHER ========== */}

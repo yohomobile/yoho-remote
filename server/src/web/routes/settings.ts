@@ -208,5 +208,47 @@ export function createSettingsRoutes(
         return c.json({ ok: true, shareAllSessions, viewOthersSessions })
     })
 
+    // ========== Brain Config ==========
+
+    const brainConfigSchema = z.object({
+        agent: z.enum(['claude', 'codex']),
+        claudeModelMode: z.string().optional(),
+        codexModel: z.string().optional(),
+        extra: z.record(z.string(), z.unknown()).optional(),
+    })
+
+    app.get('/settings/brain-config', async (c) => {
+        const namespace = c.get('namespace') || 'default'
+        const config = await store.getBrainConfig(namespace)
+        if (!config) {
+            return c.json({
+                namespace,
+                agent: 'claude' as const,
+                claudeModelMode: 'opus',
+                codexModel: 'gpt-5.4',
+                extra: {},
+                updatedAt: 0,
+                updatedBy: null,
+            })
+        }
+        return c.json(config)
+    })
+
+    app.put('/settings/brain-config', async (c) => {
+        const body = await c.req.json()
+        const parsed = brainConfigSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid config', details: parsed.error.issues }, 400)
+        }
+
+        const namespace = c.get('namespace') || 'default'
+        const email = c.get('email') || null
+        const result = await store.setBrainConfig(namespace, {
+            ...parsed.data,
+            updatedBy: email,
+        })
+        return c.json({ ok: true, config: result })
+    })
+
     return app
 }

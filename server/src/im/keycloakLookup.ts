@@ -1,5 +1,5 @@
 /**
- * Keycloak Admin API lookup for feishu-keycloak user linking.
+ * Keycloak Admin API lookup for user linking.
  * Uses service account (yoho-admin-api) with client_credentials grant.
  */
 

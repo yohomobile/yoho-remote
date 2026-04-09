@@ -398,6 +398,23 @@ export type StoredSessionShare = {
     createdAt: number
 }
 
+// Brain (K1) 配置类型 — 独立于 IM 平台（飞书/钉钉/企微等）
+export type BrainAgent = 'claude' | 'codex'
+
+export type StoredBrainConfig = {
+    namespace: string
+    /** Agent 类型：claude (Claude Code) 或 codex (OpenAI Codex) */
+    agent: BrainAgent
+    /** Claude 模型模式 (agent=claude 时生效) */
+    claudeModelMode: string
+    /** Codex 模型 (agent=codex 时生效) */
+    codexModel: string
+    /** 额外 JSON 配置（预留扩展） */
+    extra: Record<string, unknown>
+    updatedAt: number
+    updatedBy: string | null
+}
+
 // PostgreSQL 配置类型
 export type PostgresConfig = {
     host: string

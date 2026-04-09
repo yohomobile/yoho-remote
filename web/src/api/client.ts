@@ -45,6 +45,9 @@ import type {
     CRSApiKeysResponse,
     CRSBatchStatsResponse,
     CRSUsageSummaryResponse,
+    BrainConfigResponse,
+    UpdateBrainConfigResponse,
+    BrainAgent,
 } from '@/types/api'
 
 type ApiClientOptions = {
@@ -291,6 +294,24 @@ export class ApiClient {
         return await this.request<UpdateUserPreferencesResponse>('/api/settings/user-preferences', {
             method: 'PUT',
             body: JSON.stringify(preferences)
+        })
+    }
+
+    // ========== Brain Config ==========
+
+    async getBrainConfig(): Promise<BrainConfigResponse> {
+        return await this.request<BrainConfigResponse>('/api/settings/brain-config')
+    }
+
+    async updateBrainConfig(config: {
+        agent: BrainAgent
+        claudeModelMode?: string
+        codexModel?: string
+        extra?: Record<string, unknown>
+    }): Promise<UpdateBrainConfigResponse> {
+        return await this.request<UpdateBrainConfigResponse>('/api/settings/brain-config', {
+            method: 'PUT',
+            body: JSON.stringify(config)
         })
     }
 

@@ -28,6 +28,8 @@ import type {
     StoredOrganization,
     StoredOrgMember,
     StoredOrgInvitation,
+    StoredBrainConfig,
+    BrainAgent,
     OrgRole,
     UserRole,
     VersionedUpdateResult,
@@ -432,6 +434,16 @@ export interface IStore {
         createdAt: number
     }>>
     cleanOldFeishuChatMessages(olderThanMs: number): Promise<number>
+
+    // === Brain Config ===
+    getBrainConfig(namespace: string): Promise<StoredBrainConfig | null>
+    setBrainConfig(namespace: string, config: {
+        agent: BrainAgent
+        claudeModelMode?: string
+        codexModel?: string
+        extra?: Record<string, unknown>
+        updatedBy?: string | null
+    }): Promise<StoredBrainConfig>
 
     // === Organization 操作 ===
     createOrganization(data: { name: string; slug: string; createdBy: string }): Promise<StoredOrganization | null>
