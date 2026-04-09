@@ -312,6 +312,7 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
     });
     let loggedReasoningDelta = false;
     let planCallId: string | null = null;
+    let turnModelContextWindow: number | null = null;
 
     logger.debug(`[Codex] MCP event logging ${mcpLogEnabled ? 'enabled' : 'disabled'} (sample=${mcpLogSampleRate})`);
 
@@ -388,6 +389,12 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
                 logger.debug('thinking started');
                 session.onThinkingChange(true);
             }
+            // Reset per-turn context window (will be re-set in inFlight block above)
+            turnModelContextWindow = null;
+            const mcw = (msg as { model_context_window?: number | null }).model_context_window;
+            if (typeof mcw === 'number') {
+                turnModelContextWindow = mcw;
+            }
         }
         if (msg.type === 'task_complete' || msg.type === 'turn_aborted') {
             if (session.thinking) {
@@ -432,8 +439,11 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
             });
         }
         if (msg.type === 'token_count') {
+            const tokenMsg = turnModelContextWindow !== null
+                ? { ...msg, info: { ...(msg as { info?: object }).info, model_context_window: turnModelContextWindow } }
+                : msg;
             session.sendCodexMessage({
-                ...msg,
+                ...tokenMsg,
                 id: randomUUID()
             });
         }
