@@ -183,6 +183,11 @@ export function NewSession(props: {
         () => getMachineWorkspaceGroupId(currentMachine),
         [currentMachine]
     )
+    // If any machine in the org has a workspaceGroupId, enable categorized project display
+    const hasWorkspaceGroups = useMemo(
+        () => props.machines.some((m) => getMachineWorkspaceGroupId(m) !== null),
+        [props.machines]
+    )
 
     const projects = useMemo(() => {
         return Array.isArray(projectsData?.projects) ? projectsData.projects : []
@@ -207,16 +212,17 @@ export function NewSession(props: {
 
     const selectedProjectScopeText = useMemo(() => {
         if (!selectedProject) return null
+        if (!hasWorkspaceGroups) return null
         if (selectedProject.machineId) {
             return currentMachine
                 ? `Machine local to ${getMachineTitle(currentMachine)}`
                 : 'Machine local project'
         }
         if (selectedProject.workspaceGroupId) {
-            return `Shared with workspace group ${selectedProject.workspaceGroupId}`
+            return `Org shared · ${selectedProject.workspaceGroupId}`
         }
-        return 'Global shared project'
-    }, [currentMachine, selectedProject])
+        return 'Global shared project (legacy)'
+    }, [currentMachine, selectedProject, hasWorkspaceGroups])
 
     // Initialize with saved machine or first available
     useEffect(() => {
@@ -302,7 +308,11 @@ export function NewSession(props: {
             }
 
             haptic.notification('error')
-            setError(result.message)
+            const isLicenseError = typeof result.code === 'string' && (result.code.startsWith('LICENSE_') || result.code === 'NO_LICENSE')
+            setError(isLicenseError
+                ? 'Your organization\'s license has expired or is not active. Please contact your administrator.'
+                : result.message
+            )
         } catch (e) {
             haptic.notification('error')
             setSpawnLogs(prev => [
@@ -380,33 +390,43 @@ export function NewSession(props: {
                             {!projectsLoading && projects.length === 0 && (
                                 <option value="">No projects available</option>
                             )}
-                            {machineLocalProjects.length > 0 ? (
-                                <optgroup label={currentMachine ? `Machine Local · ${getMachineTitle(currentMachine)}` : 'Machine Local'}>
-                                    {machineLocalProjects.map((project) => (
-                                        <option key={project.id} value={project.path}>
-                                            {project.name}
-                                        </option>
-                                    ))}
-                                </optgroup>
-                            ) : null}
-                            {workspaceSharedProjects.length > 0 ? (
-                                <optgroup label={currentMachineWorkspaceGroupId ? `Workspace Shared · ${currentMachineWorkspaceGroupId}` : 'Workspace Shared'}>
-                                    {workspaceSharedProjects.map((project) => (
-                                        <option key={project.id} value={project.path}>
-                                            {project.name}
-                                        </option>
-                                    ))}
-                                </optgroup>
-                            ) : null}
-                            {globalSharedProjects.length > 0 ? (
-                                <optgroup label="Global Shared (Legacy)">
-                                    {globalSharedProjects.map((project) => (
-                                        <option key={project.id} value={project.path}>
-                                            {project.name}
-                                        </option>
-                                    ))}
-                                </optgroup>
-                            ) : null}
+                            {hasWorkspaceGroups ? (
+                                <>
+                                    {machineLocalProjects.length > 0 ? (
+                                        <optgroup label={currentMachine ? `Machine Local · ${getMachineTitle(currentMachine)}` : 'Machine Local'}>
+                                            {machineLocalProjects.map((project) => (
+                                                <option key={project.id} value={project.path}>
+                                                    {project.name}
+                                                </option>
+                                            ))}
+                                        </optgroup>
+                                    ) : null}
+                                    {workspaceSharedProjects.length > 0 ? (
+                                        <optgroup label={currentMachineWorkspaceGroupId ? `Org Shared · ${currentMachineWorkspaceGroupId}` : 'Org Shared'}>
+                                            {workspaceSharedProjects.map((project) => (
+                                                <option key={project.id} value={project.path}>
+                                                    {project.name}
+                                                </option>
+                                            ))}
+                                        </optgroup>
+                                    ) : null}
+                                    {globalSharedProjects.length > 0 ? (
+                                        <optgroup label="Global Shared (Legacy)">
+                                            {globalSharedProjects.map((project) => (
+                                                <option key={project.id} value={project.path}>
+                                                    {project.name}
+                                                </option>
+                                            ))}
+                                        </optgroup>
+                                    ) : null}
+                                </>
+                            ) : (
+                                projects.map((project) => (
+                                    <option key={project.id} value={project.path}>
+                                        {project.name}
+                                    </option>
+                                ))
+                            )}
                         </select>
                         {selectedProject ? (
                             <div className="space-y-1 text-xs text-[var(--app-hint)]">
@@ -417,9 +437,9 @@ export function NewSession(props: {
                             </div>
                         ) : !projectsLoading && currentMachine ? (
                             <div className="text-xs text-[var(--app-hint)]">
-                                {currentMachineWorkspaceGroupId
-                                    ? `No saved projects visible on ${getMachineTitle(currentMachine)} yet. Add a machine-local project or a shared project for workspace group ${currentMachineWorkspaceGroupId} in Settings.`
-                                    : `No saved projects for ${getMachineTitle(currentMachine)}. For standalone machines like a MacBook, add a machine-local project in Settings.`}
+                                {hasWorkspaceGroups
+                                    ? `No saved projects visible on ${getMachineTitle(currentMachine)} yet. Add projects in Settings.`
+                                    : `No saved projects for ${getMachineTitle(currentMachine)}. Add projects in Settings.`}
                             </div>
                         ) : null}
                     </>

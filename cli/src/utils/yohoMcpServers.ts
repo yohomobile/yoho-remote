@@ -12,6 +12,7 @@ export interface YohoStdioMcpServerConfig {
 export interface YohoHttpMcpServerConfig {
     type: 'http';
     url: string;
+    headers?: Record<string, string>;
 }
 
 export type YohoMcpServerConfig = YohoStdioMcpServerConfig | YohoHttpMcpServerConfig;
@@ -22,12 +23,14 @@ export interface YohoAuxProjectRef {
 }
 
 export interface YohoAuxProjectClient {
-    getProjects(sessionId: string, machineId?: string): Promise<YohoAuxProjectRef[]>;
+    getProjects(sessionId: string): Promise<YohoAuxProjectRef[]>;
 }
 
 export interface YohoAuxMcpServerOptions {
     apiClient?: YohoAuxProjectClient;
     sessionId?: string | null;
+    /** Org ID for data isolation. Passed as YOHO_ORG_ID env (stdio) or x-org-id header (HTTP). */
+    orgId?: string | null;
 }
 
 function resolveHomeDir(): string {
@@ -96,14 +99,9 @@ async function resolveProjectRepoRoot(
     return null;
 }
 
-/** Well-known ports for auxiliary MCP servers (co-located with yoho-remote-server) */
-export const MEMORY_HTTP_PORT = 3100;
-export const CREDENTIALS_HTTP_PORT = 3101;
+/** Well-known HTTP port for the unified yoho-vault MCP server (co-located with yoho-remote-server) */
+export const VAULT_HTTP_PORT = 3100;
 
-/**
- * Derive the host where auxiliary MCP HTTP servers run from YOHO_REMOTE_URL.
- * They are co-located with yoho-remote-server, so we just extract the hostname.
- */
 function deriveAuxMcpHost(): string | null {
     const serverUrl = process.env.YOHO_REMOTE_URL;
     if (!serverUrl) return null;
@@ -115,61 +113,45 @@ function deriveAuxMcpHost(): string | null {
 }
 
 /**
- * Returns MCP server configs for yoho-memory and yoho-credentials.
+ * Returns the MCP server config for yoho-vault (unified memory + credentials, org-isolated).
  *
- * Strategy: if the local MCP entry files exist, use stdio (works everywhere).
- * yoho-memory path resolution order:
- * 1) YOHO_MEMORY_PATH env
- * 2) Project list entry (YohoMemory / yoho-memory)
- * 3) legacy ~/happy/yoho-memory path
+ * Path resolution order:
+ * 1) YOHO_MEMORY_PATH env (legacy compat)
+ * 2) Project list: YohoVault / yoho-vault / YohoMemory / yoho-memory
+ * 3) ~/happy/yoho-memory (legacy path)
  *
- * Otherwise, for Claude, fall back to HTTP against the remote servers.
- * Codex only supports stdio, so it gets nothing when local files are absent.
+ * Org isolation: orgId passed as YOHO_ORG_ID env (stdio) or x-org-id header (HTTP).
+ * Codex only supports stdio; gets nothing when local files are absent.
  */
 export async function getYohoAuxMcpServers(flavor: 'codex', options?: YohoAuxMcpServerOptions): Promise<Record<string, YohoStdioMcpServerConfig>>;
 export async function getYohoAuxMcpServers(flavor: 'claude', options?: YohoAuxMcpServerOptions): Promise<Record<string, YohoMcpServerConfig>>;
 export async function getYohoAuxMcpServers(flavor: 'claude' | 'codex', options?: YohoAuxMcpServerOptions): Promise<Record<string, YohoMcpServerConfig>> {
     const homeDir = resolveHomeDir();
-    const env = { PATH: buildPathEnv(homeDir) };
+    const env: Record<string, string> = { PATH: buildPathEnv(homeDir) };
+    if (options?.orgId) env.YOHO_ORG_ID = options.orgId;
 
-    const memoryServerName = flavor === 'codex' ? 'yoho_memory' : 'yoho-memory';
-    const credentialsServerName = flavor === 'codex' ? 'yoho_credentials' : 'yoho-credentials';
+    const serverName = flavor === 'codex' ? 'yoho_vault' : 'yoho-vault';
 
-    const memoryRepoRoot = resolveRepoRoot(process.env.YOHO_MEMORY_PATH, 'src/mcp/stdio.ts')
-        ?? await resolveProjectRepoRoot('src/mcp/stdio.ts', ['YohoMemory', 'yoho-memory'], options)
+    const vaultRepoRoot = resolveRepoRoot(process.env.YOHO_MEMORY_PATH, 'src/mcp/stdio.ts')
+        ?? await resolveProjectRepoRoot('src/mcp/stdio.ts', ['YohoVault', 'yoho-vault', 'YohoMemory', 'yoho-memory'], options)
         ?? resolveRepoRoot(`${homeDir}/happy/yoho-memory`, 'src/mcp/stdio.ts');
-    const memoryLocalPath = memoryRepoRoot ? join(memoryRepoRoot, 'src/mcp/stdio.ts') : null;
-    const credentialsLocalPath = `${homeDir}/happy/yoho-task-v2/mcp/credentials-server/index.ts`;
+    const vaultLocalPath = vaultRepoRoot ? join(vaultRepoRoot, 'src/mcp/stdio.ts') : null;
 
     const result: Record<string, YohoMcpServerConfig> = {};
 
-    // yoho-memory
-    if (memoryLocalPath && existsSync(memoryLocalPath)) {
-        result[memoryServerName] = {
+    if (vaultLocalPath && existsSync(vaultLocalPath)) {
+        result[serverName] = {
             command: 'bun',
-            args: ['run', memoryLocalPath],
-            cwd: memoryRepoRoot ?? `${homeDir}/happy/yoho-memory`,
+            args: ['run', vaultLocalPath],
+            cwd: vaultRepoRoot ?? `${homeDir}/happy/yoho-memory`,
             env,
         };
     } else if (flavor === 'claude') {
         const host = deriveAuxMcpHost();
         if (host) {
-            result[memoryServerName] = { type: 'http', url: `http://${host}:${MEMORY_HTTP_PORT}/mcp` };
-        }
-    }
-
-    // yoho-credentials
-    if (existsSync(credentialsLocalPath)) {
-        result[credentialsServerName] = {
-            command: 'bun',
-            args: ['run', credentialsLocalPath],
-            cwd: `${homeDir}/happy/yoho-task-v2/mcp/credentials-server`,
-            env,
-        };
-    } else if (flavor === 'claude') {
-        const host = deriveAuxMcpHost();
-        if (host) {
-            result[credentialsServerName] = { type: 'http', url: `http://${host}:${CREDENTIALS_HTTP_PORT}/mcp` };
+            const headers: Record<string, string> = {};
+            if (options?.orgId) headers['x-org-id'] = options.orgId;
+            result[serverName] = { type: 'http', url: `http://${host}:${VAULT_HTTP_PORT}/mcp`, headers };
         }
     }
 

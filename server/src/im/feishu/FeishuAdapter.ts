@@ -9,8 +9,8 @@
  */
 
 import * as lark from '@larksuiteoapi/node-sdk'
-import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from 'node:fs'
-import { join, basename, extname } from 'node:path'
+import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync, statSync } from 'node:fs'
+import { join, basename, extname, resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import type { IStore } from '../../store/interface'
@@ -20,7 +20,7 @@ import { textToSpeech } from './tts'
 import { enrichTextWithDocContent } from './docFetcher'
 import { extractFileContent } from './fileExtractor'
 import { buildCardJson } from './cardBuilder'
-import { buildFeishuBrainInitPrompt, buildFeishuVijnaptiInitPrompt } from '../../web/prompts/initPrompt'
+import { buildFeishuBrainInitPrompt } from '../../web/prompts/initPrompt'
 import { getConfiguration } from '../../configuration'
 
 export interface FeishuAdapterConfig {
@@ -44,6 +44,17 @@ export class FeishuAdapter implements IMAdapter {
 
     // Independent token cache
     private tokenCache: { value: string; expiresAt: number } | null = null
+
+    // Per-session image URL→key dedup cache (LRU-style, capped at 100 entries)
+    private imageKeyCache: Map<string, string> = new Map()
+
+    // Incoming message dedup: prevent processing same messageId twice on Feishu webhook retry
+    private recentMessageIds: Map<string, number> = new Map()
+    private static readonly MSG_DEDUP_TTL_MS = 60_000
+
+    // Card action dedup: ignore rapid double-clicks (2s window)
+    private recentCardActions: Map<string, number> = new Map()
+    private static readonly CARD_ACTION_DEDUP_MS = 2_000
 
     private static readonly IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'])
     private static readonly VIDEO_EXTS = new Set(['mp4'])
@@ -140,6 +151,8 @@ export class FeishuAdapter implements IMAdapter {
             try { this.wsClient.close({ force: true }) } catch {}
             this.wsClient = null
         }
+        this.recentMessageIds.clear()
+        this.recentCardActions.clear()
         console.log('[FeishuAdapter] Stopped')
     }
 
@@ -198,7 +211,13 @@ export class FeishuAdapter implements IMAdapter {
             for (const ref of mediaRefs) {
                 try {
                     const filePath = this.resolveFilePath(ref)
-                    if (!filePath || !existsSync(filePath)) {
+                    if (!filePath) {
+                        // resolveFilePath returns null for path traversal attempts or oversized files
+                        console.warn(`[FeishuAdapter] Media file rejected: ${ref}`)
+                        await this.sendText(chatId, `[文件无法发送: ${basename(ref)}（路径无效或超过 20MB 限制）]`)
+                        continue
+                    }
+                    if (!existsSync(filePath)) {
                         console.warn(`[FeishuAdapter] Media file not found: ${ref}`)
                         await this.sendText(chatId, `[文件未找到: ${basename(ref)}]`)
                         continue
@@ -433,10 +452,17 @@ export class FeishuAdapter implements IMAdapter {
      * Useful for private notifications in group chats.
      */
     async sendEphemeralCard(chatId: string, userId: string, cardContent: string): Promise<boolean> {
+        let card: Record<string, unknown>
+        try {
+            card = JSON.parse(cardContent)
+        } catch {
+            console.error('[FeishuAdapter] sendEphemeralCard: invalid card JSON')
+            return false
+        }
         const result = await this.callFeishuApi(
             'https://open.feishu.cn/open-apis/ephemeral/v1/send',
             'POST',
-            { chat_id: chatId, user_id: userId, msg_type: 'interactive', card: JSON.parse(cardContent) },
+            { chat_id: chatId, user_id: userId, msg_type: 'interactive', card },
         )
         if (!result || result.code !== 0) {
             console.error(`[FeishuAdapter] sendEphemeralCard failed: code=${result?.code}, msg=${result?.msg}`)
@@ -505,15 +531,12 @@ export class FeishuAdapter implements IMAdapter {
     }
 
     async buildInitPrompt(chatType: string, chatName?: string, senderName?: string): Promise<string> {
-        const isVijnaptiGroup = chatType === 'group' && chatName?.includes('唯识')
         const options = {
             feishuChatType: chatType as 'p2p' | 'group',
             feishuChatName: chatName,
             ...(chatType === 'p2p' && senderName ? { userName: senderName } : {}),
         }
-        return isVijnaptiGroup
-            ? await buildFeishuVijnaptiInitPrompt('developer', options)
-            : await buildFeishuBrainInitPrompt('developer', options)
+        return await buildFeishuBrainInitPrompt('developer', options)
     }
 
     // ========== Message receiving ==========
@@ -530,6 +553,23 @@ export class FeishuAdapter implements IMAdapter {
         const messageId = message.message_id as string
         const senderOpenId = sender.sender_id?.open_id as string
         const messageType = message.message_type as string
+
+        // Dedup: Feishu may re-deliver the same message on webhook timeout/retry
+        if (messageId) {
+            const now = Date.now()
+            const lastSeen = this.recentMessageIds.get(messageId)
+            if (lastSeen !== undefined && now - lastSeen < FeishuAdapter.MSG_DEDUP_TTL_MS) {
+                console.log(`[FeishuAdapter] Duplicate messageId ${messageId.slice(0, 12)}, skipping`)
+                return
+            }
+            this.recentMessageIds.set(messageId, now)
+            // Evict expired entries when cache grows large
+            if (this.recentMessageIds.size > 1000) {
+                for (const [id, ts] of this.recentMessageIds) {
+                    if (now - ts > FeishuAdapter.MSG_DEDUP_TTL_MS) this.recentMessageIds.delete(id)
+                }
+            }
+        }
 
         // Ignore bot's own messages
         if (senderOpenId === this.botOpenId) return
@@ -613,7 +653,10 @@ export class FeishuAdapter implements IMAdapter {
         if (parentId && addressed && text) {
             const parentText = await this.fetchParentMessage(parentId)
             if (parentText) {
-                const preview = parentText.length > 300 ? parentText.slice(0, 300) + '…' : parentText
+                const isLong = parentText.length > 300
+                const preview = isLong
+                    ? parentText.slice(0, 300) + `…（原文共 ${parentText.length} 字）`
+                    : parentText
                 text = `[引用消息]\n${preview}\n---\n${text}`
             }
         }
@@ -700,6 +743,23 @@ export class FeishuAdapter implements IMAdapter {
             const userId = data.operator?.open_id as string || ''
             const chatId = data.open_chat_id as string || ''
             if (tag && chatId) {
+                // Dedup: ignore rapid double-clicks within 2s window
+                const valueStr = value != null ? (typeof value === 'string' ? value : JSON.stringify(value)) : ''
+                const dedupeKey = `${chatId}:${tag}:${valueStr}`
+                const now = Date.now()
+                const lastAt = this.recentCardActions.get(dedupeKey)
+                if (lastAt !== undefined && now - lastAt < FeishuAdapter.CARD_ACTION_DEDUP_MS) {
+                    console.log(`[FeishuAdapter] Duplicate card action "${tag}" (${now - lastAt}ms ago), ignoring`)
+                    return
+                }
+                this.recentCardActions.set(dedupeKey, now)
+                // Purge stale entries
+                if (this.recentCardActions.size > 100) {
+                    for (const [k, ts] of this.recentCardActions) {
+                        if (now - ts > 30_000) this.recentCardActions.delete(k)
+                    }
+                }
+
                 console.log(`[FeishuAdapter] Card action "${tag}" in ${chatId.slice(0, 12)} by ${userId.slice(0, 8)}`)
                 this.bridge.onCardAction(chatId, tag, value, userId)
             }
@@ -982,9 +1042,12 @@ export class FeishuAdapter implements IMAdapter {
             const sessionId = this.bridge?.getSessionIdForChat(chatId)
 
             const token = await this.getToken()
+            const imgCtrl = new AbortController()
+            const imgTimeout = setTimeout(() => imgCtrl.abort(), 30_000)
             const resp = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${imageKey}?type=image`, {
-                headers: { Authorization: `Bearer ${token}` }
-            })
+                headers: { Authorization: `Bearer ${token}` },
+                signal: imgCtrl.signal,
+            }).finally(() => clearTimeout(imgTimeout))
             if (!resp.ok) {
                 console.error(`[FeishuAdapter] Failed to download image: ${resp.status} ${resp.statusText}`)
                 return null
@@ -1028,12 +1091,15 @@ export class FeishuAdapter implements IMAdapter {
 
             const sessionId = this.bridge?.getSessionIdForChat(chatId)
             const token = await this.getToken()
+            const fileCtrl = new AbortController()
+            const fileTimeout = setTimeout(() => fileCtrl.abort(), 30_000)
             const resp = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=file`, {
-                headers: { Authorization: `Bearer ${token}` }
-            })
+                headers: { Authorization: `Bearer ${token}` },
+                signal: fileCtrl.signal,
+            }).finally(() => clearTimeout(fileTimeout))
             if (!resp.ok) {
                 console.error(`[FeishuAdapter] Failed to download file: ${resp.status} ${resp.statusText}`)
-                return null
+                return `[文件下载失败（${resp.status}）：${fileName || fileKey.slice(0, 16)}，请重新分享或检查权限]`
             }
 
             const arrayBuffer = await resp.arrayBuffer()
@@ -1060,7 +1126,7 @@ export class FeishuAdapter implements IMAdapter {
                 console.warn(`[FeishuAdapter] Content extraction failed for ${safeName}:`, err)
             }
 
-            return `[File: ${serverPath}]`
+            return `[文件: ${safeName}（内容提取失败，文件路径：${serverPath}）]`
         } catch (err) {
             console.error('[FeishuAdapter] handleFileMessage failed:', err)
             return null
@@ -1079,13 +1145,15 @@ export class FeishuAdapter implements IMAdapter {
             }
 
             const token = await this.getToken()
+            const audioCtrl = new AbortController()
+            const audioTimeout = setTimeout(() => audioCtrl.abort(), 30_000)
             const downloadResp = await fetch(
                 `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=file`,
-                { headers: { Authorization: `Bearer ${token}` } }
-            )
+                { headers: { Authorization: `Bearer ${token}` }, signal: audioCtrl.signal }
+            ).finally(() => clearTimeout(audioTimeout))
             if (!downloadResp.ok) {
                 console.error(`[FeishuAdapter] Failed to download audio: ${downloadResp.status} ${downloadResp.statusText}`)
-                return null
+                return `[语音下载失败，请重新发送]`
             }
 
             const arrayBuffer = await downloadResp.arrayBuffer()
@@ -1102,12 +1170,15 @@ export class FeishuAdapter implements IMAdapter {
             console.log(`[FeishuAdapter] Converted to PCM: ${pcmBuffer.length} bytes`)
 
             const fileId = `feishu${ts.toString().slice(-10)}`
+            const asrCtrl = new AbortController()
+            const asrTimeout = setTimeout(() => asrCtrl.abort(), 30_000)
             const asrResp = await fetch('https://open.feishu.cn/open-apis/speech_to_text/v1/speech/file_recognize', {
                 method: 'POST',
                 headers: {
                     Authorization: `Bearer ${token}`,
                     'Content-Type': 'application/json',
                 },
+                signal: asrCtrl.signal,
                 body: JSON.stringify({
                     speech: { speech: pcmBase64 },
                     config: {
@@ -1116,7 +1187,7 @@ export class FeishuAdapter implements IMAdapter {
                         engine_type: '16k_auto',
                     },
                 }),
-            })
+            }).finally(() => clearTimeout(asrTimeout))
 
             const asrData = await asrResp.json() as {
                 code?: number
@@ -1126,13 +1197,13 @@ export class FeishuAdapter implements IMAdapter {
 
             if (asrData.code !== 0) {
                 console.error(`[FeishuAdapter] ASR failed: code=${asrData.code} msg=${asrData.msg}`)
-                return null
+                return `[语音] （识别失败，请重新发送）`
             }
 
             const recognitionText = asrData.data?.recognition_text?.trim()
             if (!recognitionText) {
                 console.log('[FeishuAdapter] ASR returned empty text')
-                return null
+                return `[语音] （音频过短或不清晰，无法识别）`
             }
 
             console.log(`[FeishuAdapter] ASR result: ${recognitionText.slice(0, 100)}`)
@@ -1158,9 +1229,12 @@ export class FeishuAdapter implements IMAdapter {
 
             const sessionId = this.bridge?.getSessionIdForChat(chatId)
             const token = await this.getToken()
+            const mediaCtrl = new AbortController()
+            const mediaTimeout = setTimeout(() => mediaCtrl.abort(), 30_000)
             const resp = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=file`, {
-                headers: { Authorization: `Bearer ${token}` }
-            })
+                headers: { Authorization: `Bearer ${token}` },
+                signal: mediaCtrl.signal,
+            }).finally(() => clearTimeout(mediaTimeout))
             if (!resp.ok) {
                 console.error(`[FeishuAdapter] Failed to download media: ${resp.status} ${resp.statusText}`)
                 return null
@@ -1217,12 +1291,29 @@ export class FeishuAdapter implements IMAdapter {
             for (const msg of subMessages.slice(0, 20)) {
                 const type = msg.msg_type || 'text'
                 const contentStr = msg.body?.content || '{}'
-                const text = this.extractMessageText(type, contentStr)
-                if (text) parts.push(text)
+                const msgText = this.extractMessageText(type, contentStr)
+                if (msgText) {
+                    const senderId = msg.sender_id || ''
+                    let senderDisplay = ''
+                    if (senderId) {
+                        try {
+                            const info = await this.resolveSenderInfo(senderId)
+                            senderDisplay = info.name || senderId.slice(0, 8)
+                        } catch {
+                            senderDisplay = senderId.slice(0, 8)
+                        }
+                    }
+                    parts.push(senderDisplay ? `${senderDisplay}: ${msgText}` : msgText)
+                }
             }
 
-            console.log(`[FeishuAdapter] merge_forward: ${subMessages.length} sub-messages extracted`)
-            return parts.join('\n') || '[合并转发]'
+            const total = subMessages.length
+            const shown = parts.length
+            const header = total > 20
+                ? `[合并转发：共 ${total} 条，显示前 ${shown} 条]`
+                : `[合并转发：共 ${total} 条]`
+            console.log(`[FeishuAdapter] merge_forward: ${total} sub-messages, ${shown} with content`)
+            return parts.length > 0 ? `${header}\n${parts.join('\n')}` : '[合并转发]'
         } catch (err) {
             console.error('[FeishuAdapter] handleMergeForwardMessage failed:', err)
             return '[合并转发]'
@@ -1233,22 +1324,138 @@ export class FeishuAdapter implements IMAdapter {
 
     /**
      * Split text at paragraph (or line) boundaries so each chunk stays under maxLen.
-     * Attempts to break at double-newlines first, then single newlines, then hard-cuts.
+     *
+     * Smart splitting rules:
+     *   1. Never split inside a fenced code block (``` ... ```)
+     *   2. Prefer splitting at double-newlines (paragraph breaks)
+     *   3. Fall back to single newlines, but only between top-level lines
+     *   4. Last resort: hard-cut at maxLen (only if a single block exceeds limit)
+     *
+     * A code block that exceeds maxLen on its own is kept whole in a dedicated chunk
+     * (Feishu will scroll it), unless it's truly enormous (>2× maxLen) in which case
+     * it gets a hard split at a newline inside the block.
      */
     private splitTextIntoChunks(text: string, maxLen: number): string[] {
         if (text.length <= maxLen) return [text]
-        const chunks: string[] = []
-        let remaining = text
 
+        // Split text into segments: alternating prose and fenced code blocks.
+        // Each segment is an atomic unit that we try not to break.
+        const segments: string[] = []
+        const codeBlockRe = /^```[^\n]*\n[\s\S]*?^```\s*$/gm
+        let lastEnd = 0
+        let match: RegExpExecArray | null
+        while ((match = codeBlockRe.exec(text)) !== null) {
+            if (match.index > lastEnd) {
+                segments.push(text.slice(lastEnd, match.index))
+            }
+            segments.push(match[0])
+            lastEnd = match.index + match[0].length
+        }
+        if (lastEnd < text.length) {
+            segments.push(text.slice(lastEnd))
+        }
+
+        const chunks: string[] = []
+        let current = ''
+
+        for (const segment of segments) {
+            // Would adding this segment overflow?
+            if (current.length + segment.length <= maxLen) {
+                current += segment
+                continue
+            }
+
+            // If current buffer is non-trivial, flush it first
+            if (current.trim()) {
+                // current itself might be over maxLen (accumulated prose) — sub-split it
+                this.splitProseIntoChunks(current, maxLen, chunks)
+                current = ''
+            }
+
+            // Now handle the segment itself
+            if (segment.length <= maxLen) {
+                current = segment
+            } else {
+                // Oversized segment — if it's a code block, try to split at internal newlines
+                this.splitOversizedSegment(segment, maxLen, chunks)
+            }
+        }
+
+        if (current.trim()) {
+            this.splitProseIntoChunks(current, maxLen, chunks)
+        }
+
+        const filtered = chunks.filter(c => c.length > 0)
+        return this.mergeSmallChunks(filtered, maxLen)
+    }
+
+    /**
+     * Merge adjacent small chunks to avoid sending many tiny messages.
+     * A chunk under 25% of maxLen is considered "small" and gets merged with
+     * its neighbor if the combined size fits.
+     */
+    private mergeSmallChunks(chunks: string[], maxLen: number): string[] {
+        if (chunks.length <= 1) return chunks
+        const smallThreshold = maxLen * 0.25
+        const merged: string[] = [chunks[0]]
+        for (let i = 1; i < chunks.length; i++) {
+            const prev = merged[merged.length - 1]
+            const cur = chunks[i]
+            if ((cur.length < smallThreshold || prev.length < smallThreshold)
+                && prev.length + cur.length + 2 <= maxLen) {
+                merged[merged.length - 1] = prev + '\n\n' + cur
+            } else {
+                merged.push(cur)
+            }
+        }
+        return merged
+    }
+
+    /** Split prose (non-code-block text) at paragraph/line boundaries. */
+    private splitProseIntoChunks(text: string, maxLen: number, out: string[]): void {
+        let remaining = text
         while (remaining.length > maxLen) {
+            // Prefer double-newline (paragraph break)
             let splitAt = remaining.lastIndexOf('\n\n', maxLen)
-            if (splitAt < maxLen * 0.5) splitAt = remaining.lastIndexOf('\n', maxLen)
+            // Fall back to single newline, but only if reasonably deep into the chunk
+            if (splitAt < maxLen * 0.4) splitAt = remaining.lastIndexOf('\n', maxLen)
+            // Last resort: hard-cut
             if (splitAt < maxLen * 0.3) splitAt = maxLen
-            chunks.push(remaining.slice(0, splitAt).trim())
+            out.push(remaining.slice(0, splitAt).trim())
             remaining = remaining.slice(splitAt).trim()
         }
-        if (remaining) chunks.push(remaining)
-        return chunks.filter(c => c.length > 0)
+        if (remaining.trim()) out.push(remaining.trim())
+    }
+
+    /** Split an oversized segment (usually a huge code block) trying to keep it readable. */
+    private splitOversizedSegment(segment: string, maxLen: number, out: string[]): void {
+        const isCodeBlock = segment.trimStart().startsWith('```')
+        if (!isCodeBlock) {
+            // Plain prose — normal prose splitting
+            this.splitProseIntoChunks(segment, maxLen, out)
+            return
+        }
+        // Code block — split at internal newlines, wrapping each piece in fences
+        const lines = segment.split('\n')
+        // First line is the opening fence (e.g. ```typescript), last is closing ```
+        const openFence = lines[0]
+        const closeFence = lines[lines.length - 1].trim() === '```' ? '```' : ''
+        const innerLines = closeFence ? lines.slice(1, -1) : lines.slice(1)
+
+        let buf = openFence + '\n'
+        for (const line of innerLines) {
+            if (buf.length + line.length + 1 + 4 > maxLen) { // +4 for closing ```\n
+                // Close this chunk and start a new one
+                out.push((buf + '```').trim())
+                buf = openFence + '\n'
+            }
+            buf += line + '\n'
+        }
+        // Final piece
+        buf += closeFence || '```'
+        if (buf.trim() !== openFence + '\n```') {
+            out.push(buf.trim())
+        }
     }
 
     /**
@@ -1283,9 +1490,58 @@ export class FeishuAdapter implements IMAdapter {
         }
     }
 
+    /**
+     * Resolve markdown image URLs in text: download remote images, upload to Feishu,
+     * and replace URLs with image_keys for inline display. Failed uploads become links.
+     * Inspired by larksuite/cli resolveMarkdownImageURLs().
+     */
+    private async resolveMarkdownImages(text: string): Promise<string> {
+        const IMAGE_URL_RE = /!\[([^\]]*)\]\((https?:\/\/[^)]+)\)/g
+        const matches: Array<{ full: string; alt: string; url: string }> = []
+        let m: RegExpExecArray | null
+        while ((m = IMAGE_URL_RE.exec(text)) !== null) {
+            matches.push({ full: m[0], alt: m[1], url: m[2] })
+        }
+        if (matches.length === 0) return text
+
+        // Upload in parallel with dedup — same URL reuses cached key
+        const results = await Promise.all(
+            matches.map(async ({ full, alt, url }) => {
+                // Check dedup cache first
+                const cached = this.imageKeyCache.get(url)
+                if (cached) {
+                    return { full, replacement: `![${alt}](${cached})` }
+                }
+                const imageKey = await this.downloadAndUploadImage(url)
+                if (imageKey) {
+                    this.imageKeyCache.set(url, imageKey)
+                    return { full, replacement: `![${alt}](${imageKey})` }
+                }
+                // Upload failed — degrade to clickable link
+                return { full, replacement: `[${alt || '图片'}](${url})` }
+            })
+        )
+
+        // Evict old cache entries (keep last 100)
+        if (this.imageKeyCache.size > 100) {
+            const keys = [...this.imageKeyCache.keys()]
+            for (let i = 0; i < keys.length - 100; i++) {
+                this.imageKeyCache.delete(keys[i])
+            }
+        }
+
+        let resolved = text
+        for (const { full, replacement } of results) {
+            resolved = resolved.replace(full, replacement)
+        }
+        return resolved
+    }
+
     private async downloadAndUploadImage(url: string): Promise<string | null> {
         try {
-            const resp = await fetch(url)
+            const controller = new AbortController()
+            const timeout = setTimeout(() => controller.abort(), 30_000)
+            const resp = await fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timeout))
             if (!resp.ok) {
                 console.warn(`[FeishuAdapter] Image download failed: ${resp.status} ${url}`)
                 return null
@@ -1316,9 +1572,23 @@ export class FeishuAdapter implements IMAdapter {
         }
     }
 
+    /**
+     * Send a post to a chat and return the message ID.
+     * Used by BrainBridge for streaming partial-content posts.
+     */
+    async sendPostAndGetId(chatId: string, text: string): Promise<string | null> {
+        const { buildFeishuMessage } = await import('./formatter')
+        const resolvedText = await this.resolveMarkdownImages(text)
+        const { msgType, content } = buildFeishuMessage(resolvedText)
+        return this.sendFeishuMessage(chatId, msgType, content)
+    }
+
     private async sendPost(chatId: string, text: string, replyToMessageId?: string, atIds?: string[]): Promise<void> {
+        // Resolve markdown image URLs → upload to Feishu and replace with image_keys for inline display
+        const resolvedText = await this.resolveMarkdownImages(text)
+
         // Try building the message first — cards handle their own content splitting
-        const probe = buildFeishuMessage(text, atIds)
+        const probe = buildFeishuMessage(resolvedText, atIds)
         if (probe.msgType === 'interactive' || probe.msgType === 'text') {
             // Card or plain text — send as single message
             await this.sendFeishuMessage(chatId, probe.msgType, probe.content, replyToMessageId)
@@ -1327,7 +1597,7 @@ export class FeishuAdapter implements IMAdapter {
 
         // Post format — chunk if needed
         const CHUNK_LIMIT = 4000
-        const chunks = this.splitTextIntoChunks(text, CHUNK_LIMIT)
+        const chunks = this.splitTextIntoChunks(resolvedText, CHUNK_LIMIT)
 
         for (let ci = 0; ci < chunks.length; ci++) {
             const isFirst = ci === 0
@@ -1356,10 +1626,47 @@ export class FeishuAdapter implements IMAdapter {
         return messageId
     }
 
+    // ========== Circuit breaker ==========
+
+    private circuitFailures = 0
+    private circuitOpenUntil = 0
+    private static readonly CIRCUIT_THRESHOLD = 5     // consecutive failures to open circuit
+    private static readonly CIRCUIT_COOLDOWN = 30_000 // ms to wait before retrying after circuit opens
+
+    private isCircuitOpen(): boolean {
+        if (this.circuitFailures < FeishuAdapter.CIRCUIT_THRESHOLD) return false
+        if (Date.now() > this.circuitOpenUntil) {
+            // Half-open: allow one attempt
+            this.circuitFailures = FeishuAdapter.CIRCUIT_THRESHOLD - 1
+            return false
+        }
+        return true
+    }
+
+    private recordSuccess(): void {
+        this.circuitFailures = 0
+    }
+
+    private recordFailure(): void {
+        this.circuitFailures++
+        if (this.circuitFailures >= FeishuAdapter.CIRCUIT_THRESHOLD) {
+            this.circuitOpenUntil = Date.now() + FeishuAdapter.CIRCUIT_COOLDOWN
+            console.error(`[FeishuAdapter] Circuit breaker OPEN — ${this.circuitFailures} consecutive failures, pausing for ${FeishuAdapter.CIRCUIT_COOLDOWN / 1000}s`)
+        }
+    }
+
     /**
-     * Central Feishu API caller with 401 token refresh retry and 429 rate limit backoff.
+     * Central Feishu API caller with:
+     *  - 401 token refresh retry
+     *  - 429 exponential backoff with jitter
+     *  - Circuit breaker (opens after 5 consecutive failures, cools down 30s)
      */
     private async callFeishuApi(url: string, method: string, body?: unknown, maxRetries = 2): Promise<Record<string, any> | null> {
+        if (this.isCircuitOpen()) {
+            console.warn(`[FeishuAdapter] Circuit breaker open, skipping API call to ${url}`)
+            return null
+        }
+
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             try {
                 const token = await this.getToken()
@@ -1376,26 +1683,33 @@ export class FeishuAdapter implements IMAdapter {
                     continue
                 }
 
-                // 429 — rate limited, backoff and retry
+                // 429 — rate limited, exponential backoff with jitter
                 if (resp.status === 429 && attempt < maxRetries) {
                     const retryAfter = parseInt(resp.headers.get('retry-after') || '', 10)
-                    const delay = (retryAfter > 0 ? retryAfter : (attempt + 1)) * 1000
-                    console.warn(`[FeishuAdapter] 429 rate limited on ${url}, retrying in ${delay}ms`)
+                    const baseDelay = retryAfter > 0 ? retryAfter * 1000 : 1000 * Math.pow(2, attempt)
+                    const jitter = Math.random() * 1000
+                    const delay = baseDelay + jitter
+                    console.warn(`[FeishuAdapter] 429 rate limited on ${url}, retrying in ${Math.round(delay)}ms (attempt ${attempt + 1})`)
                     await new Promise(r => setTimeout(r, delay))
                     continue
                 }
 
-                return await resp.json() as Record<string, any>
+                const result = await resp.json() as Record<string, any>
+                this.recordSuccess()
+                return result
             } catch (err) {
                 if (attempt < maxRetries) {
-                    console.warn(`[FeishuAdapter] API call failed (attempt ${attempt + 1}), retrying:`, (err as Error).message)
-                    await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
+                    const delay = 1000 * Math.pow(2, attempt) + Math.random() * 500
+                    console.warn(`[FeishuAdapter] API call failed (attempt ${attempt + 1}), retrying in ${Math.round(delay)}ms:`, (err as Error).message)
+                    await new Promise(r => setTimeout(r, delay))
                     continue
                 }
                 console.error(`[FeishuAdapter] API call failed after ${maxRetries + 1} attempts:`, err)
+                this.recordFailure()
                 return null
             }
         }
+        this.recordFailure()
         return null
     }
 
@@ -1505,15 +1819,45 @@ export class FeishuAdapter implements IMAdapter {
         return FeishuAdapter.FILE_TYPE_MAP[ext] || 'stream'
     }
 
+    private static readonly MAX_FILE_SIZE = 20 * 1024 * 1024 // 20 MB
+
     private resolveFilePath(ref: string): string | null {
+        let filePath: string | null = null
         const suIdx = ref.indexOf('server-uploads/')
         if (suIdx >= 0) {
             const config = getConfiguration()
             const relativePath = ref.slice(suIdx + 'server-uploads/'.length)
-            return join(config.dataDir, 'uploads', relativePath)
+            filePath = resolve(config.dataDir, 'uploads', relativePath)
+            // Path traversal guard: must stay under uploads/
+            const uploadsDir = resolve(config.dataDir, 'uploads')
+            if (!filePath.startsWith(uploadsDir + '/')) {
+                console.warn(`[FeishuAdapter] Path traversal blocked: ${ref} resolved to ${filePath}`)
+                return null
+            }
+        } else if (ref.startsWith('/')) {
+            filePath = resolve(ref)
         }
-        if (ref.startsWith('/')) return ref
-        return null
+
+        if (!filePath) return null
+
+        // Block suspicious patterns
+        if (filePath.includes('/../') || filePath.includes('/./')) {
+            console.warn(`[FeishuAdapter] Suspicious path blocked: ${ref}`)
+            return null
+        }
+
+        // File size guard
+        try {
+            const stat = statSync(filePath)
+            if (stat.size > FeishuAdapter.MAX_FILE_SIZE) {
+                console.warn(`[FeishuAdapter] File too large (${(stat.size / 1024 / 1024).toFixed(1)}MB > 20MB limit): ${ref}`)
+                return null
+            }
+        } catch {
+            // File doesn't exist — let the caller handle existsSync check
+        }
+
+        return filePath
     }
 
     private async uploadImage(filePath: string): Promise<string | null> {
@@ -1578,7 +1922,8 @@ export class FeishuAdapter implements IMAdapter {
     // ========== Token management ==========
 
     private async getToken(): Promise<string> {
-        if (this.tokenCache && Date.now() < this.tokenCache.expiresAt) {
+        // Preemptive refresh: if token expires within 5 minutes, refresh early
+        if (this.tokenCache && Date.now() < this.tokenCache.expiresAt - 5 * 60 * 1000) {
             return this.tokenCache.value
         }
 

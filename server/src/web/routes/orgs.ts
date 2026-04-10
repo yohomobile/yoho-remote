@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type { WebAppEnv } from '../middleware/auth'
 import type { IStore, OrgRole } from '../../store'
 import { emailService } from '../../services/emailService'
+import { getLicenseService } from '../../license/licenseService'
 
 const createOrgSchema = z.object({
     name: z.string().min(1).max(100),
@@ -109,7 +110,8 @@ export function createOrgsRoutes(store: IStore): Hono<WebAppEnv> {
         if ('error' in roleCheck) return c.json({ error: roleCheck.error }, roleCheck.status)
 
         const members = await store.getOrgMembers(orgId)
-        return c.json({ org, members, myRole: roleCheck.role })
+        const license = await store.getOrgLicense(orgId)
+        return c.json({ org, members, myRole: roleCheck.role, license })
     })
 
     // 更新组织
@@ -186,6 +188,15 @@ export function createOrgsRoutes(store: IStore): Hono<WebAppEnv> {
         if (existing) {
             return c.json({ error: 'User is already a member' }, 409)
         }
+
+        // License: 检查成员数上限
+        try {
+            const licenseService = getLicenseService()
+            const memberCheck = await licenseService.canAddMember(orgId)
+            if (!memberCheck.valid) {
+                return c.json({ error: memberCheck.message, code: memberCheck.code }, 403)
+            }
+        } catch { /* LicenseService not initialized */ }
 
         // 发送邀请（7 天有效期）
         const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000
@@ -366,6 +377,20 @@ export function createOrgsRoutes(store: IStore): Hono<WebAppEnv> {
         if (!email) return c.json({ error: 'Unauthorized' }, 401)
 
         const invitationId = c.req.param('invitationId')
+
+        // License: 通过 pending invitations 获取 orgId，检查成员数上限
+        try {
+            const licenseService = getLicenseService()
+            const pendingInvitations = await store.getPendingInvitationsForUser(email)
+            const invitation = pendingInvitations.find(inv => inv.id === invitationId)
+            if (invitation) {
+                const memberCheck = await licenseService.canAddMember(invitation.orgId)
+                if (!memberCheck.valid) {
+                    return c.json({ error: memberCheck.message, code: memberCheck.code }, 403)
+                }
+            }
+        } catch { /* LicenseService not initialized */ }
+
         const success = await store.acceptOrgInvitation(invitationId, userId, email)
         if (!success) {
             return c.json({ error: 'Invitation not found, expired, or already accepted' }, 404)

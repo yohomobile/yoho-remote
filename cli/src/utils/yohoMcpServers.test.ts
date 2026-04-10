@@ -5,54 +5,43 @@ import { describe, expect, it, vi } from 'vitest';
 import { getYohoAuxMcpServers, type YohoHttpMcpServerConfig, type YohoStdioMcpServerConfig } from './yohoMcpServers';
 
 const homeDir = process.env.HOME || require('node:os').homedir();
-const memoryExists = existsSync(`${homeDir}/happy/yoho-memory/src/mcp/stdio.ts`);
-const credentialsExists = existsSync(`${homeDir}/happy/yoho-task-v2/mcp/credentials-server/index.ts`);
+const vaultExists = existsSync(`${homeDir}/happy/yoho-memory/src/mcp/stdio.ts`);
 
 describe('getYohoAuxMcpServers', () => {
     it('returns correct server names for Claude', async () => {
         const servers = await getYohoAuxMcpServers('claude');
         for (const key of Object.keys(servers)) {
-            expect(['yoho-memory', 'yoho-credentials']).toContain(key);
+            expect(['yoho-vault']).toContain(key);
         }
     });
 
     it('returns correct server names for Codex', async () => {
         const servers = await getYohoAuxMcpServers('codex');
         for (const key of Object.keys(servers)) {
-            expect(['yoho_memory', 'yoho_credentials']).toContain(key);
+            expect(['yoho_vault']).toContain(key);
         }
     });
 
-    it('returns stdio config when local paths exist', async () => {
+    it('returns stdio config when local path exists', async () => {
         const servers = await getYohoAuxMcpServers('claude');
-        if (memoryExists) {
-            const cfg = servers['yoho-memory'] as YohoStdioMcpServerConfig;
+        if (vaultExists) {
+            const cfg = servers['yoho-vault'] as YohoStdioMcpServerConfig;
             expect(cfg.command).toBe('bun');
             expect(cfg.cwd).toContain('/happy/yoho-memory');
         }
-        if (credentialsExists) {
-            const cfg = servers['yoho-credentials'] as YohoStdioMcpServerConfig;
-            expect(cfg.command).toBe('bun');
-            expect(cfg.cwd).toContain('/happy/yoho-task-v2/mcp/credentials-server');
-        }
     });
 
-    it('falls back to HTTP for Claude when local paths are missing and YOHO_REMOTE_URL is set', async () => {
-        if (memoryExists && credentialsExists) return; // skip on machines with local paths
+    it('falls back to HTTP for Claude when local path is missing and YOHO_REMOTE_URL is set', async () => {
+        if (vaultExists) return; // skip on machines with local path
 
         const original = process.env.YOHO_REMOTE_URL;
         process.env.YOHO_REMOTE_URL = 'http://192.168.122.1:3006';
         try {
             const servers = await getYohoAuxMcpServers('claude');
-            if (!memoryExists) {
-                const cfg = servers['yoho-memory'] as YohoHttpMcpServerConfig;
+            if (!vaultExists) {
+                const cfg = servers['yoho-vault'] as YohoHttpMcpServerConfig;
                 expect(cfg.type).toBe('http');
                 expect(cfg.url).toContain(':3100/mcp');
-            }
-            if (!credentialsExists) {
-                const cfg = servers['yoho-credentials'] as YohoHttpMcpServerConfig;
-                expect(cfg.type).toBe('http');
-                expect(cfg.url).toContain(':3101/mcp');
             }
         } finally {
             if (original !== undefined) process.env.YOHO_REMOTE_URL = original;
@@ -60,18 +49,15 @@ describe('getYohoAuxMcpServers', () => {
         }
     });
 
-    it('omits servers for Codex when local paths are missing', async () => {
+    it('omits vault server for Codex when local path is missing', async () => {
         const servers = await getYohoAuxMcpServers('codex');
-        if (!memoryExists) {
-            expect(servers).not.toHaveProperty('yoho_memory');
-        }
-        if (!credentialsExists) {
-            expect(servers).not.toHaveProperty('yoho_credentials');
+        if (!vaultExists) {
+            expect(servers).not.toHaveProperty('yoho_vault');
         }
     });
 
-    it('resolves yoho-memory from Project list when configured there', async () => {
-        const tempRoot = mkdtempSync(join(tmpdir(), 'yoho-memory-project-'));
+    it('resolves vault from Project list when registered as YohoVault or YohoMemory', async () => {
+        const tempRoot = mkdtempSync(join(tmpdir(), 'yoho-vault-project-'));
         const repoRoot = join(tempRoot, 'yoho-memory');
         const entryPath = join(repoRoot, 'src', 'mcp');
         mkdirSync(entryPath, { recursive: true });
@@ -87,10 +73,35 @@ describe('getYohoAuxMcpServers', () => {
                 sessionId: 'session-123'
             });
 
-            const cfg = servers.yoho_memory as YohoStdioMcpServerConfig;
+            const cfg = servers.yoho_vault as YohoStdioMcpServerConfig;
             expect(cfg.command).toBe('bun');
             expect(cfg.cwd).toBe(repoRoot);
             expect(cfg.args).toEqual(['run', join(repoRoot, 'src', 'mcp', 'stdio.ts')]);
+        } finally {
+            rmSync(tempRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('passes orgId as YOHO_ORG_ID env when provided (stdio)', async () => {
+        const tempRoot = mkdtempSync(join(tmpdir(), 'yoho-vault-org-'));
+        const repoRoot = join(tempRoot, 'yoho-vault');
+        const entryPath = join(repoRoot, 'src', 'mcp');
+        mkdirSync(entryPath, { recursive: true });
+        writeFileSync(join(entryPath, 'stdio.ts'), 'console.log("ok")\n');
+
+        try {
+            const servers = await getYohoAuxMcpServers('codex', {
+                apiClient: {
+                    getProjects: vi.fn().mockResolvedValue([
+                        { name: 'YohoVault', path: repoRoot }
+                    ])
+                },
+                sessionId: 'session-123',
+                orgId: 'test-org-id',
+            });
+
+            const cfg = servers.yoho_vault as YohoStdioMcpServerConfig;
+            expect(cfg.env?.YOHO_ORG_ID).toBe('test-org-id');
         } finally {
             rmSync(tempRoot, { recursive: true, force: true });
         }

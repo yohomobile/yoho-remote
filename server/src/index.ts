@@ -19,6 +19,7 @@ import { startWebServer } from './web/server'
 import { createSocketServer } from './socket/server'
 import { SSEManager } from './sse/sseManager'
 import { initWebPushService } from './services/webPush'
+import { createLicenseService } from './license/licenseService'
 import { emailService } from './services/emailService'
 import type { Server as BunServer } from 'bun'
 import type { WebSocketData } from '@socket.io/bun-engine'
@@ -97,6 +98,15 @@ async function main() {
     console.log(`[Server] Store: PostgreSQL (${pgConfig.host}/${pgConfig.database})`)
     const store = await PostgresStore.create(pgConfig)
 
+    // Initialize License service
+    const adminOrgId = process.env.ADMIN_ORG_ID || null
+    createLicenseService(store, adminOrgId)
+    if (adminOrgId) {
+        console.log(`[Server] License: admin org ID = ${adminOrgId}`)
+    } else {
+        console.log('[Server] License: no admin org configured (all orgs require license)')
+    }
+
     // Initialize Web Push service
     const webPushConfig = config.webPushVapidPublicKey && config.webPushVapidPrivateKey && config.webPushVapidSubject
         ? {
@@ -164,7 +174,20 @@ async function main() {
         onWebappEvent: (event: SyncEvent) => syncEngine?.handleRealtimeEvent(event),
         onSessionAlive: (payload) => syncEngine?.handleSessionAlive(payload),
         onSessionEnd: (payload) => syncEngine?.handleSessionEnd(payload),
-        onMachineAlive: (payload) => syncEngine?.handleMachineAlive(payload)
+        onMachineAlive: (payload) => syncEngine?.handleMachineAlive(payload),
+        onLicenseBlock: (sessionId, reason) => {
+            // 1. Stamp termination reason on in-memory session before killing
+            const session = syncEngine?.getSession(sessionId)
+            if (session) session.terminationReason = reason
+            // 2. Kill the daemon process
+            syncEngine?.terminateSessionProcess(sessionId).catch(err => {
+                console.error(`[License] Failed to terminate session ${sessionId}:`, err)
+            })
+            // 3. Immediately mark session inactive so webapp reflects the correct state
+            syncEngine?.handleSessionEnd({ sid: sessionId, time: Date.now() }).catch(err => {
+                console.error(`[License] Failed to deactivate session ${sessionId}:`, err)
+            })
+        },
     })
 
     syncEngine = new SyncEngine(store, socketServer.io, socketServer.rpcRegistry, sseManager)

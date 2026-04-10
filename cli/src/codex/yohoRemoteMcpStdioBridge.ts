@@ -84,7 +84,9 @@ export async function runYohoRemoteMcpStdioBridge(argv: string[]): Promise<void>
                 { name: 'yr-stdio-bridge', version: '1.0.0' },
                 { capabilities: {} }
             );
-            const transport = new StreamableHTTPClientTransport(new URL(baseUrl));
+            const orgId = process.env.YOHO_ORG_ID?.trim() || null;
+            const headers: Record<string, string> = orgId ? { 'x-org-id': orgId } : {};
+            const transport = new StreamableHTTPClientTransport(new URL(baseUrl), { requestInit: { headers } });
             await client.connect(transport);
             httpClient = client;
             return client;

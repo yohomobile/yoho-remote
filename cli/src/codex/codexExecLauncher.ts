@@ -24,7 +24,7 @@ import { hasCodexCliOverrides } from './utils/codexCliOverrides';
 import { buildCodexStartConfig, TITLE_INSTRUCTION } from './utils/codexStartConfig';
 import { buildCommandExecutionResult, getCommandExecutionPreview } from './utils/commandExecutionResult';
 import { resolveCodexBinary } from './codexBinary';
-import { getYohoAuxMcpServers, MEMORY_HTTP_PORT, CREDENTIALS_HTTP_PORT } from '@/utils/yohoMcpServers';
+import { getYohoAuxMcpServers, VAULT_HTTP_PORT } from '@/utils/yohoMcpServers';
 import type { CodexSession } from './session';
 import type { EnhancedMode, PermissionMode } from './loop';
 
@@ -117,8 +117,8 @@ function buildMcpConfigFlags(
 function normalizeCodexToolReferences(message: string): string {
     return message
         .replaceAll(/mcp__yoho_remote__([a-z0-9_]+)/gi, 'functions.yoho_remote__$1')
-        .replaceAll(/mcp__yoho-memory__([a-z0-9_]+)/gi, 'functions.yoho_memory__$1')
-        .replaceAll(/mcp__yoho-credentials__([a-z0-9_]+)/gi, 'functions.yoho_credentials__$1');
+        .replaceAll(/mcp__yoho-vault__([a-z0-9_]+)/gi, 'functions.yoho_vault__$1')
+        .replaceAll(/mcp__yoho_vault__([a-z0-9_]+)/gi, 'functions.yoho_vault__$1');
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +197,7 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
     const auxServers = await getYohoAuxMcpServers('codex', {
         apiClient: session.api,
         sessionId: session.client.sessionId,
+        orgId: session.client.orgId,
     });
     const mcpServers: Record<string, { command: string; args: string[]; cwd?: string; env?: Record<string, string> }> = {
         yoho_remote: {
@@ -206,22 +207,15 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
         ...auxServers
     };
 
-    // Add stdio bridges for remote aux MCP servers when local files are absent
-    if (!auxServers.yoho_memory) {
+    // Add stdio bridge for remote vault MCP server when local files are absent
+    if (!auxServers.yoho_vault) {
         try {
             const host = new URL(process.env.YOHO_REMOTE_URL || '').hostname;
             if (host) {
-                const memBridge = getYohoRemoteCliCommand(['mcp', '--url', `http://${host}:${MEMORY_HTTP_PORT}/mcp`]);
-                mcpServers.yoho_memory = { command: memBridge.command, args: memBridge.args };
-            }
-        } catch { /* invalid URL, skip */ }
-    }
-    if (!auxServers.yoho_credentials) {
-        try {
-            const host = new URL(process.env.YOHO_REMOTE_URL || '').hostname;
-            if (host) {
-                const credBridge = getYohoRemoteCliCommand(['mcp', '--url', `http://${host}:${CREDENTIALS_HTTP_PORT}/mcp`]);
-                mcpServers.yoho_credentials = { command: credBridge.command, args: credBridge.args };
+                const vaultBridge = getYohoRemoteCliCommand(['mcp', '--url', `http://${host}:${VAULT_HTTP_PORT}/mcp`]);
+                const vaultBridgeEnv: Record<string, string> = {};
+                if (session.client.orgId) vaultBridgeEnv.YOHO_ORG_ID = session.client.orgId;
+                mcpServers.yoho_vault = { command: vaultBridge.command, args: vaultBridge.args, env: vaultBridgeEnv };
             }
         } catch { /* invalid URL, skip */ }
     }

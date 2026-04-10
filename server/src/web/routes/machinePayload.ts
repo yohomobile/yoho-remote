@@ -21,5 +21,6 @@ export function serializeMachine(machine: Machine) {
         updatedAt: machine.updatedAt,
         metadata: machine.metadata ? { ...machine.metadata } : null,
         daemonState: machine.daemonState,
+        supportedAgents: machine.supportedAgents ?? null,
     }
 }

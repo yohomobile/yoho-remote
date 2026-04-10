@@ -136,6 +136,7 @@ export function useSSE(options: {
                             modelMode?: string
                             modelReasoningEffort?: string
                             fastMode?: boolean
+                            terminationReason?: string
                             sid?: string  // 仅包含 sid 表示是 metadata/todos/agentState 更新
                         } | null
 
@@ -159,7 +160,8 @@ export function useSSE(options: {
                             data.permissionMode !== undefined ||
                             data.modelMode !== undefined ||
                             data.modelReasoningEffort !== undefined ||
-                            data.fastMode !== undefined
+                            data.fastMode !== undefined ||
+                            data.terminationReason !== undefined
                         )
 
                         // 检查是否只是 metadata/todos/agentState 更新（只包含 sid）
@@ -185,6 +187,7 @@ export function useSSE(options: {
                                             ...(data.modelMode !== undefined && { modelMode: data.modelMode as Session['modelMode'] }),
                                             ...(data.modelReasoningEffort !== undefined && { modelReasoningEffort: data.modelReasoningEffort as Session['modelReasoningEffort'] }),
                                             ...(data.fastMode !== undefined && { fastMode: data.fastMode }),
+                                            ...(data.terminationReason !== undefined && { terminationReason: data.terminationReason }),
                                         }
                                     }
                                 }
@@ -204,7 +207,8 @@ export function useSSE(options: {
                                         (data.thinking !== undefined && data.thinking !== target.thinking) ||
                                         (data.modelMode !== undefined && data.modelMode !== target.modelMode) ||
                                         (data.modelReasoningEffort !== undefined && data.modelReasoningEffort !== target.modelReasoningEffort) ||
-                                        (data.fastMode !== undefined && data.fastMode !== target.fastMode)
+                                        (data.fastMode !== undefined && data.fastMode !== target.fastMode) ||
+                                        (data.terminationReason !== undefined && data.terminationReason !== target.terminationReason)
                                     if (!hasChange) return prev
                                     return {
                                         ...prev,
@@ -218,6 +222,7 @@ export function useSSE(options: {
                                                     ...(data.modelMode !== undefined && { modelMode: data.modelMode as SessionSummary['modelMode'] }),
                                                     ...(data.modelReasoningEffort !== undefined && { modelReasoningEffort: data.modelReasoningEffort as SessionSummary['modelReasoningEffort'] }),
                                                     ...(data.fastMode !== undefined && { fastMode: data.fastMode }),
+                                                    ...(data.terminationReason !== undefined && { terminationReason: data.terminationReason }),
                                                 }
                                                 : s
                                         )

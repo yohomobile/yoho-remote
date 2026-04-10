@@ -13,6 +13,7 @@ import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { OfflineBanner } from '@/components/OfflineBanner'
 import { SyncingBanner } from '@/components/SyncingBanner'
 import { UpdateBanner } from '@/components/UpdateBanner'
+import { LicenseBanner } from '@/components/LicenseBanner'
 import { LoadingState } from '@/components/LoadingState'
 import { Toaster } from '@/components/ui/toaster'
 import { useVersionCheck } from '@/hooks/useVersionCheck'
@@ -279,7 +280,23 @@ export function App() {
         }
 
         if (event.type === 'session-updated') {
-            const data = ('data' in event ? event.data : null) as { active?: boolean; thinking?: boolean; wasThinking?: boolean } | null
+            const data = ('data' in event ? event.data : null) as { active?: boolean; thinking?: boolean; wasThinking?: boolean; terminationReason?: string } | null
+
+            // License kill notification
+            if (data?.active === false && typeof data.terminationReason === 'string' && data.terminationReason.startsWith('LICENSE_')) {
+                const sessionsData = queryClient.getQueryData<{ sessions: SessionSummary[] }>([...queryKeys.sessions, currentOrgId ?? 'all'])
+                const killedSession = sessionsData?.sessions.find(s => s.id === event.sessionId)
+                const label = killedSession?.metadata?.summary?.text || killedSession?.metadata?.name || 'A session'
+                const reasonLabel = data.terminationReason === 'LICENSE_SUSPENDED' ? 'License suspended' : 'License expired'
+                notifyTaskComplete({
+                    sessionId: event.sessionId,
+                    title: `${reasonLabel} — ${label}`,
+                    project: undefined,
+                    onClick: () => navigate({ to: '/sessions/$sessionId', params: { sessionId: event.sessionId } }),
+                })
+                return
+            }
+
             if (data?.wasThinking && data.thinking === false) {
                 const isCurrentSession = event.sessionId === selectedSessionId
                 const isAppVisible = document.visibilityState === 'visible'
@@ -411,6 +428,7 @@ export function App() {
             {hasUpdate && <UpdateBanner onDismiss={handleDismiss} />}
             <SyncingBanner isSyncing={isSyncing} />
             <OfflineBanner />
+            <LicenseBanner />
             <div className="h-full flex flex-col">
                 <OrgGate>
                     <Outlet />

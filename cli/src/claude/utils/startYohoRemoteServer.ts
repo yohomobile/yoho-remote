@@ -101,7 +101,6 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
         registerProjectTools(mcp, toolNames, {
             apiClient: options.apiClient,
             sessionId: options.yohoRemoteSessionId,
-            machineId: options.machineId,
         });
 
         const { registerSessionTools } = await import('./sessionTools');

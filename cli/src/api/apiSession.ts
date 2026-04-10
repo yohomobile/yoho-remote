@@ -36,6 +36,7 @@ import {
 export class ApiSessionClient extends EventEmitter {
     private readonly token: string
     readonly sessionId: string
+    readonly orgId: string | null
     private metadata: Metadata | null
     private metadataVersion: number
     private agentState: AgentState | null
@@ -56,6 +57,7 @@ export class ApiSessionClient extends EventEmitter {
         super()
         this.token = token
         this.sessionId = session.id
+        this.orgId = session.orgId ?? null
         this.metadata = session.metadata
         this.metadataVersion = session.metadataVersion
         this.agentState = session.agentState
@@ -123,7 +125,18 @@ export class ApiSessionClient extends EventEmitter {
         })
 
         this.socket.on('error', (payload) => {
-            logger.debug('[API] Socket error:', payload)
+            if (typeof payload.code === 'string' && payload.code.startsWith('license-')) {
+                // License block: server has rejected this session. terminateSessionProcess RPC will follow.
+                logger.warn(`[API] License block for session ${payload.id ?? this.sessionId}: ${payload.message} (code: ${payload.code})`)
+                this.emit('license-error', payload)
+            } else {
+                logger.debug('[API] Socket error:', payload)
+            }
+        })
+
+        this.socket.on('license-warning', (payload) => {
+            logger.warn(`[API] License warning for session ${payload.id ?? this.sessionId}: ${payload.message}`)
+            this.emit('license-warning', payload)
         })
 
         const handleTerminalEvent = <T extends { sessionId: string }>(

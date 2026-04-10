@@ -45,6 +45,7 @@ import type {
     BrainConfigResponse,
     UpdateBrainConfigResponse,
     BrainAgent,
+    MeResponse,
 } from '@/types/api'
 
 type ApiClientOptions = {
@@ -282,6 +283,10 @@ export class ApiClient {
     }
 
     // ========== User Preferences ==========
+
+    async getMe(): Promise<MeResponse> {
+        return await this.request<MeResponse>('/api/settings/me')
+    }
 
     async getUserPreferences(): Promise<UserPreferencesResponse> {
         return await this.request<UserPreferencesResponse>('/api/settings/user-preferences')

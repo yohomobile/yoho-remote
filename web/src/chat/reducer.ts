@@ -834,12 +834,12 @@ export function reduceChatBlocks(
     // This matches backend logic in server/src/sync/syncEngine.ts:getLastUsageForSession
     let latestUsage: LatestUsage | null = null
 
-    // Find the last message with actual usage data
-    // Prioritize 'result' messages (cumulative usage) over 'assistant' messages (per-turn usage)
-    // Skip messages where usage exists but all values are 0
-    let resultUsage: LatestUsage | null = null
+    // Find the last assistant message with per-step usage data.
+    // IMPORTANT: session-result messages contain CUMULATIVE usage across all turns,
+    // which is NOT suitable for context percentage calculation (would show e.g. 13162%).
+    // Only per-step assistant usage or Codex token-count data accurately reflects
+    // the current context window usage.
     let assistantUsage: LatestUsage | null = null
-    let fallbackUsage: LatestUsage | null = null
     // Codex-specific: track the last token-count event.
     // New format has model_context_window for direct percentage calculation.
     let lastTokenCount: LatestUsage | null = null
@@ -870,10 +870,6 @@ export function reduceChatBlocks(
                 timestamp: msg.createdAt
             }
 
-            if (!fallbackUsage) {
-                fallbackUsage = usage
-            }
-
             // Track last token-count event for Codex context percentage
             const isTokenCount = msg.role === 'event' && msg.content && typeof msg.content === 'object' && 'type' in msg.content && msg.content.type === 'token-count'
             if (isTokenCount) {
@@ -888,33 +884,23 @@ export function reduceChatBlocks(
                 continue
             }
 
-            // Check if this is a result message (contains cumulative usage)
+            // Skip session-result events — their usage is cumulative across all turns
+            // and would produce wildly inflated context percentages
             if (msg.role === 'event' && msg.content && typeof msg.content === 'object' && 'type' in msg.content && msg.content.type === 'session-result') {
-                if (!resultUsage) {
-                    resultUsage = usage
-                }
-                if (assistantUsage) {
-                    break
-                }
                 continue
             }
 
-            // Store assistant message usage as fallback
+            // Per-step assistant message usage (accurate for context window)
             if (!assistantUsage && msg.role === 'agent') {
                 assistantUsage = usage
-                if (resultUsage) {
-                    break
-                }
+                break
             }
         }
     }
 
-    // Prefer assistant turn usage over session-result cumulative usage.
-    // For Codex sessions, fall back to token-count usage (with modelContextWindow if new format).
-    if (lastTokenCount) {
-        fallbackUsage = lastTokenCount
-    }
-    latestUsage = assistantUsage ?? resultUsage ?? fallbackUsage
+    // Use per-step assistant usage or Codex token-count data only.
+    // Never fall back to cumulative session-result usage for context percentage.
+    latestUsage = assistantUsage ?? lastTokenCount ?? null
 
     // Sort blocks by createdAt to ensure permission-only blocks appear in correct order.
     // We use a stable sort by adding original index as tiebreaker for equal createdAt values.

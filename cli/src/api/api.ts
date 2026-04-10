@@ -258,6 +258,7 @@ export class ApiClient {
         directory: string
         agent?: string
         modelMode?: string
+        codexModel?: string
         source?: string
         mainSessionId?: string
     }): Promise<{ type: 'success'; sessionId: string; logs?: unknown[] } | { type: 'error'; message: string; logs?: unknown[] }> {
@@ -268,6 +269,7 @@ export class ApiClient {
                 directory: opts.directory,
                 agent: opts.agent ?? 'claude',
                 modelMode: opts.modelMode,
+                codexModel: opts.codexModel,
                 source: opts.source ?? 'brain-child',
                 mainSessionId: opts.mainSessionId,
             },
@@ -380,7 +382,7 @@ export class ApiClient {
 
     // ===== Project API methods =====
 
-    async getProjects(sessionId: string, _machineId?: string): Promise<Project[]> {
+    async getProjects(sessionId: string): Promise<Project[]> {
         const params = new URLSearchParams({ sessionId })
         const response = await axios.get(
             `${configuration.serverUrl}/cli/projects?${params}`,
@@ -396,17 +398,16 @@ export class ApiClient {
     }
 
     async addProject(sessionId: string, opts: {
-        name: string
+        name?: string
         path: string
         description?: string
-        machineId?: string | null
     }): Promise<Project> {
         const params = new URLSearchParams({ sessionId })
-        const payload = {
-            name: opts.name,
+        const payload: Record<string, string | undefined> = {
             path: opts.path,
             description: opts.description,
         }
+        if (opts.name) payload.name = opts.name
         const response = await axios.post(
             `${configuration.serverUrl}/cli/projects?${params}`,
             payload,
@@ -422,17 +423,15 @@ export class ApiClient {
     }
 
     async updateProject(sessionId: string, id: string, opts: {
-        name: string
-        path: string
+        name?: string
+        path?: string
         description?: string
-        machineId?: string | null
     }): Promise<Project> {
         const params = new URLSearchParams({ sessionId })
-        const payload = {
-            name: opts.name,
-            path: opts.path,
-            description: opts.description,
-        }
+        const payload: Record<string, string | undefined> = {}
+        if (opts.name !== undefined) payload.name = opts.name
+        if (opts.path !== undefined) payload.path = opts.path
+        if (opts.description !== undefined) payload.description = opts.description
         const response = await axios.put(
             `${configuration.serverUrl}/cli/projects/${encodeURIComponent(id)}?${params}`,
             payload,
@@ -470,6 +469,7 @@ export class ApiClient {
         updatedAt: number
         metadata: MachineMetadata | null
         daemonState: DaemonState | null
+        supportedAgents: string[] | null
     }>> {
         const response = await axios.get(
             `${configuration.serverUrl}/cli/machines`,

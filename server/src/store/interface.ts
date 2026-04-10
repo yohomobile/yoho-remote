@@ -28,8 +28,10 @@ import type {
     StoredOrganization,
     StoredOrgMember,
     StoredOrgInvitation,
+    StoredOrgLicense,
     StoredBrainConfig,
     BrainAgent,
+    LicenseStatus,
     OrgRole,
     UserRole,
     VersionedUpdateResult,
@@ -50,6 +52,7 @@ import type {
     AutoIterExecutionPolicy,
     AutoIterApprovalMethod,
     AutoIterNotificationLevel,
+    SpawnAgentType,
 } from './types'
 
 export type { StoredSessionShare } from './types'
@@ -68,7 +71,7 @@ export interface IStore {
     setSessionRolePromptSent(id: string, namespace: string): Promise<boolean>
     setSessionCreatedBy(id: string, email: string, namespace: string): Promise<boolean>
     setSessionOrgId(id: string, orgId: string, namespace: string): Promise<boolean>
-    setSessionActive(id: string, active: boolean, activeAt: number, namespace: string): Promise<boolean>
+    setSessionActive(id: string, active: boolean, activeAt: number, namespace: string, terminationReason?: string | null): Promise<boolean>
     setSessionModelConfig(id: string, config: {
         permissionMode?: string
         modelMode?: string
@@ -79,6 +82,7 @@ export interface IStore {
     getSessionByNamespace(id: string, namespace: string): Promise<StoredSession | null>
     getSessions(orgId?: string | null): Promise<StoredSession[]>
     getSessionsByNamespace(namespace: string): Promise<StoredSession[]>
+    getActiveSessionCount(orgId: string): Promise<number>
     deleteSession(id: string): Promise<boolean>
     patchSessionMetadata(id: string, patch: Record<string, unknown>, namespace: string): Promise<boolean>
 
@@ -91,6 +95,7 @@ export interface IStore {
     getMachines(orgId?: string | null): Promise<StoredMachine[]>
     getMachinesByNamespace(namespace: string, orgId?: string | null): Promise<StoredMachine[]>
     setMachineOrgId(id: string, orgId: string, namespace: string): Promise<boolean>
+    setMachineSupportedAgents(id: string, supportedAgents: SpawnAgentType[] | null, namespace: string): Promise<boolean>
 
     // === Message 操作 ===
     addMessage(sessionId: string, content: unknown, localId?: string): Promise<StoredMessage>
@@ -136,7 +141,14 @@ export interface IStore {
     getProjects(machineId?: string | null, orgId?: string | null): Promise<StoredProject[]>
     getProject(id: string): Promise<StoredProject | null>
     addProject(name: string, path: string, description?: string, machineId?: string | null, orgId?: string | null, workspaceGroupId?: string | null): Promise<StoredProject | null>
-    updateProject(id: string, name: string, path: string, description?: string, machineId?: string | null, orgId?: string | null, workspaceGroupId?: string | null): Promise<StoredProject | null>
+    updateProject(id: string, fields: {
+        name?: string
+        path?: string
+        description?: string | null
+        machineId?: string | null
+        orgId?: string | null
+        workspaceGroupId?: string | null
+    }): Promise<StoredProject | null>
     removeProject(id: string): Promise<boolean>
 
     // === Role Prompt 操作 ===
@@ -445,6 +457,22 @@ export interface IStore {
         updatedBy?: string | null
     }): Promise<StoredBrainConfig>
 
+    // === Org License 操作 ===
+    getOrgLicense(orgId: string): Promise<StoredOrgLicense | null>
+    getAllOrgLicenses(): Promise<(StoredOrgLicense & { orgName: string; orgSlug: string })[]>
+    upsertOrgLicense(data: {
+        orgId: string
+        startsAt: number
+        expiresAt: number
+        maxMembers: number
+        maxConcurrentSessions?: number | null
+        status?: LicenseStatus
+        issuedBy: string
+        note?: string | null
+    }): Promise<StoredOrgLicense>
+    updateOrgLicenseStatus(orgId: string, status: LicenseStatus): Promise<boolean>
+    deleteOrgLicense(orgId: string): Promise<boolean>
+
     // === Organization 操作 ===
     createOrganization(data: { name: string; slug: string; createdBy: string }): Promise<StoredOrganization | null>
     getOrganization(id: string): Promise<StoredOrganization | null>
@@ -505,7 +533,9 @@ export type {
     StoredOrganization,
     StoredOrgMember,
     StoredOrgInvitation,
+    StoredOrgLicense,
     StoredDownloadFile,
+    LicenseStatus,
     OrgRole,
     UserRole,
     VersionedUpdateResult,

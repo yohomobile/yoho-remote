@@ -217,7 +217,7 @@ describe('Codex frontend support', () => {
         expect(reduced.latestUsage?.contextSize).toBe(811_089)
     })
 
-    test('falls back to Claude session-result usage when assistant usage is missing', () => {
+    test('does not use cumulative session-result usage for context percentage', () => {
         const normalized: NormalizedMessage[] = [{
             id: 'session-result-only',
             localId: null,
@@ -240,9 +240,9 @@ describe('Codex frontend support', () => {
 
         const reduced = reduceChatBlocks(normalized, null)
 
-        expect(reduced.latestUsage).not.toBeNull()
-        expect(reduced.latestUsage?.contextSize).toBe(811_089)
-        expect(reduced.latestUsage?.timestamp).toBe(2)
+        // session-result usage is cumulative across all turns — using it for
+        // context percentage would produce wildly inflated values (e.g. 13162%)
+        expect(reduced.latestUsage).toBeNull()
     })
 
     test('formats yoho namespaced tools with MCP-style titles and useful subtitles', () => {

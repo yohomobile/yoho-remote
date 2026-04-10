@@ -355,15 +355,23 @@ export function SessionChat(props: {
 
             {controlsDisabled ? (
                 <div className="px-3 pt-3">
-                    <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-hint)]">
-                        {isResuming
-                            ? 'Resuming session...'
-                            : resumeError
-                                ? 'Resume failed. Tap the composer to retry.'
-                                : props.messages.length === 0
-                                    ? 'Starting session...'
-                                    : 'Session is inactive. Tap the composer to resume.'}
-                    </div>
+                    {props.session.terminationReason?.startsWith('LICENSE_') ? (
+                        <div className="mx-auto w-full max-w-content rounded-md bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-600 dark:text-red-400">
+                            {props.session.terminationReason === 'LICENSE_SUSPENDED'
+                                ? 'Session terminated — license suspended. Contact your administrator.'
+                                : 'Session terminated — license expired. Contact your administrator.'}
+                        </div>
+                    ) : (
+                        <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-hint)]">
+                            {isResuming
+                                ? 'Resuming session...'
+                                : resumeError
+                                    ? 'Resume failed. Tap the composer to retry.'
+                                    : props.messages.length === 0
+                                        ? 'Starting session...'
+                                        : 'Session is inactive. Tap the composer to resume.'}
+                        </div>
+                    )}
                 </div>
             ) : null}
 

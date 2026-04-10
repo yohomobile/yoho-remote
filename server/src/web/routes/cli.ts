@@ -1,13 +1,22 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, basename, resolve } from 'node:path'
 import { configuration, getConfiguration } from '../../configuration'
 import { safeCompareStrings } from '../../utils/crypto'
 import { parseAccessToken } from '../../utils/accessToken'
 import type { Machine, Session, SyncEngine } from '../../sync/syncEngine'
 import type { SSEManager } from '../../sse/sseManager'
 import { serializeMachine, sortMachinesForDisplay } from './machinePayload'
+import { getLicenseService } from '../../license/licenseService'
+
+/** Derive a PascalCase project name from an absolute path's basename. e.g. "yoho-remote" → "YohoRemote" */
+function toPascalCase(path: string): string {
+    return basename(path)
+        .split(/[-_]+/)
+        .map((seg) => seg.charAt(0).toUpperCase() + seg.slice(1).toLowerCase())
+        .join('')
+}
 
 const bearerSchema = z.string().regex(/^Bearer\s+(.+)$/i)
 
@@ -36,8 +45,9 @@ const getMessagesQuerySchema = z.object({
 const brainSpawnSchema = z.object({
     machineId: z.string().min(1),
     directory: z.string().min(1),
-    agent: z.enum(['claude', 'codex', 'opencode']).default('claude'),
+    agent: z.enum(['claude', 'codex']).default('claude'),
     modelMode: z.enum(['default', 'sonnet', 'opus']).optional(),
+    codexModel: z.enum(['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark']).optional(),
     source: z.string().default('brain-child'),
     mainSessionId: z.string().optional(),
 })
@@ -236,9 +246,20 @@ export function createCliRoutes(
         const sessionId = c.req.param('sessionId')
         const filename = c.req.param('filename')
 
+        // Reject params containing path separators (guards against %2F traversal after decoding)
+        if (sessionId.includes('/') || sessionId.includes('\\') || filename.includes('/') || filename.includes('\\')) {
+            return c.json({ error: 'Invalid path' }, 400)
+        }
+
         try {
             const config = getConfiguration()
-            const filePath = join(config.dataDir, 'uploads', sessionId, filename)
+            const uploadsBase = resolve(config.dataDir, 'uploads')
+            const filePath = resolve(uploadsBase, sessionId, filename)
+
+            // Prevent path traversal: resolved path must stay within uploads directory
+            if (!filePath.startsWith(uploadsBase + '/')) {
+                return c.json({ error: 'Invalid path' }, 400)
+            }
 
             if (!existsSync(filePath)) {
                 return c.json({ error: 'File not found' }, 404)
@@ -315,24 +336,44 @@ export function createCliRoutes(
             return c.json({ error: 'Machine is offline' }, 503)
         }
 
+        // License check: 从 mainSession 继承 orgId 进行校验
+        if (parsed.data.mainSessionId && store) {
+            const mainSession = await store.getSessionByNamespace(parsed.data.mainSessionId, namespace)
+            const brainOrgId = mainSession?.orgId || machineResolved.machine.orgId
+            if (brainOrgId) {
+                try {
+                    const licenseService = getLicenseService()
+                    const licenseCheck = await licenseService.canCreateSession(brainOrgId)
+                    if (!licenseCheck.valid) {
+                        return c.json({ type: 'error', message: licenseCheck.message, code: licenseCheck.code }, 403)
+                    }
+                } catch { /* LicenseService not initialized */ }
+            }
+        }
+
+        // For codex sessions, store codexModel as modelMode so session_find_or_create can match by model tier
+        let effectiveModelMode: string | undefined = parsed.data.modelMode
+        if (!effectiveModelMode && parsed.data.codexModel) {
+            effectiveModelMode = parsed.data.codexModel
+        }
+
         const result = await engine.spawnSession(
             parsed.data.machineId,
             parsed.data.directory,
             parsed.data.agent as any,
             true,     // yolo
-            'simple',
-            undefined,
             {
                 source: parsed.data.source,
                 mainSessionId: parsed.data.mainSessionId,
                 permissionMode: 'bypassPermissions',
-                modelMode: parsed.data.modelMode as any,
+                modelMode: effectiveModelMode as any,
+                codexModel: parsed.data.codexModel,
             }
         )
 
         // Inherit org_id from main (brain) session
         if (result.type === 'success' && parsed.data.mainSessionId && store) {
-            const mainSession = await store.getSession(parsed.data.mainSessionId)
+            const mainSession = await store.getSessionByNamespace(parsed.data.mainSessionId, namespace)
             if (mainSession?.orgId) {
                 await store.setSessionOrgId(result.sessionId, mainSession.orgId, namespace)
             }
@@ -452,7 +493,7 @@ export function createCliRoutes(
     // ==================== Project CRUD ====================
 
     const addProjectSchema = z.object({
-        name: z.string().min(1).max(100),
+        name: z.string().min(1).max(100).optional(),
         path: z.string().min(1).max(500),
         description: z.string().max(500).optional(),
         machineId: z.string().nullable().optional(),
@@ -460,30 +501,43 @@ export function createCliRoutes(
     })
 
     const updateProjectSchema = z.object({
-        name: z.string().min(1).max(100),
-        path: z.string().min(1).max(500),
-        description: z.string().max(500).optional(),
+        name: z.string().min(1).max(100).optional(),
+        path: z.string().min(1).max(500).optional(),
+        description: z.string().max(500).nullable().optional(),
         machineId: z.string().nullable().optional(),
         workspaceGroupId: z.string().nullable().optional()
     })
 
-    // Helper: resolve orgId from sessionId
-    async function resolveOrgId(sessionId: string | undefined): Promise<string | null> {
+    // Helper: resolve orgId from sessionId — validates that the session belongs to the caller's namespace.
+    async function resolveOrgId(sessionId: string | undefined, namespace: string): Promise<string | null> {
         if (!sessionId || !store) return null
-        const session = await store.getSession(sessionId)
+        const session = await store.getSessionByNamespace(sessionId, namespace)
         return session?.orgId ?? null
+    }
+
+    // Helper: resolve workspaceGroupId from session's machine
+    function resolveWorkspaceGroupId(sessionId: string | undefined): string | null {
+        if (!sessionId) return null
+        const engine = getSyncEngine()
+        if (!engine) return null
+        const session = engine.getSession(sessionId)
+        if (!session?.machineId) return null
+        const machine = engine.getMachine(session.machineId)
+        return machine?.metadata?.workspaceGroupId ?? null
     }
 
     // List org-shared projects (query: machineId, sessionId). machineId is accepted for compatibility only.
     app.get('/projects', async (c) => {
         if (!store) return c.json({ error: 'Store not available' }, 503)
         const sessionId = c.req.query('sessionId')
-        const orgId = await resolveOrgId(sessionId)
+        const orgId = await resolveOrgId(sessionId, c.get('namespace'))
         const projects = await store.getProjects(undefined, orgId)
         return c.json({ projects })
     })
 
     // Create org-shared project (query: sessionId, body: name, path, description?, machineId?)
+    // When workspaceGroupId is not provided and the project is shared (no machineId),
+    // inherit workspaceGroupId from the session's machine to avoid creating Legacy projects.
     app.post('/projects', async (c) => {
         if (!store) return c.json({ error: 'Store not available' }, 503)
         const json = await c.req.json().catch(() => null)
@@ -491,14 +545,17 @@ export function createCliRoutes(
         if (!parsed.success) return c.json({ error: 'Invalid project data' }, 400)
 
         const sessionId = c.req.query('sessionId')
-        const orgId = await resolveOrgId(sessionId)
+        const orgId = await resolveOrgId(sessionId, c.get('namespace'))
+        const workspaceGroupId = parsed.data.workspaceGroupId
+            ?? (!parsed.data.machineId ? resolveWorkspaceGroupId(sessionId) : null)
+        const name = parsed.data.name ?? toPascalCase(parsed.data.path)
         const project = await store.addProject(
-            parsed.data.name,
+            name,
             parsed.data.path,
             parsed.data.description,
             parsed.data.machineId,
             orgId,
-            parsed.data.workspaceGroupId
+            workspaceGroupId
         )
         if (!project) return c.json({ error: 'Failed to add project. Path may already exist.' }, 400)
 
@@ -514,17 +571,23 @@ export function createCliRoutes(
         const parsed = updateProjectSchema.safeParse(json)
         if (!parsed.success) return c.json({ error: 'Invalid project data' }, 400)
         const sessionId = c.req.query('sessionId')
-        const orgId = await resolveOrgId(sessionId)
+        const orgId = await resolveOrgId(sessionId, c.get('namespace'))
 
-        const project = await store.updateProject(
-            id,
-            parsed.data.name,
-            parsed.data.path,
-            parsed.data.description,
-            parsed.data.machineId,
+        // Verify caller owns this project (org-scoped projects can only be modified by the same org)
+        const existing = await store.getProject(id)
+        if (!existing) return c.json({ error: 'Project not found or path already exists' }, 404)
+        if (existing.orgId !== null && existing.orgId !== orgId) {
+            return c.json({ error: 'Project not found or path already exists' }, 404)
+        }
+
+        const project = await store.updateProject(id, {
+            name: parsed.data.name,
+            path: parsed.data.path,
+            description: parsed.data.description,
+            machineId: parsed.data.machineId,
             orgId,
-            parsed.data.workspaceGroupId
-        )
+            workspaceGroupId: parsed.data.workspaceGroupId,
+        })
         if (!project) return c.json({ error: 'Project not found or path already exists' }, 404)
 
         const projects = await store.getProjects(undefined, orgId)
@@ -535,11 +598,19 @@ export function createCliRoutes(
     app.delete('/projects/:id', async (c) => {
         if (!store) return c.json({ error: 'Store not available' }, 503)
         const id = c.req.param('id')
+        const sessionId = c.req.query('sessionId')
+        const orgId = await resolveOrgId(sessionId, c.get('namespace'))
+
+        // Verify caller owns this project before deleting
+        const existing = await store.getProject(id)
+        if (!existing) return c.json({ error: 'Project not found' }, 404)
+        if (existing.orgId !== null && existing.orgId !== orgId) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+
         const success = await store.removeProject(id)
         if (!success) return c.json({ error: 'Project not found' }, 404)
 
-        const sessionId = c.req.query('sessionId')
-        const orgId = await resolveOrgId(sessionId)
         const projects = await store.getProjects(undefined, orgId)
         return c.json({ ok: true, projects })
     })

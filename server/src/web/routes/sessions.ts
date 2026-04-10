@@ -5,7 +5,24 @@ import type { SSEManager } from '../../sse/sseManager'
 import type { IStore, UserRole, StoredSession } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
 import { requireMachine, requireSessionFromParam, requireSessionFromParamWithShareCheck, requireSyncEngine } from './guards'
-import { buildInitPrompt, buildBrainInitPrompt, buildVijnaptiInitPrompt } from '../prompts/initPrompt'
+import { buildInitPrompt, buildBrainInitPrompt } from '../prompts/initPrompt'
+import { getLicenseService } from '../../license/licenseService'
+
+/**
+ * License 检查：如果指定了 orgId，校验是否可创建会话
+ * 返回错误 Response 或 null（表示通过）
+ */
+async function checkSessionLicense(c: { json: (data: any, status: number) => any }, orgId: string | null | undefined): Promise<Response | null> {
+    if (!orgId) return null
+    try {
+        const licenseService = getLicenseService()
+        const licenseCheck = await licenseService.canCreateSession(orgId)
+        if (!licenseCheck.valid) {
+            return c.json({ type: 'error', message: licenseCheck.message, code: licenseCheck.code }, 403)
+        }
+    } catch { /* LicenseService not initialized */ }
+    return null
+}
 
 type SessionSummaryMetadata = {
     name?: string
@@ -48,6 +65,7 @@ type SessionSummary = {
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     fastMode?: boolean
     viewers?: SessionViewer[]
+    terminationReason?: string
 }
 
 function toSessionSummary(session: Session): SessionSummary {
@@ -84,7 +102,8 @@ function toSessionSummary(session: Session): SessionSummary {
         thinking: session.thinking ?? false,
         modelMode: session.modelMode,
         modelReasoningEffort: session.modelReasoningEffort,
-        fastMode: session.fastMode
+        fastMode: session.fastMode,
+        terminationReason: session.terminationReason,
     }
 }
 
@@ -299,12 +318,9 @@ async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserR
     const projectRoot = session?.metadata?.path?.trim() || null
     const source = session?.metadata?.source
     console.log(`[sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}, source=${source}`)
-    const isVijnapti = source === 'brain' && projectRoot?.includes('vijnapti-workspace')
-    const prompt = isVijnapti
-        ? await buildVijnaptiInitPrompt(role, { projectRoot, userName })
-        : source === 'brain'
-            ? await buildBrainInitPrompt(role, { projectRoot, userName })
-            : await buildInitPrompt(role, { projectRoot, userName })
+    const prompt = source === 'brain'
+        ? await buildBrainInitPrompt(role, { projectRoot, userName })
+        : await buildInitPrompt(role, { projectRoot, userName })
     if (!prompt.trim()) {
         console.warn(`[sendInitPrompt] Empty prompt for session ${sessionId}, skipping`)
         return
@@ -530,6 +546,11 @@ export function createSessionsRoutes(
             return machine
         }
 
+        // License check: if orgId is specified, validate license
+        const orgId = c.req.query('orgId')
+        const licenseError = await checkSessionLicense(c, orgId)
+        if (licenseError) return licenseError
+
         const rawSource = parsed.data.source?.trim()
         const source = rawSource ? rawSource : 'external-api'
         const email = c.get('email')
@@ -605,6 +626,10 @@ export function createSessionsRoutes(
         const userName = c.get('name')
         const orgId = c.req.query('orgId')
 
+        // License check
+        const licenseError = await checkSessionLicense(c, orgId)
+        if (licenseError) return licenseError
+
         // Find first online machine in this namespace (filtered by org if provided)
         const machines = engine.getOnlineMachinesByNamespace(namespace, orgId ?? undefined)
         if (machines.length === 0) {
@@ -617,68 +642,6 @@ export function createSessionsRoutes(
         const result = await engine.spawnSession(
             machine.id,
             brainDirectory,
-            'claude',
-            true,        // yolo
-            {
-                source: 'brain',
-                permissionMode: 'bypassPermissions',
-            }
-        )
-
-        if (result.type === 'success') {
-            void (async () => {
-                const isOnline = await waitForSessionOnline(engine, result.sessionId, 60_000)
-                if (!isOnline) return
-                await engine.waitForSocketInRoom(result.sessionId, 5000)
-                if (email) {
-                    await store.setSessionCreatedBy(result.sessionId, email, namespace)
-                }
-                if (orgId) {
-                    await store.setSessionOrgId(result.sessionId, orgId, namespace)
-                }
-                await sendInitPrompt(engine, result.sessionId, role, userName)
-            })()
-        }
-
-        return c.json(result)
-    })
-
-    // Vijnapti Brain: singleton create (唯识意识架构 AI，全局单例)
-    app.post('/brain/vijnapti', async (c) => {
-        const engine = requireSyncEngine(c, getSyncEngine)
-        if (engine instanceof Response) {
-            return engine
-        }
-
-        const namespace = c.get('namespace')
-        const email = c.get('email')
-        const role = c.get('role')
-        const userName = c.get('name')
-        const orgId = c.req.query('orgId')
-
-        // Singleton: check if an active vijnapti session already exists
-        const allSessions = engine.getSessionsByNamespace(namespace)
-        const existing = allSessions.find(s =>
-            s.active &&
-            s.metadata?.source === 'brain' &&
-            s.metadata?.path?.includes('vijnapti-workspace')
-        )
-        if (existing) {
-            return c.json({ type: 'success', sessionId: existing.id, existing: true })
-        }
-
-        // Find first online machine in this namespace (filtered by org if provided)
-        const machines = engine.getOnlineMachinesByNamespace(namespace, orgId ?? undefined)
-        if (machines.length === 0) {
-            return c.json({ type: 'error', message: 'No machines online' }, 503)
-        }
-        const machine = machines[0]
-        const homeDir = machine.metadata?.homeDir || '/tmp'
-        const vijnaptiDirectory = `${homeDir}/.yoho-remote/vijnapti-workspace`
-
-        const result = await engine.spawnSession(
-            machine.id,
-            vijnaptiDirectory,
             'claude',
             true,        // yolo
             {
@@ -969,6 +932,11 @@ export function createSessionsRoutes(
             return c.json({ type: 'already-active', sessionId })
         }
 
+        // License check: session 可能在归档后 license 已过期（orgId 来自 DB）
+        const storedForResume = await store.getSession(sessionId)
+        const licenseError = await checkSessionLicense(c, storedForResume?.orgId)
+        if (licenseError) return licenseError
+
         const flavor = session.metadata?.flavor ?? 'claude'
         if (flavor !== 'claude' && flavor !== 'codex') {
             return c.json({ error: 'Resume not supported for this session flavor' }, 400)
@@ -1112,6 +1080,11 @@ export function createSessionsRoutes(
 
         const sessionId = sessionResult.sessionId
         const session = sessionResult.session
+
+        // License check: 刷新账号前校验 license 是否仍有效（orgId 来自 DB）
+        const storedForRefresh = await store.getSession(sessionId)
+        const refreshLicenseError = await checkSessionLicense(c, storedForRefresh?.orgId)
+        if (refreshLicenseError) return refreshLicenseError
 
         const flavor = session.metadata?.flavor ?? 'claude'
         if (flavor !== 'claude') {

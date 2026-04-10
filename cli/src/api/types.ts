@@ -165,6 +165,7 @@ export type Session = {
     modelMode?: SessionModelMode
     modelReasoningEffort?: SessionModelReasoningEffort
     fastMode?: boolean
+    orgId?: string | null
 }
 
 export const MachineMetadataSchema = z.object({
@@ -352,7 +353,7 @@ export type Project = {
     updatedAt: number
 }
 
-export type SocketErrorReason = 'namespace-missing' | 'access-denied' | 'not-found'
+export type SocketErrorReason = 'namespace-missing' | 'access-denied' | 'not-found' | (string & {})
 
 export interface ServerToClientEvents {
     update: (data: Update) => void
@@ -362,6 +363,7 @@ export interface ServerToClientEvents {
     'terminal:resize': (data: TerminalResizePayload) => void
     'terminal:close': (data: TerminalClosePayload) => void
     error: (data: { message: string; code?: SocketErrorReason; scope?: 'session' | 'machine'; id?: string }) => void
+    'license-warning': (data: { message: string; scope?: 'session' | 'machine'; id?: string }) => void
 }
 
 export interface ClientToServerEvents {

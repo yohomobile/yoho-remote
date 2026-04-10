@@ -10,6 +10,7 @@
 import { z } from 'zod'
 import type { Server } from 'socket.io'
 import type { IStore } from '../store/interface'
+import type { SpawnAgentType } from '../store/types'
 import type { RpcRegistry } from '../socket/rpcRegistry'
 import type { SSEManager } from '../sse/sseManager'
 import { extractTodoWriteTodosFromMessageContent, TodosSchema, type TodoItem } from './todos'
@@ -98,6 +99,8 @@ export interface Session {
     fastMode?: boolean
     /** Timestamp of the last abort request; heartbeats within the grace window won't override thinking=false */
     abortedAt?: number
+    /** Set when the session was forcibly terminated (e.g. 'license-expired', 'license-suspended') */
+    terminationReason?: string
 }
 
 export interface Machine {
@@ -120,6 +123,7 @@ export interface Machine {
     daemonState: unknown | null
     daemonStateVersion: number
     orgId: string | null
+    supportedAgents: SpawnAgentType[] | null  // null = no restriction (all agents allowed)
 }
 
 export interface DecryptedMessage {
@@ -1295,14 +1299,23 @@ export class SyncEngine {
         session.thinking = false
         session.thinkingAt = t
 
-        // Persist active=false to database so it survives server restarts
-        await this.store.setSessionActive(session.id, false, t, session.namespace)
+        // Persist active=false (and terminationReason if set) to database so it survives server restarts
+        await this.store.setSessionActive(session.id, false, t, session.namespace, session.terminationReason ?? null)
 
         // 如果任务刚完成，使用带订阅者过滤的事件
         if (wasThinking) {
             this.emitTaskCompleteEvent(session)
         } else {
-            this.emit({ type: 'session-updated', sessionId: session.id, data: { active: false, thinking: false, wasThinking: false } })
+            this.emit({
+                type: 'session-updated',
+                sessionId: session.id,
+                data: {
+                    active: false,
+                    thinking: false,
+                    wasThinking: false,
+                    ...(session.terminationReason ? { terminationReason: session.terminationReason } : {})
+                }
+            })
         }
     }
 
@@ -1391,15 +1404,20 @@ export class SyncEngine {
             const machine = this.machines.get(machineId)
             if (!machine?.active) return
 
-            const candidates = Array.from(this.sessions.values()).filter(s =>
-                !s.active &&
-                this._dbActiveSessionIds.has(s.id) &&
-                s.metadata?.machineId === machineId &&
-                s.namespace === namespace &&
-                s.metadata?.path &&
-                (s.metadata?.flavor === 'claude' || s.metadata?.flavor === 'codex') &&
-                (typeof s.metadata?.claudeSessionId === 'string' || typeof s.metadata?.codexSessionId === 'string')
-            )
+            const machineSupportedAgents = machine.supportedAgents
+            const candidates = Array.from(this.sessions.values()).filter(s => {
+                if (s.active) return false
+                if (!this._dbActiveSessionIds.has(s.id)) return false
+                if (s.metadata?.machineId !== machineId) return false
+                if (s.namespace !== namespace) return false
+                if (!s.metadata?.path) return false
+                const flavor = s.metadata?.flavor
+                if (flavor !== 'claude' && flavor !== 'codex') return false
+                if (typeof s.metadata?.claudeSessionId !== 'string' && typeof s.metadata?.codexSessionId !== 'string') return false
+                // Skip sessions whose agent is not supported by this machine
+                if (machineSupportedAgents && machineSupportedAgents.length > 0 && !machineSupportedAgents.includes(flavor as SpawnAgentType)) return false
+                return true
+            })
 
             if (candidates.length === 0) return
             console.log(`[auto-resume] Machine ${machineId.slice(0, 8)} online, resuming ${candidates.length} session(s)`)
@@ -1516,7 +1534,8 @@ export class SyncEngine {
             permissionMode: existing?.permissionMode ?? (stored.permissionMode as any) ?? undefined,
             modelMode: existing?.modelMode ?? (stored.modelMode as any) ?? undefined,
             modelReasoningEffort: existing?.modelReasoningEffort ?? (stored.modelReasoningEffort as any) ?? undefined,
-            fastMode: existing?.fastMode ?? stored.fastMode ?? undefined
+            fastMode: existing?.fastMode ?? stored.fastMode ?? undefined,
+            terminationReason: existing?.terminationReason ?? stored.terminationReason ?? undefined
         }
 
         this.sessions.set(sessionId, session)
@@ -1566,7 +1585,8 @@ export class SyncEngine {
             metadataVersion: stored.metadataVersion,
             daemonState: stored.daemonState,
             daemonStateVersion: stored.daemonStateVersion,
-            orgId: stored.orgId ?? null
+            orgId: stored.orgId ?? null,
+            supportedAgents: stored.supportedAgents ?? null
         }
 
         this.machines.set(machineId, machine)
@@ -1930,6 +1950,19 @@ export class SyncEngine {
             reuseExistingWorktree?: boolean
         }
     ): Promise<{ type: 'success'; sessionId: string; logs?: unknown[] } | { type: 'error'; message: string; logs?: unknown[] }> {
+        // Validate that the machine supports the requested agent
+        const machine = this.machines.get(machineId)
+        if (machine?.supportedAgents && machine.supportedAgents.length > 0) {
+            const requestedAgent = (agent || 'claude') as SpawnAgentType
+            if (!machine.supportedAgents.includes(requestedAgent)) {
+                const displayName = machine.metadata?.displayName || machine.metadata?.host || machineId.slice(0, 8)
+                return {
+                    type: 'error',
+                    message: `Machine "${displayName}" does not support agent "${requestedAgent}". Supported: ${machine.supportedAgents.join(', ')}`
+                }
+            }
+        }
+
         try {
             const result = await this.machineRpc(
                 machineId,

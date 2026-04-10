@@ -27,7 +27,10 @@ export type StoredSession = {
     modelMode: string | null
     modelReasoningEffort: string | null
     fastMode: boolean | null
+    terminationReason: string | null
 }
+
+export type SpawnAgentType = 'claude' | 'codex'
 
 export type StoredMachine = {
     id: string
@@ -42,6 +45,7 @@ export type StoredMachine = {
     activeAt: number | null
     seq: number
     orgId: string | null
+    supportedAgents: SpawnAgentType[] | null  // null = 不限制（所有 agent 都允许）
 }
 
 export type StoredMessage = {
@@ -96,6 +100,23 @@ export type StoredOrgInvitation = {
     createdAt: number
     expiresAt: number
     acceptedAt: number | null
+}
+
+// Org License 类型
+export type LicenseStatus = 'active' | 'expired' | 'suspended'
+
+export type StoredOrgLicense = {
+    id: string
+    orgId: string
+    startsAt: number
+    expiresAt: number
+    maxMembers: number
+    maxConcurrentSessions: number | null
+    status: LicenseStatus
+    issuedBy: string
+    note: string | null
+    createdAt: number
+    updatedAt: number
 }
 
 export type StoredPushSubscription = {

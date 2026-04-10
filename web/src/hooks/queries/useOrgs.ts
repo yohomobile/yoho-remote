@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/query-keys'
 import type { ApiClient } from '@/api/client'
-import type { Organization, OrgMember, OrgInvitation, OrgRole } from '@/types/api'
+import type { Organization, OrgMember, OrgInvitation, OrgRole, OrgLicense } from '@/types/api'
 
 export function useMyOrgs(api: ApiClient | null) {
     const query = useQuery({
@@ -35,6 +35,7 @@ export function useOrg(api: ApiClient | null, orgId: string | null) {
         org: query.data?.org ?? null,
         members: query.data?.members ?? [],
         myRole: query.data?.myRole as OrgRole | undefined,
+        license: (query.data?.license ?? null) as OrgLicense | null,
         isLoading: query.isLoading,
         error: query.error instanceof Error ? query.error.message : null,
     }

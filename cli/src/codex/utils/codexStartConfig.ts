@@ -8,8 +8,8 @@ export const TITLE_INSTRUCTION = trimIdent(`Based on this message, call function
 function normalizeCodexToolReferences(message: string): string {
     return message
         .replaceAll(/mcp__yoho_remote__([a-z0-9_]+)/gi, 'functions.yoho_remote__$1')
-        .replaceAll(/mcp__yoho-memory__([a-z0-9_]+)/gi, 'functions.yoho_memory__$1')
-        .replaceAll(/mcp__yoho-credentials__([a-z0-9_]+)/gi, 'functions.yoho_credentials__$1');
+        .replaceAll(/mcp__yoho-vault__([a-z0-9_]+)/gi, 'functions.yoho_vault__$1')
+        .replaceAll(/mcp__yoho_vault__([a-z0-9_]+)/gi, 'functions.yoho_vault__$1');
 }
 
 function resolveApprovalPolicy(mode: EnhancedMode): CodexSessionConfig['approval-policy'] {

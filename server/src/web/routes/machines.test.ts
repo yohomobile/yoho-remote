@@ -23,6 +23,7 @@ function createMachine(overrides: Partial<Machine>): Machine {
         },
         daemonStateVersion: 1,
         orgId: null,
+        supportedAgents: null,
         ...overrides,
     }
 }

@@ -9,6 +9,7 @@ import { buildInitPrompt } from '../prompts/initPrompt'
 import { requireMachine } from './guards'
 import { isMachineBlocked } from './blocklist'
 import { serializeMachine, sortMachinesForDisplay } from './machinePayload'
+import { getLicenseService } from '../../license/licenseService'
 
 const spawnBodySchema = z.object({
     directory: z.string().min(1),
@@ -139,6 +140,18 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
         const parsed = spawnBodySchema.safeParse(body)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        // License check: 优先用 query param orgId，fallback 到 machine 自身的 orgId
+        const orgIdForLicense = c.req.query('orgId') || machine.orgId
+        if (orgIdForLicense) {
+            try {
+                const licenseService = getLicenseService()
+                const licenseCheck = await licenseService.canCreateSession(orgIdForLicense)
+                if (!licenseCheck.valid) {
+                    return c.json({ type: 'error', message: licenseCheck.message, code: licenseCheck.code }, 403)
+                }
+            } catch { /* LicenseService not initialized */ }
         }
 
         const rawSource = parsed.data.source?.trim()
@@ -323,6 +336,43 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
         machine.updatedAt = Date.now()
         machine.seq += 1
 
+        engine.emit({ type: 'machine-updated', machineId: machine.id, data: machine })
+        return c.json({ ok: true, machine: serializeMachine(machine) })
+    })
+
+    // ========== Supported Agents 配置 ==========
+
+    const supportedAgentsSchema = z.object({
+        supportedAgents: z.array(z.enum(['claude', 'codex'])).nullable().transform(v => v && v.length === 0 ? null : v)
+    })
+
+    app.put('/machines/:id/supported-agents', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not connected' }, 503)
+        }
+
+        const machineId = c.req.param('id')
+        const machine = requireMachine(c, engine, machineId)
+        if (machine instanceof Response) {
+            return machine
+        }
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = supportedAgentsSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body. Expected { supportedAgents: ["claude", "codex"] | null }' }, 400)
+        }
+
+        const { supportedAgents } = parsed.data
+        const ok = await store.setMachineSupportedAgents(machine.id, supportedAgents, machine.namespace)
+        if (!ok) {
+            return c.json({ error: 'Failed to update supported agents' }, 500)
+        }
+
+        machine.supportedAgents = supportedAgents
+        machine.updatedAt = Date.now()
+        machine.seq += 1
         engine.emit({ type: 'machine-updated', machineId: machine.id, data: machine })
         return c.json({ ok: true, machine: serializeMachine(machine) })
     })

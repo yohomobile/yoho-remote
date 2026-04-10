@@ -116,6 +116,12 @@ export interface IMAdapter {
 
     /** Query who has read a message (optional) */
     getReadUsers?(messageId: string): Promise<string[]>
+
+    /** Send an ephemeral (private) card visible only to a specific user in a group chat (optional) */
+    sendEphemeralCard?(chatId: string, userId: string, cardContent: string): Promise<boolean>
+
+    /** Send a post message and return the message ID (for streaming partial updates) */
+    sendPostAndGetId?(chatId: string, text: string): Promise<string | null>
 }
 
 /**

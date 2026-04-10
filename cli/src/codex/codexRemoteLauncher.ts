@@ -22,7 +22,7 @@ import { restoreTerminalState } from '@/ui/terminalState';
 import { hasCodexCliOverrides } from './utils/codexCliOverrides';
 import { buildCodexStartConfig, TITLE_INSTRUCTION } from './utils/codexStartConfig';
 import { convertCodexEvent } from './utils/codexEventConverter';
-import { getYohoAuxMcpServers, MEMORY_HTTP_PORT, CREDENTIALS_HTTP_PORT } from '@/utils/yohoMcpServers';
+import { getYohoAuxMcpServers, VAULT_HTTP_PORT } from '@/utils/yohoMcpServers';
 
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
 
@@ -547,6 +547,7 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
     const auxServers = await getYohoAuxMcpServers('codex', {
         apiClient: session.api,
         sessionId: session.client.sessionId,
+        orgId: session.client.orgId,
     });
     const mcpServers: Record<string, { command: string; args: string[]; cwd?: string; env?: Record<string, string> }> = {
         yoho_remote: {
@@ -556,22 +557,15 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
         ...auxServers
     };
 
-    // Add stdio bridges for remote aux MCP servers when local files are absent
-    if (!auxServers.yoho_memory) {
+    // Add stdio bridge for remote vault MCP server when local files are absent
+    if (!auxServers.yoho_vault) {
         try {
             const host = new URL(process.env.YOHO_REMOTE_URL || '').hostname;
             if (host) {
-                const memBridge = getYohoRemoteCliCommand(['mcp', '--url', `http://${host}:${MEMORY_HTTP_PORT}/mcp`]);
-                mcpServers.yoho_memory = { command: memBridge.command, args: memBridge.args };
-            }
-        } catch { /* invalid URL, skip */ }
-    }
-    if (!auxServers.yoho_credentials) {
-        try {
-            const host = new URL(process.env.YOHO_REMOTE_URL || '').hostname;
-            if (host) {
-                const credBridge = getYohoRemoteCliCommand(['mcp', '--url', `http://${host}:${CREDENTIALS_HTTP_PORT}/mcp`]);
-                mcpServers.yoho_credentials = { command: credBridge.command, args: credBridge.args };
+                const vaultBridge = getYohoRemoteCliCommand(['mcp', '--url', `http://${host}:${VAULT_HTTP_PORT}/mcp`]);
+                const vaultBridgeEnv: Record<string, string> = {};
+                if (session.client.orgId) vaultBridgeEnv.YOHO_ORG_ID = session.client.orgId;
+                mcpServers.yoho_vault = { command: vaultBridge.command, args: vaultBridge.args, env: vaultBridgeEnv };
             }
         } catch { /* invalid URL, skip */ }
     }

@@ -252,6 +252,11 @@ function SessionItem(props: {
                             {s.pendingRequestsCount} pending
                         </span>
                     )}
+                    {s.terminationReason?.startsWith('LICENSE_') && (
+                        <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-500">
+                            {s.terminationReason === 'LICENSE_SUSPENDED' ? 'License suspended' : 'License expired'}
+                        </span>
+                    )}
                     {s.viewers && s.viewers.length > 0 && (
                         <ViewersBadge viewers={s.viewers} />
                     )}

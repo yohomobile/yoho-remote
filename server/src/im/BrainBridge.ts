@@ -9,12 +9,30 @@
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
-import { execSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import type { SyncEngine, SyncEvent } from '../sync/syncEngine'
 import type { IStore } from '../store/interface'
-import type { IMAdapter, IMMessage, IMBridgeCallbacks, BrainBridgeConfig, IMReplyExtra } from './types'
+import type { IMAdapter, IMMessage, IMBridgeCallbacks, BrainBridgeConfig } from './types'
 import { extractAgentText, extractAgentMessageMeta, isInternalBrainMessage } from './agentMessage'
+import { buildFeishuMessage, buildFeishuMessageForEdit } from './feishu/formatter'
+import { extractActions, actionsToExtras } from './feishu/actionExtractor'
 import { lookupKeycloakUserByEmail, type KeycloakUserInfo } from './keycloakLookup'
+import { getLicenseService } from '../license/licenseService'
+
+// ========== Structured logging ==========
+
+type LogLevel = 'info' | 'warn' | 'error'
+
+function slog(level: LogLevel, event: string, data: Record<string, unknown>): void {
+    const entry = JSON.stringify({ ts: Date.now(), level, event, ...data })
+    if (level === 'error') {
+        console.error(entry)
+    } else if (level === 'warn') {
+        console.warn(entry)
+    } else {
+        console.log(entry)
+    }
+}
 
 interface ChatState {
     // Buffered incoming messages not yet sent to Brain
@@ -60,10 +78,25 @@ export class BrainBridge implements IMBridgeCallbacks {
     // Track whether the last batch was passive-only (no @bot)
     private lastBatchPassive: Map<string, boolean> = new Map()
 
+    // Per-round trace: ID + receive timestamp for latency tracking
+    private traceIds: Map<string, string> = new Map()
+    private traceStartTimes: Map<string, number> = new Map()
+
+    // "Thinking" indicator: message ID of the thinking placeholder per chat
+    private thinkingMessageId: Map<string, string> = new Map()
+    private thinkingTimers: Map<string, ReturnType<typeof setInterval>> = new Map()
+    private thinkingEditFailures: Map<string, number> = new Map()
+
     // Tracked timers (cleared on stop)
     private cleanupInterval: ReturnType<typeof setInterval> | null = null
     private recoveryTimeout: ReturnType<typeof setTimeout> | null = null
+    private busyWatchdogInterval: ReturnType<typeof setInterval> | null = null
     private initTimeouts: Map<string, ReturnType<typeof setTimeout>> = new Map()
+    private initStartTimes: Map<string, number> = new Map()
+
+    // Busy watchdog: detect chats stuck busy after Brain crash
+    private busySinceAt: Map<string, number> = new Map()
+    private static readonly BUSY_TIMEOUT_MS = 10 * 60_000   // 10 minutes
 
     // Rebuild rate limiting
     private lastRebuildAt: Map<string, number> = new Map()
@@ -136,12 +169,18 @@ export class BrainBridge implements IMBridgeCallbacks {
             clearInterval(this.cleanupInterval)
             this.cleanupInterval = null
         }
+        if (this.busyWatchdogInterval) {
+            clearInterval(this.busyWatchdogInterval)
+            this.busyWatchdogInterval = null
+        }
         if (this.recoveryTimeout) {
             clearTimeout(this.recoveryTimeout)
             this.recoveryTimeout = null
         }
+        this.busySinceAt.clear()
         for (const t of this.initTimeouts.values()) clearTimeout(t)
         this.initTimeouts.clear()
+        this.initStartTimes.clear()
 
         this.agentMessages.clear()
         this.initReady.clear()
@@ -151,6 +190,15 @@ export class BrainBridge implements IMBridgeCallbacks {
         this.lastSenderIds.clear()
         this.lastBatchPassive.clear()
         this.lastRebuildAt.clear()
+        for (const t of this.thinkingTimers.values()) clearInterval(t)
+        this.thinkingTimers.clear()
+        this.thinkingMessageId.clear()
+        this.thinkingStartTime.clear()
+        this.thinkingEditFailures.clear()
+        for (const t of this.streamingTimers.values()) clearTimeout(t)
+        this.streamingTimers.clear()
+        this.streamingMessageId.clear()
+        this.streamingUpdateCount.clear()
 
         await this.adapter.stop()
         console.log(`${this.logPrefix} Stopped`)
@@ -179,7 +227,24 @@ export class BrainBridge implements IMBridgeCallbacks {
         const sessionId = this.chatIdToSessionId.get(chatId)
         if (!sessionId) return
         const valueStr = typeof actionValue === 'string' ? actionValue : JSON.stringify(actionValue)
-        console.log(`${this.logPrefix} Card action "${actionTag}" in ${chatId.slice(0, 12)} by ${userId.slice(0, 8)}`)
+
+        // Pre-assign traceId so the card action and the resulting reply share the same trace
+        if (!this.traceIds.has(chatId)) {
+            this.traceIds.set(chatId, `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`)
+            this.traceStartTimes.set(chatId, Date.now())
+        }
+        const traceId = this.traceIds.get(chatId)
+        slog('info', 'card.action', {
+            traceId,
+            chatId: chatId.slice(0, 12),
+            userId: userId.slice(0, 8),
+            tag: actionTag,
+            value: valueStr,
+        })
+
+        // Immediate acknowledgment: send a quick 🤔 indicator so user sees the click registered
+        this.sendThinkingIndicator(chatId).catch(() => {})
+
         this.onMessage(chatId, this.chatIdToChatType.get(chatId) || 'p2p', {
             text: `[卡片操作] 用户点击了按钮 "${actionTag}"${valueStr ? `，值: ${valueStr}` : ''}`,
             messageId: `card-action-${Date.now()}`,
@@ -202,8 +267,23 @@ export class BrainBridge implements IMBridgeCallbacks {
             this.chatStates.set(chatId, state)
         }
 
+        // Generate trace ID for this round (first message starts a new trace)
+        if (!this.traceIds.has(chatId)) {
+            this.traceIds.set(chatId, `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`)
+            this.traceStartTimes.set(chatId, Date.now())
+        }
+        const traceId = this.traceIds.get(chatId)!
+
         // Add message to buffer
         state.incoming.push(message)
+        slog('info', 'im.message.received', {
+            traceId,
+            chatId: chatId.slice(0, 12),
+            chatType,
+            addressed: message.addressed,
+            msgLen: message.text.length,
+            busy: state.busy,
+        })
 
         if (state.busy || state.creating) {
             console.log(`${this.logPrefix} Chat ${chatId.slice(0, 12)} busy, buffered (${state.incoming.length} pending)`)
@@ -284,7 +364,7 @@ export class BrainBridge implements IMBridgeCallbacks {
                             console.error(`${this.logPrefix} Recovery sendSummary error for ${chatId.slice(0, 12)}:`, err)
                         })
                         const state = this.chatStates.get(chatId)
-                        if (state) state.busy = false
+                        if (state) { state.busy = false; this.busySinceAt.delete(chatId) }
                     }
                 }
             }, 5000)
@@ -299,6 +379,11 @@ export class BrainBridge implements IMBridgeCallbacks {
         }
         cleanup()
         this.cleanupInterval = setInterval(cleanup, 60 * 60 * 1000)
+
+        // Busy watchdog: reset chats stuck busy >10min after Brain crash
+        this.busyWatchdogInterval = setInterval(() => {
+            this.checkBusyWatchdog().catch(() => {})
+        }, 5 * 60_000)
     }
 
     // ========== State persistence ==========
@@ -327,6 +412,27 @@ export class BrainBridge implements IMBridgeCallbacks {
         }
     }
 
+    // ========== Busy watchdog ==========
+
+    private async checkBusyWatchdog(): Promise<void> {
+        const now = Date.now()
+        for (const [chatId, sinceAt] of this.busySinceAt) {
+            if (now - sinceAt < BrainBridge.BUSY_TIMEOUT_MS) continue
+            const state = this.chatStates.get(chatId)
+            if (!state?.busy) {
+                this.busySinceAt.delete(chatId)
+                continue
+            }
+            const busyMs = now - sinceAt
+            slog('warn', 'busy.timeout', { chatId: chatId.slice(0, 12), busyMs })
+            state.busy = false
+            this.busySinceAt.delete(chatId)
+            await this.clearThinkingIndicator(chatId).catch(() => {})
+            this.adapter.sendText(chatId, '⚠️ 处理超时，已自动恢复。如需继续，请重新发送消息。').catch(() => {})
+            await this.clearPersistedState(chatId).catch(() => {})
+        }
+    }
+
     // ========== Message flushing ==========
 
     private async flushIncomingMessages(chatId: string): Promise<void> {
@@ -348,15 +454,21 @@ export class BrainBridge implements IMBridgeCallbacks {
         const senderName = messages[0].senderName
         const sessionId = await this.ensureSession(chatId, chatType, senderName)
         if (!sessionId) {
-            await this.adapter.sendText(chatId, '抱歉，无法创建会话。请检查是否有在线机器。')
+            await this.adapter.sendText(chatId, '⚠️ 暂时无法响应——没有可用的计算节点。稍后会自动恢复，请过几分钟再试。')
+            state.incoming.splice(0, messages.length)
             return
         }
 
         // Wait for initPrompt to be sent first
         const initPromise = this.initReady.get(chatId)
         if (initPromise) {
-            await initPromise
-            this.initReady.delete(chatId)
+            try {
+                await initPromise
+            } catch (err) {
+                console.warn(`${this.logPrefix} initPromise failed for ${chatId.slice(0, 12)}:`, err)
+            } finally {
+                this.initReady.delete(chatId)
+            }
         }
 
         await this.store.touchFeishuChatSession(chatId).catch(() => {})
@@ -397,9 +509,22 @@ export class BrainBridge implements IMBridgeCallbacks {
         // Track if this batch is passive-only
         this.lastBatchPassive.set(chatId, chatType === 'group' && hasPassive && !hasAddressed)
 
+        const flushStart = Date.now()
         console.log(`${this.logPrefix} Sending ${messages.length} merged message(s) to session ${sessionId.slice(0, 8)}${appendSystemPrompt ? ' (with user profiles)' : ''}`)
+        const traceId = this.traceIds.get(chatId)
+        slog('info', 'brain.flush', {
+            traceId,
+            chatId: chatId.slice(0, 12),
+            sessionId: sessionId.slice(0, 8),
+            msgCount: messages.length,
+            hasAddressed,
+            hasPassive,
+            combinedLen: combined.length,
+            waitMs: Date.now() - (this.traceStartTimes.get(chatId) ?? Date.now()),
+        })
 
         state.busy = true
+        this.busySinceAt.set(chatId, Date.now())
         this.persistChatState(chatId)
 
         // Send to Brain session
@@ -417,11 +542,18 @@ export class BrainBridge implements IMBridgeCallbacks {
             })
             // Clear buffer only after successful send
             state.incoming.splice(0, messages.length)
+
+            // Show "thinking" indicator for addressed messages (not passive/listen mode)
+            if (hasAddressed) {
+                this.sendThinkingIndicator(chatId, lastMsgId).catch(() => {})
+            }
         } catch (err) {
             console.error(`${this.logPrefix} sendMessage failed for ${chatId.slice(0, 12)}, releasing busy:`, err)
             state.busy = false
+            this.busySinceAt.delete(chatId)
             this.persistChatState(chatId)
-            throw err
+            await this.clearThinkingIndicator(chatId)
+            await this.adapter.sendText(chatId, '⚠️ 消息发送失败，请重试。').catch(() => {})
         }
     }
 
@@ -468,22 +600,32 @@ export class BrainBridge implements IMBridgeCallbacks {
     private async createBrainSession(chatId: string, chatType: string, chatName?: string, senderName?: string): Promise<string | null> {
         try {
             const namespace = 'default'
+            // Load Brain config first to know which agent we need
+            const brainConfig = await this.store.getBrainConfig(namespace)
+            const agent = brainConfig?.agent ?? 'claude'
+
             const machines = this.syncEngine.getOnlineMachinesByNamespace(namespace)
             if (machines.length === 0) {
                 console.error(`${this.logPrefix} No online machines available`)
                 return null
             }
 
-            const machine = machines.find(m => m.id === BrainBridge.NCU_MACHINE_ID) || machines[0]
+            // Filter machines that support the required agent
+            const compatibleMachines = machines.filter(m =>
+                !m.supportedAgents || m.supportedAgents.includes(agent)
+            )
+            if (compatibleMachines.length === 0) {
+                console.error(`${this.logPrefix} No online machines support agent "${agent}"`)
+                return null
+            }
+
+            const machine = compatibleMachines.find(m => m.id === BrainBridge.NCU_MACHINE_ID) || compatibleMachines[0]
             if (machine.id !== BrainBridge.NCU_MACHINE_ID) {
-                console.warn(`${this.logPrefix} ncu not online, falling back to ${machine.id}`)
+                console.warn(`${this.logPrefix} ncu not online or incompatible, falling back to ${machine.id}`)
             }
             const homeDir = (machine.metadata as Record<string, unknown>)?.homeDir as string || '/tmp'
             const brainDirectory = `${homeDir}/.yoho-remote/brain-workspace`
 
-            // Load Brain config from DB
-            const brainConfig = await this.store.getBrainConfig(namespace)
-            const agent = brainConfig?.agent ?? 'claude'
             const spawnOptions: Record<string, unknown> = {
                 source: 'brain',
                 permissionMode: 'bypassPermissions',
@@ -493,6 +635,18 @@ export class BrainBridge implements IMBridgeCallbacks {
                 spawnOptions.modelMode = brainConfig?.claudeModelMode ?? 'opus'
             } else if (agent === 'codex') {
                 spawnOptions.codexModel = brainConfig?.codexModel ?? 'gpt-5.4'
+            }
+
+            // License check: 用 machine 的 orgId 校验
+            if (machine.orgId) {
+                try {
+                    const licenseService = getLicenseService()
+                    const licenseCheck = await licenseService.canCreateSession(machine.orgId)
+                    if (!licenseCheck.valid) {
+                        console.error(`${this.logPrefix} License check failed: ${licenseCheck.message}`)
+                        return null
+                    }
+                } catch { /* LicenseService not initialized */ }
             }
 
             console.log(`${this.logPrefix} Spawning Brain session: agent=${agent}, config=${JSON.stringify(spawnOptions)}`)
@@ -528,12 +682,16 @@ export class BrainBridge implements IMBridgeCallbacks {
             this.chatIdToChatType.set(chatId, chatType)
 
             // Create initReady promise
+            const initStartMs = Date.now()
+            this.initStartTimes.set(chatId, initStartMs)
             const initPromise = new Promise<void>((resolve) => {
                 this.initReadyResolvers.set(chatId, resolve)
                 const timeoutId = setTimeout(() => {
                     this.initTimeouts.delete(chatId)
                     if (this.initReadyResolvers.has(chatId)) {
-                        console.warn(`${this.logPrefix} initReady timeout for chat ${chatId.slice(0, 12)}, force resolving`)
+                        const elapsed = Date.now() - (this.initStartTimes.get(chatId) ?? initStartMs)
+                        slog('warn', 'init.timeout', { chatId: chatId.slice(0, 12), elapsedMs: elapsed })
+                        this.initStartTimes.delete(chatId)
                         this.initReadyResolvers.get(chatId)?.()
                         this.initReadyResolvers.delete(chatId)
                     }
@@ -621,15 +779,19 @@ export class BrainBridge implements IMBridgeCallbacks {
     /**
      * Strip thinking blocks from a Claude session JSONL file before resume.
      */
-    private stripThinkingBlocksFromJsonl(claudeSessionId: string, homeDir: string): void {
+    private stripThinkingBlocksFromJsonl(sessionId: string, homeDir: string): void {
         try {
             const claudeProjectsDir = `${homeDir}/.claude/projects`
             let jsonlPath: string
             try {
-                jsonlPath = execSync(
-                    `find "${claudeProjectsDir}" -maxdepth 3 -name "${claudeSessionId}.jsonl" 2>/dev/null | head -1`,
+                // Use spawnSync with an args array to avoid shell injection
+                const result = spawnSync(
+                    'find',
+                    [claudeProjectsDir, '-maxdepth', '3', '-name', `${sessionId}.jsonl`],
                     { encoding: 'utf-8' }
-                ).trim()
+                )
+                if (result.error) throw result.error
+                jsonlPath = (result.stdout || '').split('\n').find(l => l.trim()) || ''
             } catch {
                 return
             }
@@ -667,31 +829,56 @@ export class BrainBridge implements IMBridgeCallbacks {
 
             if (modified) {
                 writeFileSync(jsonlPath, newLines.join('\n'))
-                console.log(`${this.logPrefix} Stripped thinking blocks from JSONL for session ${claudeSessionId.slice(0, 8)}`)
+                console.log(`${this.logPrefix} Stripped thinking blocks from JSONL for session ${sessionId.slice(0, 8)}`)
             }
         } catch (err) {
-            console.error(`${this.logPrefix} stripThinkingBlocksFromJsonl failed:`, err)
+            console.error(`${this.logPrefix} stripThinkingBlocksFromJsonl failed for session ${sessionId.slice(0, 8)}:`, err)
         }
     }
 
-    private async resumeBrainSession(oldSessionId: string, claudeSessionId: string): Promise<boolean> {
+    private async resumeBrainSession(oldSessionId: string, underlyingSessionId: string): Promise<boolean> {
         try {
             const namespace = 'default'
+            // Load Brain config to know which agent we need
+            const brainConfig = await this.store.getBrainConfig(namespace)
+            const agent = brainConfig?.agent ?? 'claude'
+
             const machines = this.syncEngine.getOnlineMachinesByNamespace(namespace)
             if (machines.length === 0) return false
 
-            const machine = machines.find(m => m.id === BrainBridge.NCU_MACHINE_ID) || machines[0]
+            // Filter machines that support the required agent
+            const compatibleMachines = machines.filter(m =>
+                !m.supportedAgents || m.supportedAgents.includes(agent)
+            )
+            if (compatibleMachines.length === 0) {
+                console.error(`${this.logPrefix} No online machines support agent "${agent}" for resume`)
+                return false
+            }
+
+            const machine = compatibleMachines.find(m => m.id === BrainBridge.NCU_MACHINE_ID) || compatibleMachines[0]
             const homeDir = (machine.metadata as Record<string, unknown>)?.homeDir as string || '/tmp'
             const brainDirectory = `${homeDir}/.yoho-remote/brain-workspace`
 
-            this.stripThinkingBlocksFromJsonl(claudeSessionId, homeDir)
+            // License check: 用 machine 的 orgId 校验
+            if (machine.orgId) {
+                try {
+                    const licenseService = getLicenseService()
+                    const licenseCheck = await licenseService.canCreateSession(machine.orgId)
+                    if (!licenseCheck.valid) {
+                        console.error(`${this.logPrefix} License check failed for resume: ${licenseCheck.message}`)
+                        return false
+                    }
+                } catch { /* LicenseService not initialized */ }
+            }
 
-            // Load Brain config
-            const brainConfig = await this.store.getBrainConfig(namespace)
-            const agent = brainConfig?.agent ?? 'claude'
+            // Only strip thinking blocks for Claude sessions (codex doesn't use .claude/projects)
+            if (agent === 'claude') {
+                this.stripThinkingBlocksFromJsonl(underlyingSessionId, homeDir)
+            }
+
             const spawnOptions: Record<string, unknown> = {
                 sessionId: oldSessionId,
-                resumeSessionId: claudeSessionId,
+                resumeSessionId: underlyingSessionId,
                 source: 'brain',
                 permissionMode: 'bypassPermissions',
                 caller: this.adapter.platform,
@@ -725,8 +912,13 @@ export class BrainBridge implements IMBridgeCallbacks {
 
     private async rebuildSession(chatId: string, chatType: string, senderName?: string): Promise<string | null> {
         const lastRebuild = this.lastRebuildAt.get(chatId) || 0
-        if (Date.now() - lastRebuild < this.REBUILD_COOLDOWN_MS) {
-            console.warn(`${this.logPrefix} Rebuild cooldown for chat ${chatId.slice(0, 12)}, skipping`)
+        const elapsed = Date.now() - lastRebuild
+        if (elapsed < this.REBUILD_COOLDOWN_MS) {
+            const remainSec = Math.ceil((this.REBUILD_COOLDOWN_MS - elapsed) / 1000)
+            console.warn(`${this.logPrefix} Rebuild cooldown for chat ${chatId.slice(0, 12)}, ${remainSec}s remaining`)
+            slog('warn', 'session.rebuild_cooldown', { chatId: chatId.slice(0, 12), remainSec })
+            // Notify user so message isn't silently dropped
+            this.adapter.sendText(chatId, `⚠️ 会话正在恢复中，请稍候约 ${remainSec} 秒后重试。`).catch(() => {})
             return null
         }
         this.lastRebuildAt.set(chatId, Date.now())
@@ -736,13 +928,15 @@ export class BrainBridge implements IMBridgeCallbacks {
         // Try to resume first (preserves conversation context)
         if (oldSessionId) {
             const oldSession = this.syncEngine.getSession(oldSessionId)
-            const claudeSessionId = (oldSession?.metadata as Record<string, unknown>)?.claudeSessionId as string | undefined
+            const oldMeta = oldSession?.metadata as Record<string, unknown> | undefined
+            // Read the right underlying session ID based on agent flavor
+            const underlyingSessionId = ((oldMeta?.claudeSessionId ?? oldMeta?.codexSessionId) as string | undefined)?.trim() || undefined
 
-            if (claudeSessionId) {
+            if (underlyingSessionId) {
                 console.log(`${this.logPrefix} Attempting resume for chat ${chatId.slice(0, 12)}, session ${oldSessionId.slice(0, 8)}`)
                 await this.store.updateFeishuChatSessionStatus(chatId, 'resuming')
 
-                const resumed = await this.resumeBrainSession(oldSessionId, claudeSessionId)
+                const resumed = await this.resumeBrainSession(oldSessionId, underlyingSessionId)
                 if (resumed) {
                     console.log(`${this.logPrefix} Resumed session ${oldSessionId.slice(0, 8)} for chat ${chatId.slice(0, 12)}`)
                     await this.store.updateFeishuChatSessionStatus(chatId, 'active')
@@ -758,6 +952,13 @@ export class BrainBridge implements IMBridgeCallbacks {
 
         if (oldSessionId) {
             this.sessionToChatId.delete(oldSessionId)
+            // Clear stale timers so they don't fire against the dead session
+            const thinkTimer = this.thinkingTimers.get(chatId)
+            if (thinkTimer) { clearInterval(thinkTimer); this.thinkingTimers.delete(chatId) }
+            const streamTimer = this.streamingTimers.get(chatId)
+            if (streamTimer) { clearTimeout(streamTimer); this.streamingTimers.delete(chatId) }
+            this.streamingUpdateCount.delete(chatId)
+            this.thinkingEditFailures.delete(chatId)
         }
 
         let chatName: string | undefined
@@ -817,12 +1018,16 @@ export class BrainBridge implements IMBridgeCallbacks {
             if (isTaskComplete || isAborted) {
                 if (isAborted) {
                     console.log(`${this.logPrefix} Session aborted for ${chatId.slice(0, 12)}, clearing busy state`)
+                    // Clean up thinking indicator on abort (no reply coming)
+                    this.clearThinkingIndicator(chatId).catch(() => {})
                 }
 
                 // If initPrompt just finished, resolve initReady
                 const initResolver = this.initReadyResolvers.get(chatId)
                 if (initResolver) {
-                    console.log(`${this.logPrefix} initPrompt processed for chat ${chatId.slice(0, 12)}, resolving initReady`)
+                    const elapsed = Date.now() - (this.initStartTimes.get(chatId) ?? Date.now())
+                    slog('info', 'init.ready', { chatId: chatId.slice(0, 12), elapsedMs: elapsed })
+                    this.initStartTimes.delete(chatId)
                     initResolver()
                     this.initReadyResolvers.delete(chatId)
                     const initTimeout = this.initTimeouts.get(chatId)
@@ -843,6 +1048,7 @@ export class BrainBridge implements IMBridgeCallbacks {
                 if (!state) return
 
                 state.busy = false
+                this.busySinceAt.delete(chatId)
                 if (state.incoming.length > 0) {
                     console.log(`${this.logPrefix} Brain done for ${chatId.slice(0, 12)}, flushing ${state.incoming.length} pending message(s)`)
                     this.flushIncomingMessages(chatId).catch(err => {
@@ -853,12 +1059,202 @@ export class BrainBridge implements IMBridgeCallbacks {
         }
     }
 
+    // ========== Thinking indicator ==========
+
+    private thinkingStartTime: Map<string, number> = new Map()
+
+    // ========== Streaming partial content ==========
+
+    private streamingMessageId: Map<string, string> = new Map()
+    private streamingTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
+
+    /**
+     * Send a lightweight "thinking" indicator to let the user know K1 is processing.
+     * Uses a small text message that gets recalled when the real reply arrives.
+     * Auto-updates every 10s after first 15s to show elapsed time.
+     */
+    private async sendThinkingIndicator(chatId: string, replyToMessageId?: string): Promise<void> {
+        try {
+            // Don't stack thinking indicators
+            if (this.thinkingMessageId.has(chatId)) return
+
+            const thinkingText = '🤔'
+            const token = await (this.adapter as any).getToken?.()
+            if (!token) return
+
+            // Send a minimal text message as thinking indicator
+            const url = replyToMessageId
+                ? `https://open.feishu.cn/open-apis/im/v1/messages/${replyToMessageId}/reply`
+                : 'https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id'
+            const body = replyToMessageId
+                ? { msg_type: 'text', content: JSON.stringify({ text: thinkingText }) }
+                : { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: thinkingText }) }
+
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify(body),
+            })
+            const data = await resp.json() as { code?: number; data?: { message_id?: string } }
+            const msgId = data?.data?.message_id
+            if (msgId) {
+                this.thinkingMessageId.set(chatId, msgId)
+                this.thinkingStartTime.set(chatId, Date.now())
+
+                // Every 10s: update elapsed time indicator; stop after 3 consecutive failures
+                const timer = setInterval(() => {
+                    if (!this.thinkingMessageId.has(chatId)) return
+                    const startTime = this.thinkingStartTime.get(chatId)
+                    const elapsed = startTime ? Math.round((Date.now() - startTime) / 1000) : 0
+                    const text = elapsed >= 60
+                        ? `🤔 正在处理（${Math.floor(elapsed / 60)}分${elapsed % 60}秒）...`
+                        : `🤔 正在处理（${elapsed}秒）...`
+                    this.adapter.editMessage?.(msgId, 'text', JSON.stringify({ text }))
+                        .then(() => { this.thinkingEditFailures.delete(chatId) })
+                        .catch((err) => {
+                            const failures = (this.thinkingEditFailures.get(chatId) ?? 0) + 1
+                            this.thinkingEditFailures.set(chatId, failures)
+                            slog('warn', 'thinking.edit_failed', { chatId: chatId.slice(0, 12), failures, err: String(err) })
+                            if (failures >= 3) {
+                                slog('warn', 'thinking.edit_failures', { chatId: chatId.slice(0, 12), failures })
+                                const t = this.thinkingTimers.get(chatId)
+                                if (t) { clearInterval(t); this.thinkingTimers.delete(chatId) }
+                                this.thinkingEditFailures.delete(chatId)
+                            }
+                        })
+                }, 10_000)
+                this.thinkingTimers.set(chatId, timer)
+
+                // After 8s, if Brain has generated text, switch to streaming mode
+                const streamTimer = setTimeout(() => {
+                    this.flushStreamingContent(chatId).catch(() => {})
+                }, 8_000)
+                this.streamingTimers.set(chatId, streamTimer)
+            }
+        } catch {
+            // Non-critical — don't let this block the flow
+        }
+    }
+
+    /**
+     * Remove the thinking indicator before sending the real reply.
+     */
+    private async clearThinkingIndicator(chatId: string): Promise<void> {
+        // Cancel streaming timer
+        const streamTimer = this.streamingTimers.get(chatId)
+        if (streamTimer) {
+            clearTimeout(streamTimer)
+            this.streamingTimers.delete(chatId)
+        }
+
+        const thinkTimer = this.thinkingTimers.get(chatId)
+        if (thinkTimer) {
+            clearInterval(thinkTimer)
+            this.thinkingTimers.delete(chatId)
+        }
+        this.thinkingStartTime.delete(chatId)
+        this.thinkingEditFailures.delete(chatId)
+
+        const msgId = this.thinkingMessageId.get(chatId)
+        if (msgId) {
+            this.thinkingMessageId.delete(chatId)
+            this.adapter.recallMessage?.(msgId).catch(() => {})
+        }
+    }
+
+    // Max streaming updates per response (prevent unbounded timer chain)
+    private streamingUpdateCount: Map<string, number> = new Map()
+    private static readonly STREAM_THRESHOLD = 600   // min chars to start streaming
+    private static readonly STREAM_MAX_UPDATES = 5   // max partial edits before giving up
+
+    /**
+     * If Brain has been thinking for 8s and has generated ≥600 chars of content,
+     * recall the 🤔 indicator and show partial content as a streaming post.
+     * Reschedules itself every 10s, up to STREAM_MAX_UPDATES times.
+     * If an edit fails, stops updating and lets sendSummary handle the final reply.
+     */
+    private async flushStreamingContent(chatId: string): Promise<void> {
+        try {
+            // Guard: chat may have been removed (session rebuild, restart recovery)
+            if (!this.chatStates.has(chatId)) return
+
+            const msgs = this.agentMessages.get(chatId)
+            if (!msgs || msgs.length === 0) return
+
+            const partialText = msgs.map(m => m.text).join('\n').trim()
+            if (partialText.length < BrainBridge.STREAM_THRESHOLD) return
+
+            const updateCount = (this.streamingUpdateCount.get(chatId) ?? 0) + 1
+            if (updateCount > BrainBridge.STREAM_MAX_UPDATES) {
+                slog('warn', 'streaming.cap_reached', { chatId: chatId.slice(0, 12), updates: updateCount })
+                return
+            }
+            this.streamingUpdateCount.set(chatId, updateCount)
+
+            // Recall the 🤔 indicator if still showing
+            const thinkingMsgId = this.thinkingMessageId.get(chatId)
+            if (thinkingMsgId) {
+                const thinkTimer = this.thinkingTimers.get(chatId)
+                if (thinkTimer) { clearInterval(thinkTimer); this.thinkingTimers.delete(chatId) }
+                this.thinkingMessageId.delete(chatId)
+                this.thinkingStartTime.delete(chatId)
+                this.adapter.recallMessage?.(thinkingMsgId).catch(() => {})
+            }
+
+            const displayText = partialText + '\n\n_⏳ 正在生成..._'
+            const existingStreamId = this.streamingMessageId.get(chatId)
+
+            if (existingStreamId) {
+                // Edit existing streaming post; stop on failure (conflict avoidance)
+                const { buildFeishuMessageForEdit } = await import('./feishu/formatter')
+                const formatted = buildFeishuMessageForEdit(displayText)
+                const ok = await this.adapter.editMessage?.(existingStreamId, formatted.msgType, formatted.content)
+                    .catch(() => false)
+                if (!ok) {
+                    slog('warn', 'streaming.edit_failed', { chatId: chatId.slice(0, 12), msgId: existingStreamId.slice(0, 12) })
+                    // Stop streaming; sendSummary will recall and resend final
+                    this.streamingUpdateCount.delete(chatId)
+                    return
+                }
+            } else {
+                // Send the first streaming post
+                const msgId = await this.adapter.sendPostAndGetId?.(chatId, displayText)
+                if (msgId) {
+                    this.streamingMessageId.set(chatId, msgId)
+                }
+            }
+
+            slog('info', 'streaming.update', { chatId: chatId.slice(0, 12), update: updateCount, textLen: partialText.length })
+
+            // Reschedule next update in 10s (clear old timer first to prevent stacking)
+            const prev = this.streamingTimers.get(chatId)
+            if (prev) clearTimeout(prev)
+            const nextTimer = setTimeout(() => {
+                this.flushStreamingContent(chatId).catch(() => {})
+            }, 10_000)
+            this.streamingTimers.set(chatId, nextTimer)
+        } catch {
+            // Non-critical
+        }
+    }
+
     // ========== Summary sending ==========
 
     /**
      * Process accumulated agent messages and send reply via adapter.
      */
     private async sendSummary(chatId: string): Promise<void> {
+        // Clear thinking indicator and any streaming timer before sending the real reply
+        await this.clearThinkingIndicator(chatId)
+
+        // Recall streaming partial post (if any) before sending final
+        const streamMsgId = this.streamingMessageId.get(chatId)
+        if (streamMsgId) {
+            this.streamingMessageId.delete(chatId)
+            this.adapter.recallMessage?.(streamMsgId).catch(() => {})
+        }
+        this.streamingUpdateCount.delete(chatId)
+
         const raw = this.agentMessages.get(chatId)
         if (!raw || raw.length === 0) return
         this.agentMessages.delete(chatId)
@@ -879,10 +1275,13 @@ export class BrainBridge implements IMBridgeCallbacks {
 
         const allText = substantive.join('\n')
 
-        // Detect [silent]
+        // ── Extract structured actions (or fall back to legacy bracket tags) ──
+        const { actions, cards, cleanText: textReply } = extractActions(allText)
+
+        // Detect silent
         const isPassiveBatch = this.lastBatchPassive.get(chatId) ?? false
         this.lastBatchPassive.delete(chatId)
-        if (allText.includes('[silent]')) {
+        if (actions.silent) {
             if (isPassiveBatch) {
                 console.log(`${this.logPrefix} K1 chose [silent] for ${chatId.slice(0, 12)}, skipping reply`)
                 this.lastUserMessageId.delete(chatId)
@@ -891,137 +1290,97 @@ export class BrainBridge implements IMBridgeCallbacks {
                 return
             }
             console.warn(`${this.logPrefix} K1 used [silent] in addressed mode for ${chatId.slice(0, 12)}, ignoring marker`)
+            slog('warn', 'brain.silent_addressed', { chatId: chatId.slice(0, 12) })
         }
 
-        // Extract [feishu-file: path] references
-        const mediaRefs: string[] = []
-        const FEISHU_FILE_RE = /\[feishu-file:\s*(.+?)\]/g
-        let fm: RegExpExecArray | null
-        while ((fm = FEISHU_FILE_RE.exec(allText)) !== null) {
-            mediaRefs.push(fm[1].trim())
+        // ── Execute immediate actions ──
+
+        if (actions.edit) {
+            for (const { id, text } of actions.edit) {
+                console.log(`${this.logPrefix} Editing message ${id.slice(0, 12)}`)
+                const richCheck = buildFeishuMessage(text)
+                if (richCheck.msgType === 'interactive') {
+                    // Feishu edit API doesn't support card format — recall and resend as new message
+                    console.log(`${this.logPrefix} Edit needs card format, recalling ${id.slice(0, 12)} and resending`)
+                    const recalled = await this.adapter.recallMessage?.(id).catch(() => false) ?? false
+                    if (!recalled) {
+                        slog('warn', 'edit.recall_failed', { chatId: chatId.slice(0, 12), msgId: id.slice(0, 12) })
+                    }
+                    const chatType = this.chatIdToChatType.get(chatId)
+                    await this.adapter.sendReply(chatId, { text, chatType })
+                        .catch(err => console.error(`${this.logPrefix} edit-as-resend failed:`, err))
+                } else {
+                    const editFormatted = buildFeishuMessageForEdit(text)
+                    this.adapter.editMessage?.(id, editFormatted.msgType, editFormatted.content)
+                        .catch(err => console.error(`${this.logPrefix} editMessage failed:`, err))
+                }
+            }
         }
 
-        // Extract [at:all] and [at: openId] references
-        const hasAtAll = /\[at:\s*all\]/i.test(allText)
-        const explicitAtSet = new Set<string>()
-        const AT_RE = /\[at:\s*(ou_[a-zA-Z0-9]+)\]/g
-        let atMatch: RegExpExecArray | null
-        while ((atMatch = AT_RE.exec(allText)) !== null) {
-            explicitAtSet.add(atMatch[1])
-        }
-        const explicitAtIds = [...explicitAtSet]
-
-        // Extract platform-specific extras
-        const extras: IMReplyExtra[] = []
-        const STICKER_RE = /\[feishu-sticker:\s*(.+?)\]/g
-        const SHARE_CHAT_RE = /\[feishu-share-chat:\s*(.+?)\]/g
-        const SHARE_USER_RE = /\[feishu-share-user:\s*(.+?)\]/g
-        const IMAGE_URL_RE = /\[feishu-image-url:\s*(.+?)\]/g
-        let em: RegExpExecArray | null
-        while ((em = STICKER_RE.exec(allText)) !== null) extras.push({ type: 'sticker', stickerId: em[1].trim() })
-        while ((em = SHARE_CHAT_RE.exec(allText)) !== null) extras.push({ type: 'share_chat', chatId: em[1].trim() })
-        while ((em = SHARE_USER_RE.exec(allText)) !== null) extras.push({ type: 'share_user', userId: em[1].trim() })
-        while ((em = IMAGE_URL_RE.exec(allText)) !== null) extras.push({ type: 'image_url', url: em[1].trim() })
-
-        // Extract [feishu-reaction: emoji] — Brain reacts to the user's triggering message
-        const reactions: string[] = []
-        const REACTION_RE = /\[feishu-reaction:\s*(\w+)\]/g
-        let rm: RegExpExecArray | null
-        while ((rm = REACTION_RE.exec(allText)) !== null) {
-            reactions.push(rm[1].trim())
+        if (actions.recall) {
+            for (const target of actions.recall) {
+                if (target === 'last') {
+                    console.log(`${this.logPrefix} Recalling last bot message for ${chatId.slice(0, 12)}`)
+                    this.adapter.recallLastMessage?.(chatId)
+                        .catch(err => console.error(`${this.logPrefix} recallLastMessage failed:`, err))
+                } else {
+                    console.log(`${this.logPrefix} Recalling message ${target.slice(0, 12)}`)
+                    this.adapter.recallMessage?.(target)
+                        .catch(err => console.error(`${this.logPrefix} recallMessage failed:`, err))
+                }
+            }
         }
 
-        // Extract <feishu-card>{...JSON...}</feishu-card> blocks
-        const cards: string[] = []
-        const CARD_RE = /<feishu-card>([\s\S]*?)<\/feishu-card>/g
-        let cm: RegExpExecArray | null
-        while ((cm = CARD_RE.exec(allText)) !== null) {
-            const json = cm[1].trim()
-            if (json) cards.push(json)
+        if (actions.forward) {
+            for (const { id, to } of actions.forward) {
+                console.log(`${this.logPrefix} Forwarding ${id.slice(0, 12)} to ${to.slice(0, 12)}`)
+                this.adapter.forwardMessage?.(id, to)
+                    .catch(err => console.error(`${this.logPrefix} forwardMessage failed:`, err))
+            }
         }
 
-        // Execute [feishu-edit: messageId | new text] and [feishu-recall: messageId?] immediately
-        const EDIT_RE = /\[feishu-edit:\s*(om_[a-zA-Z0-9]+)\s+([\s\S]+?)\]/g
-        const RECALL_EXPLICIT_RE = /\[feishu-recall:\s*(om_[a-zA-Z0-9]+)\]/g
-        const RECALL_LAST_RE = /\[feishu-recall\]/g
-        let editMatch: RegExpExecArray | null
-        while ((editMatch = EDIT_RE.exec(allText)) !== null) {
-            const [, msgId, newContent] = editMatch
-            console.log(`${this.logPrefix} Editing message ${msgId.slice(0, 12)}`)
-            this.adapter.editMessage?.(msgId, 'text', JSON.stringify({ text: newContent.trim() }))
-                .catch(err => console.error(`${this.logPrefix} editMessage failed:`, err))
-        }
-        let recallMatch: RegExpExecArray | null
-        while ((recallMatch = RECALL_EXPLICIT_RE.exec(allText)) !== null) {
-            const msgId = recallMatch[1]
-            console.log(`${this.logPrefix} Recalling message ${msgId.slice(0, 12)}`)
-            this.adapter.recallMessage?.(msgId)
-                .catch(err => console.error(`${this.logPrefix} recallMessage failed:`, err))
-        }
-        // [feishu-recall] with no ID — recall the last bot message in this chat
-        if (RECALL_LAST_RE.test(allText) && this.adapter.recallMessage) {
-            console.log(`${this.logPrefix} Recalling last bot message for ${chatId.slice(0, 12)}`)
-            this.adapter.recallLastMessage?.(chatId)
-                .catch(err => console.error(`${this.logPrefix} recallLastMessage failed:`, err))
+        if (actions.pin) {
+            for (const id of actions.pin) {
+                console.log(`${this.logPrefix} Pinning message ${id.slice(0, 12)}`)
+                this.adapter.pinMessage?.(id)
+                    .catch(err => console.error(`${this.logPrefix} pinMessage failed:`, err))
+            }
         }
 
-        // Execute [feishu-forward: om_messageId oc_chatId] — forward a message to another chat
-        const FORWARD_RE = /\[feishu-forward:\s*(om_[a-zA-Z0-9]+)\s+(oc_[a-zA-Z0-9]+)\]/g
-        let fwdMatch: RegExpExecArray | null
-        while ((fwdMatch = FORWARD_RE.exec(allText)) !== null) {
-            const [, msgId, targetChat] = fwdMatch
-            console.log(`${this.logPrefix} Forwarding ${msgId.slice(0, 12)} to ${targetChat.slice(0, 12)}`)
-            this.adapter.forwardMessage?.(msgId, targetChat)
-                .catch(err => console.error(`${this.logPrefix} forwardMessage failed:`, err))
+        if (actions.unpin) {
+            for (const id of actions.unpin) {
+                console.log(`${this.logPrefix} Unpinning message ${id.slice(0, 12)}`)
+                this.adapter.unpinMessage?.(id)
+                    .catch(err => console.error(`${this.logPrefix} unpinMessage failed:`, err))
+            }
         }
 
-        // Execute [feishu-pin: om_messageId] and [feishu-unpin: om_messageId]
-        const PIN_RE = /\[feishu-pin:\s*(om_[a-zA-Z0-9]+)\]/g
-        const UNPIN_RE = /\[feishu-unpin:\s*(om_[a-zA-Z0-9]+)\]/g
-        let pinMatch: RegExpExecArray | null
-        while ((pinMatch = PIN_RE.exec(allText)) !== null) {
-            console.log(`${this.logPrefix} Pinning message ${pinMatch[1].slice(0, 12)}`)
-            this.adapter.pinMessage?.(pinMatch[1])
-                .catch(err => console.error(`${this.logPrefix} pinMessage failed:`, err))
-        }
-        while ((pinMatch = UNPIN_RE.exec(allText)) !== null) {
-            console.log(`${this.logPrefix} Unpinning message ${pinMatch[1].slice(0, 12)}`)
-            this.adapter.unpinMessage?.(pinMatch[1])
-                .catch(err => console.error(`${this.logPrefix} unpinMessage failed:`, err))
+        if (actions.urgent) {
+            for (const { id, type, users } of actions.urgent) {
+                console.log(`${this.logPrefix} Urgent(${type}) message ${id.slice(0, 12)} to ${users.length} users`)
+                this.adapter.urgentMessage?.(id, type as 'app' | 'sms' | 'phone', users)
+                    .catch((err: unknown) => console.error(`${this.logPrefix} urgentMessage failed:`, err))
+            }
         }
 
-        // Execute [feishu-urgent: om_messageId app|sms|phone ou_xxx,ou_yyy]
-        const URGENT_RE = /\[feishu-urgent:\s*(om_[a-zA-Z0-9]+)\s+(app|sms|phone)\s+([\w,]+)\]/g
-        let urgentMatch: RegExpExecArray | null
-        while ((urgentMatch = URGENT_RE.exec(allText)) !== null) {
-            const [, msgId, type, userList] = urgentMatch
-            const userIds = userList.split(',').map(s => s.trim()).filter(Boolean)
-            console.log(`${this.logPrefix} Urgent(${type}) message ${msgId.slice(0, 12)} to ${userIds.length} users`)
-            this.adapter.urgentMessage?.(msgId, type as 'app' | 'sms' | 'phone', userIds)
-                .catch(err => console.error(`${this.logPrefix} urgentMessage failed:`, err))
+        if (actions.ephemeral) {
+            for (const { userId, text } of actions.ephemeral) {
+                console.log(`${this.logPrefix} Sending ephemeral card to ${userId.slice(0, 12)} in ${chatId.slice(0, 12)}`)
+                // Route text through formatter so markdown → proper card/post JSON
+                const formatted = buildFeishuMessage(text)
+                const cardJson = formatted.msgType === 'interactive'
+                    ? formatted.content
+                    : JSON.stringify({
+                        schema: '2.0',
+                        config: { wide_screen_mode: true },
+                        elements: [{ tag: 'markdown', content: text }],
+                    })
+                this.adapter.sendEphemeralCard?.(chatId, userId, cardJson)
+                    .catch((err: unknown) => console.error(`${this.logPrefix} sendEphemeralCard failed:`, err))
+            }
         }
 
-        // Strip tags from text
-        const textReply = allText
-            .replace(/\[feishu-file:\s*.+?\]/g, '')
-            .replace(/\[at:\s*ou_[a-zA-Z0-9]+\]/g, '')
-            .replace(/\[at:\s*all\]/gi, '')
-            .replace(/\[feishu-sticker:\s*.+?\]/g, '')
-            .replace(/\[feishu-share-chat:\s*.+?\]/g, '')
-            .replace(/\[feishu-share-user:\s*.+?\]/g, '')
-            .replace(/\[feishu-image-url:\s*.+?\]/g, '')
-            .replace(/\[feishu-reaction:\s*\w+\]/g, '')
-            .replace(/\[feishu-edit:\s*om_[a-zA-Z0-9]+\s+[\s\S]+?\]/g, '')
-            .replace(/\[feishu-recall:\s*om_[a-zA-Z0-9]+\]/g, '')
-            .replace(/\[feishu-recall\]/g, '')
-            .replace(/\[feishu-forward:\s*om_[a-zA-Z0-9]+\s+oc_[a-zA-Z0-9]+\]/g, '')
-            .replace(/\[feishu-pin:\s*om_[a-zA-Z0-9]+\]/g, '')
-            .replace(/\[feishu-unpin:\s*om_[a-zA-Z0-9]+\]/g, '')
-            .replace(/\[feishu-urgent:\s*om_[a-zA-Z0-9]+\s+(?:app|sms|phone)\s+[\w,]+\]/g, '')
-            .replace(/<feishu-card>[\s\S]*?<\/feishu-card>/g, '')
-            .replace(/<\/?feishu-reply>/g, '')
-            .replace(/\[silent\]/g, '')
-            .trim()
+        // ── Build reply payload ──
 
         const replyToMessageId = this.lastUserMessageId.get(chatId)
         this.lastUserMessageId.delete(chatId)
@@ -1029,16 +1388,22 @@ export class BrainBridge implements IMBridgeCallbacks {
         const senderIds = this.lastSenderIds.get(chatId)
         this.lastSenderIds.delete(chatId)
 
-        // Compute @mention IDs: [at:all] wins; else explicit [at:ou_xxx]; else fallback to senders
+        // Compute @mention IDs: "all" wins; else explicit; else fallback to senders
+        const explicitAtIds = actions.at || []
+        const hasAtAll = explicitAtIds.includes('all')
         const atIds = hasAtAll
             ? ['all']
             : (explicitAtIds.length > 0 ? explicitAtIds : senderIds ? [...senderIds] : [])
 
+        const mediaRefs = actions.files || []
+        const extras = actionsToExtras(actions)
+        const reactions = actions.reactions || []
         const chatType = this.chatIdToChatType.get(chatId)
 
         if (textReply || mediaRefs.length > 0 || extras.length > 0 || cards.length > 0 || reactions.length > 0) {
             console.log(`${this.logPrefix} Sending summary to ${chatId.slice(0, 12)} (${textReply.length} chars, ${deduped.length} messages${replyToMessageId ? ', reply' : ''}${atIds.length ? `, @${atIds.length}` : ''}${mediaRefs.length ? `, +${mediaRefs.length} media` : ''}${extras.length ? `, +${extras.length} extras` : ''}${cards.length ? `, +${cards.length} cards` : ''}${reactions.length ? `, +${reactions.length} reactions` : ''})`)
-            await this.adapter.sendReply(chatId, {
+            const replyStart = Date.now()
+            const replyPayload = {
                 text: textReply,
                 replyTo: replyToMessageId,
                 atIds: atIds.length > 0 ? atIds : undefined,
@@ -1047,8 +1412,43 @@ export class BrainBridge implements IMBridgeCallbacks {
                 cards: cards.length > 0 ? cards : undefined,
                 reactions: reactions.length > 0 ? reactions : undefined,
                 chatType,
+            }
+            let sendErr: unknown = null
+            for (let attempt = 0; attempt < 3; attempt++) {
+                try {
+                    await this.adapter.sendReply(chatId, replyPayload)
+                    sendErr = null
+                    break
+                } catch (err) {
+                    sendErr = err
+                    if (attempt < 2) {
+                        slog('warn', 'reply.send_retry', { chatId: chatId.slice(0, 12), attempt: attempt + 1 })
+                        await new Promise(r => setTimeout(r, 2000))
+                    }
+                }
+            }
+            if (sendErr) {
+                slog('error', 'reply.send_failed', { chatId: chatId.slice(0, 12) })
+                this.adapter.sendText(chatId, '⚠️ 回复发送失败，请重试。').catch(() => {})
+            }
+            const traceId = this.traceIds.get(chatId)
+            const totalMs = Date.now() - (this.traceStartTimes.get(chatId) ?? replyStart)
+            slog('info', 'brain.reply', {
+                traceId,
+                chatId: chatId.slice(0, 12),
+                textLen: textReply.length,
+                cards: cards.length,
+                extras: extras.length,
+                reactions: reactions.length,
+                hadStreaming: !!streamMsgId,
+                replyMs: Date.now() - replyStart,
+                totalMs,
             })
         }
+
+        // Clear trace for this round
+        this.traceIds.delete(chatId)
+        this.traceStartTimes.delete(chatId)
 
         await this.clearPersistedState(chatId)
     }
@@ -1089,6 +1489,8 @@ export class BrainBridge implements IMBridgeCallbacks {
 
     private async fetchUserProfile(senderName: string, senderId: string): Promise<string | null> {
         try {
+            const ctrl = new AbortController()
+            const timeout = setTimeout(() => ctrl.abort(), 5_000)
             const resp = await fetch(`${this.YOHO_MEMORY_URL}/recall`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1097,10 +1499,11 @@ export class BrainBridge implements IMBridgeCallbacks {
                     keywords: [senderName, senderId],
                     maxFiles: 2,
                 }),
-            })
+                signal: ctrl.signal,
+            }).finally(() => clearTimeout(timeout))
             if (!resp.ok) return null
             const result = await resp.json() as { answer?: string; filesSearched?: number }
-            if (!result.answer || !result.filesSearched) return null
+            if (!result.answer || result.filesSearched === undefined) return null
             return result.answer
         } catch {
             return null

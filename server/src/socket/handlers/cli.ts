@@ -5,6 +5,7 @@ import { RpcRegistry } from '../rpcRegistry'
 import type { SyncEvent } from '../../sync/syncEngine'
 import { extractTodoWriteTodosFromMessageContent } from '../../sync/todos'
 import type { SocketServer, SocketWithData } from '../socketTypes'
+import { getLicenseService } from '../../license/licenseService'
 
 type SessionAlivePayload = {
     sid: string
@@ -73,6 +74,7 @@ export type CliHandlersDeps = {
     onSessionEnd?: (payload: SessionEndPayload) => void
     onMachineAlive?: (payload: MachineAlivePayload) => void
     onWebappEvent?: (event: SyncEvent) => void
+    onLicenseBlock?: (sessionId: string, reason: string) => void
 }
 
 // Tracks which socket currently "owns" each session (sessionId → socketId).
@@ -86,8 +88,24 @@ type AccessResult<T> =
     | { ok: false; reason: AccessErrorReason }
 
 export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDeps): void {
-    const { io, store, rpcRegistry, onSessionAlive, onSessionEnd, onMachineAlive, onWebappEvent } = deps
+    const { io, store, rpcRegistry, onSessionAlive, onSessionEnd, onMachineAlive, onWebappEvent, onLicenseBlock } = deps
     const namespace = typeof socket.data.namespace === 'string' ? socket.data.namespace : null
+
+    // Cache: machineId → orgId（用于 session-alive license fallback，避免每次心跳查 DB）
+    const machineOrgIdCache = new Map<string, { orgId: string | null; fetchedAt: number }>()
+    const MACHINE_ORG_CACHE_TTL = 10 * 60 * 1000 // 10 分钟，与 license cache 一致
+
+    const getMachineOrgId = async (machineId: string): Promise<string | null> => {
+        const now = Date.now()
+        const cached = machineOrgIdCache.get(machineId)
+        if (cached && now - cached.fetchedAt < MACHINE_ORG_CACHE_TTL) {
+            return cached.orgId
+        }
+        const machine = await store.getMachine(machineId)
+        const orgId = machine?.orgId ?? null
+        machineOrgIdCache.set(machineId, { orgId, fetchedAt: now })
+        return orgId
+    }
 
     const resolveSessionAccess = async (sessionId: string): Promise<AccessResult<StoredSession>> => {
         if (!namespace) {
@@ -347,6 +365,40 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
         if (!sessionAccess.ok) {
             emitAccessError('session', data.sid, sessionAccess.reason)
             return
+        }
+
+        // License check: validate org license for this session
+        // 优先用 session 的 orgId，如果没有则 fallback 到 machine 的 orgId（防止绕过）
+        let licenseOrgId = sessionAccess.value.orgId
+        if (!licenseOrgId && sessionAccess.value.machineId) {
+            licenseOrgId = await getMachineOrgId(sessionAccess.value.machineId)
+        }
+        if (licenseOrgId) {
+            try {
+                const licenseService = getLicenseService()
+                const licenseCheck = await licenseService.validateLicense(licenseOrgId)
+                if (!licenseCheck.valid) {
+                    socket.emit('error', {
+                        message: licenseCheck.message,
+                        code: `license-${licenseCheck.code.toLowerCase().replace(/_/g, '-')}`,
+                        scope: 'session',
+                        id: data.sid,
+                    })
+                    // 尝试终止 daemon 上的 CLI 进程，并把原因传给 index.ts
+                    onLicenseBlock?.(data.sid, licenseCheck.code)
+                    return
+                }
+                // 7 天内到期预警
+                if (licenseCheck.valid && licenseCheck.warning) {
+                    socket.emit('license-warning', {
+                        message: licenseCheck.warning,
+                        scope: 'session',
+                        id: data.sid,
+                    })
+                }
+            } catch {
+                // LicenseService not initialized — skip check (dev mode)
+            }
         }
 
         // Dedup: detect and resolve conflicting sockets for the same session.

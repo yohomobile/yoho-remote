@@ -56,9 +56,12 @@ async function getAdminToken(): Promise<string> {
 export async function lookupKeycloakUserByEmail(email: string): Promise<KeycloakUserInfo | null> {
     try {
         const token = await getAdminToken()
+        const ctrl = new AbortController()
+        const timeout = setTimeout(() => ctrl.abort(), 3_000)
         const resp = await fetch(`${KC_USERS_URL}?email=${encodeURIComponent(email)}&exact=true`, {
             headers: { Authorization: `Bearer ${token}` },
-        })
+            signal: ctrl.signal,
+        }).finally(() => clearTimeout(timeout))
 
         if (!resp.ok) return null
         const users = await resp.json() as Array<{

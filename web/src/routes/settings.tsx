@@ -4,11 +4,11 @@ import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { Spinner } from '@/components/Spinner'
 import { getClientId, getDeviceType } from '@/lib/client-identity'
-import { getCurrentUserSync } from '@/services/tokenStorage'
+import { getCurrentUserSync, getExpiresAtSync } from '@/services/tokenStorage'
 import { useNotificationPermission, useWebPushSubscription } from '@/hooks/useNotification'
 import { useServerUrl } from '@/hooks/useServerUrl'
 import { getLogoutUrl, clearTokens } from '@/services/keycloak'
-import type { Project, Machine, OrgRole } from '@/types/api'
+import type { Project, Machine, OrgRole, OrgLicense, LicenseStatus } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useMyOrgs, useOrg } from '@/hooks/queries/useOrgs'
 import { useCreateOrg, useInviteMember, useUpdateMemberRole, useRemoveMember } from '@/hooks/mutations/useOrgMutations'
@@ -50,7 +50,7 @@ function getProjectMachineLabel(machineId: string | null, machinesById: Map<stri
 function getProjectScopeBadge(project: Project, machinesById: Map<string, Machine>): { label: string; title: string; className: string } {
     if (!project.machineId && project.workspaceGroupId) {
         return {
-            label: `Workspace Shared · ${project.workspaceGroupId}`,
+            label: `Org Shared · ${project.workspaceGroupId}`,
             title: `Shared with machines in workspace group ${project.workspaceGroupId}`,
             className: 'border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300'
         }
@@ -72,6 +72,138 @@ function getProjectScopeBadge(project: Project, machinesById: Map<string, Machin
             : 'Only available on the bound machine',
         className: 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300'
     }
+}
+
+function formatDate(ts: number): string {
+    return new Date(ts).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+function daysUntil(ts: number): number {
+    return Math.ceil((ts - Date.now()) / (1000 * 60 * 60 * 24))
+}
+
+const LICENSE_STATUS_STYLE: Record<LicenseStatus, { badge: string; label: string }> = {
+    active: { badge: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400', label: 'Active' },
+    expired: { badge: 'bg-red-500/15 text-red-600 dark:text-red-400', label: 'Expired' },
+    suspended: { badge: 'bg-amber-500/15 text-amber-600 dark:text-amber-400', label: 'Suspended' },
+}
+
+function LicenseCard({ license, memberCount }: { license: OrgLicense | null; memberCount: number }) {
+    if (!license) {
+        return (
+            <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
+                <div className="px-3 py-2 border-b border-[var(--app-divider)]">
+                    <h3 className="text-sm font-medium">License</h3>
+                </div>
+                <div className="px-3 py-4 flex items-center gap-2.5">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-500/10">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-500"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
+                    </div>
+                    <div>
+                        <div className="text-sm font-medium text-red-600 dark:text-red-400">No license configured</div>
+                        <div className="text-[11px] text-[var(--app-hint)] mt-0.5">Contact your administrator to activate a license.</div>
+                    </div>
+                </div>
+            </div>
+        )
+    }
+
+    const style = LICENSE_STATUS_STYLE[license.status]
+    const days = daysUntil(license.expiresAt)
+    const isExpiredByDate = days <= 0
+    const isExpired = license.status === 'expired' || isExpiredByDate
+    const isSuspended = license.status === 'suspended'
+    const isBlocked = isExpired || isSuspended
+    const isWarningSoon = !isBlocked && days <= 7
+    const memberPct = Math.min(100, Math.round((memberCount / license.maxMembers) * 100))
+    const memberFull = memberCount >= license.maxMembers
+
+    function daysLabel(): string {
+        if (days > 0) return `${days} day${days !== 1 ? 's' : ''}`
+        if (days === 0) return 'Expires today'
+        return `Expired ${Math.abs(days)} day${Math.abs(days) !== 1 ? 's' : ''} ago`
+    }
+
+    return (
+        <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
+            <div className="px-3 py-2 border-b border-[var(--app-divider)] flex items-center justify-between">
+                <h3 className="text-sm font-medium">License</h3>
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${style.badge}`}>
+                    {style.label}
+                </span>
+            </div>
+
+            {/* Alert banner */}
+            {(isBlocked || isWarningSoon) && (
+                <div className={`px-3 py-2 border-b border-[var(--app-divider)] flex items-start gap-2 ${
+                    isBlocked ? 'bg-red-500/10' : 'bg-amber-500/10'
+                }`}>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`mt-0.5 shrink-0 ${isBlocked ? 'text-red-500' : 'text-amber-500'}`}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                    <div className={`text-[11px] leading-relaxed font-medium ${isBlocked ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                        {isSuspended
+                            ? 'License suspended — sessions are blocked. Contact your administrator.'
+                            : isExpired
+                                ? 'License expired — sessions are blocked. Contact your administrator.'
+                                : `License expires in ${days} day${days !== 1 ? 's' : ''}. Renew soon to avoid interruption.`
+                        }
+                    </div>
+                </div>
+            )}
+
+            <div className="divide-y divide-[var(--app-divider)]">
+                {/* Valid period */}
+                <div className="px-3 py-2 flex items-center justify-between gap-2">
+                    <span className="text-xs text-[var(--app-hint)]">Valid period</span>
+                    <span className="text-xs font-medium">
+                        {formatDate(license.startsAt)} – {formatDate(license.expiresAt)}
+                    </span>
+                </div>
+
+                {/* Days remaining */}
+                <div className="px-3 py-2 flex items-center justify-between gap-2">
+                    <span className="text-xs text-[var(--app-hint)]">Expiry</span>
+                    <span className={`text-xs font-semibold ${
+                        isBlocked ? 'text-red-500' : isWarningSoon ? 'text-amber-500' : 'text-[var(--app-fg)]'
+                    }`}>
+                        {daysLabel()}
+                    </span>
+                </div>
+
+                {/* Members */}
+                <div className="px-3 py-2.5 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-[var(--app-hint)]">Members</span>
+                        <span className={`text-xs font-semibold ${memberFull ? 'text-red-500' : 'text-[var(--app-fg)]'}`}>
+                            {memberCount} / {license.maxMembers}
+                        </span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-[var(--app-border)]">
+                        <div
+                            className={`h-1.5 rounded-full transition-all ${
+                                memberFull ? 'bg-red-500' : memberPct >= 80 ? 'bg-amber-500' : 'bg-emerald-500'
+                            }`}
+                            style={{ width: `${memberPct}%` }}
+                        />
+                    </div>
+                </div>
+
+                {/* Concurrent sessions limit */}
+                {license.maxConcurrentSessions !== null && (
+                    <div className="px-3 py-2 flex items-center justify-between gap-2">
+                        <span className="text-xs text-[var(--app-hint)]">Max concurrent sessions</span>
+                        <span className="text-xs font-medium">{license.maxConcurrentSessions}</span>
+                    </div>
+                )}
+
+                {/* Note */}
+                {license.note && (
+                    <div className="px-3 py-2">
+                        <span className="text-[11px] text-[var(--app-hint)] italic">{license.note}</span>
+                    </div>
+                )}
+            </div>
+        </div>
+    )
 }
 
 function BackIcon(props: { className?: string }) {
@@ -200,12 +332,12 @@ function ProjectForm(props: {
         ? (props.initial ? props.initial.workspaceGroupId : selectedWorkspaceGroupId)
         : null
     const requiresWorkspaceGroup = props.scope === 'shared' && !props.initial
-    const scopeLabel = props.scope === 'shared' ? 'Workspace Shared Project' : 'Machine Local Project'
+    const scopeLabel = props.scope === 'shared' ? 'Org Shared Project' : 'Machine Local Project'
     const scopeHint = props.scope === 'shared'
         ? props.initial?.workspaceGroupId
             ? `Shared with machines in workspace group ${props.initial.workspaceGroupId}.`
             : props.initial
-                ? 'Legacy global shared project. Saving keeps it global until you recreate it under a workspace group.'
+                ? 'Legacy global shared project. Saving keeps it global until you recreate it under an org workspace group.'
                 : selectedWorkspaceGroupId
                     ? `Shared with machines in workspace group ${selectedWorkspaceGroupId}, based on the machine selected above.`
                     : 'Pick a machine with a workspace group above before adding a shared project.'
@@ -318,6 +450,7 @@ function MachineCard(props: {
     const { machine } = props
     const currentWorkspaceGroupId = getMachineWorkspaceGroupId(machine)
     const [workspaceGroupDraft, setWorkspaceGroupDraft] = useState(currentWorkspaceGroupId ?? '')
+    const [showAdvanced, setShowAdvanced] = useState(false)
     const machineIp = getMachineIp(machine)
     const platformLabel = [
         machine.metadata?.platform || null,
@@ -406,9 +539,10 @@ function MachineCard(props: {
                 </div>
             </div>
 
+            {/* Primary details */}
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <MachineDetail
-                    label="最近活跃"
+                    label="Last Active"
                     value={formatMachineTimestamp(machine.activeAt)}
                     tone="accent"
                 />
@@ -418,46 +552,36 @@ function MachineCard(props: {
                     mono
                     tone="accent"
                 />
-                <MachineDetail
-                    label="Home"
-                    value={machine.metadata?.homeDir || '-'}
-                    mono
-                />
-                <MachineDetail
-                    label="Remote"
-                    value={machine.metadata?.yohoRemoteHomeDir || '-'}
-                    mono
-                />
-                <MachineDetail
-                    label="Runtime"
-                    value={machine.metadata?.yohoRemoteLibDir || '-'}
-                    mono
-                />
-                <MachineDetail
-                    label="CWD"
-                    value={machine.metadata?.cwd || '-'}
-                    mono
-                />
-                <MachineDetail
-                    label="Workspace Group"
-                    value={currentWorkspaceGroupId || 'Not configured'}
-                    mono
-                    tone={currentWorkspaceGroupId ? 'accent' : 'default'}
-                />
-                <MachineDetail
-                    label="Server"
-                    value={machine.metadata?.serverUrl || '-'}
-                    mono
-                    fullWidth
-                />
-                <MachineDetail
-                    label="Machine ID"
-                    value={machine.id}
-                    mono
-                    fullWidth
-                />
+                {machine.metadata?.cwd ? (
+                    <MachineDetail
+                        label="CWD"
+                        value={machine.metadata.cwd}
+                        mono
+                        fullWidth
+                    />
+                ) : null}
             </div>
 
+            {/* Advanced details (collapsible) */}
+            <button
+                type="button"
+                onClick={() => setShowAdvanced(v => !v)}
+                className="mt-2 flex items-center gap-1 text-[11px] text-[var(--app-hint)] hover:text-[var(--app-fg)] transition-colors"
+            >
+                <span className={`transition-transform ${showAdvanced ? 'rotate-90' : ''}`}>&#9654;</span>
+                Advanced Details
+            </button>
+            {showAdvanced && (
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <MachineDetail label="Home" value={machine.metadata?.homeDir || '-'} mono />
+                    <MachineDetail label="Remote" value={machine.metadata?.yohoRemoteHomeDir || '-'} mono />
+                    <MachineDetail label="Runtime" value={machine.metadata?.yohoRemoteLibDir || '-'} mono />
+                    <MachineDetail label="Server" value={machine.metadata?.serverUrl || '-'} mono />
+                    <MachineDetail label="Machine ID" value={machine.id} mono fullWidth />
+                </div>
+            )}
+
+            {/* Workspace Group Config */}
             <div className="mt-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)]/60 px-3 py-3">
                 <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--app-hint)]">
                     Workspace Group Config
@@ -488,6 +612,24 @@ function MachineCard(props: {
     )
 }
 
+function SessionExpiry({ expiresAt }: { expiresAt: number }) {
+    const [now, setNow] = useState(Date.now())
+    useEffect(() => {
+        const timer = setInterval(() => setNow(Date.now()), 60_000)
+        return () => clearInterval(timer)
+    }, [])
+
+    const remaining = expiresAt - now
+    if (remaining <= 0) {
+        return <span className="text-sm font-mono text-red-500">Expired</span>
+    }
+    const hours = Math.floor(remaining / 3_600_000)
+    const minutes = Math.floor((remaining % 3_600_000) / 60_000)
+    const text = hours > 0 ? `${hours}h ${minutes}m remaining` : `${minutes}m remaining`
+    const isLow = remaining < 600_000 // < 10 min
+    return <span className={`text-sm font-mono ${isLow ? 'text-amber-500' : 'text-[var(--app-hint)]'}`}>{text}</span>
+}
+
 export default function SettingsPage() {
     const { api, currentOrgId, setCurrentOrgId } = useAppContext()
     const goBack = useAppGoBack()
@@ -505,8 +647,19 @@ export default function SettingsPage() {
         name: getCurrentUserSync()?.name || '-',
         email: getCurrentUserSync()?.email || '-',
         clientId: getClientId(),
-        deviceType: getDeviceType()
+        deviceType: getDeviceType(),
+        expiresAt: getExpiresAtSync()
     }), [])
+
+    // 获取当前用户的角色和组织信息
+    const { data: meData } = useQuery({
+        queryKey: queryKeys.me,
+        queryFn: async () => {
+            if (!api) throw new Error('API unavailable')
+            return await api.getMe()
+        },
+        enabled: Boolean(api)
+    })
 
     // Organizations
     const { orgs } = useMyOrgs(api)
@@ -540,7 +693,7 @@ export default function SettingsPage() {
     }, [createOrg, newOrgName, newOrgSlug, setCurrentOrgId])
 
     // Members management
-    const { members, myRole: orgRole } = useOrg(api, currentOrgId ?? '')
+    const { members, myRole: orgRole, license: orgLicense } = useOrg(api, currentOrgId ?? '')
     const { inviteMember, isPending: isInviting, error: inviteError } = useInviteMember(api, currentOrgId ?? '')
     const { updateRole } = useUpdateMemberRole(api, currentOrgId ?? '')
     const { removeMember } = useRemoveMember(api, currentOrgId ?? '')
@@ -604,6 +757,7 @@ export default function SettingsPage() {
         () => displayMachines.filter((machine) => Boolean(getMachineWorkspaceGroupId(machine))),
         [displayMachines]
     )
+    const hasWorkspaceGroups = sharedProjectMachines.length > 0
     const selectedLocalProjectMachine = useMemo(() => {
         if (!selectedLocalProjectMachineId) return null
         return machinesById.get(selectedLocalProjectMachineId) ?? null
@@ -642,6 +796,16 @@ export default function SettingsPage() {
     }, [projectScope, selectedLocalProjectMachineId, selectedSharedProjectMachineId])
 
     // Projects
+    // Simple mode: no workspace groups → fetch all org projects without machine filter
+    const { data: allProjectsData, isLoading: allProjectsLoading } = useQuery({
+        queryKey: ['projects', currentOrgId, 'all'],
+        queryFn: async () => {
+            if (!api) throw new Error('API unavailable')
+            return await api.getProjects(currentOrgId)
+        },
+        enabled: Boolean(api && !hasWorkspaceGroups)
+    })
+
     const { data: sharedProjectsData, isLoading: sharedProjectsLoading } = useQuery({
         queryKey: ['projects', currentOrgId, 'shared', selectedSharedProjectMachineId],
         queryFn: async () => {
@@ -649,7 +813,7 @@ export default function SettingsPage() {
             if (!selectedSharedProjectMachineId) return { projects: [] }
             return await api.getProjects(currentOrgId, selectedSharedProjectMachineId)
         },
-        enabled: Boolean(api && selectedSharedProjectMachineId)
+        enabled: Boolean(api && hasWorkspaceGroups && selectedSharedProjectMachineId)
     })
 
     const { data: machineProjectsData, isLoading: machineProjectsLoading } = useQuery({
@@ -659,7 +823,7 @@ export default function SettingsPage() {
             if (!selectedLocalProjectMachineId) return { projects: [] }
             return await api.getProjects(currentOrgId, selectedLocalProjectMachineId)
         },
-        enabled: Boolean(api && selectedLocalProjectMachineId)
+        enabled: Boolean(api && hasWorkspaceGroups && selectedLocalProjectMachineId)
     })
 
     const sharedProjects = useMemo(() => {
@@ -676,30 +840,41 @@ export default function SettingsPage() {
     }, [machineProjectsData, selectedLocalProjectMachineId])
 
     const projects = useMemo(() => {
+        if (!hasWorkspaceGroups) {
+            return Array.isArray(allProjectsData?.projects) ? allProjectsData.projects : []
+        }
         return projectScope === 'shared' ? sharedProjects : machineProjects
-    }, [machineProjects, projectScope, sharedProjects])
+    }, [hasWorkspaceGroups, allProjectsData, machineProjects, projectScope, sharedProjects])
 
-    const projectsLoading = projectScope === 'shared'
-        ? Boolean(selectedSharedProjectMachineId) && sharedProjectsLoading
-        : Boolean(selectedLocalProjectMachineId) && machineProjectsLoading
+    const projectsLoading = !hasWorkspaceGroups
+        ? allProjectsLoading
+        : projectScope === 'shared'
+            ? Boolean(selectedSharedProjectMachineId) && sharedProjectsLoading
+            : Boolean(selectedLocalProjectMachineId) && machineProjectsLoading
 
-    const canAddProject = projectScope === 'shared'
-        ? Boolean(getMachineWorkspaceGroupId(selectedSharedProjectMachine))
-        : Boolean(selectedLocalProjectMachineId)
-    const projectSectionDescription = projectScope === 'shared'
-        ? selectedSharedProjectMachine && getMachineWorkspaceGroupId(selectedSharedProjectMachine)
-            ? `Paths shared with workspace group ${getMachineWorkspaceGroupId(selectedSharedProjectMachine)}`
-            : 'Select a machine with a workspace group to manage shared paths'
-        : selectedLocalProjectMachine
-            ? `Paths stored only on ${getMachineTitle(selectedLocalProjectMachine)}`
-            : 'Select a machine to manage local-only project paths'
-    const projectEmptyState = projectScope === 'shared'
-        ? selectedSharedProjectMachine && getMachineWorkspaceGroupId(selectedSharedProjectMachine)
-            ? `No shared projects saved for workspace group ${getMachineWorkspaceGroupId(selectedSharedProjectMachine)} yet.`
-            : 'Configure a workspace group on at least one machine first.'
-        : selectedLocalProjectMachine
-            ? `No local projects saved for ${getMachineTitle(selectedLocalProjectMachine)} yet. Standalone machines like a MacBook should create their own projects here.`
-            : 'Select a machine first.'
+    const canAddProject = !hasWorkspaceGroups
+        ? true
+        : projectScope === 'shared'
+            ? Boolean(getMachineWorkspaceGroupId(selectedSharedProjectMachine))
+            : Boolean(selectedLocalProjectMachineId)
+    const projectSectionDescription = !hasWorkspaceGroups
+        ? 'Manage project paths for your organization'
+        : projectScope === 'shared'
+            ? selectedSharedProjectMachine && getMachineWorkspaceGroupId(selectedSharedProjectMachine)
+                ? `Paths shared with workspace group ${getMachineWorkspaceGroupId(selectedSharedProjectMachine)}`
+                : 'Select a machine with a workspace group to manage shared paths'
+            : selectedLocalProjectMachine
+                ? `Paths stored only on ${getMachineTitle(selectedLocalProjectMachine)}`
+                : 'Select a machine to manage local-only project paths'
+    const projectEmptyState = !hasWorkspaceGroups
+        ? 'No projects saved yet. Add your first project.'
+        : projectScope === 'shared'
+            ? selectedSharedProjectMachine && getMachineWorkspaceGroupId(selectedSharedProjectMachine)
+                ? `No shared projects saved for workspace group ${getMachineWorkspaceGroupId(selectedSharedProjectMachine)} yet.`
+                : 'Configure a workspace group on at least one machine first.'
+            : selectedLocalProjectMachine
+                ? `No local projects saved for ${getMachineTitle(selectedLocalProjectMachine)} yet. Standalone machines like a MacBook should create their own projects here.`
+                : 'Select a machine first.'
 
     const addProjectMutation = useMutation({
         mutationFn: async (data: ProjectFormData) => {
@@ -925,15 +1100,38 @@ export default function SettingsPage() {
                             <div className="px-3 py-2 border-b border-[var(--app-divider)]">
                                 <h3 className="text-sm font-medium">Current Session</h3>
                             </div>
+
+                            {/* Profile header */}
+                            <div className="px-3 py-3 flex items-center gap-3 border-b border-[var(--app-divider)]">
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-500/15 text-blue-500 font-semibold text-sm">
+                                    {currentSession.name !== '-'
+                                        ? currentSession.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+                                        : '?'}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-sm font-medium truncate">{currentSession.name}</span>
+                                        {meData?.role && (
+                                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium leading-none ${
+                                                meData.role === 'operator'
+                                                    ? 'bg-amber-500/15 text-amber-500'
+                                                    : 'bg-emerald-500/15 text-emerald-500'
+                                            }`}>
+                                                {meData.role === 'operator' ? 'Operator' : 'Developer'}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="text-xs text-[var(--app-hint)] truncate mt-0.5">{currentSession.email}</div>
+                                    {meData?.orgs && meData.orgs.length > 0 && (
+                                        <div className="text-xs text-[var(--app-hint)] truncate mt-0.5">
+                                            {meData.orgs.map(o => o.name).join(', ')}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Session details */}
                             <div className="divide-y divide-[var(--app-divider)]">
-                                <div className="px-3 py-2 flex items-center justify-between gap-2">
-                                    <span className="text-sm text-[var(--app-hint)]">Name</span>
-                                    <span className="text-sm font-mono truncate">{currentSession.name}</span>
-                                </div>
-                                <div className="px-3 py-2 flex items-center justify-between gap-2">
-                                    <span className="text-sm text-[var(--app-hint)]">Email</span>
-                                    <span className="text-sm font-mono truncate">{currentSession.email}</span>
-                                </div>
                                 <div className="px-3 py-2 flex items-center justify-between gap-2">
                                     <span className="text-sm text-[var(--app-hint)]">Device</span>
                                     <span className="text-sm font-mono">{currentSession.deviceType}</span>
@@ -942,6 +1140,12 @@ export default function SettingsPage() {
                                     <span className="text-sm text-[var(--app-hint)]">Client ID</span>
                                     <span className="text-sm font-mono">{currentSession.clientId}</span>
                                 </div>
+                                {currentSession.expiresAt && (
+                                    <div className="px-3 py-2 flex items-center justify-between gap-2">
+                                        <span className="text-sm text-[var(--app-hint)]">Session</span>
+                                        <SessionExpiry expiresAt={currentSession.expiresAt} />
+                                    </div>
+                                )}
                                 <div className="px-3 py-2">
                                     <button
                                         type="button"
@@ -1259,6 +1463,9 @@ export default function SettingsPage() {
                                 Organization Settings
                             </h2>
 
+                            {/* License Section */}
+                            <LicenseCard license={orgLicense} memberCount={members.length} />
+
                             {/* Members Section */}
                             <div id="section-members" className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
                                 <div className="px-3 py-2 border-b border-[var(--app-divider)] flex items-center justify-between">
@@ -1373,62 +1580,62 @@ export default function SettingsPage() {
                                                 className="flex items-center gap-1 px-2 py-1 text-xs font-medium rounded bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90 transition-opacity disabled:opacity-50"
                                             >
                                                 <PlusIcon className="w-3 h-3" />
-                                                {projectScope === 'shared' ? 'Add Shared' : 'Add Local'}
+                                                {!hasWorkspaceGroups ? 'Add' : projectScope === 'shared' ? 'Add Shared' : 'Add Local'}
                                             </button>
                                         </div>
                                     )}
                                 </div>
-                                <div className="px-3 py-2.5 border-b border-[var(--app-divider)] space-y-2">
-                                    <div className="inline-flex rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)]/70 p-1">
-                                        <button
-                                            type="button"
-                                            onClick={() => setProjectScope('shared')}
-                                            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                                                projectScope === 'shared'
-                                                    ? 'bg-[var(--app-button)] text-[var(--app-button-text)]'
-                                                    : 'text-[var(--app-hint)] hover:text-[var(--app-fg)]'
-                                            }`}
-                                        >
-                                            Workspace Shared
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => setProjectScope('machine')}
-                                            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                                                projectScope === 'machine'
-                                                    ? 'bg-[var(--app-button)] text-[var(--app-button-text)]'
-                                                    : 'text-[var(--app-hint)] hover:text-[var(--app-fg)]'
-                                            }`}
-                                        >
-                                            Machine Local
-                                        </button>
-                                    </div>
-                                    {projectScope === 'machine' ? (
-                                        displayMachines.length > 0 ? (
-                                            <div className="space-y-1.5">
-                                                <select
-                                                    value={selectedLocalProjectMachineId ?? ''}
-                                                    onChange={(e) => setSelectedLocalProjectMachineId(e.target.value || null)}
-                                                    className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
-                                                >
-                                                    {displayMachines.map((machine) => (
-                                                        <option key={machine.id} value={machine.id}>
-                                                            {getMachineTitle(machine)}
-                                                            {machine.metadata?.platform ? ` (${machine.metadata.platform})` : ''}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                                <div className="text-[11px] text-[var(--app-hint)]">
-                                                    Standalone machines like a MacBook should manage their own local project paths here.
+                                {hasWorkspaceGroups && (
+                                    <div className="px-3 py-2.5 border-b border-[var(--app-divider)] space-y-2">
+                                        <div className="inline-flex rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)]/70 p-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => setProjectScope('shared')}
+                                                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                                                    projectScope === 'shared'
+                                                        ? 'bg-[var(--app-button)] text-[var(--app-button-text)]'
+                                                        : 'text-[var(--app-hint)] hover:text-[var(--app-fg)]'
+                                                }`}
+                                            >
+                                                Org Shared
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setProjectScope('machine')}
+                                                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                                                    projectScope === 'machine'
+                                                        ? 'bg-[var(--app-button)] text-[var(--app-button-text)]'
+                                                        : 'text-[var(--app-hint)] hover:text-[var(--app-fg)]'
+                                                }`}
+                                            >
+                                                Machine Local
+                                            </button>
+                                        </div>
+                                        {projectScope === 'machine' ? (
+                                            displayMachines.length > 0 ? (
+                                                <div className="space-y-1.5">
+                                                    <select
+                                                        value={selectedLocalProjectMachineId ?? ''}
+                                                        onChange={(e) => setSelectedLocalProjectMachineId(e.target.value || null)}
+                                                        className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
+                                                    >
+                                                        {displayMachines.map((machine) => (
+                                                            <option key={machine.id} value={machine.id}>
+                                                                {getMachineTitle(machine)}
+                                                                {machine.metadata?.platform ? ` (${machine.metadata.platform})` : ''}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    <div className="text-[11px] text-[var(--app-hint)]">
+                                                        Standalone machines like a MacBook should manage their own local project paths here.
+                                                    </div>
                                                 </div>
-                                            </div>
+                                            ) : (
+                                                <div className="text-[11px] text-[var(--app-hint)]">
+                                                    No machines available yet.
+                                                </div>
+                                            )
                                         ) : (
-                                            <div className="text-[11px] text-[var(--app-hint)]">
-                                                No machines available yet.
-                                            </div>
-                                        )
-                                    ) : (
-                                        sharedProjectMachines.length > 0 ? (
                                             <div className="space-y-1.5">
                                                 <select
                                                     value={selectedSharedProjectMachineId ?? ''}
@@ -1449,13 +1656,9 @@ export default function SettingsPage() {
                                                     Shared projects created here will be visible to every machine in the selected workspace group.
                                                 </div>
                                             </div>
-                                        ) : (
-                                            <div className="text-[11px] text-[var(--app-hint)]">
-                                                Configure a workspace group on a machine below before adding shared projects.
-                                            </div>
-                                        )
-                                    )}
-                                </div>
+                                        )}
+                                    </div>
+                                )}
                                 {showAddProject && (
                                     <ProjectForm
                                         scope={projectScope}
@@ -1513,31 +1716,31 @@ export default function SettingsPage() {
                                                         <div className="min-w-0 flex-1">
                                                             <div className="text-sm font-medium truncate">{project.name}</div>
                                                             <div className="text-xs text-[var(--app-hint)] font-mono truncate mt-0.5">{project.path}</div>
-                                                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                                                                {(() => {
-                                                                    const badge = getProjectScopeBadge(project, machinesById)
-                                                                    return (
-                                                                        <span
-                                                                            title={badge.title}
-                                                                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${badge.className}`}
-                                                                        >
-                                                                            {badge.label}
-                                                                        </span>
-                                                                    )
-                                                                })()}
-                                                            </div>
-                                                            {project.machineId ? (
-                                                                <div className="text-xs text-[var(--app-hint)] mt-1">
-                                                                    Only on {getProjectMachineLabel(project.machineId, machinesById)}
-                                                                </div>
-                                                            ) : project.workspaceGroupId ? (
-                                                                <div className="text-xs text-[var(--app-hint)] mt-1">
-                                                                    Shared with workspace group {project.workspaceGroupId}
-                                                                </div>
-                                                            ) : (
-                                                                <div className="text-xs text-[var(--app-hint)] mt-1">
-                                                                    Legacy global shared project
-                                                                </div>
+                                                            {hasWorkspaceGroups && (
+                                                                <>
+                                                                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                                                        {(() => {
+                                                                            const badge = getProjectScopeBadge(project, machinesById)
+                                                                            return (
+                                                                                <span
+                                                                                    title={badge.title}
+                                                                                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${badge.className}`}
+                                                                                >
+                                                                                    {badge.label}
+                                                                                </span>
+                                                                            )
+                                                                        })()}
+                                                                    </div>
+                                                                    {project.machineId ? (
+                                                                        <div className="text-xs text-[var(--app-hint)] mt-1">
+                                                                            Only on {getProjectMachineLabel(project.machineId, machinesById)}
+                                                                        </div>
+                                                                    ) : project.workspaceGroupId ? (
+                                                                        <div className="text-xs text-[var(--app-hint)] mt-1">
+                                                                            Org shared · {project.workspaceGroupId}
+                                                                        </div>
+                                                                    ) : null}
+                                                                </>
                                                             )}
                                                             {project.description && (
                                                                 <div className="text-xs text-[var(--app-hint)] mt-0.5 line-clamp-2">{project.description}</div>

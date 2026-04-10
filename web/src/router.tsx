@@ -15,7 +15,7 @@ import { NewSession } from '@/components/NewSession'
 import { LoadingState } from '@/components/LoadingState'
 import { OnlineUsersBadge } from '@/components/OnlineUsersBadge'
 import { useAppContext } from '@/lib/app-context'
-import { useMyOrgs } from '@/hooks/queries/useOrgs'
+import { useMyOrgs, useOrg } from '@/hooks/queries/useOrgs'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { isTelegramApp } from '@/hooks/useTelegram'
 import { useMessages } from '@/hooks/queries/useMessages'
@@ -410,6 +410,13 @@ function NewSessionPage() {
     const goBack = useAppGoBack()
     const queryClient = useQueryClient()
     const { machines, isLoading: machinesLoading, error: machinesError } = useMachines(api, true, currentOrgId)
+    const { license } = useOrg(api, currentOrgId)
+
+    const licenseBlocked = license !== null && (
+        license.status === 'expired' ||
+        license.status === 'suspended' ||
+        Math.ceil((license.expiresAt - Date.now()) / (1000 * 60 * 60 * 24)) <= 0
+    )
 
     const handleCancel = useCallback(() => {
         navigate({ to: '/sessions' })
@@ -453,13 +460,38 @@ function NewSessionPage() {
                         </div>
                     ) : null}
 
-                    <NewSession
-                        api={api}
-                        machines={machines}
-                        isLoading={machinesLoading}
-                        onCancel={handleCancel}
-                        onSuccess={handleSuccess}
-                    />
+                    {licenseBlocked ? (
+                        <div className="mx-auto w-full max-w-content p-4 flex flex-col gap-3 items-center text-center">
+                            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-500/10">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-red-500">
+                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <div className="text-sm font-semibold text-[var(--app-fg)]">
+                                    {license?.status === 'suspended' ? 'License suspended' : 'License expired'}
+                                </div>
+                                <div className="text-[12px] text-[var(--app-hint)] mt-1 leading-relaxed">
+                                    Sessions are currently blocked.<br/>Contact your administrator to renew the license.
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => navigate({ to: '/settings' })}
+                                className="mt-1 px-4 py-2 text-sm font-medium rounded-lg bg-[var(--app-subtle-bg)] border border-[var(--app-border)] text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors"
+                            >
+                                View License in Settings
+                            </button>
+                        </div>
+                    ) : (
+                        <NewSession
+                            api={api}
+                            machines={machines}
+                            isLoading={machinesLoading}
+                            onCancel={handleCancel}
+                            onSuccess={handleSuccess}
+                        />
+                    )}
                 </div>
             </div>
         </div>

@@ -15,6 +15,7 @@ export const queryKeys = {
     ] as const,
     slashCommands: (sessionId: string) => ['slash-commands', sessionId] as const,
     typing: (sessionId: string) => ['typing', sessionId] as const,
+    me: ['me'] as const,
     userPreferences: ['user-preferences'] as const,
     orgs: ['orgs'] as const,
     org: (orgId: string) => ['org', orgId] as const,

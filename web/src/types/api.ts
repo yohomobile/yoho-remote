@@ -76,6 +76,7 @@ export type Session = {
     modelMode?: ModelMode
     modelReasoningEffort?: ModelReasoningEffort
     fastMode?: boolean
+    terminationReason?: string
 }
 
 export type ResumeSessionResponse = {
@@ -171,6 +172,7 @@ export type SessionSummary = {
     modelReasoningEffort?: ModelReasoningEffort
     fastMode?: boolean
     viewers?: SessionViewer[]
+    terminationReason?: string  // e.g. 'LICENSE_EXPIRED', 'LICENSE_SUSPENDED'
 }
 
 export type MessageStatus = 'sending' | 'sent' | 'failed'
@@ -216,6 +218,7 @@ export type Machine = {
         shutdownRequestedAt?: number
         shutdownSource?: string
     } | null
+    supportedAgents: ('claude' | 'codex')[] | null  // null = no restriction
 }
 
 export type AuthResponse = {
@@ -231,6 +234,14 @@ export type AuthResponse = {
 export type SessionsResponse = { sessions: SessionSummary[] }
 export type SessionResponse = { session: Session }
 export type DeleteSessionResponse = { ok: true }
+
+// 当前用户信息
+export type MeResponse = {
+    email: string | null
+    name: string | null
+    role: 'developer' | 'operator'
+    orgs: { id: string; name: string; role: string }[]
+}
 
 // 用户设置类型
 export type UserPreferences = {
@@ -279,7 +290,7 @@ export type SpawnLogEntry = {
 
 export type SpawnResponse =
     | { type: 'success'; sessionId: string; logs?: SpawnLogEntry[] }
-    | { type: 'error'; message: string; logs?: SpawnLogEntry[] }
+    | { type: 'error'; message: string; code?: string; logs?: SpawnLogEntry[] }
 
 export type GitCommandResponse = {
     success: boolean
@@ -430,8 +441,24 @@ export type OrgInvitation = {
     orgName?: string
 }
 
+export type LicenseStatus = 'active' | 'expired' | 'suspended'
+
+export type OrgLicense = {
+    id: string
+    orgId: string
+    startsAt: number
+    expiresAt: number
+    maxMembers: number
+    maxConcurrentSessions: number | null
+    status: LicenseStatus
+    issuedBy: string
+    note: string | null
+    createdAt: number
+    updatedAt: number
+}
+
 export type OrgsResponse = { orgs: Organization[] }
-export type OrgDetailResponse = { org: Organization; members: OrgMember[]; myRole: OrgRole }
+export type OrgDetailResponse = { org: Organization; members: OrgMember[]; myRole: OrgRole; license?: OrgLicense | null }
 export type CreateOrgResponse = { ok: true; org: Organization }
 export type UpdateOrgResponse = { ok: true; org: Organization }
 export type OrgMembersResponse = { members: OrgMember[] }

@@ -30,9 +30,11 @@ import type {
     StoredOrganization,
     StoredOrgMember,
     StoredOrgInvitation,
+    StoredOrgLicense,
     StoredDownloadFile,
     StoredBrainConfig,
     BrainAgent,
+    LicenseStatus,
     OrgRole,
     UserRole,
     VersionedUpdateResult,
@@ -46,6 +48,7 @@ import type {
     AutoIterExecutionStatus,
     AutoIterApprovalMethod,
     PostgresConfig,
+    SpawnAgentType,
 } from './types'
 
 export class PostgresStore implements IStore {
@@ -111,6 +114,7 @@ export class PostgresStore implements IStore {
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS model_mode TEXT;
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS model_reasoning_effort TEXT;
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS fast_mode BOOLEAN;
+            ALTER TABLE sessions ADD COLUMN IF NOT EXISTS termination_reason TEXT;
             CREATE INDEX IF NOT EXISTS idx_sessions_tag ON sessions(tag);
             CREATE INDEX IF NOT EXISTS idx_sessions_tag_namespace ON sessions(tag, namespace);
             -- OpenCode session 查询优化索引
@@ -547,6 +551,20 @@ export class PostgresStore implements IStore {
             );
             CREATE INDEX IF NOT EXISTS idx_org_invitations_email ON org_invitations(email);
 
+            -- Org Licenses 表
+            CREATE TABLE IF NOT EXISTS org_licenses (
+                id TEXT PRIMARY KEY,
+                org_id TEXT NOT NULL UNIQUE REFERENCES organizations(id) ON DELETE CASCADE,
+                starts_at BIGINT NOT NULL,
+                expires_at BIGINT NOT NULL,
+                max_members INT NOT NULL DEFAULT 5,
+                max_concurrent_sessions INT,
+                status TEXT NOT NULL DEFAULT 'active',
+                issued_by TEXT NOT NULL,
+                note TEXT,
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL
+            );
             -- Migration: Add org_id to projects
             ALTER TABLE projects ADD COLUMN IF NOT EXISTS org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL;
             CREATE INDEX IF NOT EXISTS idx_projects_org_id ON projects(org_id);
@@ -583,6 +601,9 @@ export class PostgresStore implements IStore {
                 created_at BIGINT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_session_downloads_session_id ON session_downloads(session_id);
+
+            -- Migration: Add supported_agents to machines (admin-managed, not overwritten by daemon heartbeat)
+            ALTER TABLE machines ADD COLUMN IF NOT EXISTS supported_agents JSONB;
 
         `)
     }
@@ -777,11 +798,11 @@ export class PostgresStore implements IStore {
         return (result.rowCount ?? 0) > 0
     }
 
-    async setSessionActive(id: string, active: boolean, activeAt: number, namespace: string): Promise<boolean> {
+    async setSessionActive(id: string, active: boolean, activeAt: number, namespace: string, terminationReason?: string | null): Promise<boolean> {
         const result = await this.pool.query(`
-            UPDATE sessions SET active = $1, active_at = $2
+            UPDATE sessions SET active = $1, active_at = $2, termination_reason = COALESCE($5, termination_reason)
             WHERE id = $3 AND namespace = $4
-        `, [active, activeAt, id, namespace])
+        `, [active, activeAt, id, namespace, terminationReason ?? null])
         return (result.rowCount ?? 0) > 0
     }
 
@@ -855,6 +876,14 @@ export class PostgresStore implements IStore {
     async getSessionsByNamespace(namespace: string): Promise<StoredSession[]> {
         const result = await this.pool.query('SELECT * FROM sessions WHERE namespace = $1 ORDER BY updated_at DESC', [namespace])
         return result.rows.map(row => this.toStoredSession(row))
+    }
+
+    async getActiveSessionCount(orgId: string): Promise<number> {
+        const result = await this.pool.query(
+            'SELECT COUNT(*) as count FROM sessions WHERE org_id = $1 AND active = true',
+            [orgId]
+        )
+        return Number(result.rows[0]?.count ?? 0)
     }
 
     async deleteSession(id: string): Promise<boolean> {
@@ -972,8 +1001,16 @@ export class PostgresStore implements IStore {
 
     async setMachineOrgId(id: string, orgId: string, namespace: string): Promise<boolean> {
         const result = await this.pool.query(
-            'UPDATE machines SET org_id = $1 WHERE id = $2 AND namespace = $3',
-            [orgId, id, namespace]
+            'UPDATE machines SET org_id = $1, updated_at = $2 WHERE id = $3 AND namespace = $4',
+            [orgId, Date.now(), id, namespace]
+        )
+        return (result.rowCount ?? 0) > 0
+    }
+
+    async setMachineSupportedAgents(id: string, supportedAgents: SpawnAgentType[] | null, namespace: string): Promise<boolean> {
+        const result = await this.pool.query(
+            'UPDATE machines SET supported_agents = $1, updated_at = $2, seq = seq + 1 WHERE id = $3 AND namespace = $4',
+            [supportedAgents ? JSON.stringify(supportedAgents) : null, Date.now(), id, namespace]
         )
         return (result.rowCount ?? 0) > 0
     }
@@ -1456,18 +1493,36 @@ export class PostgresStore implements IStore {
         }
     }
 
-    async updateProject(id: string, name: string, path: string, description?: string, machineId?: string | null, orgId?: string | null, workspaceGroupId?: string | null): Promise<StoredProject | null> {
+    async updateProject(id: string, fields: {
+        name?: string
+        path?: string
+        description?: string | null
+        machineId?: string | null
+        orgId?: string | null
+        workspaceGroupId?: string | null
+    }): Promise<StoredProject | null> {
         const now = Date.now()
         const current = await this.pool.query(
-            'SELECT org_id FROM projects WHERE id = $1',
+            'SELECT name, path, description, machine_id, org_id, workspace_group_id FROM projects WHERE id = $1',
             [id]
         )
         if (current.rows.length === 0) return null
+        const cur = current.rows[0]
 
-        const effectiveOrgId = orgId !== undefined ? orgId : (current.rows[0].org_id as string | null)
-        const normalizedMachineId = machineId?.trim() || null
-        const normalizedWorkspaceGroupId = normalizedMachineId ? null : (workspaceGroupId?.trim() || null)
-        const conflict = normalizedMachineId
+        const effectiveName = fields.name ?? (cur.name as string)
+        const effectivePath = fields.path ?? (cur.path as string)
+        const effectiveDescription = fields.description !== undefined ? (fields.description || null) : (cur.description as string | null)
+        const effectiveOrgId = fields.orgId !== undefined ? fields.orgId : (cur.org_id as string | null)
+        const effectiveMachineId = fields.machineId !== undefined ? (fields.machineId?.trim() || null) : (cur.machine_id as string | null)
+        // When machineId is set, workspace_group_id must be null (machine-local projects don't belong to a group).
+        // When machineId is not set, preserve current workspace_group_id if not explicitly provided.
+        const effectiveWorkspaceGroupId = effectiveMachineId
+            ? null
+            : fields.workspaceGroupId !== undefined
+                ? (fields.workspaceGroupId?.trim() || null)
+                : (cur.workspace_group_id as string | null)
+
+        const conflict = effectiveMachineId
             ? await this.pool.query(
                 `SELECT 1
                  FROM projects
@@ -1476,7 +1531,7 @@ export class PostgresStore implements IStore {
                    AND machine_id = $3
                    AND org_id IS NOT DISTINCT FROM $4
                  LIMIT 1`,
-                [id, path, normalizedMachineId, effectiveOrgId ?? null]
+                [id, effectivePath, effectiveMachineId, effectiveOrgId ?? null]
             )
             : await this.pool.query(
                 `SELECT 1
@@ -1487,7 +1542,7 @@ export class PostgresStore implements IStore {
                    AND org_id IS NOT DISTINCT FROM $3
                    AND workspace_group_id IS NOT DISTINCT FROM $4
                  LIMIT 1`,
-                [id, path, effectiveOrgId ?? null, normalizedWorkspaceGroupId]
+                [id, effectivePath, effectiveOrgId ?? null, effectiveWorkspaceGroupId]
             )
         if (conflict.rows.length > 0) {
             return null
@@ -1495,7 +1550,7 @@ export class PostgresStore implements IStore {
 
         const result = await this.pool.query(
             'UPDATE projects SET name = $1, path = $2, description = $3, machine_id = $4, workspace_group_id = $5, updated_at = $6 WHERE id = $7 RETURNING *',
-            [name, path, description || null, normalizedMachineId, normalizedWorkspaceGroupId, now, id]
+            [effectiveName, effectivePath, effectiveDescription, effectiveMachineId, effectiveWorkspaceGroupId, now, id]
         )
         if (result.rows.length === 0) return null
         const row = result.rows[0]
@@ -3114,7 +3169,8 @@ export class PostgresStore implements IStore {
             permissionMode: row.permission_mode ?? null,
             modelMode: row.model_mode ?? null,
             modelReasoningEffort: row.model_reasoning_effort ?? null,
-            fastMode: row.fast_mode ?? null
+            fastMode: row.fast_mode ?? null,
+            terminationReason: row.termination_reason ?? null
         }
     }
 
@@ -3131,7 +3187,12 @@ export class PostgresStore implements IStore {
             active: row.active === true,
             activeAt: row.active_at ? Number(row.active_at) : null,
             seq: row.seq,
-            orgId: row.org_id ?? null
+            orgId: row.org_id ?? null,
+            supportedAgents: (() => {
+                if (!Array.isArray(row.supported_agents)) return null
+                const filtered = row.supported_agents.filter((v: unknown) => v === 'claude' || v === 'codex') as SpawnAgentType[]
+                return filtered.length > 0 ? filtered : null
+            })()
         }
     }
 
@@ -3837,6 +3898,82 @@ export class PostgresStore implements IStore {
             return (result.rowCount ?? 0) > 0
         }
         const result = await this.pool.query('DELETE FROM org_invitations WHERE id = $1', [id])
+        return (result.rowCount ?? 0) > 0
+    }
+
+    // ========== Org License 操作 ==========
+
+    private toStoredOrgLicense(row: any): StoredOrgLicense {
+        return {
+            id: row.id,
+            orgId: row.org_id,
+            startsAt: Number(row.starts_at),
+            expiresAt: Number(row.expires_at),
+            maxMembers: Number(row.max_members),
+            maxConcurrentSessions: row.max_concurrent_sessions != null ? Number(row.max_concurrent_sessions) : null,
+            status: row.status as LicenseStatus,
+            issuedBy: row.issued_by,
+            note: row.note ?? null,
+            createdAt: Number(row.created_at),
+            updatedAt: Number(row.updated_at),
+        }
+    }
+
+    async getOrgLicense(orgId: string): Promise<StoredOrgLicense | null> {
+        const result = await this.pool.query('SELECT * FROM org_licenses WHERE org_id = $1', [orgId])
+        return result.rows.length > 0 ? this.toStoredOrgLicense(result.rows[0]) : null
+    }
+
+    async getAllOrgLicenses(): Promise<(StoredOrgLicense & { orgName: string; orgSlug: string })[]> {
+        const result = await this.pool.query(
+            `SELECT l.*, o.name as org_name, o.slug as org_slug
+             FROM org_licenses l
+             INNER JOIN organizations o ON l.org_id = o.id
+             ORDER BY l.created_at DESC`
+        )
+        return result.rows.map((r: any) => ({
+            ...this.toStoredOrgLicense(r),
+            orgName: r.org_name,
+            orgSlug: r.org_slug,
+        }))
+    }
+
+    async upsertOrgLicense(data: {
+        orgId: string
+        startsAt: number
+        expiresAt: number
+        maxMembers: number
+        maxConcurrentSessions?: number | null
+        status?: LicenseStatus
+        issuedBy: string
+        note?: string | null
+    }): Promise<StoredOrgLicense> {
+        const now = Date.now()
+        const id = randomUUID()
+        const status = data.status ?? 'active'
+        const result = await this.pool.query(
+            `INSERT INTO org_licenses (id, org_id, starts_at, expires_at, max_members, max_concurrent_sessions, status, issued_by, note, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             ON CONFLICT (org_id) DO UPDATE SET
+                starts_at = $3, expires_at = $4, max_members = $5, max_concurrent_sessions = $6,
+                status = $7, issued_by = $8, note = $9, updated_at = $11
+             RETURNING *`,
+            [id, data.orgId, data.startsAt, data.expiresAt, data.maxMembers,
+             data.maxConcurrentSessions ?? null, status, data.issuedBy, data.note ?? null, now, now]
+        )
+        return this.toStoredOrgLicense(result.rows[0])
+    }
+
+    async updateOrgLicenseStatus(orgId: string, status: LicenseStatus): Promise<boolean> {
+        const result = await this.pool.query(
+            'UPDATE org_licenses SET status = $2, updated_at = $3 WHERE org_id = $1',
+            [orgId, status, Date.now()]
+        )
+        return (result.rowCount ?? 0) > 0
+    }
+
+    async deleteOrgLicense(orgId: string): Promise<boolean> {
+        const result = await this.pool.query('DELETE FROM org_licenses WHERE org_id = $1', [orgId])
         return (result.rowCount ?? 0) > 0
     }
 }

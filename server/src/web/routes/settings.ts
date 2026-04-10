@@ -12,9 +12,9 @@ const addProjectSchema = z.object({
 })
 
 const updateProjectSchema = z.object({
-    name: z.string().min(1).max(100),
-    path: z.string().min(1).max(500),
-    description: z.string().max(500).optional(),
+    name: z.string().min(1).max(100).optional(),
+    path: z.string().min(1).max(500).optional(),
+    description: z.string().max(500).nullable().optional(),
     machineId: z.string().nullable().optional(),
     workspaceGroupId: z.string().nullable().optional()
 })
@@ -27,6 +27,22 @@ export function createSettingsRoutes(
     store: IStore
 ): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
+
+    // ==================== 当前用户信息 ====================
+
+    app.get('/settings/me', async (c) => {
+        const email = c.get('email')
+        const name = c.get('name')
+        const role = c.get('role')
+        const orgs = c.get('orgs')
+
+        return c.json({
+            email: email || null,
+            name: name || null,
+            role,
+            orgs: orgs || [],
+        })
+    })
 
     // ==================== 项目管理 ====================
 
@@ -73,15 +89,20 @@ export function createSettingsRoutes(
         }
 
         const orgId = c.req.query('orgId')
-        const project = await store.updateProject(
-            id,
-            parsed.data.name,
-            parsed.data.path,
-            parsed.data.description,
-            parsed.data.machineId,
+        const existing = await store.getProject(id)
+        if (!existing) return c.json({ error: 'Project not found or path already exists' }, 404)
+        if (existing.orgId !== null && existing.orgId !== orgId) {
+            return c.json({ error: 'Project not found or path already exists' }, 404)
+        }
+
+        const project = await store.updateProject(id, {
+            name: parsed.data.name,
+            path: parsed.data.path,
+            description: parsed.data.description,
+            machineId: parsed.data.machineId,
             orgId,
-            parsed.data.workspaceGroupId
-        )
+            workspaceGroupId: parsed.data.workspaceGroupId,
+        })
         if (!project) {
             return c.json({ error: 'Project not found or path already exists' }, 404)
         }
@@ -93,12 +114,18 @@ export function createSettingsRoutes(
     // 删除项目
     app.delete('/settings/projects/:id', async (c) => {
         const id = c.req.param('id')
+        const orgId = c.req.query('orgId')
+        const existing = await store.getProject(id)
+        if (!existing) return c.json({ error: 'Project not found' }, 404)
+        if (existing.orgId !== null && existing.orgId !== orgId) {
+            return c.json({ error: 'Project not found' }, 404)
+        }
+
         const success = await store.removeProject(id)
         if (!success) {
             return c.json({ error: 'Project not found' }, 404)
         }
 
-        const orgId = c.req.query('orgId')
         const projects = await store.getProjects(undefined, orgId)
         return c.json({ ok: true, projects })
     })
