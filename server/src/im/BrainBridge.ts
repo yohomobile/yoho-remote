@@ -717,6 +717,11 @@ export class BrainBridge implements IMBridgeCallbacks {
             const sessionId = spawnResult.sessionId
             console.log(`${this.logPrefix} Created Brain session ${sessionId.slice(0, 8)} for chat ${chatId.slice(0, 12)}`)
 
+            // Inherit orgId from machine so vault MCP gets correct org isolation
+            if (selectedMachine.orgId) {
+                await this.store.setSessionOrgId(sessionId, selectedMachine.orgId, namespace)
+            }
+
             // Save mapping
             await this.store.createFeishuChatSession({
                 feishuChatId: chatId,
@@ -951,6 +956,10 @@ export class BrainBridge implements IMBridgeCallbacks {
                 const r = await this.syncEngine.spawnSession(m.id, brainDirectory, agent, true, spawnOptions as any)
 
                 if (r.type === 'success') {
+                    // Backfill orgId for sessions created before the fix
+                    if (m.orgId) {
+                        await this.store.setSessionOrgId(oldSessionId, m.orgId, namespace).catch(() => {})
+                    }
                     const online = await this.waitForSessionOnline(oldSessionId, 30_000)
                     return online
                 }
