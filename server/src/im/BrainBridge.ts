@@ -1215,6 +1215,9 @@ export class BrainBridge implements IMBridgeCallbacks {
     private streamingUpdateCount: Map<string, number> = new Map()
     private static readonly STREAM_THRESHOLD = 600   // min chars to start streaming
     private static readonly STREAM_MAX_UPDATES = 5   // max partial edits before giving up
+    private static readonly SUMMARY_SETTLE_POLL_MS = 50
+    private static readonly SUMMARY_SETTLE_WINDOW_MS = 200
+    private static readonly SUMMARY_SETTLE_MAX_WAIT_MS = 1_500
 
     /**
      * If Brain has been thinking for 8s and has generated ≥600 chars of content,
@@ -1289,10 +1292,35 @@ export class BrainBridge implements IMBridgeCallbacks {
 
     // ========== Summary sending ==========
 
+    private getAgentMessageFingerprint(chatId: string): string {
+        const msgs = this.agentMessages.get(chatId) ?? []
+        return msgs.slice(-5).map(msg => `${msg.messageId ?? ''}:${msg.text}`).join('\n---\n')
+    }
+
+    private async waitForAgentMessagesToSettle(chatId: string): Promise<void> {
+        const start = Date.now()
+        let lastFingerprint: string | null = null
+        let stableSince = 0
+
+        while (Date.now() - start < BrainBridge.SUMMARY_SETTLE_MAX_WAIT_MS) {
+            const fingerprint = this.getAgentMessageFingerprint(chatId)
+            if (fingerprint !== lastFingerprint) {
+                lastFingerprint = fingerprint
+                stableSince = Date.now()
+            } else if (stableSince !== 0 && Date.now() - stableSince >= BrainBridge.SUMMARY_SETTLE_WINDOW_MS) {
+                return
+            }
+            await new Promise(resolve => setTimeout(resolve, BrainBridge.SUMMARY_SETTLE_POLL_MS))
+        }
+    }
+
     /**
      * Process accumulated agent messages and send reply via adapter.
      */
     private async sendSummary(chatId: string): Promise<void> {
+        // Task-complete may race with the final assistant/result message flush.
+        await this.waitForAgentMessagesToSettle(chatId)
+
         // Clear thinking indicator and any streaming timer before sending the real reply
         await this.clearThinkingIndicator(chatId)
 

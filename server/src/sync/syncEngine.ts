@@ -289,6 +289,9 @@ export class SyncEngine {
     // 推送频率限制：每个 session 最少间隔 30 秒才能再次发送推送
     private readonly lastPushNotificationAt: Map<string, number> = new Map()
     private readonly PUSH_NOTIFICATION_MIN_INTERVAL_MS = 30_000
+    private static readonly TASK_MESSAGE_SETTLE_POLL_MS = 50
+    private static readonly TASK_MESSAGE_SETTLE_WINDOW_MS = 200
+    private static readonly TASK_MESSAGE_SETTLE_MAX_WAIT_MS = 1_500
 
     constructor(
         private readonly store: IStore,
@@ -832,6 +835,11 @@ export class SyncEngine {
         }
 
         if (event.type === 'message-received' && event.sessionId) {
+            if (event.message) {
+                const cached = this.sessionMessages.get(event.sessionId) ?? []
+                cached.push(event.message)
+                this.sessionMessages.set(event.sessionId, cached.slice(-200))
+            }
             if (!this.sessions.has(event.sessionId)) {
                 await this.refreshSession(event.sessionId)
             }
@@ -1048,6 +1056,39 @@ export class SyncEngine {
      * Brain callback: when a brain-child session completes, push the result back to the Brain session.
      * This enables true async orchestration - Brain sends a task and gets notified when it's done.
      */
+    private getSessionMessageTailFingerprint(sessionId: string): string {
+        const cached = this.sessionMessages.get(sessionId) ?? []
+        const tail = cached.slice(-5)
+        return tail.map(message => {
+            const record = message.content as Record<string, unknown> | null
+            const role = record?.role as string | undefined
+            const inner = record?.content as Record<string, unknown> | string | null | undefined
+            const contentType = inner && typeof inner === 'object'
+                ? (((inner.data as Record<string, unknown> | undefined)?.type as string | undefined) ?? (inner.type as string | undefined) ?? '')
+                : typeof inner === 'string'
+                ? 'text'
+                : ''
+            return `${message.seq}:${role ?? ''}:${contentType}`
+        }).join('|')
+    }
+
+    private async waitForSessionMessagesToSettle(sessionId: string): Promise<void> {
+        const start = Date.now()
+        let lastFingerprint: string | null = null
+        let stableSince = 0
+
+        while (Date.now() - start < SyncEngine.TASK_MESSAGE_SETTLE_MAX_WAIT_MS) {
+            const fingerprint = this.getSessionMessageTailFingerprint(sessionId)
+            if (fingerprint !== lastFingerprint) {
+                lastFingerprint = fingerprint
+                stableSince = Date.now()
+            } else if (stableSince !== 0 && Date.now() - stableSince >= SyncEngine.TASK_MESSAGE_SETTLE_WINDOW_MS) {
+                return
+            }
+            await new Promise(resolve => setTimeout(resolve, SyncEngine.TASK_MESSAGE_SETTLE_POLL_MS))
+        }
+    }
+
     private async sendBrainCallbackIfNeeded(session: Session): Promise<void> {
         try {
             const source = (session.metadata as any)?.source
@@ -1064,6 +1105,10 @@ export class SyncEngine {
                 await this.retryBrainCallback(session, mainSessionId, 'brain session not found')
                 return
             }
+
+            // Task-complete may arrive slightly before the final assistant/result messages.
+            // Wait for the in-memory message tail to stop changing before extracting output.
+            await this.waitForSessionMessagesToSettle(session.id)
 
             // Get the last few messages from child session to extract result + usage
             const messages = await this.store.getMessages(session.id, 30)
