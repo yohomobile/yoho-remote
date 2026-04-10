@@ -9,6 +9,7 @@ import type { Machine, Session, SyncEngine } from '../../sync/syncEngine'
 import type { SSEManager } from '../../sse/sseManager'
 import { serializeMachine, sortMachinesForDisplay } from './machinePayload'
 import { getLicenseService } from '../../license/licenseService'
+import { buildInitPrompt } from '../prompts/initPrompt'
 
 /** Derive a PascalCase project name from an absolute path's basename. e.g. "yoho-remote" → "YohoRemote" */
 function toPascalCase(path: string): string {
@@ -377,6 +378,45 @@ export function createCliRoutes(
             if (mainSession?.orgId) {
                 await store.setSessionOrgId(result.sessionId, mainSession.orgId, namespace)
             }
+        }
+
+        // Send init prompt to brain-child session (fire-and-forget)
+        if (result.type === 'success') {
+            void (async () => {
+                try {
+                    // Wait for session to come online
+                    const isOnline = await new Promise<boolean>((resolve) => {
+                        const existing = engine.getSession(result.sessionId)
+                        if (existing?.active) return resolve(true)
+                        const timer = setTimeout(() => resolve(false), 60_000)
+                        const unsub = engine.subscribe((event) => {
+                            if (event.sessionId !== result.sessionId) return
+                            if (event.type !== 'session-added' && event.type !== 'session-updated') return
+                            const s = engine.getSession(result.sessionId)
+                            if (s?.active) { clearTimeout(timer); unsub(); resolve(true) }
+                        })
+                        // Re-check after subscribing
+                        const current = engine.getSession(result.sessionId)
+                        if (current?.active) { clearTimeout(timer); unsub(); resolve(true) }
+                    })
+                    if (!isOnline) {
+                        console.warn(`[brain/spawn] Session ${result.sessionId} did not come online within 60s, skipping init prompt`)
+                        return
+                    }
+                    // Wait for socket to join room
+                    await engine.waitForSocketInRoom(result.sessionId, 5000)
+                    // Build and send init prompt
+                    const session = engine.getSession(result.sessionId)
+                    const projectRoot = session?.metadata?.path?.trim() || null
+                    const prompt = await buildInitPrompt('developer', { projectRoot })
+                    if (prompt.trim()) {
+                        await engine.sendMessage(result.sessionId, { text: prompt, sentFrom: 'webapp' })
+                        console.log(`[brain/spawn] Sent init prompt to brain-child session ${result.sessionId}`)
+                    }
+                } catch (err) {
+                    console.error(`[brain/spawn] Failed to send init prompt to ${result.sessionId}:`, err)
+                }
+            })()
         }
 
         return c.json(result)
