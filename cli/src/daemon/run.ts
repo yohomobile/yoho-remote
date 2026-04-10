@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import os from 'os';
+import { spawnSync } from 'child_process';
 
 import { ApiClient } from '@/api/api';
 import { TrackedSession } from './types';
@@ -467,6 +468,17 @@ export async function startDaemon(): Promise<void> {
             default: return 'claude';
           }
         })();
+
+        // Check if the agent command is available in PATH before attempting to spawn
+        const whichResult = spawnSync('which', [agentCommand], { encoding: 'utf8' });
+        if (whichResult.status !== 0) {
+          addLog('env', `Agent "${agentCommand}" not found in PATH`, 'error');
+          return {
+            type: 'error' as const,
+            errorMessage: `AGENT_NOT_AVAILABLE: "${agentCommand}" not found in PATH on this machine`,
+            logs: spawnLogs,
+          };
+        }
         const args = [
           agentCommand,
           '--yoho-remote-starting-mode', 'remote',
