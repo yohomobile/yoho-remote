@@ -258,7 +258,12 @@ export function NewSession(props: {
     const handleMachineChange = useCallback((newMachineId: string) => {
         setMachineId(newMachineId)
         setInitialProjectRestored(true) // 手动切换机器时不再尝试恢复旧项目
-    }, [])
+        // Auto-switch agent if current agent is not supported by the new machine
+        const newMachine = props.machines.find(m => m.id === newMachineId)
+        if (newMachine?.supportedAgents && newMachine.supportedAgents.length > 0) {
+            setAgent(prev => newMachine.supportedAgents!.includes(prev) ? prev : (newMachine.supportedAgents![0] as AgentType))
+        }
+    }, [props.machines])
 
     async function handleCreate() {
         if (!machineId) return
@@ -452,23 +457,27 @@ export function NewSession(props: {
                     Agent
                 </label>
                 <div className="flex flex-wrap gap-x-3 gap-y-2">
-                    {(['claude', 'codex'] as const).map((agentType) => (
-                        <label
-                            key={agentType}
-                            className="flex items-center gap-1 cursor-pointer"
-                        >
-                            <input
-                                type="radio"
-                                name="agent"
-                                value={agentType}
-                                checked={agent === agentType}
-                                onChange={() => setAgent(agentType)}
-                                disabled={isFormDisabled}
-                                className="accent-[var(--app-link)] w-3.5 h-3.5"
-                            />
-                            <span className="text-xs capitalize">{agentType}</span>
-                        </label>
-                    ))}
+                    {(['claude', 'codex'] as const).map((agentType) => {
+                        const machineSupports = !currentMachine?.supportedAgents || currentMachine.supportedAgents.includes(agentType)
+                        return (
+                            <label
+                                key={agentType}
+                                className={`flex items-center gap-1 ${machineSupports ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                                title={!machineSupports ? `${getMachineTitle(currentMachine!)} does not support ${agentType}` : undefined}
+                            >
+                                <input
+                                    type="radio"
+                                    name="agent"
+                                    value={agentType}
+                                    checked={agent === agentType}
+                                    onChange={() => setAgent(agentType)}
+                                    disabled={isFormDisabled || !machineSupports}
+                                    className="accent-[var(--app-link)] w-3.5 h-3.5"
+                                />
+                                <span className="text-xs capitalize">{agentType}</span>
+                            </label>
+                        )
+                    })}
                 </div>
             </div>
 
