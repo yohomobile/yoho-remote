@@ -144,8 +144,8 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
         toolNames.push('environment_info')
     }
 
-    // Register push_download tool when apiClient is available
-    if (options?.apiClient && options.yohoRemoteSessionId) {
+    // Register push_download tool when apiClient is available (not for Feishu — files go via <feishu-actions>)
+    if (options?.apiClient && options.yohoRemoteSessionId && options.sessionCaller !== 'feishu') {
         const api = options.apiClient
         const sessionId = options.yohoRemoteSessionId
         mcp.registerTool<any, any>('push_download', {
