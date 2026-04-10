@@ -427,6 +427,7 @@ export interface IStore {
     updateFeishuChatSessionStatus(feishuChatId: string, status: string): Promise<boolean>
     touchFeishuChatSession(feishuChatId: string): Promise<boolean>
     updateFeishuChatState(feishuChatId: string, state: Record<string, unknown>): Promise<boolean>
+    deleteFeishuChatSession(feishuChatId: string): Promise<boolean>
 
     // === 飞书消息持久化（单聊+群聊） ===
     saveFeishuChatMessage(data: {

@@ -193,15 +193,28 @@ function getCreatorDisplayName(email: string | undefined | null): string | null 
     return name.length > 0 ? name : email
 }
 
+function TrashIcon() {
+    return (
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+            <path d="M10 11v6M14 11v6" />
+            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+        </svg>
+    )
+}
+
 function SessionItem(props: {
     session: SessionSummary
     project: Project | null
     currentUserEmail: string | null
     onSelect: (sessionId: string) => void
+    onDelete?: (sessionId: string) => void
     modelLabel?: string | null
     machineName?: string | null
 }) {
-    const { session: s, project, currentUserEmail, onSelect, modelLabel, machineName } = props
+    const { session: s, project, currentUserEmail, onSelect, onDelete, modelLabel, machineName } = props
+    const isBrainSession = s.metadata?.source === 'brain'
 
     // Check if session was created by current user
     const isMySession = currentUserEmail && s.createdBy
@@ -328,6 +341,16 @@ function SessionItem(props: {
                 <span className="text-[11px] text-[var(--app-hint)]">
                     {formatRelativeTime(s.updatedAt)}
                 </span>
+                {isBrainSession && onDelete && (
+                    <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onDelete(s.id) }}
+                        className="opacity-0 group-hover:opacity-100 flex h-5 w-5 items-center justify-center rounded text-[var(--app-hint)] transition-all hover:bg-red-500/10 hover:text-red-500"
+                        title="Delete brain session"
+                    >
+                        <TrashIcon />
+                    </button>
+                )}
             </div>
         </button>
     )
@@ -339,6 +362,7 @@ export function SessionList(props: {
     currentUserEmail: string | null
     viewOthersSessions?: boolean
     onSelect: (sessionId: string) => void
+    onDelete?: (sessionId: string) => void
     onNewSession: () => void
     onRefresh: () => void
     isLoading: boolean
@@ -517,6 +541,7 @@ export function SessionList(props: {
                                 project={sessionProjectMap.get(session.id) ?? null}
                                 currentUserEmail={props.currentUserEmail}
                                 onSelect={props.onSelect}
+                                onDelete={props.onDelete}
                                 modelLabel={modelLabel}
                                 machineName={machineName}
                             />

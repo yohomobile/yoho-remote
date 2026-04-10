@@ -3534,6 +3534,14 @@ export class PostgresStore implements IStore {
         return (result.rowCount ?? 0) > 0
     }
 
+    async deleteFeishuChatSession(feishuChatId: string): Promise<boolean> {
+        const result = await this.pool.query(
+            'DELETE FROM feishu_chat_sessions WHERE feishu_chat_id = $1',
+            [feishuChatId]
+        )
+        return (result.rowCount ?? 0) > 0
+    }
+
     // === 飞书消息持久化（单聊+群聊） ===
 
     async saveFeishuChatMessage(data: {

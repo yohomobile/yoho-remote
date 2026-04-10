@@ -177,6 +177,15 @@ function SessionsPage() {
         }
     }, [isRefreshing])
 
+    const handleDeleteSession = useCallback(async (sessionId: string) => {
+        try {
+            await api.deleteSession(sessionId)
+            void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+        } catch (err) {
+            console.error('Failed to delete session:', err)
+        }
+    }, [api, queryClient])
+
     const handleCreateBrainSession = useCallback(async () => {
         if (isCreatingBrain) return
         setIsCreatingBrain(true)
@@ -285,6 +294,7 @@ function SessionsPage() {
                         to: '/sessions/$sessionId',
                         params: { sessionId },
                     })}
+                    onDelete={handleDeleteSession}
                     onNewSession={() => navigate({ to: '/sessions/new' })}
                     onRefresh={handleRefresh}
                     isLoading={isLoading}

@@ -1073,6 +1073,39 @@ export class BrainBridge implements IMBridgeCallbacks {
                 }
             }
         }
+
+        // Clean up Feishu mapping when a Brain session is deleted
+        if (event.type === 'session-removed' && event.sessionId) {
+            const chatId = this.sessionToChatId.get(event.sessionId)
+            if (chatId) {
+                console.log(`${this.logPrefix} Session ${event.sessionId.slice(0, 8)} removed — clearing Feishu mapping for ${chatId.slice(0, 12)}`)
+
+                // Clear DB mapping
+                this.store.deleteFeishuChatSession(chatId).catch(err => {
+                    console.error(`${this.logPrefix} deleteFeishuChatSession failed for ${chatId.slice(0, 12)}:`, err)
+                })
+
+                // Clear all in-memory state
+                this.sessionToChatId.delete(event.sessionId)
+                this.chatIdToSessionId.delete(chatId)
+                this.chatIdToChatType.delete(chatId)
+                this.chatStates.delete(chatId)
+                this.agentMessages.delete(chatId)
+                this.lastSenderIds.delete(chatId)
+                this.lastBatchPassive.delete(chatId)
+                this.lastUserMessageId.delete(chatId)
+                this.traceIds.delete(chatId)
+                this.traceStartTimes.delete(chatId)
+                this.busySinceAt.delete(chatId)
+                this.lastRebuildAt.delete(chatId)
+                this.initReady.delete(chatId)
+                this.initReadyResolvers.delete(chatId)
+                this.initStartTimes.delete(chatId)
+                const initTimeout = this.initTimeouts.get(chatId)
+                if (initTimeout) { clearTimeout(initTimeout); this.initTimeouts.delete(chatId) }
+                this.clearThinkingIndicator(chatId).catch(() => {})
+            }
+        }
     }
 
     // ========== Thinking indicator ==========
