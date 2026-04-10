@@ -287,6 +287,22 @@ export class BrainBridge implements IMBridgeCallbacks {
 
         if (state.busy || state.creating) {
             console.log(`${this.logPrefix} Chat ${chatId.slice(0, 12)} busy, buffered (${state.incoming.length} pending)`)
+
+            // Abort current Brain turn if the new addressed message warrants it:
+            //   - p2p: always abort (single user, new message = new intent)
+            //   - group: abort only if the sender is already in the current processing batch
+            //     (same person adding context / correcting themselves; don't interrupt for a different user)
+            if (message.addressed && !state.creating) {
+                const isSameSender = chatType === 'p2p'
+                    || (this.lastSenderIds.get(chatId)?.has(message.senderId) ?? false)
+                if (isSameSender) {
+                    const sessionId = this.chatIdToSessionId.get(chatId)
+                    if (sessionId) {
+                        console.log(`${this.logPrefix} Aborting current Brain turn for ${chatId.slice(0, 12)} (${chatType}, sender=${message.senderId.slice(0, 8)})`)
+                        this.syncEngine.abortSession(sessionId).catch(() => {})
+                    }
+                }
+            }
             return
         }
 
