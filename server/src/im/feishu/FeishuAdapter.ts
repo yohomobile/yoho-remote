@@ -1573,13 +1573,13 @@ export class FeishuAdapter implements IMAdapter {
     }
 
     /**
-     * Send a post to a chat and return the message ID.
-     * Used by BrainBridge for streaming partial-content posts.
+     * Send a streaming card to a chat and return the message ID.
+     * Used by BrainBridge for streaming partial-content updates.
+     * Always sends as an interactive card so subsequent edits via PATCH /im/v1/messages work.
      */
     async sendPostAndGetId(chatId: string, text: string): Promise<string | null> {
-        const { buildFeishuMessage } = await import('./formatter')
-        const resolvedText = await this.resolveMarkdownImages(text)
-        const { msgType, content } = buildFeishuMessage(resolvedText)
+        const { buildStreamingCard } = await import('./formatter')
+        const { msgType, content } = buildStreamingCard(text)
         return this.sendFeishuMessage(chatId, msgType, content)
     }
 

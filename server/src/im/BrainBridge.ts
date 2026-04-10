@@ -1312,8 +1312,11 @@ export class BrainBridge implements IMBridgeCallbacks {
                     .catch(() => false)
                 if (!ok) {
                     slog('warn', 'streaming.edit_failed', { chatId: chatId.slice(0, 12), msgId: existingStreamId.slice(0, 12) })
-                    // Stop streaming; sendSummary will recall and resend final
+                    // Stop streaming and clean up the dangling streaming message immediately.
+                    // Clearing streamingMessageId prevents sendSummary from recalling it again.
                     this.streamingUpdateCount.delete(chatId)
+                    this.streamingMessageId.delete(chatId)
+                    this.adapter.recallMessage?.(existingStreamId).catch(() => {})
                     return
                 }
             } else {

@@ -593,18 +593,31 @@ function buildPostPayload(text: string, atIds?: string[]): { msgType: string; co
  * - Long / structured content (>=800 chars, code blocks, tables, multi-heading) → interactive card
  */
 /**
+ * Build a streaming card payload for Feishu.
+ * The Feishu edit API (PATCH /im/v1/messages) only supports editing interactive cards.
+ * This function always returns an interactive card so that streaming messages can be
+ * created once and then updated in-place.
+ */
+export function buildStreamingCard(text: string): { msgType: string; content: string } {
+    const card = {
+        schema: '2.0',
+        config: { wide_screen_mode: true },
+        elements: [{ tag: 'markdown', content: text }],
+    }
+    return {
+        msgType: 'interactive',
+        content: JSON.stringify(card),
+    }
+}
+
+/**
  * Build a Feishu message for edit operations.
- * Feishu edit API only supports text and post (not interactive/card),
- * so this always returns text or post format.
+ * Feishu edit API (PATCH /im/v1/messages) only supports editing interactive cards —
+ * attempting to edit a "text" or "post" message returns error 230001 "NOT a card".
+ * Therefore this always returns an interactive card format.
  */
 export function buildFeishuMessageForEdit(text: string): { msgType: string; content: string } {
-    if (text.length <= SHORT_TEXT_THRESHOLD && !hasMarkdownFormatting(text)) {
-        return {
-            msgType: 'text',
-            content: JSON.stringify({ text }),
-        }
-    }
-    return buildPostPayload(text)
+    return buildStreamingCard(text)
 }
 
 export function buildFeishuMessage(text: string, atIds?: string[]): { msgType: string; content: string } {
