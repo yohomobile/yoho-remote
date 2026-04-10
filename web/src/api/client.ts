@@ -549,6 +549,16 @@ export class ApiClient {
         )
     }
 
+    async setMachineSupportedAgents(machineId: string, supportedAgents: ('claude' | 'codex')[] | null): Promise<UpdateMachineResponse> {
+        return await this.request<UpdateMachineResponse>(
+            `/api/machines/${encodeURIComponent(machineId)}/supported-agents`,
+            {
+                method: 'PUT',
+                body: JSON.stringify({ supportedAgents })
+            }
+        )
+    }
+
     async checkMachinePathsExists(
         machineId: string,
         paths: string[]

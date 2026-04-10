@@ -12,6 +12,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import type { SyncEngine, SyncEvent } from '../sync/syncEngine'
 import type { IStore } from '../store/interface'
+import type { StoredMessage } from '../store/types'
 import type { IMAdapter, IMMessage, IMBridgeCallbacks, BrainBridgeConfig } from './types'
 import { extractAgentText, extractAgentMessageMeta, isInternalBrainMessage } from './agentMessage'
 import { buildFeishuMessage, buildFeishuMessageForEdit } from './feishu/formatter'
@@ -47,6 +48,12 @@ interface ChatState {
     creating: boolean
 }
 
+type BufferedAgentMessage = {
+    text: string
+    messageId: string | null
+    seq: number | null
+}
+
 export class BrainBridge implements IMBridgeCallbacks {
     private syncEngine: SyncEngine
     private store: IStore
@@ -63,7 +70,9 @@ export class BrainBridge implements IMBridgeCallbacks {
     private chatStates: Map<string, ChatState> = new Map()
 
     // Accumulate agent messages per chatId (tagged with messageId for thinking removal)
-    private agentMessages: Map<string, { text: string; messageId: string | null }[]> = new Map()
+    private agentMessages: Map<string, BufferedAgentMessage[]> = new Map()
+    private lastSeenSeq: Map<string, number> = new Map()
+    private lastDeliveredSeq: Map<string, number> = new Map()
 
     // Promise that resolves when session init (initPrompt) is fully processed
     private initReady: Map<string, Promise<void>> = new Map()
@@ -183,6 +192,8 @@ export class BrainBridge implements IMBridgeCallbacks {
         this.initStartTimes.clear()
 
         this.agentMessages.clear()
+        this.lastSeenSeq.clear()
+        this.lastDeliveredSeq.clear()
         this.initReady.clear()
         this.initReadyResolvers.clear()
         this.chatStates.clear()
@@ -346,10 +357,18 @@ export class BrainBridge implements IMBridgeCallbacks {
             this.chatIdToChatType.set(m.feishuChatId, m.feishuChatType)
 
             // Restore persisted state from DB
-            const s = m.state as { agentMessages?: string[]; lastUserMessageId?: string | null; busy?: boolean } | null
-            if (s && (s.agentMessages?.length || s.lastUserMessageId || s.busy)) {
+            const s = m.state as {
+                agentMessages?: string[]
+                lastUserMessageId?: string | null
+                busy?: boolean
+                lastDeliveredSeq?: number
+            } | null
+            if (typeof s?.lastDeliveredSeq === 'number') {
+                this.lastDeliveredSeq.set(m.feishuChatId, s.lastDeliveredSeq)
+            }
+            if (s && (s.agentMessages?.length || s.lastUserMessageId || s.busy || s.lastDeliveredSeq !== undefined)) {
                 if (s.agentMessages?.length) {
-                    this.agentMessages.set(m.feishuChatId, s.agentMessages.map(t => ({ text: t, messageId: null })))
+                    this.agentMessages.set(m.feishuChatId, s.agentMessages.map(t => ({ text: t, messageId: null, seq: null })))
                 }
                 if (s.lastUserMessageId) {
                     this.lastUserMessageId.set(m.feishuChatId, s.lastUserMessageId)
@@ -412,6 +431,7 @@ export class BrainBridge implements IMBridgeCallbacks {
             agentMessages: rawMsgs.map(m => m.text),
             lastUserMessageId: lastMsgId,
             busy: state?.busy || false,
+            lastDeliveredSeq: this.lastDeliveredSeq.get(chatId) ?? 0,
         }
         try {
             await this.store.updateFeishuChatState(chatId, persisted)
@@ -422,7 +442,8 @@ export class BrainBridge implements IMBridgeCallbacks {
 
     private async clearPersistedState(chatId: string): Promise<void> {
         try {
-            await this.store.updateFeishuChatState(chatId, {})
+            const lastDeliveredSeq = this.lastDeliveredSeq.get(chatId) ?? 0
+            await this.store.updateFeishuChatState(chatId, lastDeliveredSeq > 0 ? { lastDeliveredSeq } : {})
         } catch (err) {
             console.error(`${this.logPrefix} clearPersistedState failed for ${chatId.slice(0, 12)}:`, err)
         }
@@ -696,6 +717,8 @@ export class BrainBridge implements IMBridgeCallbacks {
             this.sessionToChatId.set(sessionId, chatId)
             this.chatIdToSessionId.set(chatId, sessionId)
             this.chatIdToChatType.set(chatId, chatType)
+            this.lastSeenSeq.set(chatId, 0)
+            this.lastDeliveredSeq.set(chatId, 0)
 
             // Create initReady promise
             const initStartMs = Date.now()
@@ -996,6 +1019,7 @@ export class BrainBridge implements IMBridgeCallbacks {
         if (event.type === 'message-received' && event.sessionId && event.message) {
             const chatId = this.sessionToChatId.get(event.sessionId)
             if (!chatId) return
+            this.lastSeenSeq.set(chatId, Math.max(this.lastSeenSeq.get(chatId) ?? 0, event.message.seq))
 
             // Check for tool_use — remove "thinking" text from same message ID
             const meta = extractAgentMessageMeta(event.message.content)
@@ -1015,7 +1039,7 @@ export class BrainBridge implements IMBridgeCallbacks {
             if (isInternalBrainMessage(text)) return
 
             const msgs = this.agentMessages.get(chatId) || []
-            msgs.push({ text, messageId: meta?.messageId ?? null })
+            msgs.push({ text, messageId: meta?.messageId ?? null, seq: event.message.seq })
             this.agentMessages.set(chatId, msgs)
 
             this.persistChatState(chatId)
@@ -1051,6 +1075,7 @@ export class BrainBridge implements IMBridgeCallbacks {
                         clearTimeout(initTimeout)
                         this.initTimeouts.delete(chatId)
                     }
+                    this.lastDeliveredSeq.set(chatId, this.lastSeenSeq.get(chatId) ?? 0)
                     this.agentMessages.delete(chatId)
                     this.clearPersistedState(chatId)
                     return
@@ -1101,6 +1126,8 @@ export class BrainBridge implements IMBridgeCallbacks {
                 this.initReady.delete(chatId)
                 this.initReadyResolvers.delete(chatId)
                 this.initStartTimes.delete(chatId)
+                this.lastSeenSeq.delete(chatId)
+                this.lastDeliveredSeq.delete(chatId)
                 const initTimeout = this.initTimeouts.get(chatId)
                 if (initTimeout) { clearTimeout(initTimeout); this.initTimeouts.delete(chatId) }
                 this.clearThinkingIndicator(chatId).catch(() => {})
@@ -1217,7 +1244,7 @@ export class BrainBridge implements IMBridgeCallbacks {
     private static readonly STREAM_MAX_UPDATES = 5   // max partial edits before giving up
     private static readonly SUMMARY_SETTLE_POLL_MS = 50
     private static readonly SUMMARY_SETTLE_WINDOW_MS = 200
-    private static readonly SUMMARY_SETTLE_MAX_WAIT_MS = 1_500
+    private static readonly SUMMARY_SETTLE_MAX_WAIT_MS = 3_000
 
     /**
      * If Brain has been thinking for 8s and has generated ≥600 chars of content,
@@ -1292,9 +1319,24 @@ export class BrainBridge implements IMBridgeCallbacks {
 
     // ========== Summary sending ==========
 
-    private getAgentMessageFingerprint(chatId: string): string {
+    private async getPendingReplyFingerprint(chatId: string): Promise<string> {
         const msgs = this.agentMessages.get(chatId) ?? []
-        return msgs.slice(-5).map(msg => `${msg.messageId ?? ''}:${msg.text}`).join('\n---\n')
+        const inMemory = msgs.slice(-5).map(msg => `${msg.seq ?? ''}:${msg.messageId ?? ''}:${msg.text}`).join('\n---\n')
+
+        const sessionId = this.chatIdToSessionId.get(chatId)
+        if (!sessionId) return inMemory
+
+        try {
+            const afterSeq = this.lastDeliveredSeq.get(chatId) ?? 0
+            const pending = await this.store.getMessagesAfter(sessionId, afterSeq, 20)
+            const fromStore = pending.slice(-5).map(msg => {
+                const text = extractAgentText(msg.content)
+                return `${msg.seq}:${text ?? ''}`
+            }).join('\n---\n')
+            return `${inMemory}\n===\n${fromStore}`
+        } catch {
+            return inMemory
+        }
     }
 
     private async waitForAgentMessagesToSettle(chatId: string): Promise<void> {
@@ -1303,7 +1345,7 @@ export class BrainBridge implements IMBridgeCallbacks {
         let stableSince = 0
 
         while (Date.now() - start < BrainBridge.SUMMARY_SETTLE_MAX_WAIT_MS) {
-            const fingerprint = this.getAgentMessageFingerprint(chatId)
+            const fingerprint = await this.getPendingReplyFingerprint(chatId)
             if (fingerprint !== lastFingerprint) {
                 lastFingerprint = fingerprint
                 stableSince = Date.now()
@@ -1311,6 +1353,77 @@ export class BrainBridge implements IMBridgeCallbacks {
                 return
             }
             await new Promise(resolve => setTimeout(resolve, BrainBridge.SUMMARY_SETTLE_POLL_MS))
+        }
+    }
+
+    private extractBufferedAgentMessage(message: StoredMessage): BufferedAgentMessage | null {
+        const text = extractAgentText(message.content)
+        if (!text || isInternalBrainMessage(text)) return null
+        const meta = extractAgentMessageMeta(message.content)
+        return {
+            text,
+            messageId: meta?.messageId ?? null,
+            seq: message.seq,
+        }
+    }
+
+    private async collectPendingAgentMessages(chatId: string): Promise<{
+        messages: BufferedAgentMessage[]
+        maxSeq: number
+        inMemoryCount: number
+        dbTailCount: number
+        recoveredCount: number
+        afterSeq: number
+    }> {
+        const inMemory = [...(this.agentMessages.get(chatId) ?? [])]
+        const maxBufferedSeq = inMemory.reduce((max, msg) => Math.max(max, msg.seq ?? 0), 0)
+
+        const sessionId = this.chatIdToSessionId.get(chatId)
+        const afterSeq = this.lastDeliveredSeq.get(chatId) ?? 0
+        if (!sessionId) {
+            return {
+                messages: inMemory,
+                maxSeq: maxBufferedSeq,
+                inMemoryCount: inMemory.length,
+                dbTailCount: 0,
+                recoveredCount: 0,
+                afterSeq,
+            }
+        }
+
+        let pendingFromStore: StoredMessage[] = []
+        try {
+            pendingFromStore = await this.store.getMessagesAfter(sessionId, afterSeq, 200)
+        } catch (err) {
+            console.error(`${this.logPrefix} getMessagesAfter failed for ${chatId.slice(0, 12)}:`, err)
+        }
+
+        const seenSeq = new Set<number>()
+        const combined: BufferedAgentMessage[] = []
+
+        for (const msg of inMemory) {
+            if (msg.seq !== null) {
+                seenSeq.add(msg.seq)
+            }
+            combined.push(msg)
+        }
+
+        for (const msg of pendingFromStore) {
+            if (seenSeq.has(msg.seq)) continue
+            const extracted = this.extractBufferedAgentMessage(msg)
+            if (!extracted) continue
+            combined.push(extracted)
+            seenSeq.add(msg.seq)
+        }
+
+        const maxStoreSeq = pendingFromStore.reduce((max, msg) => Math.max(max, msg.seq), afterSeq)
+        return {
+            messages: combined,
+            maxSeq: Math.max(maxBufferedSeq, maxStoreSeq),
+            inMemoryCount: inMemory.length,
+            dbTailCount: pendingFromStore.length,
+            recoveredCount: Math.max(0, combined.length - inMemory.length),
+            afterSeq,
         }
     }
 
@@ -1332,8 +1445,38 @@ export class BrainBridge implements IMBridgeCallbacks {
         }
         this.streamingUpdateCount.delete(chatId)
 
-        const raw = this.agentMessages.get(chatId)
-        if (!raw || raw.length === 0) return
+        const {
+            messages: raw,
+            maxSeq,
+            inMemoryCount,
+            dbTailCount,
+            recoveredCount,
+            afterSeq,
+        } = await this.collectPendingAgentMessages(chatId)
+        slog('info', 'summary.collect', {
+            chatId: chatId.slice(0, 12),
+            sessionId: this.chatIdToSessionId.get(chatId)?.slice(0, 8),
+            afterSeq,
+            inMemoryCount,
+            dbTailCount,
+            recoveredCount,
+            rawCount: raw.length,
+            maxSeq,
+        })
+        if (!raw || raw.length === 0) {
+            if (maxSeq > 0) {
+                this.lastDeliveredSeq.set(chatId, maxSeq)
+            }
+            slog('info', 'summary.empty', {
+                chatId: chatId.slice(0, 12),
+                sessionId: this.chatIdToSessionId.get(chatId)?.slice(0, 8),
+                afterSeq,
+                maxSeq,
+            })
+            this.agentMessages.delete(chatId)
+            await this.persistChatState(chatId)
+            return
+        }
         this.agentMessages.delete(chatId)
 
         const texts = raw.map(m => m.text)
@@ -1342,18 +1485,27 @@ export class BrainBridge implements IMBridgeCallbacks {
         const deduped = texts.filter((m, i) => i === 0 || m !== texts[i - 1])
 
         // Drop short narration fragments if a longer reply follows
-        const SHORT_NARRATION_LIMIT = 60
+        const SHORT_NARRATION_LIMIT = 80
         const substantive = deduped.filter((m, i) => {
-            if (m.trim().length > SHORT_NARRATION_LIMIT) return true
             if (i === deduped.length - 1) return true
-            const nextLong = deduped.slice(i + 1).some(n => n.trim().length > SHORT_NARRATION_LIMIT)
-            return !nextLong
+            if (m.trim().length <= SHORT_NARRATION_LIMIT) return false
+            return true
         })
 
         const allText = substantive.join('\n')
 
         // ── Extract structured actions (or fall back to legacy bracket tags) ──
         const { actions, cards, cleanText: textReply } = extractActions(allText)
+        slog('info', 'summary.compose', {
+            chatId: chatId.slice(0, 12),
+            sessionId: this.chatIdToSessionId.get(chatId)?.slice(0, 8),
+            rawCount: raw.length,
+            dedupedCount: deduped.length,
+            substantiveCount: substantive.length,
+            textLen: textReply.length,
+            preview: textReply.slice(0, 120),
+            maxSeq,
+        })
 
         // Detect silent
         const isPassiveBatch = this.lastBatchPassive.get(chatId) ?? false
@@ -1363,6 +1515,9 @@ export class BrainBridge implements IMBridgeCallbacks {
                 console.log(`${this.logPrefix} K1 chose [silent] for ${chatId.slice(0, 12)}, skipping reply`)
                 this.lastUserMessageId.delete(chatId)
                 this.lastSenderIds.delete(chatId)
+                if (maxSeq > 0) {
+                    this.lastDeliveredSeq.set(chatId, maxSeq)
+                }
                 await this.clearPersistedState(chatId)
                 return
             }
@@ -1476,8 +1631,10 @@ export class BrainBridge implements IMBridgeCallbacks {
         const extras = actionsToExtras(actions)
         const reactions = actions.reactions || []
         const chatType = this.chatIdToChatType.get(chatId)
+        const hasReplyPayload = textReply || mediaRefs.length > 0 || extras.length > 0 || cards.length > 0 || reactions.length > 0
+        let delivered = !hasReplyPayload
 
-        if (textReply || mediaRefs.length > 0 || extras.length > 0 || cards.length > 0 || reactions.length > 0) {
+        if (hasReplyPayload) {
             console.log(`${this.logPrefix} Sending summary to ${chatId.slice(0, 12)} (${textReply.length} chars, ${deduped.length} messages${replyToMessageId ? ', reply' : ''}${atIds.length ? `, @${atIds.length}` : ''}${mediaRefs.length ? `, +${mediaRefs.length} media` : ''}${extras.length ? `, +${extras.length} extras` : ''}${cards.length ? `, +${cards.length} cards` : ''}${reactions.length ? `, +${reactions.length} reactions` : ''})`)
             const replyStart = Date.now()
             const replyPayload = {
@@ -1507,6 +1664,8 @@ export class BrainBridge implements IMBridgeCallbacks {
             if (sendErr) {
                 slog('error', 'reply.send_failed', { chatId: chatId.slice(0, 12) })
                 this.adapter.sendText(chatId, '⚠️ 回复发送失败，请重试。').catch(() => {})
+            } else {
+                delivered = true
             }
             const traceId = this.traceIds.get(chatId)
             const totalMs = Date.now() - (this.traceStartTimes.get(chatId) ?? replyStart)
@@ -1521,6 +1680,10 @@ export class BrainBridge implements IMBridgeCallbacks {
                 replyMs: Date.now() - replyStart,
                 totalMs,
             })
+        }
+
+        if (delivered && maxSeq > 0) {
+            this.lastDeliveredSeq.set(chatId, maxSeq)
         }
 
         // Clear trace for this round

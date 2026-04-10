@@ -446,6 +446,8 @@ function MachineCard(props: {
     machine: Machine
     onSaveWorkspaceGroup: (machineId: string, workspaceGroupId: string | null) => void
     isSavingWorkspaceGroup: boolean
+    onSaveSupportedAgents: (machineId: string, supportedAgents: ('claude' | 'codex')[] | null) => void
+    isSavingSupportedAgents: boolean
 }) {
     const { machine } = props
     const currentWorkspaceGroupId = getMachineWorkspaceGroupId(machine)
@@ -515,6 +517,11 @@ function MachineCard(props: {
                                 : 'border-[var(--app-border)] bg-[var(--app-bg)]/70 text-[var(--app-hint)]'
                         }`}>
                             {currentWorkspaceGroupId ? `WG ${currentWorkspaceGroupId}` : 'Local only'}
+                        </span>
+                        <span className="rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/70 px-2 py-0.5 text-[10px] font-medium text-[var(--app-hint)]">
+                            {machine.supportedAgents && machine.supportedAgents.length > 0
+                                ? machine.supportedAgents.join(', ')
+                                : 'All agents'}
                         </span>
                     </div>
                     {machineSubtitle ? (
@@ -606,6 +613,42 @@ function MachineCard(props: {
                     >
                         {props.isSavingWorkspaceGroup ? 'Saving...' : 'Save Group'}
                     </button>
+                </div>
+            </div>
+
+            {/* Supported Agents Config */}
+            <div className="mt-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)]/60 px-3 py-3">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--app-hint)]">
+                    Supported Agents
+                </div>
+                <div className="mt-1 text-[11px] leading-relaxed text-[var(--app-hint)]">
+                    Which AI agents can run on this machine. Leave all checked to allow any agent.
+                </div>
+                <div className="mt-2 flex gap-3">
+                    {(['claude', 'codex'] as const).map((agent) => {
+                        const checked = !machine.supportedAgents || machine.supportedAgents.includes(agent)
+                        return (
+                            <label key={agent} className="flex items-center gap-1.5 text-sm text-[var(--app-fg)] cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    disabled={props.isSavingSupportedAgents}
+                                    onChange={() => {
+                                        const current = machine.supportedAgents ?? ['claude', 'codex']
+                                        const next = checked
+                                            ? current.filter(a => a !== agent)
+                                            : [...current, agent]
+                                        props.onSaveSupportedAgents(
+                                            machine.id,
+                                            next.length === 0 || next.length === 2 ? null : next as ('claude' | 'codex')[],
+                                        )
+                                    }}
+                                    className="accent-[var(--app-button)]"
+                                />
+                                {agent === 'claude' ? 'Claude Code' : 'Codex'}
+                            </label>
+                        )
+                    })}
                 </div>
             </div>
         </div>
@@ -713,6 +756,7 @@ export default function SettingsPage() {
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['brain-config'] }),
     })
 
+
     const handleInvite = useCallback(async () => {
         if (!inviteEmail.trim()) return
         try {
@@ -751,6 +795,20 @@ export default function SettingsPage() {
         enabled: Boolean(api)
     })
     const machines = machinesData?.machines ?? []
+    // Compute which agents are supported by at least one online machine
+    const supportedAgentSet = useMemo(() => {
+        const onlineMachines = machines.filter(m => m.active)
+        const supported = new Set<string>()
+        for (const m of onlineMachines) {
+            if (!m.supportedAgents || m.supportedAgents.length === 0) {
+                supported.add('claude')
+                supported.add('codex')
+            } else {
+                for (const a of m.supportedAgents) supported.add(a)
+            }
+        }
+        return supported
+    }, [machines])
     const displayMachines = useMemo(() => sortMachinesForStableDisplay(machines), [machines])
     const machinesById = useMemo(() => new Map(displayMachines.map((machine) => [machine.id, machine])), [displayMachines])
     const sharedProjectMachines = useMemo(
@@ -965,6 +1023,20 @@ export default function SettingsPage() {
     const handleSaveWorkspaceGroup = useCallback((machineId: string, workspaceGroupId: string | null) => {
         updateMachineWorkspaceGroupMutation.mutate({ machineId, workspaceGroupId })
     }, [updateMachineWorkspaceGroupMutation])
+
+    const updateMachineSupportedAgentsMutation = useMutation({
+        mutationFn: async ({ machineId, supportedAgents }: { machineId: string; supportedAgents: ('claude' | 'codex')[] | null }) => {
+            if (!api) throw new Error('API unavailable')
+            return await api.setMachineSupportedAgents(machineId, supportedAgents)
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: queryKeys.machines })
+        },
+    })
+
+    const handleSaveSupportedAgents = useCallback((machineId: string, supportedAgents: ('claude' | 'codex')[] | null) => {
+        updateMachineSupportedAgentsMutation.mutate({ machineId, supportedAgents })
+    }, [updateMachineSupportedAgentsMutation])
 
     const handleLogout = useCallback(async () => {
         try {
@@ -1270,23 +1342,21 @@ export default function SettingsPage() {
                                 <div className="divide-y divide-[var(--app-divider)]">
                                     {/* Agent selector */}
                                     <div className="px-3 py-2.5">
-                                        <div className="text-sm mb-2">Agent Type</div>
                                         <div className="flex gap-2">
                                             {([
                                                 { value: 'claude' as const, label: 'Claude Code', desc: 'Anthropic Claude' },
                                                 { value: 'codex' as const, label: 'Codex', desc: 'OpenAI Codex' },
                                             ] as const).map((opt) => {
                                                 const isActive = (brainConfig?.agent ?? 'claude') === opt.value
+                                                const isSupported = supportedAgentSet.size === 0 || supportedAgentSet.has(opt.value)
                                                 return (
                                                     <button
                                                         key={opt.value}
                                                         type="button"
-                                                        disabled={brainConfigMutation.isPending}
+                                                        disabled={brainConfigMutation.isPending || !isSupported}
+                                                        title={!isSupported ? 'No online machine supports this agent' : undefined}
                                                         onClick={() => {
-                                                            const config = opt.value === 'claude'
-                                                                ? { agent: opt.value, claudeModelMode: brainConfig?.claudeModelMode ?? 'opus' }
-                                                                : { agent: opt.value, codexModel: brainConfig?.codexModel ?? 'gpt-5.4' }
-                                                            brainConfigMutation.mutate(config)
+                                                            brainConfigMutation.mutate({ agent: opt.value })
                                                         }}
                                                         className={`flex-1 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
                                                             isActive
@@ -1295,41 +1365,13 @@ export default function SettingsPage() {
                                                         } disabled:opacity-50`}
                                                     >
                                                         <div>{opt.label}</div>
-                                                        <div className="text-[10px] font-normal mt-0.5 opacity-70">{opt.desc}</div>
+                                                        <div className="text-[10px] font-normal mt-0.5 opacity-70">
+                                                            {!isSupported ? 'No machine available' : opt.desc}
+                                                        </div>
                                                     </button>
                                                 )
                                             })}
                                         </div>
-                                    </div>
-                                    {/* Model config */}
-                                    <div className="px-3 py-2.5">
-                                        <div className="text-sm mb-2">Model</div>
-                                        {(brainConfig?.agent ?? 'claude') === 'claude' ? (
-                                            <select
-                                                value={brainConfig?.claudeModelMode ?? 'opus'}
-                                                disabled={brainConfigMutation.isPending}
-                                                onChange={(e) => brainConfigMutation.mutate({
-                                                    agent: 'claude',
-                                                    claudeModelMode: e.target.value,
-                                                })}
-                                                className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)] disabled:opacity-50"
-                                            >
-                                                <option value="opus">Opus (most capable)</option>
-                                                <option value="sonnet">Sonnet (balanced)</option>
-                                            </select>
-                                        ) : (
-                                            <select
-                                                value={brainConfig?.codexModel ?? 'gpt-5.4'}
-                                                disabled={brainConfigMutation.isPending}
-                                                onChange={(e) => brainConfigMutation.mutate({
-                                                    agent: 'codex',
-                                                    codexModel: e.target.value,
-                                                })}
-                                                className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)] disabled:opacity-50"
-                                            >
-                                                <option value="gpt-5.4">GPT-5.4</option>
-                                            </select>
-                                        )}
                                     </div>
                                     {/* Status */}
                                     {brainConfigMutation.isError && (
@@ -1806,6 +1848,11 @@ export default function SettingsPage() {
                                                 isSavingWorkspaceGroup={
                                                     updateMachineWorkspaceGroupMutation.isPending
                                                     && updateMachineWorkspaceGroupMutation.variables?.machineId === machine.id
+                                                }
+                                                onSaveSupportedAgents={handleSaveSupportedAgents}
+                                                isSavingSupportedAgents={
+                                                    updateMachineSupportedAgentsMutation.isPending
+                                                    && updateMachineSupportedAgentsMutation.variables?.machineId === machine.id
                                                 }
                                             />
                                         ))}

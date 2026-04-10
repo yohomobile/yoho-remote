@@ -291,7 +291,7 @@ export class SyncEngine {
     private readonly PUSH_NOTIFICATION_MIN_INTERVAL_MS = 30_000
     private static readonly TASK_MESSAGE_SETTLE_POLL_MS = 50
     private static readonly TASK_MESSAGE_SETTLE_WINDOW_MS = 200
-    private static readonly TASK_MESSAGE_SETTLE_MAX_WAIT_MS = 1_500
+    private static readonly TASK_MESSAGE_SETTLE_MAX_WAIT_MS = 3_000
 
     constructor(
         private readonly store: IStore,
@@ -1113,6 +1113,8 @@ export class SyncEngine {
             // Get the last few messages from child session to extract result + usage
             const messages = await this.store.getMessages(session.id, 30)
             let resultText: string | null = null
+            let resultSource: 'result' | 'assistant' | 'message' | 'raw-data' | 'none' = 'none'
+            let resultSeq: number | null = null
 
             // Extract usage: prefer assistant message (per-step) over result message (cumulative)
             // Result message usage is cumulative across all steps and would inflate contextSize.
@@ -1162,6 +1164,11 @@ export class SyncEngine {
                 const data = content.content?.data
 
                 if (!resultText) {
+                    if (data?.type === 'result' && typeof data.result === 'string') {
+                        resultText = data.result
+                        resultSource = 'result'
+                        resultSeq = messages[i].seq
+                    }
                     if (data?.type === 'assistant' && data.message?.content) {
                         const blocks = data.message.content
                         if (Array.isArray(blocks)) {
@@ -1171,14 +1178,20 @@ export class SyncEngine {
                                 .filter(Boolean)
                             if (texts.length > 0) {
                                 resultText = texts.join('\n')
+                                resultSource = 'assistant'
+                                resultSeq = messages[i].seq
                             }
                         }
                     }
                     // simpler agent format
                     if (typeof data?.message === 'string') {
                         resultText = data.message
+                        resultSource = 'message'
+                        resultSeq = messages[i].seq
                     } else if (typeof data === 'string') {
                         resultText = data
+                        resultSource = 'raw-data'
+                        resultSeq = messages[i].seq
                     }
                 }
 
@@ -1190,6 +1203,17 @@ export class SyncEngine {
             const truncatedResult = resultText
                 ? resultText.length > 4000 ? resultText.slice(0, 4000) + '\n...(truncated)' : resultText
                 : '（无文本输出）'
+
+            const tailSummary = messages.slice(-5).map(message => {
+                const content = message.content as any
+                const dataType = content?.content?.data?.type ?? content?.content?.type ?? 'unknown'
+                return `${message.seq}:${dataType}`
+            }).join(',')
+            console.log(
+                `[brain-callback] Extracted sid=${shortId(session.id)} main=${shortId(mainSessionId)} ` +
+                `source=${resultSource} seq=${resultSeq ?? 'n/a'} len=${truncatedResult.length} ` +
+                `messages=${messages.length} tail=[${tailSummary}] preview=${JSON.stringify(truncatedResult.slice(0, 120))}`
+            )
 
             // Build token stats line (contextSize formula matches frontend: cache_creation + cache_read + input_tokens)
             const messageCount = await this.store.getMessageCount(session.id)
