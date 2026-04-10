@@ -647,7 +647,7 @@ export class BrainBridge implements IMBridgeCallbacks {
                 return null
             }
 
-            // Filter machines that support the required agent
+            // Filter by supportedAgents (DB-configured) — primary filter
             const compatibleMachines = machines.filter(m =>
                 !m.supportedAgents || m.supportedAgents.includes(agent)
             )
@@ -656,12 +656,11 @@ export class BrainBridge implements IMBridgeCallbacks {
                 return null
             }
 
-            const machine = compatibleMachines.find(m => m.id === BrainBridge.NCU_MACHINE_ID) || compatibleMachines[0]
-            if (machine.id !== BrainBridge.NCU_MACHINE_ID) {
-                console.warn(`${this.logPrefix} ncu not online or incompatible, falling back to ${machine.id}`)
-            }
-            const homeDir = (machine.metadata as Record<string, unknown>)?.homeDir as string || '/tmp'
-            const brainDirectory = `${homeDir}/.yoho-remote/brain-workspace`
+            // Sort: ncu first, then others
+            const orderedMachines = [
+                ...compatibleMachines.filter(m => m.id === BrainBridge.NCU_MACHINE_ID),
+                ...compatibleMachines.filter(m => m.id !== BrainBridge.NCU_MACHINE_ID),
+            ]
 
             const spawnOptions: Record<string, unknown> = {
                 source: 'brain',
@@ -674,34 +673,48 @@ export class BrainBridge implements IMBridgeCallbacks {
                 spawnOptions.codexModel = brainConfig?.codexModel ?? 'gpt-5.4'
             }
 
-            // License check: 用 machine 的 orgId 校验
-            if (machine.orgId) {
-                try {
-                    const licenseService = getLicenseService()
-                    const licenseCheck = await licenseService.canCreateSession(machine.orgId)
-                    if (!licenseCheck.valid) {
-                        console.error(`${this.logPrefix} License check failed: ${licenseCheck.message}`)
-                        return null
-                    }
-                } catch { /* LicenseService not initialized */ }
-            }
+            // Try each compatible machine in order; skip on license failure or AGENT_NOT_AVAILABLE
+            let spawnResult: Awaited<ReturnType<typeof this.syncEngine.spawnSession>> | null = null
+            let selectedMachine: typeof orderedMachines[0] | null = null
+            for (const m of orderedMachines) {
+                if (m.orgId) {
+                    try {
+                        const licenseService = getLicenseService()
+                        const licenseCheck = await licenseService.canCreateSession(m.orgId)
+                        if (!licenseCheck.valid) {
+                            console.warn(`${this.logPrefix} License check failed for ${m.id.slice(0, 8)}, skipping`)
+                            continue
+                        }
+                    } catch { /* LicenseService not initialized */ }
+                }
 
-            console.log(`${this.logPrefix} Spawning Brain session: agent=${agent}, config=${JSON.stringify(spawnOptions)}`)
+                const homeDir = (m.metadata as Record<string, unknown>)?.homeDir as string || '/tmp'
+                const brainDirectory = `${homeDir}/.yoho-remote/brain-workspace`
+                console.log(`${this.logPrefix} Trying ${m.id.slice(0, 8)}: agent=${agent}`)
+                const r = await this.syncEngine.spawnSession(m.id, brainDirectory, agent, true, spawnOptions as any)
 
-            const result = await this.syncEngine.spawnSession(
-                machine.id,
-                brainDirectory,
-                agent,
-                true,
-                spawnOptions as any,
-            )
-
-            if (result.type !== 'success') {
-                console.error(`${this.logPrefix} Failed to create session: ${result.message}`)
+                if (r.type === 'success') {
+                    spawnResult = r
+                    selectedMachine = m
+                    break
+                }
+                if (r.message?.includes('AGENT_NOT_AVAILABLE')) {
+                    console.warn(`${this.logPrefix} Agent "${agent}" not available on ${m.id.slice(0, 8)}, trying next`)
+                    continue
+                }
+                console.error(`${this.logPrefix} Spawn failed on ${m.id.slice(0, 8)}: ${r.message}`)
                 return null
             }
 
-            const sessionId = result.sessionId
+            if (!spawnResult || spawnResult.type !== 'success' || !selectedMachine) {
+                console.error(`${this.logPrefix} No machine could spawn agent "${agent}"`)
+                return null
+            }
+            if (selectedMachine.id !== BrainBridge.NCU_MACHINE_ID) {
+                console.warn(`${this.logPrefix} ncu not available, used ${selectedMachine.id.slice(0, 8)}`)
+            }
+
+            const sessionId = spawnResult.sessionId
             console.log(`${this.logPrefix} Created Brain session ${sessionId.slice(0, 8)} for chat ${chatId.slice(0, 12)}`)
 
             // Save mapping
@@ -885,7 +898,7 @@ export class BrainBridge implements IMBridgeCallbacks {
             const machines = this.syncEngine.getOnlineMachinesByNamespace(namespace)
             if (machines.length === 0) return false
 
-            // Filter machines that support the required agent
+            // Filter by supportedAgents (DB-configured) — primary filter
             const compatibleMachines = machines.filter(m =>
                 !m.supportedAgents || m.supportedAgents.includes(agent)
             )
@@ -894,26 +907,11 @@ export class BrainBridge implements IMBridgeCallbacks {
                 return false
             }
 
-            const machine = compatibleMachines.find(m => m.id === BrainBridge.NCU_MACHINE_ID) || compatibleMachines[0]
-            const homeDir = (machine.metadata as Record<string, unknown>)?.homeDir as string || '/tmp'
-            const brainDirectory = `${homeDir}/.yoho-remote/brain-workspace`
-
-            // License check: 用 machine 的 orgId 校验
-            if (machine.orgId) {
-                try {
-                    const licenseService = getLicenseService()
-                    const licenseCheck = await licenseService.canCreateSession(machine.orgId)
-                    if (!licenseCheck.valid) {
-                        console.error(`${this.logPrefix} License check failed for resume: ${licenseCheck.message}`)
-                        return false
-                    }
-                } catch { /* LicenseService not initialized */ }
-            }
-
-            // Only strip thinking blocks for Claude sessions (codex doesn't use .claude/projects)
-            if (agent === 'claude') {
-                this.stripThinkingBlocksFromJsonl(underlyingSessionId, homeDir)
-            }
+            // Sort: ncu first, then others
+            const orderedMachines = [
+                ...compatibleMachines.filter(m => m.id === BrainBridge.NCU_MACHINE_ID),
+                ...compatibleMachines.filter(m => m.id !== BrainBridge.NCU_MACHINE_ID),
+            ]
 
             const spawnOptions: Record<string, unknown> = {
                 sessionId: oldSessionId,
@@ -928,21 +926,44 @@ export class BrainBridge implements IMBridgeCallbacks {
                 spawnOptions.codexModel = brainConfig?.codexModel ?? 'gpt-5.4'
             }
 
-            const result = await this.syncEngine.spawnSession(
-                machine.id,
-                brainDirectory,
-                agent,
-                true,
-                spawnOptions as any,
-            )
+            // Try each compatible machine in order
+            for (const m of orderedMachines) {
+                if (m.orgId) {
+                    try {
+                        const licenseService = getLicenseService()
+                        const licenseCheck = await licenseService.canCreateSession(m.orgId)
+                        if (!licenseCheck.valid) {
+                            console.warn(`${this.logPrefix} License check failed for ${m.id.slice(0, 8)}, skipping`)
+                            continue
+                        }
+                    } catch { /* LicenseService not initialized */ }
+                }
 
-            if (result.type !== 'success') {
-                console.warn(`${this.logPrefix} resumeBrainSession spawn failed: ${result.message}`)
+                const homeDir = (m.metadata as Record<string, unknown>)?.homeDir as string || '/tmp'
+                const brainDirectory = `${homeDir}/.yoho-remote/brain-workspace`
+
+                // Only strip thinking blocks for Claude sessions
+                if (agent === 'claude') {
+                    this.stripThinkingBlocksFromJsonl(underlyingSessionId, homeDir)
+                }
+
+                console.log(`${this.logPrefix} Resume: trying ${m.id.slice(0, 8)}: agent=${agent}`)
+                const r = await this.syncEngine.spawnSession(m.id, brainDirectory, agent, true, spawnOptions as any)
+
+                if (r.type === 'success') {
+                    const online = await this.waitForSessionOnline(oldSessionId, 30_000)
+                    return online
+                }
+                if (r.message?.includes('AGENT_NOT_AVAILABLE')) {
+                    console.warn(`${this.logPrefix} Agent "${agent}" not available on ${m.id.slice(0, 8)}, trying next`)
+                    continue
+                }
+                console.warn(`${this.logPrefix} resumeBrainSession spawn failed on ${m.id.slice(0, 8)}: ${r.message}`)
                 return false
             }
 
-            const online = await this.waitForSessionOnline(oldSessionId, 30_000)
-            return online
+            console.error(`${this.logPrefix} No machine could resume agent "${agent}"`)
+            return false
         } catch (err) {
             console.error(`${this.logPrefix} resumeBrainSession failed:`, err)
             return false
