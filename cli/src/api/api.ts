@@ -362,6 +362,7 @@ export class ApiClient {
     async getSessionStatus(sessionId: string): Promise<{
         active: boolean
         thinking: boolean
+        initDone: boolean
         messageCount: number
         lastUsage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; contextSize: number } | null
         modelMode?: string

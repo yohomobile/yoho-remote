@@ -638,6 +638,10 @@ export class SyncEngine {
         return this.machines.get(machineId)
     }
 
+    isBrainChildInitDone(sessionId: string): boolean {
+        return this.brainChildInitCompleted.has(sessionId)
+    }
+
     getMachineByNamespace(machineId: string, namespace: string): Machine | undefined {
         const machine = this.machines.get(machineId)
         if (!machine || machine.namespace !== namespace) {

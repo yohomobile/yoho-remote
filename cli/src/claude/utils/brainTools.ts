@@ -42,14 +42,9 @@ export function registerBrainTools(
     const { apiClient: api, machineId, brainSessionId } = options
 
     // ===== Helper: wait for session to come online AND finish its init prompt =====
-    // Uses getSessionStatus (includes thinking flag) to detect init prompt completion.
-    // Phases:
-    //   1. Wait for active=true (session spawned)
-    //   2. Wait for thinking=true (init prompt started) — up to 5s grace period
-    //   3. Wait for thinking=false with 3s stability debounce
-    //      A rate_limit_event briefly sets thinking=false while Claude pauses; we must
-    //      not mistake that for completion. Require thinking to stay false for 3s before
-    //      declaring the init prompt done.
+    // Uses getSessionStatus.initDone — a server-side flag set when the first thinking→false
+    // transition fires (i.e., init prompt completed). This is authoritative: no heuristics,
+    // no debounce, immune to rate_limit_event pauses that briefly flip thinking=false.
     async function waitForSessionOnline(sessionId: string, timeoutSec = 120): Promise<boolean> {
         const deadline = Date.now() + timeoutSec * 1000
 
@@ -63,35 +58,11 @@ export function registerBrainTools(
         }
         if (Date.now() >= deadline) return false
 
-        // Phase 2: wait up to 5s for thinking=true (init prompt to start)
-        const thinkingDeadline = Date.now() + 5_000
-        let thinkingObserved = false
-        while (Date.now() < thinkingDeadline) {
-            try {
-                const status = await api.getSessionStatus(sessionId)
-                if (status.thinking) { thinkingObserved = true; break }
-            } catch { /* ignore */ }
-            await new Promise(r => setTimeout(r, 300))
-        }
-
-        if (!thinkingObserved) {
-            // Init prompt didn't start within grace period — proceed anyway
-            return true
-        }
-
-        // Phase 3: wait for thinking=false, then debounce 3s to filter out rate_limit pauses.
-        // If thinking flips back to true within the debounce window, reset and wait again.
-        const DEBOUNCE_MS = 3_000
-        let notThinkingSince = 0
+        // Phase 2: wait for initDone=true (server sets this when init prompt completes)
         while (Date.now() < deadline) {
             try {
                 const status = await api.getSessionStatus(sessionId)
-                if (status.thinking) {
-                    notThinkingSince = 0  // reset debounce — still processing
-                } else {
-                    if (notThinkingSince === 0) notThinkingSince = Date.now()
-                    if (Date.now() - notThinkingSince >= DEBOUNCE_MS) return true
-                }
+                if (status.initDone) return true
             } catch { /* ignore */ }
             await new Promise(r => setTimeout(r, 500))
         }

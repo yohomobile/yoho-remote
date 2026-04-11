@@ -675,6 +675,7 @@ export function createCliRoutes(
         return c.json({
             active: session.active,
             thinking: session.thinking ?? false,
+            initDone: engine.isBrainChildInitDone(sessionId),
             messageCount,
             lastUsage,
             modelMode: session.modelMode ?? 'default',
