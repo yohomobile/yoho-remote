@@ -4,7 +4,8 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { execSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type {
     SDKMessage,
     SDKUserMessage,
@@ -26,16 +27,19 @@ export interface ConversionContext {
 }
 
 /**
- * Get current git branch for the working directory
+ * Get current git branch for the working directory.
+ * Reads .git/HEAD directly to avoid spawning a subprocess with an NFS cwd,
+ * which would cause getcwd() to block indefinitely on stale/slow NFS mounts.
  */
 function getGitBranch(cwd: string): string | undefined {
     try {
-        const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-            cwd,
-            encoding: 'utf8',
-            stdio: ['ignore', 'pipe', 'ignore']
-        }).trim()
-        return branch || undefined
+        // Handle git worktrees: .git may be a file pointing to the real git dir
+        let gitDir = join(cwd, '.git')
+        const headContent = readFileSync(join(gitDir, 'HEAD'), 'utf8').trim()
+        if (headContent.startsWith('ref: refs/heads/')) {
+            return headContent.slice('ref: refs/heads/'.length) || undefined
+        }
+        return undefined // detached HEAD
     } catch {
         return undefined
     }
