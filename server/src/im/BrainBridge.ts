@@ -110,8 +110,8 @@ export class BrainBridge implements IMBridgeCallbacks {
     // Rebuild rate limiting
     private lastRebuildAt: Map<string, number> = new Map()
     private readonly REBUILD_COOLDOWN_MS = 30_000
-    private readonly INPUT_DEBOUNCE_MS = 3_000
-    private readonly PASSIVE_DEBOUNCE_MS = 20_000
+    private readonly INPUT_DEBOUNCE_MS = 0
+    private readonly PASSIVE_DEBOUNCE_MS = 3_000
 
     // Brain sessions must run on ncu — it has yoho-memory, yoho-credentials MCP deps
     private static readonly NCU_MACHINE_ID = 'e16b3653-ad9f-46a7-89fd-48a3d576cccb'
