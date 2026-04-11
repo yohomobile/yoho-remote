@@ -1604,10 +1604,12 @@ export class BrainBridge implements IMBridgeCallbacks {
         const deduped = texts.filter((m, i) => i === 0 || m !== texts[i - 1])
 
         // Drop short narration fragments if a longer reply follows
+        // BUT always keep messages containing structured action/card blocks
         const SHORT_NARRATION_LIMIT = 80
+        const HAS_STRUCTURED_BLOCK = /<feishu-(actions|card)>/
         const substantive = deduped.filter((m, i) => {
             if (i === deduped.length - 1) return true
-            if (m.trim().length <= SHORT_NARRATION_LIMIT) return false
+            if (m.trim().length <= SHORT_NARRATION_LIMIT && !HAS_STRUCTURED_BLOCK.test(m)) return false
             return true
         })
 
