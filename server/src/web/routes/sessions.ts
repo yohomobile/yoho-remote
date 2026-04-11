@@ -982,6 +982,10 @@ export function createSessionsRoutes(
         session.activeAt = now
         // Reset thinking state so resumed session starts clean
         session.thinking = false
+        // Guard: prevent session-end from old process (killed by daemon dedup) from
+        // undoing pre-activate. Without this, the old CLI's death event races with
+        // the new CLI's first heartbeat and blocks resume for 60s.
+        session.resumingUntil = now + RESUME_TIMEOUT_MS
 
         // Primary attempt: spawn with both yoho-remote session ID and native resume ID
         // so the CLI binds to this session AND Claude/Codex resumes the old conversation
@@ -1013,6 +1017,7 @@ export function createSessionsRoutes(
         // Reset session to inactive so it doesn't block future operations
         session.active = false
         session.thinking = false
+        session.resumingUntil = undefined
         await store.setSessionActive(sessionId, false, Date.now(), namespace)
 
         // Fallback: spawn a new session with only the native resume ID

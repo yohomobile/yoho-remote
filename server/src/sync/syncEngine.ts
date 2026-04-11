@@ -101,6 +101,9 @@ export interface Session {
     abortedAt?: number
     /** Set when the session was forcibly terminated (e.g. 'license-expired', 'license-suspended') */
     terminationReason?: string
+    /** Set during resume to prevent session-end from old process undoing pre-activate.
+     *  Value is the timestamp until which the resume guard is active. */
+    resumingUntil?: number
 }
 
 export interface Machine {
@@ -869,7 +872,10 @@ export class SyncEngine {
 
         // Check if session is archived in database (don't reactivate archived sessions)
         // This prevents zombie heartbeats from reactivating aborted sessions
-        if (!session.active) {
+        // But during resume, the DB may briefly say inactive due to the old process's
+        // session-end racing with pre-activate — allow heartbeats through.
+        const resumeGuardActive = session.resumingUntil && Date.now() < session.resumingUntil
+        if (!session.active && !resumeGuardActive) {
             // Verify with database - if DB says inactive, don't reactivate
             const stored = await this.store.getSession(payload.sid)
             if (stored && !stored.active) {
@@ -887,6 +893,10 @@ export class SyncEngine {
 
         session.active = true
         session.activeAt = Math.max(session.activeAt, t)
+        // Resume guard fulfilled — new CLI is alive, clear the guard
+        if (session.resumingUntil) {
+            session.resumingUntil = undefined
+        }
         // payload.thinking 是可选字段：未提供时不要覆盖已有 thinking 状态。
         // 否则会把 session 误判为 thinking=false，导致 wasThinking 误触发。
         if (payload.thinking !== undefined) {
@@ -1359,6 +1369,13 @@ export class SyncEngine {
         const session = this.sessions.get(payload.sid) ?? await this.refreshSession(payload.sid)
         if (!session) return
 
+        // During resume, the daemon kills the old process before spawning the new one.
+        // The old process's session-end must not undo the pre-activate, otherwise the
+        // new CLI's heartbeats get blocked (DB says inactive) and resume times out.
+        if (session.resumingUntil && Date.now() < session.resumingUntil) {
+            return
+        }
+
         if (!session.active && !session.thinking) {
             return
         }
@@ -1604,7 +1621,8 @@ export class SyncEngine {
             modelMode: existing?.modelMode ?? (stored.modelMode as any) ?? undefined,
             modelReasoningEffort: existing?.modelReasoningEffort ?? (stored.modelReasoningEffort as any) ?? undefined,
             fastMode: existing?.fastMode ?? stored.fastMode ?? undefined,
-            terminationReason: existing?.terminationReason ?? stored.terminationReason ?? undefined
+            terminationReason: existing?.terminationReason ?? stored.terminationReason ?? undefined,
+            resumingUntil: existing?.resumingUntil
         }
 
         this.sessions.set(sessionId, session)
