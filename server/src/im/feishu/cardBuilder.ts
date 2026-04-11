@@ -48,7 +48,7 @@ const VALID_COLORS = new Set([
 ])
 
 // Tags not supported in Feishu card schema v2
-const V2_UNSUPPORTED_TAGS = new Set(['action'])
+const V2_UNSUPPORTED_TAGS = new Set(['action', 'note'])
 
 /**
  * Sanitize a parsed card object for v2 compatibility.
@@ -63,14 +63,30 @@ function sanitizeCardV2(card: Record<string, unknown>): void {
         const el = elements[i] as Record<string, unknown>
         if (!el || typeof el.tag !== 'string') continue
         if (V2_UNSUPPORTED_TAGS.has(el.tag)) {
-            // Convert action buttons to markdown text
-            const actions = el.actions as Array<Record<string, unknown>> | undefined
-            if (Array.isArray(actions) && actions.length > 0) {
-                const labels = actions
-                    .map(a => (a.text as Record<string, unknown>)?.content as string || '')
-                    .filter(Boolean)
-                    .map(t => `\`${t}\``)
-                elements[i] = { tag: 'markdown', content: labels.join('  ') }
+            if (el.tag === 'action') {
+                // Convert action buttons to markdown text
+                const actions = el.actions as Array<Record<string, unknown>> | undefined
+                if (Array.isArray(actions) && actions.length > 0) {
+                    const labels = actions
+                        .map(a => (a.text as Record<string, unknown>)?.content as string || '')
+                        .filter(Boolean)
+                        .map(t => `\`${t}\``)
+                    elements[i] = { tag: 'markdown', content: labels.join('  ') }
+                } else {
+                    elements.splice(i, 1)
+                }
+            } else if (el.tag === 'note') {
+                // Convert note elements to markdown text
+                const noteEls = el.elements as Array<Record<string, unknown>> | undefined
+                if (Array.isArray(noteEls) && noteEls.length > 0) {
+                    const text = noteEls
+                        .map(n => (n.content as string) || '')
+                        .filter(Boolean)
+                        .join(' ')
+                    elements[i] = { tag: 'markdown', content: text ? `_${text}_` : '' }
+                } else {
+                    elements.splice(i, 1)
+                }
             } else {
                 elements.splice(i, 1)
             }
@@ -82,7 +98,6 @@ function sanitizeCardV2(card: Record<string, unknown>): void {
 type FeishuElement =
     | { tag: 'markdown'; content: string }
     | { tag: 'hr' }
-    | { tag: 'note'; elements: Array<{ tag: 'plain_text'; content: string }> }
     | { tag: 'column_set'; columns: FeishuColumn[]; flex_mode: string; background_style: string }
 
 interface FeishuColumn {
@@ -172,12 +187,9 @@ function buildFromDsl(input: string): string | null {
                 if (!section) continue
 
                 if (hasFooter && i === lastIdx) {
-                    // Render last short section as note (footer)
+                    // Render last short section as footer-style markdown (italic)
                     card.body.elements.push({ tag: 'hr' })
-                    card.body.elements.push({
-                        tag: 'note',
-                        elements: [{ tag: 'plain_text', content: section }],
-                    })
+                    card.body.elements.push({ tag: 'markdown', content: `_${section}_` })
                 } else {
                     // Parse <buttons> blocks within each section
                     const sectionElements = parseSectionWithButtons(section)
