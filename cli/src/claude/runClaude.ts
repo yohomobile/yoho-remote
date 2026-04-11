@@ -496,7 +496,12 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         api,
         allowedTools: sessionSource === 'brain'
             ? [
-                // Brain mode: whitelist only MCP tools, no built-in tools (Read, Write, Bash, etc.)
+                // Brain mode: whitelist MCP tools + selected built-in tools for direct task handling.
+                // WebSearch/WebFetch allow Brain to handle simple queries (news, lookups) without
+                // creating child sessions. Other built-in tools (Read, Write, Bash, etc.) are still
+                // blocked so Brain focuses on orchestration for code tasks.
+                'WebSearch',
+                'WebFetch',
                 // Feishu sessions: exclude change_title (title is set server-side)
                 ...yohoRemoteServer.toolNames
                     .filter(t => sessionCaller === 'feishu' ? t !== 'change_title' : true)

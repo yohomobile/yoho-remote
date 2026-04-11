@@ -1120,6 +1120,21 @@ export class SyncEngine {
             // Wait for the in-memory message tail to stop changing before extracting output.
             await this.waitForSessionMessagesToSettle(session.id)
 
+            // Skip callback if no brain-sent messages exist yet.
+            // When a new child session is created, it processes its init prompt (thinking → false),
+            // which triggers this callback. But the brain hasn't sent any task yet, so there's
+            // nothing meaningful to report. Sending this callback causes the brain to re-send the
+            // task in a new turn, resulting in duplicate execution.
+            const recentMessages = await this.store.getMessages(session.id, 50)
+            const hasBrainMessage = recentMessages.some(m => {
+                const content = m.content as any
+                return content?.role === 'user' && content?.meta?.sentFrom === 'brain'
+            })
+            if (!hasBrainMessage) {
+                console.log(`[brain-callback] Skipping callback for ${shortId(session.id)} — no brain-sent messages yet (init prompt completion)`)
+                return
+            }
+
             // Get the last few messages from child session to extract result + usage
             const messages = await this.store.getMessages(session.id, 30)
             let resultText: string | null = null
