@@ -289,6 +289,9 @@ export class SyncEngine {
     // Tracks brain-child sessions that have completed their init prompt at least once.
     // First thinking→false is the init prompt; subsequent completions are real task results.
     private readonly brainChildInitCompleted: Set<string> = new Set()
+    // Messages sent from brain to a brain-child session before init prompt completes.
+    // Held here and flushed once the init prompt finishes.
+    private readonly brainChildPendingMessages: Map<string, string[]> = new Map()
     private _dbActiveSessionIds: Set<string> = new Set() // Sessions that were active in DB at startup
     private inactivityTimer: NodeJS.Timeout | null = null
 
@@ -583,6 +586,7 @@ export class SyncEngine {
         this.lastPushNotificationAt.delete(sessionId)
         this.deletingSessions.delete(sessionId)
         this.brainChildInitCompleted.delete(sessionId)
+        this.brainChildPendingMessages.delete(sessionId)
         this.emit({ type: 'session-removed', sessionId })
         return deleted || Boolean(session)
     }
@@ -1134,6 +1138,15 @@ export class SyncEngine {
             if (!this.brainChildInitCompleted.has(session.id)) {
                 this.brainChildInitCompleted.add(session.id)
                 console.log(`[brain-callback] Skipping init prompt callback for ${shortId(session.id)}`)
+                // Flush any brain messages that arrived before init was done
+                const pending = this.brainChildPendingMessages.get(session.id)
+                if (pending && pending.length > 0) {
+                    this.brainChildPendingMessages.delete(session.id)
+                    console.log(`[brain-queue] Flushing ${pending.length} buffered message(s) to ${shortId(session.id)}`)
+                    for (const text of pending) {
+                        await this.sendMessage(session.id, { text, sentFrom: 'brain' })
+                    }
+                }
                 return
             }
 
@@ -1783,7 +1796,21 @@ export class SyncEngine {
         return false
     }
 
-    async sendMessage(sessionId: string, payload: { text: string; localId?: string | null; sentFrom?: 'telegram-bot' | 'webapp' | 'feishu' | 'brain-callback'; meta?: Record<string, unknown> }): Promise<void> {
+    async sendMessage(sessionId: string, payload: { text: string; localId?: string | null; sentFrom?: string; meta?: Record<string, unknown> }): Promise<void> {
+        // If this is a brain-sent message and the brain-child hasn't finished its init prompt yet,
+        // buffer it and deliver it once the init prompt completes.
+        if ((payload.sentFrom as string) === 'brain') {
+            const session = this.sessions.get(sessionId)
+            const isBrainChild = session?.metadata?.source === 'brain-child'
+            if (isBrainChild && !this.brainChildInitCompleted.has(sessionId)) {
+                const pending = this.brainChildPendingMessages.get(sessionId) ?? []
+                pending.push(payload.text)
+                this.brainChildPendingMessages.set(sessionId, pending)
+                console.log(`[brain-queue] Buffered brain message for ${sessionId.slice(0, 8)} (init not done yet), queue size=${pending.length}`)
+                return
+            }
+        }
+
         // Clear abort state so the CLI's new thinking heartbeats are accepted
         const session = this.sessions.get(sessionId)
         if (session?.abortedAt) {
