@@ -288,6 +288,37 @@ export class BrainBridge implements IMBridgeCallbacks {
         }
         const traceId = this.traceIds.get(chatId)!
 
+        // Empty addressed message = user pinged bot with no text (e.g. sent @K1 alone)
+        // Don't buffer it — instead trigger an immediate flush of any buffered passive messages
+        if (message.addressed && !message.text.trim()) {
+            slog('info', 'im.message.received', {
+                traceId,
+                chatId: chatId.slice(0, 12),
+                chatType,
+                addressed: true,
+                msgLen: 0,
+                busy: state.busy,
+                note: 'ping',
+            })
+            if (!state.busy && !state.creating && state.incoming.length > 0) {
+                if (state.passiveDebounceTimer) {
+                    clearTimeout(state.passiveDebounceTimer)
+                    state.passiveDebounceTimer = null
+                }
+                if (state.debounceTimer) clearTimeout(state.debounceTimer)
+                // Remember ping sender so bot @mentions them in reply
+                if (chatType === 'group') {
+                    this.lastSenderIds.set(chatId, new Set([message.senderId]))
+                }
+                state.debounceTimer = setTimeout(() => {
+                    this.flushIncomingMessages(chatId, true).catch(err => {
+                        console.error(`${this.logPrefix} flushIncomingMessages (ping) error for ${chatId.slice(0, 12)}:`, err)
+                    })
+                }, this.INPUT_DEBOUNCE_MS)
+            }
+            return
+        }
+
         // Add message to buffer
         state.incoming.push(message)
         slog('info', 'im.message.received', {
@@ -475,7 +506,7 @@ export class BrainBridge implements IMBridgeCallbacks {
 
     // ========== Message flushing ==========
 
-    private async flushIncomingMessages(chatId: string): Promise<void> {
+    private async flushIncomingMessages(chatId: string, forceAddressed = false): Promise<void> {
         const state = this.chatStates.get(chatId)
         if (!state || state.incoming.length === 0) return
         if (state.creating) return
@@ -514,7 +545,7 @@ export class BrainBridge implements IMBridgeCallbacks {
         await this.store.touchFeishuChatSession(chatId).catch(() => {})
 
         // Format merged messages
-        const hasAddressed = messages.some(m => m.addressed)
+        const hasAddressed = forceAddressed || messages.some(m => m.addressed)
         const hasPassive = messages.some(m => !m.addressed)
         const formattedParts = messages.map(m => {
             if (chatType === 'group') {
@@ -526,9 +557,14 @@ export class BrainBridge implements IMBridgeCallbacks {
 
         let combined = formattedParts.join('\n')
 
-        // For pure passive messages, add hint
-        if (chatType === 'group' && hasPassive && !hasAddressed) {
-            combined = `[旁听模式] 群里有新消息，有价值就踊跃参与，没必要插话就输出 [silent]：\n${combined}`
+        if (chatType === 'group') {
+            if (forceAddressed) {
+                // User pinged bot (@K1 alone) to respond to buffered passive messages
+                combined = `[指令] 请回复群内以下消息：\n${combined}`
+            } else if (hasPassive && !hasAddressed) {
+                // Pure passive — bot listens and decides whether to respond
+                combined = `[旁听模式] 群里有新消息，有价值就踊跃参与，没必要插话就输出 [silent]：\n${combined}`
+            }
         }
 
         // Fetch user profiles for appendSystemPrompt
@@ -541,7 +577,8 @@ export class BrainBridge implements IMBridgeCallbacks {
         }
 
         // Remember addressed sender IDs for @ mention in reply (passive senders excluded)
-        if (chatType === 'group') {
+        // forceAddressed (ping): sender already set in onMessage — don't overwrite with empty set
+        if (chatType === 'group' && !forceAddressed) {
             const addressedSenderIds = new Set(messages.filter(m => m.addressed).map(m => m.senderId))
             this.lastSenderIds.set(chatId, addressedSenderIds)
         }
