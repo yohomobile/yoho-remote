@@ -685,10 +685,7 @@ export class FeishuAdapter implements IMAdapter {
         const mode = addressed ? '指令' : '旁听'
         console.log(`[FeishuAdapter] [${mode}] Message from ${senderName} in ${chatType} ${chatId.slice(0, 12)}...: ${text.slice(0, 100)}`)
 
-        // React with emoji for addressed messages
-        if (addressed && messageId) {
-            this.addReaction(messageId, 'OnIt').catch(() => {})
-        }
+        // Note: previously added OnIt reaction here but removed — users found it noisy
 
         // Notify bridge
         this.bridge.onMessage(chatId, chatType, {
