@@ -5,6 +5,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type {
     SDKMessage,
@@ -30,14 +31,40 @@ export interface ConversionContext {
  * Get current git branch for the working directory.
  * Reads .git/HEAD directly to avoid spawning a subprocess with an NFS cwd,
  * which would cause getcwd() to block indefinitely on stale/slow NFS mounts.
+ *
+ * NOTE: Only safe to call for local (non-NFS) paths. For NFS paths use
+ * getGitBranchAsync which runs the read in a libuv thread with a timeout.
  */
 function getGitBranch(cwd: string): string | undefined {
     try {
-        // Handle git worktrees: .git may be a file pointing to the real git dir
-        let gitDir = join(cwd, '.git')
-        const headContent = readFileSync(join(gitDir, 'HEAD'), 'utf8').trim()
+        const headContent = readFileSync(join(cwd, '.git', 'HEAD'), 'utf8').trim()
         if (headContent.startsWith('ref: refs/heads/')) {
             return headContent.slice('ref: refs/heads/'.length) || undefined
+        }
+        return undefined // detached HEAD
+    } catch {
+        return undefined
+    }
+}
+
+/**
+ * Async version of getGitBranch with a timeout.
+ * Uses fs.promises so the read runs in a libuv thread pool worker —
+ * the main event loop stays unblocked even if NFS stalls, and we race
+ * the read against a timeout to avoid hanging indefinitely.
+ */
+export async function getGitBranchAsync(cwd: string, timeoutMs = 1500): Promise<string | undefined> {
+    try {
+        const headPath = join(cwd, '.git', 'HEAD')
+        const content = await Promise.race<string>([
+            readFile(headPath, 'utf8'),
+            new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('git branch detection timeout')), timeoutMs)
+            )
+        ])
+        const trimmed = content.trim()
+        if (trimmed.startsWith('ref: refs/heads/')) {
+            return trimmed.slice('ref: refs/heads/'.length) || undefined
         }
         return undefined // detached HEAD
     } catch {
@@ -61,7 +88,9 @@ export class SDKToLogConverter {
     ) {
         this.context = {
             ...context,
-            gitBranch: context.gitBranch ?? getGitBranch(context.cwd),
+            // Only auto-detect git branch when the caller did NOT explicitly pass the field.
+            // Use 'gitBranch' in context rather than ??, so an explicit undefined skips NFS reads.
+            gitBranch: 'gitBranch' in context ? context.gitBranch : getGitBranch(context.cwd),
             version: context.version ?? process.env.npm_package_version ?? '0.0.0',
             parentUuid: null
         }

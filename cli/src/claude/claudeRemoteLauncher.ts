@@ -9,7 +9,7 @@ import { Future } from "@/utils/future";
 import { SDKAssistantMessage, SDKMessage, SDKSystemMessage, SDKUserMessage } from "./sdk";
 import { formatClaudeMessageForInk } from "@/ui/messageFormatterInk";
 import { logger } from "@/ui/logger";
-import { SDKToLogConverter } from "./utils/sdkToLogConverter";
+import { SDKToLogConverter, getGitBranchAsync } from "./utils/sdkToLogConverter";
 import { PLAN_FAKE_REJECT } from "./sdk/prompts";
 import { EnhancedMode } from "./loop";
 import { RawJSONLines } from "@/claude/types";
@@ -128,10 +128,16 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         messageQueue.releaseToolCall(toolCallId);
     });
 
+    // Resolve git branch async (with timeout) to avoid blocking on NFS openat.
+    // Pass it explicitly so the SDKToLogConverter constructor skips its sync detection.
+    const gitBranch = await getGitBranchAsync(session.path);
+    logger.debug(`[claudeRemoteLauncher] Git branch: ${gitBranch ?? '(none)'}`);
+
     // Create SDK to Log converter (pass responses from permissions)
     const sdkToLogConverter = new SDKToLogConverter({
         sessionId: session.sessionId || 'unknown',
         cwd: session.path,
+        gitBranch,
         version: process.env.npm_package_version
     }, permissionHandler.getResponses());
 
