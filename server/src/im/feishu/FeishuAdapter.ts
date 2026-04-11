@@ -270,10 +270,9 @@ export class FeishuAdapter implements IMAdapter {
                 }
                 console.log(`[FeishuAdapter] Sending interactive card to ${chatId.slice(0, 12)}`)
                 const msgId = await this.sendFeishuMessage(chatId, 'interactive', cardJson)
-                if (!msgId && !cardContent.trim().startsWith('{')) {
-                    // Card send failed, fall back to post format with the DSL body text
-                    console.warn(`[FeishuAdapter] Card send failed for ${chatId.slice(0, 12)}, falling back to post format`)
-                    await this.sendPost(chatId, cardContent).catch(() => {})
+                if (!msgId) {
+                    console.error(`[FeishuAdapter] Card send failed for ${chatId.slice(0, 12)}`)
+                    await this.sendText(chatId, '[错误] 卡片发送失败，请检查服务端日志').catch(() => {})
                 }
             }
         }
@@ -1577,15 +1576,14 @@ export class FeishuAdapter implements IMAdapter {
             return
         }
         if (probe.msgType === 'interactive') {
-            // Card — send and fall back to post/text if it fails (e.g. invalid card JSON)
             const msgId = await this.sendFeishuMessage(chatId, probe.msgType, probe.content, replyToMessageId)
             if (msgId) return
-            // Card send failed — fall through to post format below
-            console.warn(`[FeishuAdapter] Card send failed for ${chatId.slice(0, 12)}, falling back to post format`)
+            console.error(`[FeishuAdapter] Card send failed for ${chatId.slice(0, 12)}`)
+            await this.sendText(chatId, '[错误] 卡片发送失败，请检查服务端日志').catch(() => {})
+            return
         }
 
         // Post format — chunk if needed
-        // Use buildPostPayload directly to avoid card re-detection on chunks (e.g. after card fallback)
         const CHUNK_LIMIT = 4000
         const chunks = this.splitTextIntoChunks(resolvedText, CHUNK_LIMIT)
 
