@@ -270,6 +270,8 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     let currentAppendSystemPrompt: string | undefined = undefined; // Track current append system prompt
     let currentAllowedTools: string[] | undefined = sessionSource === 'brain'
         ? [
+            'WebSearch',
+            'WebFetch',
             ...yohoRemoteServer.toolNames
                 .filter(t => sessionCaller === 'feishu' ? t !== 'change_title' : true)
                 .map(toolName => `mcp__yoho_remote__${toolName}`),
