@@ -46,10 +46,11 @@ export function registerBrainTools(
     // Phases:
     //   1. Wait for active=true (session spawned)
     //   2. Wait for thinking=true (init prompt started) — up to 5s grace period
-    //   3. Wait for thinking=false (init prompt finished)
-    // This ensures the brain does not send the task before init prompt completes,
-    // which would cause the init-prompt callback to be mistaken for the task result.
-    async function waitForSessionOnline(sessionId: string, timeoutSec = 60): Promise<boolean> {
+    //   3. Wait for thinking=false with 3s stability debounce
+    //      A rate_limit_event briefly sets thinking=false while Claude pauses; we must
+    //      not mistake that for completion. Require thinking to stay false for 3s before
+    //      declaring the init prompt done.
+    async function waitForSessionOnline(sessionId: string, timeoutSec = 120): Promise<boolean> {
         const deadline = Date.now() + timeoutSec * 1000
 
         // Phase 1: wait for active=true
@@ -78,11 +79,19 @@ export function registerBrainTools(
             return true
         }
 
-        // Phase 3: wait for thinking=false (init prompt finished)
+        // Phase 3: wait for thinking=false, then debounce 3s to filter out rate_limit pauses.
+        // If thinking flips back to true within the debounce window, reset and wait again.
+        const DEBOUNCE_MS = 3_000
+        let notThinkingSince = 0
         while (Date.now() < deadline) {
             try {
                 const status = await api.getSessionStatus(sessionId)
-                if (!status.thinking) return true
+                if (status.thinking) {
+                    notThinkingSince = 0  // reset debounce — still processing
+                } else {
+                    if (notThinkingSince === 0) notThinkingSince = Date.now()
+                    if (Date.now() - notThinkingSince >= DEBOUNCE_MS) return true
+                }
             } catch { /* ignore */ }
             await new Promise(r => setTimeout(r, 500))
         }
