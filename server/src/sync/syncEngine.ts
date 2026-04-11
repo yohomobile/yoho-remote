@@ -286,6 +286,9 @@ export class SyncEngine {
     private readonly lastBroadcastAtByMachineId: Map<string, number> = new Map()
     private readonly todoBackfillAttemptedSessionIds: Set<string> = new Set()
     private readonly deletingSessions: Set<string> = new Set()
+    // Tracks brain-child sessions that have completed their init prompt at least once.
+    // First thinking→false is the init prompt; subsequent completions are real task results.
+    private readonly brainChildInitCompleted: Set<string> = new Set()
     private _dbActiveSessionIds: Set<string> = new Set() // Sessions that were active in DB at startup
     private inactivityTimer: NodeJS.Timeout | null = null
 
@@ -579,6 +582,7 @@ export class SyncEngine {
         this.todoBackfillAttemptedSessionIds.delete(sessionId)
         this.lastPushNotificationAt.delete(sessionId)
         this.deletingSessions.delete(sessionId)
+        this.brainChildInitCompleted.delete(sessionId)
         this.emit({ type: 'session-removed', sessionId })
         return deleted || Boolean(session)
     }
@@ -1120,18 +1124,12 @@ export class SyncEngine {
             // Wait for the in-memory message tail to stop changing before extracting output.
             await this.waitForSessionMessagesToSettle(session.id)
 
-            // Skip callback if no brain-sent messages exist yet.
-            // When a new child session is created, it processes its init prompt (thinking → false),
-            // which triggers this callback. But the brain hasn't sent any task yet, so there's
-            // nothing meaningful to report. Sending this callback causes the brain to re-send the
-            // task in a new turn, resulting in duplicate execution.
-            const recentMessages = await this.store.getMessages(session.id, 50)
-            const hasBrainMessage = recentMessages.some(m => {
-                const content = m.content as any
-                return content?.role === 'user' && content?.meta?.sentFrom === 'brain'
-            })
-            if (!hasBrainMessage) {
-                console.log(`[brain-callback] Skipping callback for ${shortId(session.id)} — no brain-sent messages yet (init prompt completion)`)
+            // Skip the very first thinking→false per child session (init prompt completion).
+            // The init prompt fires before the brain sends any real task, so its completion
+            // must not be forwarded to the brain as a task result.
+            if (!this.brainChildInitCompleted.has(session.id)) {
+                this.brainChildInitCompleted.add(session.id)
+                console.log(`[brain-callback] Skipping init prompt callback for ${shortId(session.id)}`)
                 return
             }
 

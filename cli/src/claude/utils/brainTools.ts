@@ -41,14 +41,49 @@ export function registerBrainTools(
 ): void {
     const { apiClient: api, machineId, brainSessionId } = options
 
-    // ===== Helper: wait for session to come online =====
-    async function waitForSessionOnline(sessionId: string, timeoutSec = 30): Promise<boolean> {
-        for (let i = 0; i < timeoutSec; i++) {
+    // ===== Helper: wait for session to come online AND finish its init prompt =====
+    // Phases:
+    //   1. Wait for active=true (session spawned)
+    //   2. Wait for thinking=true (init prompt started) — up to 5s grace period
+    //   3. Wait for thinking=false (init prompt finished)
+    // This ensures the brain does not send the task before init prompt completes,
+    // which would cause the init-prompt callback to be mistaken for the task result.
+    async function waitForSessionOnline(sessionId: string, timeoutSec = 60): Promise<boolean> {
+        const deadline = Date.now() + timeoutSec * 1000
+
+        // Phase 1: wait for active=true
+        while (Date.now() < deadline) {
             try {
                 const session = await api.getSession(sessionId)
-                if (session.active) return true
+                if (session.active) break
             } catch { /* not ready yet */ }
-            await new Promise(r => setTimeout(r, 1000))
+            await new Promise(r => setTimeout(r, 500))
+        }
+        if (Date.now() >= deadline) return false
+
+        // Phase 2: wait up to 5s for thinking=true (init prompt to start)
+        const thinkingDeadline = Date.now() + 5_000
+        let thinkingObserved = false
+        while (Date.now() < thinkingDeadline) {
+            try {
+                const session = await api.getSession(sessionId)
+                if (session.thinking) { thinkingObserved = true; break }
+            } catch { /* ignore */ }
+            await new Promise(r => setTimeout(r, 300))
+        }
+
+        if (!thinkingObserved) {
+            // Init prompt didn't start within grace period — proceed anyway
+            return true
+        }
+
+        // Phase 3: wait for thinking=false (init prompt finished)
+        while (Date.now() < deadline) {
+            try {
+                const session = await api.getSession(sessionId)
+                if (!session.thinking) return true
+            } catch { /* ignore */ }
+            await new Promise(r => setTimeout(r, 500))
         }
         return false
     }
