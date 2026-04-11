@@ -2242,6 +2242,10 @@ export class SyncEngine {
         return await this.rpcCall(`${sessionId}:${method}`, params)
     }
 
+    async machineRpcPublic(machineId: string, method: string, params: unknown): Promise<unknown> {
+        return await this.rpcCall(`${machineId}:${method}`, params)
+    }
+
     private async machineRpc(machineId: string, method: string, params: unknown): Promise<unknown> {
         return await this.rpcCall(`${machineId}:${method}`, params)
     }

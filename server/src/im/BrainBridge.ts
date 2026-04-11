@@ -8,7 +8,8 @@
  * Platform-specific behavior is delegated to an IMAdapter.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, writeFile } from 'node:fs'
+import { basename, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import type { SyncEngine, SyncEvent } from '../sync/syncEngine'
 import type { IStore } from '../store/interface'
@@ -1748,10 +1749,41 @@ export class BrainBridge implements IMBridgeCallbacks {
             ? ['all']
             : (explicitAtIds.length > 0 ? explicitAtIds : senderIds ? [...senderIds] : [])
 
-        const mediaRefs = actions.files || []
+        let mediaRefs = actions.files || []
+        // Download remote files from brain's machine to server local /tmp if needed
         if (mediaRefs.length > 0) {
-            const msg = `${new Date().toISOString()} [BrainBridge] Extracted media refs for ${chatId.slice(0, 12)}: ${JSON.stringify(mediaRefs)}\n`
-            try { require('node:fs').appendFileSync('/tmp/yr-media-debug.log', msg) } catch {}
+            const sessionId = this.chatIdToSessionId.get(chatId)
+            const session = sessionId ? this.syncEngine.getSession(sessionId) : null
+            const brainMachineId = (session?.metadata as Record<string, unknown>)?.machineId as string | undefined
+            if (brainMachineId) {
+                const localRefs: string[] = []
+                for (const ref of mediaRefs) {
+                    if (existsSync(ref)) {
+                        localRefs.push(ref)
+                        continue
+                    }
+                    // File not local — fetch from brain's machine via RPC
+                    try {
+                        const result = await this.syncEngine.machineRpcPublic(brainMachineId, 'readAbsoluteFile', { path: ref }) as { success?: boolean; content?: string; error?: string }
+                        if (result?.success && result.content) {
+                            const tmpDir = '/tmp/yr-media-downloads'
+                            mkdirSync(tmpDir, { recursive: true })
+                            const localPath = join(tmpDir, `${Date.now()}-${basename(ref)}`)
+                            const buffer = Buffer.from(result.content, 'base64')
+                            await new Promise<void>((resolve, reject) => writeFile(localPath, buffer, (err) => err ? reject(err) : resolve()))
+                            console.log(`${this.logPrefix} Downloaded remote file ${ref} → ${localPath} (${buffer.length} bytes)`)
+                            localRefs.push(localPath)
+                        } else {
+                            console.warn(`${this.logPrefix} Failed to download ${ref} from machine ${brainMachineId.slice(0, 8)}: ${result?.error || 'unknown'}`)
+                            localRefs.push(ref) // keep original ref, FeishuAdapter will report "not found"
+                        }
+                    } catch (err) {
+                        console.error(`${this.logPrefix} RPC readAbsoluteFile failed for ${ref}:`, err)
+                        localRefs.push(ref)
+                    }
+                }
+                mediaRefs = localRefs
+            }
         }
         const extras = actionsToExtras(actions)
         const reactions = actions.reactions || []
