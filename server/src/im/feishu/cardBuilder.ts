@@ -257,8 +257,8 @@ function parseSectionWithButtons(section: string): FeishuElement[] {
                 elements.push({ tag: 'markdown', content: btnTexts.join('  ') })
             }
         } else if (blockType === 'columns') {
-            // Split on <column> markers
-            const columnParts = blockContent.split(/<column>/i).map(c => c.trim()).filter(Boolean)
+            // Split on <column> markers and strip </column> closing tags
+            const columnParts = blockContent.split(/<column>/i).map(c => c.replace(/<\/column>/gi, '').trim()).filter(Boolean)
             if (columnParts.length > 0) {
                 const columns: FeishuColumn[] = columnParts.map(content => ({
                     tag: 'column',
