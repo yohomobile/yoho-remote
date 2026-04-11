@@ -1748,7 +1748,8 @@ export class BrainBridge implements IMBridgeCallbacks {
 
         const mediaRefs = actions.files || []
         if (mediaRefs.length > 0) {
-            console.log(`${this.logPrefix} Extracted media refs for ${chatId.slice(0, 12)}: ${JSON.stringify(mediaRefs)}`)
+            const msg = `${new Date().toISOString()} [BrainBridge] Extracted media refs for ${chatId.slice(0, 12)}: ${JSON.stringify(mediaRefs)}\n`
+            try { require('node:fs').appendFileSync('/tmp/yr-media-debug.log', msg) } catch {}
         }
         const extras = actionsToExtras(actions)
         const reactions = actions.reactions || []

@@ -9,7 +9,7 @@
  */
 
 import * as lark from '@larksuiteoapi/node-sdk'
-import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync, statSync, appendFileSync } from 'node:fs'
 import { join, basename, extname, resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
@@ -192,16 +192,21 @@ export class FeishuAdapter implements IMAdapter {
         if (mediaRefs) {
             for (const ref of mediaRefs) {
                 try {
-                    console.log(`[FeishuAdapter] Processing media ref: "${ref}" for chat ${chatId.slice(0, 12)}`)
+                    const debugLog = (msg: string) => { try { appendFileSync('/tmp/yr-media-debug.log', `${new Date().toISOString()} ${msg}\n`) } catch {} }
+                    debugLog(`Processing media ref: "${ref}" for chat ${chatId.slice(0, 12)}`)
                     const filePath = this.resolveFilePath(ref)
+                    debugLog(`resolveFilePath("${ref}") → ${filePath}`)
                     if (!filePath) {
                         // resolveFilePath returns null for path traversal attempts or oversized files
+                        debugLog(`REJECTED: resolveFilePath returned null`)
                         console.warn(`[FeishuAdapter] Media file rejected: ${ref}`)
                         await this.sendText(chatId, `[文件无法发送: ${basename(ref)}（路径无效或超过 20MB 限制）]`)
                         continue
                     }
-                    console.log(`[FeishuAdapter] Resolved path: "${filePath}", exists: ${existsSync(filePath)}`)
-                    if (!existsSync(filePath)) {
+                    const fileExists = existsSync(filePath)
+                    debugLog(`existsSync("${filePath}") → ${fileExists}`)
+                    if (!fileExists) {
+                        debugLog(`NOT FOUND: ${filePath}`)
                         console.warn(`[FeishuAdapter] Media file not found: ${ref} → resolved: ${filePath}`)
                         await this.sendText(chatId, `[文件未找到: ${basename(ref)}]`)
                         continue
