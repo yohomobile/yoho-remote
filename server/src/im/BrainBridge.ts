@@ -562,8 +562,14 @@ export class BrainBridge implements IMBridgeCallbacks {
                 // User pinged bot (@K1 alone) to respond to buffered passive messages
                 combined = `[指令] 请回复群内以下消息：\n${combined}`
             } else if (hasPassive && !hasAddressed) {
-                // Pure passive — bot listens and decides whether to respond
-                combined = `[旁听模式] 群里有新消息，有价值就踊跃参与，没必要插话就输出 [silent]：\n${combined}`
+                const uniqueSenders = new Set(messages.map(m => m.senderId))
+                if (uniqueSenders.size > 1) {
+                    // Multiple people talking to each other — observe and stay quiet unless valuable
+                    combined = `[旁听模式] 群里有人在互相聊天，不用插话，输出 [silent]（除非你判断有必要参与）：\n${combined}`
+                } else {
+                    // Single sender — likely talking to the bot; respond normally
+                    combined = `[旁听] 群里有消息，请直接回复：\n${combined}`
+                }
             }
         }
 
