@@ -42,6 +42,7 @@ export function registerBrainTools(
     const { apiClient: api, machineId, brainSessionId } = options
 
     // ===== Helper: wait for session to come online AND finish its init prompt =====
+    // Uses getSessionStatus (includes thinking flag) to detect init prompt completion.
     // Phases:
     //   1. Wait for active=true (session spawned)
     //   2. Wait for thinking=true (init prompt started) — up to 5s grace period
@@ -54,8 +55,8 @@ export function registerBrainTools(
         // Phase 1: wait for active=true
         while (Date.now() < deadline) {
             try {
-                const session = await api.getSession(sessionId)
-                if (session.active) break
+                const status = await api.getSessionStatus(sessionId)
+                if (status.active) break
             } catch { /* not ready yet */ }
             await new Promise(r => setTimeout(r, 500))
         }
@@ -66,8 +67,8 @@ export function registerBrainTools(
         let thinkingObserved = false
         while (Date.now() < thinkingDeadline) {
             try {
-                const session = await api.getSession(sessionId)
-                if (session.thinking) { thinkingObserved = true; break }
+                const status = await api.getSessionStatus(sessionId)
+                if (status.thinking) { thinkingObserved = true; break }
             } catch { /* ignore */ }
             await new Promise(r => setTimeout(r, 300))
         }
@@ -80,8 +81,8 @@ export function registerBrainTools(
         // Phase 3: wait for thinking=false (init prompt finished)
         while (Date.now() < deadline) {
             try {
-                const session = await api.getSession(sessionId)
-                if (!session.thinking) return true
+                const status = await api.getSessionStatus(sessionId)
+                if (!status.thinking) return true
             } catch { /* ignore */ }
             await new Promise(r => setTimeout(r, 500))
         }
