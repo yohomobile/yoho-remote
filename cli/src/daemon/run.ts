@@ -1,4 +1,5 @@
 import fs from 'fs/promises';
+import { existsSync } from 'fs';
 import os from 'os';
 import { spawnSync } from 'child_process';
 
@@ -469,54 +470,41 @@ export async function startDaemon(): Promise<void> {
           }
         })();
 
-        // Check if the agent command is available in PATH before attempting to spawn.
-        // On macOS with launchd, the daemon may have a minimal PATH that excludes user-installed
-        // bins (e.g. ~/.local/bin, npm global). Fall back to a login shell to get the full PATH.
-        let resolvedAgentPath: string | null = null;
-        const whichResult = spawnSync('which', [agentCommand], { encoding: 'utf8' });
-        if (whichResult.status === 0) {
-          resolvedAgentPath = whichResult.stdout.trim();
-        } else if (!isWindows) {
-          // Try via login shell to pick up user's full PATH (handles launchd/service environments)
-          const loginShellResult = spawnSync('sh', ['-lc', `which ${agentCommand}`], { encoding: 'utf8' });
-          logger.debug('[DAEMON RUN] Login shell which result', {
-            status: loginShellResult.status,
-            stdout: loginShellResult.stdout?.trim(),
-            stderr: loginShellResult.stderr?.trim(),
-            error: loginShellResult.error?.message,
-          });
-          if (loginShellResult.status === 0) {
-            resolvedAgentPath = loginShellResult.stdout.trim();
-            // Expand PATH in childEnv so the spawned process can also resolve its dependencies
-            const loginPathResult = spawnSync('sh', ['-lc', 'echo $PATH'], { encoding: 'utf8' });
-            logger.debug('[DAEMON RUN] Login shell PATH result', {
-              status: loginPathResult.status,
-              path: loginPathResult.stdout?.trim(),
-            });
-            if (loginPathResult.status === 0 && loginPathResult.stdout.trim()) {
-              extraEnv = { ...extraEnv, PATH: loginPathResult.stdout.trim() };
-              addLog('env', `Expanded PATH via login shell for agent resolution`, 'success');
-            }
-          } else {
-            // Also try with user's default shell (e.g. zsh) as login shell
-            const userShell = process.env.SHELL ?? '/bin/sh';
-            const zshResult = spawnSync(userShell, ['-lc', `which ${agentCommand}`], { encoding: 'utf8' });
-            logger.debug('[DAEMON RUN] User shell which result', {
-              shell: userShell,
-              status: zshResult.status,
-              stdout: zshResult.stdout?.trim(),
-              stderr: zshResult.stderr?.trim(),
-            });
-            if (zshResult.status === 0) {
-              resolvedAgentPath = zshResult.stdout.trim();
-              const zshPathResult = spawnSync(userShell, ['-lc', 'echo $PATH'], { encoding: 'utf8' });
-              if (zshPathResult.status === 0 && zshPathResult.stdout.trim()) {
-                extraEnv = { ...extraEnv, PATH: zshPathResult.stdout.trim() };
-                addLog('env', `Expanded PATH via ${userShell} login shell for agent resolution`, 'success');
+        // Resolve the agent executable path.
+        // On macOS with launchd the daemon starts with a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin)
+        // that excludes user-installed bins. `which` and login-shell fallbacks are unreliable in
+        // that environment, so we probe well-known install locations directly.
+        const resolvedAgentPath = (() => {
+          const whichResult = spawnSync('which', [agentCommand], { encoding: 'utf8' });
+          if (whichResult.status === 0 && whichResult.stdout.trim()) {
+            return whichResult.stdout.trim();
+          }
+
+          // Probe well-known install locations (covers npm global, homebrew, nvm, volta, etc.)
+          const home = os.homedir();
+          const candidateDirs = [
+            '/usr/local/bin',
+            '/opt/homebrew/bin',
+            `${home}/.npm-global/bin`,
+            `${home}/.local/bin`,
+            `${home}/.volta/bin`,
+            `/usr/bin`,
+          ];
+          for (const dir of candidateDirs) {
+            const candidate = `${dir}/${agentCommand}`;
+            if (existsSync(candidate)) {
+              // Extend PATH so the spawned process can also resolve its dependencies
+              const currentPath = process.env.PATH ?? '';
+              const dirsInPath = new Set(currentPath.split(':').filter(Boolean));
+              if (!dirsInPath.has(dir)) {
+                extraEnv = { ...extraEnv, PATH: `${dir}:${currentPath}` };
               }
+              addLog('env', `Resolved ${agentCommand} via fallback path: ${candidate}`, 'success');
+              return candidate;
             }
           }
-        }
+          return null;
+        })();
 
         if (!resolvedAgentPath) {
           addLog('env', `Agent "${agentCommand}" not found in PATH`, 'error');
