@@ -1589,10 +1589,17 @@ export class FeishuAdapter implements IMAdapter {
 
         // Try building the message first — cards handle their own content splitting
         const probe = buildFeishuMessage(resolvedText, atIds)
-        if (probe.msgType === 'interactive' || probe.msgType === 'text') {
-            // Card or plain text — send as single message
+        if (probe.msgType === 'text') {
+            // Plain text — send as single message
             await this.sendFeishuMessage(chatId, probe.msgType, probe.content, replyToMessageId)
             return
+        }
+        if (probe.msgType === 'interactive') {
+            // Card — send and fall back to post/text if it fails (e.g. invalid card JSON)
+            const msgId = await this.sendFeishuMessage(chatId, probe.msgType, probe.content, replyToMessageId)
+            if (msgId) return
+            // Card send failed — fall through to post format below
+            console.warn(`[FeishuAdapter] Card send failed for ${chatId.slice(0, 12)}, falling back to post format`)
         }
 
         // Post format — chunk if needed
