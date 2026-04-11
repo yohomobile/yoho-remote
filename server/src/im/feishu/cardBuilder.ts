@@ -57,11 +57,24 @@ const V2_UNSUPPORTED_TAGS = new Set(['action', 'note'])
 function sanitizeCardV2(card: Record<string, unknown>): void {
     const elements = (card.body as Record<string, unknown>)?.elements as unknown[]
         ?? card.elements as unknown[]
+    sanitizeElements(elements)
+}
+
+function sanitizeElements(elements: unknown[] | undefined): void {
     if (!Array.isArray(elements)) return
 
     for (let i = elements.length - 1; i >= 0; i--) {
         const el = elements[i] as Record<string, unknown>
         if (!el || typeof el.tag !== 'string') continue
+
+        // Recurse into column_set → columns → elements
+        if (el.tag === 'column_set') {
+            const cols = el.columns as Array<Record<string, unknown>> | undefined
+            if (Array.isArray(cols)) {
+                for (const col of cols) sanitizeElements(col.elements as unknown[] | undefined)
+            }
+        }
+
         if (V2_UNSUPPORTED_TAGS.has(el.tag)) {
             if (el.tag === 'action') {
                 // Convert action buttons to markdown text
