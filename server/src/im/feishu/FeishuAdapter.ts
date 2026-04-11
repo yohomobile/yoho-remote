@@ -269,10 +269,10 @@ export class FeishuAdapter implements IMAdapter {
                     continue
                 }
                 console.log(`[FeishuAdapter] Sending interactive card to ${chatId.slice(0, 12)}`)
-                const msgId = await this.sendFeishuMessage(chatId, 'interactive', cardJson)
+                let cardError = ''
+                const msgId = await this.sendFeishuMessage(chatId, 'interactive', cardJson, undefined, e => { cardError = e })
                 if (!msgId) {
-                    console.error(`[FeishuAdapter] Card send failed for ${chatId.slice(0, 12)}`)
-                    await this.sendText(chatId, '[错误] 卡片发送失败，请检查服务端日志').catch(() => {})
+                    await this.sendText(chatId, `[错误] 卡片发送失败: ${cardError}`).catch(() => {})
                 }
             }
         }
@@ -1576,10 +1576,10 @@ export class FeishuAdapter implements IMAdapter {
             return
         }
         if (probe.msgType === 'interactive') {
-            const msgId = await this.sendFeishuMessage(chatId, probe.msgType, probe.content, replyToMessageId)
+            let cardError = ''
+            const msgId = await this.sendFeishuMessage(chatId, probe.msgType, probe.content, replyToMessageId, e => { cardError = e })
             if (msgId) return
-            console.error(`[FeishuAdapter] Card send failed for ${chatId.slice(0, 12)}`)
-            await this.sendText(chatId, '[错误] 卡片发送失败，请检查服务端日志').catch(() => {})
+            await this.sendText(chatId, `[错误] 卡片发送失败: ${cardError}`).catch(() => {})
             return
         }
 
@@ -1596,7 +1596,7 @@ export class FeishuAdapter implements IMAdapter {
         }
     }
 
-    private async sendFeishuMessage(chatId: string, msgType: string, content: string, replyToMessageId?: string): Promise<string | null> {
+    private async sendFeishuMessage(chatId: string, msgType: string, content: string, replyToMessageId?: string, onError?: (detail: string) => void): Promise<string | null> {
         const url = replyToMessageId
             ? `https://open.feishu.cn/open-apis/im/v1/messages/${replyToMessageId}/reply`
             : FeishuAdapter.SEND_URL
@@ -1606,7 +1606,10 @@ export class FeishuAdapter implements IMAdapter {
 
         const result = await this.callFeishuApi(url, 'POST', body)
         if (!result || result.code !== 0) {
-            console.error(`[FeishuAdapter] sendFeishuMessage API error for ${chatId.slice(0, 12)}: code=${result?.code}, msg=${result?.msg}`)
+            const ext = (result?.error?.details as Array<{ value?: string }> | undefined)?.[0]?.value ?? ''
+            const detail = `code=${result?.code}, msg=${result?.msg}${ext ? `, ext=${ext}` : ''}`
+            console.error(`[FeishuAdapter] sendFeishuMessage API error for ${chatId.slice(0, 12)}: ${detail}`)
+            onError?.(detail)
             return null
         }
         const messageId = result.data?.message_id as string | undefined ?? null
