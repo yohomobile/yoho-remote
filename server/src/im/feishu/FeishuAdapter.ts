@@ -263,17 +263,17 @@ export class FeishuAdapter implements IMAdapter {
         // 4. Send interactive cards (DSL or raw JSON → Feishu card v2)
         if (reply.cards) {
             for (const cardContent of reply.cards) {
-                try {
-                    const cardJson = buildCardJson(cardContent)
-                    if (!cardJson) {
-                        console.warn(`[FeishuAdapter] Card content produced no output, skipping`)
-                        continue
-                    }
-                    console.log(`[FeishuAdapter] Sending interactive card to ${chatId.slice(0, 12)}`)
-                    await this.sendFeishuMessage(chatId, 'interactive', cardJson)
-                } catch (err) {
-                    console.error(`[FeishuAdapter] Failed to send card:`, err)
-                    await this.sendText(chatId, '[卡片发送失败]').catch(() => {})
+                const cardJson = buildCardJson(cardContent)
+                if (!cardJson) {
+                    console.warn(`[FeishuAdapter] Card content produced no output, skipping`)
+                    continue
+                }
+                console.log(`[FeishuAdapter] Sending interactive card to ${chatId.slice(0, 12)}`)
+                const msgId = await this.sendFeishuMessage(chatId, 'interactive', cardJson)
+                if (!msgId && !cardContent.trim().startsWith('{')) {
+                    // Card send failed, fall back to post format with the DSL body text
+                    console.warn(`[FeishuAdapter] Card send failed for ${chatId.slice(0, 12)}, falling back to post format`)
+                    await this.sendPost(chatId, cardContent).catch(() => {})
                 }
             }
         }

@@ -77,7 +77,7 @@ interface FeishuCard {
         title: { content: string; tag: 'plain_text' }
         template: string
     }
-    elements: FeishuElement[]
+    body: { elements: FeishuElement[] }
 }
 
 /**
@@ -126,7 +126,7 @@ function buildFromDsl(input: string): string | null {
         const card: FeishuCard = {
             schema: '2.0',
             config: { wide_screen_mode: true },
-            elements: [],
+            body: { elements: [] },
         }
 
         if (title) {
@@ -150,23 +150,23 @@ function buildFromDsl(input: string): string | null {
 
                 if (hasFooter && i === lastIdx) {
                     // Render last short section as note (footer)
-                    card.elements.push({ tag: 'hr' })
-                    card.elements.push({
+                    card.body.elements.push({ tag: 'hr' })
+                    card.body.elements.push({
                         tag: 'note',
                         elements: [{ tag: 'plain_text', content: section }],
                     })
                 } else {
                     // Parse <buttons> blocks within each section
                     const sectionElements = parseSectionWithButtons(section)
-                    card.elements.push(...sectionElements)
+                    card.body.elements.push(...sectionElements)
                     if (i < lastIdx - (hasFooter ? 1 : 0)) {
-                        card.elements.push({ tag: 'hr' })
+                        card.body.elements.push({ tag: 'hr' })
                     }
                 }
             }
         }
 
-        if (!card.header && card.elements.length === 0) return null
+        if (!card.header && card.body.elements.length === 0) return null
         return JSON.stringify(card)
     } catch (err) {
         console.warn('[cardBuilder] DSL parse error:', err)

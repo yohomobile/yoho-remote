@@ -509,7 +509,7 @@ function buildCardPayload(text: string, atIds?: string[]): { msgType: string; co
     const card: Record<string, unknown> = {
         schema: '2.0',
         config: { wide_screen_mode: true },
-        elements,
+        body: { elements },
     }
 
     // Only add header when there's a real heading extracted from the text
@@ -602,7 +602,7 @@ export function buildStreamingCard(text: string): { msgType: string; content: st
     const card = {
         schema: '2.0',
         config: { wide_screen_mode: true },
-        elements: [{ tag: 'markdown', content: text }],
+        body: { elements: [{ tag: 'markdown', content: text }] },
     }
     return {
         msgType: 'interactive',
