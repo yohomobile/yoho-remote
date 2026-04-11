@@ -47,6 +47,37 @@ const VALID_COLORS = new Set([
     'purple', 'grey', 'wathet', 'turquoise', 'indigo', 'violet', 'carmine',
 ])
 
+// Tags not supported in Feishu card schema v2
+const V2_UNSUPPORTED_TAGS = new Set(['action'])
+
+/**
+ * Sanitize a parsed card object for v2 compatibility.
+ * Converts unsupported elements (e.g. action/buttons) to markdown.
+ */
+function sanitizeCardV2(card: Record<string, unknown>): void {
+    const elements = (card.body as Record<string, unknown>)?.elements as unknown[]
+        ?? card.elements as unknown[]
+    if (!Array.isArray(elements)) return
+
+    for (let i = elements.length - 1; i >= 0; i--) {
+        const el = elements[i] as Record<string, unknown>
+        if (!el || typeof el.tag !== 'string') continue
+        if (V2_UNSUPPORTED_TAGS.has(el.tag)) {
+            // Convert action buttons to markdown text
+            const actions = el.actions as Array<Record<string, unknown>> | undefined
+            if (Array.isArray(actions) && actions.length > 0) {
+                const labels = actions
+                    .map(a => (a.text as Record<string, unknown>)?.content as string || '')
+                    .filter(Boolean)
+                    .map(t => `\`${t}\``)
+                elements[i] = { tag: 'markdown', content: labels.join('  ') }
+            } else {
+                elements.splice(i, 1)
+            }
+        }
+    }
+}
+
 
 type FeishuElement =
     | { tag: 'markdown'; content: string }
@@ -79,11 +110,12 @@ export function buildCardJson(content: string): string | null {
     const trimmed = content.trim()
     if (!trimmed) return null
 
-    // Raw JSON path — validate and return as-is
+    // Raw JSON path — validate and sanitize for card v2 compatibility
     if (trimmed.startsWith('{')) {
         try {
-            JSON.parse(trimmed)
-            return trimmed
+            const card = JSON.parse(trimmed)
+            sanitizeCardV2(card)
+            return JSON.stringify(card)
         } catch {
             console.warn('[cardBuilder] Invalid card JSON, falling back to DSL:', trimmed.slice(0, 80))
         }
