@@ -121,13 +121,9 @@ export function registerBrainTools(
                     return { ...fallback, candidateMachineIds: new Set([requestedMachineId]) }
                 }
             } else {
-                // Auto — expand to workspace group
-                const brainMachine = online.find(m => m.id === machineId)
-                const groupId = brainMachine?.metadata?.workspaceGroupId
-
-                candidates = groupId
-                    ? online.filter(m => m.metadata?.workspaceGroupId === groupId)
-                    : online.filter(m => m.id === machineId)
+                // Auto — pin to brain's own machine so child sessions share the same filesystem
+                // (files created by child sessions must be accessible to brain for <feishu-actions> file refs)
+                candidates = online.filter(m => m.id === machineId)
 
                 if (candidates.length === 0) {
                     // Brain's machine is offline or has no workspaceGroup — no candidates available
