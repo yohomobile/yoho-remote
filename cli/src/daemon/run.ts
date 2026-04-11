@@ -604,8 +604,14 @@ export async function startDaemon(): Promise<void> {
           }
         }
 
+        // Spawn from a local (non-NFS) directory to avoid bun's early getcwd() call
+        // blocking on stale/slow NFS mounts. The actual project directory is passed
+        // via YR_SPAWN_DIRECTORY; runClaude.ts will chdir() to it after bun initializes.
+        const safeSpawnCwd = os.homedir();
+        childEnv['YR_SPAWN_DIRECTORY'] = spawnDirectory;
+
         cliProcess = spawnYohoRemoteCLI(args, {
-          cwd: spawnDirectory,
+          cwd: safeSpawnCwd,
           detached: true,  // Sessions stay alive when daemon stops
           stdio: ['ignore', 'pipe', 'pipe'],  // Capture stdout/stderr for debugging
           env: childEnv
