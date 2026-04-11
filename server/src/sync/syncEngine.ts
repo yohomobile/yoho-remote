@@ -1504,9 +1504,15 @@ export class SyncEngine {
             if (!machine?.active) return
 
             const machineSupportedAgents = machine.supportedAgents
+            const RESUME_WINDOW_MS = 24 * 60 * 60 * 1000 // only resume sessions active within last 24h
             const candidates = Array.from(this.sessions.values()).filter(s => {
                 if (s.active) return false
-                if (!this._dbActiveSessionIds.has(s.id)) return false
+                // Skip sessions explicitly terminated (license block, etc.)
+                if (s.terminationReason) return false
+                // Skip sessions explicitly archived by user/CLI
+                if (s.metadata?.archivedBy) return false
+                // Skip sessions inactive for more than 24 hours (stale)
+                if (Date.now() - s.activeAt > RESUME_WINDOW_MS) return false
                 if (s.metadata?.machineId !== machineId) return false
                 if (s.namespace !== namespace) return false
                 if (!s.metadata?.path) return false
@@ -1522,7 +1528,6 @@ export class SyncEngine {
             console.log(`[auto-resume] Machine ${machineId.slice(0, 8)} online, resuming ${candidates.length} session(s)`)
 
             for (const session of candidates) {
-                this._dbActiveSessionIds.delete(session.id)
                 try {
                     const flavor = session.metadata!.flavor as string
                     const rawId = flavor === 'claude' ? session.metadata?.claudeSessionId : session.metadata?.codexSessionId
