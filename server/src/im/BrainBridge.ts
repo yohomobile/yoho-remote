@@ -586,6 +586,32 @@ export class BrainBridge implements IMBridgeCallbacks {
             }
         } catch (err) {
             console.error(`${this.logPrefix} sendMessage failed for ${chatId.slice(0, 12)}, releasing busy:`, err)
+
+            // FK constraint violation means the session row was deleted from the DB while
+            // our in-memory mapping still references it. Clear the stale mapping and retry
+            // so the next flush creates a fresh session — no error shown to the user.
+            const errCode = (err as Record<string, unknown>)?.code
+            const isForeignKeyViolation = errCode === '23503'
+            if (isForeignKeyViolation) {
+                const staleSessionId = this.chatIdToSessionId.get(chatId)
+                if (staleSessionId) {
+                    console.log(`${this.logPrefix} Session ${staleSessionId.slice(0, 8)} deleted from DB — clearing stale mapping for ${chatId.slice(0, 12)} and retrying`)
+                    this.chatIdToSessionId.delete(chatId)
+                    this.sessionToChatId.delete(staleSessionId)
+                    this.store.deleteFeishuChatSession(chatId).catch(() => {})
+                }
+                state.busy = false
+                this.busySinceAt.delete(chatId)
+                this.persistChatState(chatId)
+                await this.clearThinkingIndicator(chatId)
+                // Retry: state.incoming still has messages since buffer is only cleared on success
+                this.flushIncomingMessages(chatId).catch(retryErr => {
+                    console.error(`${this.logPrefix} Retry after stale-session error failed for ${chatId.slice(0, 12)}:`, retryErr)
+                    this.adapter.sendText(chatId, '⚠️ 消息发送失败，请重试。').catch(() => {})
+                })
+                return
+            }
+
             state.busy = false
             this.busySinceAt.delete(chatId)
             this.persistChatState(chatId)
