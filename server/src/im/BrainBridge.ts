@@ -1747,6 +1747,9 @@ export class BrainBridge implements IMBridgeCallbacks {
             : (explicitAtIds.length > 0 ? explicitAtIds : senderIds ? [...senderIds] : [])
 
         const mediaRefs = actions.files || []
+        if (mediaRefs.length > 0) {
+            console.log(`${this.logPrefix} Extracted media refs for ${chatId.slice(0, 12)}: ${JSON.stringify(mediaRefs)}`)
+        }
         const extras = actionsToExtras(actions)
         const reactions = actions.reactions || []
         const chatType = this.chatIdToChatType.get(chatId)

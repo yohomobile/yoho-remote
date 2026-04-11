@@ -192,6 +192,7 @@ export class FeishuAdapter implements IMAdapter {
         if (mediaRefs) {
             for (const ref of mediaRefs) {
                 try {
+                    console.log(`[FeishuAdapter] Processing media ref: "${ref}" for chat ${chatId.slice(0, 12)}`)
                     const filePath = this.resolveFilePath(ref)
                     if (!filePath) {
                         // resolveFilePath returns null for path traversal attempts or oversized files
@@ -199,8 +200,9 @@ export class FeishuAdapter implements IMAdapter {
                         await this.sendText(chatId, `[文件无法发送: ${basename(ref)}（路径无效或超过 20MB 限制）]`)
                         continue
                     }
+                    console.log(`[FeishuAdapter] Resolved path: "${filePath}", exists: ${existsSync(filePath)}`)
                     if (!existsSync(filePath)) {
-                        console.warn(`[FeishuAdapter] Media file not found: ${ref}`)
+                        console.warn(`[FeishuAdapter] Media file not found: ${ref} → resolved: ${filePath}`)
                         await this.sendText(chatId, `[文件未找到: ${basename(ref)}]`)
                         continue
                     }
