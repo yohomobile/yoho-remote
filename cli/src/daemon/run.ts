@@ -469,9 +469,28 @@ export async function startDaemon(): Promise<void> {
           }
         })();
 
-        // Check if the agent command is available in PATH before attempting to spawn
+        // Check if the agent command is available in PATH before attempting to spawn.
+        // On macOS with launchd, the daemon may have a minimal PATH that excludes user-installed
+        // bins (e.g. ~/.local/bin, npm global). Fall back to a login shell to get the full PATH.
+        let resolvedAgentPath: string | null = null;
         const whichResult = spawnSync('which', [agentCommand], { encoding: 'utf8' });
-        if (whichResult.status !== 0) {
+        if (whichResult.status === 0) {
+          resolvedAgentPath = whichResult.stdout.trim();
+        } else if (!isWindows) {
+          // Try via login shell to pick up user's full PATH (handles launchd/service environments)
+          const loginShellResult = spawnSync('sh', ['-lc', `which ${agentCommand}`], { encoding: 'utf8' });
+          if (loginShellResult.status === 0) {
+            resolvedAgentPath = loginShellResult.stdout.trim();
+            // Expand PATH in childEnv so the spawned process can also resolve its dependencies
+            const loginPathResult = spawnSync('sh', ['-lc', 'echo $PATH'], { encoding: 'utf8' });
+            if (loginPathResult.status === 0 && loginPathResult.stdout.trim()) {
+              extraEnv = { ...extraEnv, PATH: loginPathResult.stdout.trim() };
+              addLog('env', `Expanded PATH via login shell for agent resolution`, 'success');
+            }
+          }
+        }
+
+        if (!resolvedAgentPath) {
           addLog('env', `Agent "${agentCommand}" not found in PATH`, 'error');
           return {
             type: 'error' as const,
