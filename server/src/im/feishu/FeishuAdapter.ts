@@ -15,7 +15,7 @@ import { execSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import type { IStore } from '../../store/interface'
 import type { IMAdapter, IMBridgeCallbacks, IMReply, IMReplyExtra } from '../types'
-import { buildFeishuMessage } from './formatter'
+import { buildFeishuMessage, buildPostPayload } from './formatter'
 import { enrichTextWithDocContent } from './docFetcher'
 import { extractFileContent } from './fileExtractor'
 import { buildCardJson } from './cardBuilder'
@@ -1585,6 +1585,7 @@ export class FeishuAdapter implements IMAdapter {
         }
 
         // Post format — chunk if needed
+        // Use buildPostPayload directly to avoid card re-detection on chunks (e.g. after card fallback)
         const CHUNK_LIMIT = 4000
         const chunks = this.splitTextIntoChunks(resolvedText, CHUNK_LIMIT)
 
@@ -1592,7 +1593,7 @@ export class FeishuAdapter implements IMAdapter {
             const isFirst = ci === 0
             const label = chunks.length > 1 ? `（${ci + 1}/${chunks.length}）\n` : ''
             const chunkText = label + chunks[ci]
-            const { msgType, content } = buildFeishuMessage(chunkText, isFirst ? atIds : undefined)
+            const { msgType, content } = buildPostPayload(chunkText, isFirst ? atIds : undefined)
             await this.sendFeishuMessage(chatId, msgType, content, isFirst ? replyToMessageId : undefined)
         }
     }

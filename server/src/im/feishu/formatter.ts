@@ -540,7 +540,7 @@ function buildCardPayload(text: string, atIds?: string[]): { msgType: string; co
  * Uses native md tag for markdown content — renders inline code, lists, links natively.
  * Falls back to manual paragraph conversion for plain text (no markdown formatting).
  */
-function buildPostPayload(text: string, atIds?: string[]): { msgType: string; content: string } {
+export function buildPostPayload(text: string, atIds?: string[]): { msgType: string; content: string } {
     if (text.length > MAX_POST_LENGTH) {
         text = text.slice(0, MAX_POST_LENGTH) + '\n\n...(内容过长已截断)'
     }
