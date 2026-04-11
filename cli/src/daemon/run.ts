@@ -479,13 +479,41 @@ export async function startDaemon(): Promise<void> {
         } else if (!isWindows) {
           // Try via login shell to pick up user's full PATH (handles launchd/service environments)
           const loginShellResult = spawnSync('sh', ['-lc', `which ${agentCommand}`], { encoding: 'utf8' });
+          logger.debug('[DAEMON RUN] Login shell which result', {
+            status: loginShellResult.status,
+            stdout: loginShellResult.stdout?.trim(),
+            stderr: loginShellResult.stderr?.trim(),
+            error: loginShellResult.error?.message,
+          });
           if (loginShellResult.status === 0) {
             resolvedAgentPath = loginShellResult.stdout.trim();
             // Expand PATH in childEnv so the spawned process can also resolve its dependencies
             const loginPathResult = spawnSync('sh', ['-lc', 'echo $PATH'], { encoding: 'utf8' });
+            logger.debug('[DAEMON RUN] Login shell PATH result', {
+              status: loginPathResult.status,
+              path: loginPathResult.stdout?.trim(),
+            });
             if (loginPathResult.status === 0 && loginPathResult.stdout.trim()) {
               extraEnv = { ...extraEnv, PATH: loginPathResult.stdout.trim() };
               addLog('env', `Expanded PATH via login shell for agent resolution`, 'success');
+            }
+          } else {
+            // Also try with user's default shell (e.g. zsh) as login shell
+            const userShell = process.env.SHELL ?? '/bin/sh';
+            const zshResult = spawnSync(userShell, ['-lc', `which ${agentCommand}`], { encoding: 'utf8' });
+            logger.debug('[DAEMON RUN] User shell which result', {
+              shell: userShell,
+              status: zshResult.status,
+              stdout: zshResult.stdout?.trim(),
+              stderr: zshResult.stderr?.trim(),
+            });
+            if (zshResult.status === 0) {
+              resolvedAgentPath = zshResult.stdout.trim();
+              const zshPathResult = spawnSync(userShell, ['-lc', 'echo $PATH'], { encoding: 'utf8' });
+              if (zshPathResult.status === 0 && zshPathResult.stdout.trim()) {
+                extraEnv = { ...extraEnv, PATH: zshPathResult.stdout.trim() };
+                addLog('env', `Expanded PATH via ${userShell} login shell for agent resolution`, 'success');
+              }
             }
           }
         }
