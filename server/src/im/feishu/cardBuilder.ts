@@ -47,21 +47,12 @@ const VALID_COLORS = new Set([
     'purple', 'grey', 'wathet', 'turquoise', 'indigo', 'violet', 'carmine',
 ])
 
-const VALID_BUTTON_TYPES = new Set(['primary', 'danger', 'default'])
 
 type FeishuElement =
     | { tag: 'markdown'; content: string }
     | { tag: 'hr' }
     | { tag: 'note'; elements: Array<{ tag: 'plain_text'; content: string }> }
-    | { tag: 'action'; actions: FeishuButton[] }
     | { tag: 'column_set'; columns: FeishuColumn[]; flex_mode: string; background_style: string }
-
-interface FeishuButton {
-    tag: 'button'
-    text: { content: string; tag: 'plain_text' }
-    type: string
-    value?: Record<string, string>
-}
 
 interface FeishuColumn {
     tag: 'column'
@@ -212,23 +203,14 @@ function parseSectionWithButtons(section: string): FeishuElement[] {
         const blockContent = match[2]
 
         if (blockType === 'buttons') {
+            // Card v2 no longer supports the 'action' tag — render buttons as styled markdown
             const buttonLines = blockContent.split('\n').map(l => l.trim()).filter(Boolean)
-            const buttons: FeishuButton[] = buttonLines.map(line => {
-                const parts = line.split('|').map(p => p.trim())
-                const text = parts[0] || '按钮'
-                const rawType = parts[1]?.toLowerCase() || 'default'
-                const type = VALID_BUTTON_TYPES.has(rawType) ? rawType : 'default'
-                const value = parts[2] ? { action: parts[2] } : undefined
-                const btn: FeishuButton = {
-                    tag: 'button',
-                    text: { content: text, tag: 'plain_text' },
-                    type,
-                }
-                if (value) btn.value = value
-                return btn
+            const btnTexts = buttonLines.map(line => {
+                const text = line.split('|')[0]?.trim() || '按钮'
+                return `\`${text}\``
             })
-            if (buttons.length > 0) {
-                elements.push({ tag: 'action', actions: buttons })
+            if (btnTexts.length > 0) {
+                elements.push({ tag: 'markdown', content: btnTexts.join('  ') })
             }
         } else if (blockType === 'columns') {
             // Split on <column> markers
