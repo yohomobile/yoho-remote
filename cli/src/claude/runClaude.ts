@@ -64,13 +64,10 @@ export interface StartOptions {
 }
 
 export async function runClaude(options: StartOptions = {}): Promise<void> {
-    // When spawned by the daemon the process starts in a safe local cwd to avoid
-    // bun's startup getcwd() call blocking on NFS. Chdir to the real project dir now.
-    const spawnDirectory = process.env['YR_SPAWN_DIRECTORY'];
-    if (spawnDirectory) {
-        process.chdir(spawnDirectory);
-    }
-    const workingDirectory = process.cwd();
+    // When spawned by the daemon the process starts in a safe local cwd (non-NFS) to avoid
+    // bun's getcwd() blocking on stale/slow NFS mounts. The real project directory is
+    // passed via YR_SPAWN_DIRECTORY — read it directly without chdir to keep cwd on local fs.
+    const workingDirectory = process.env['YR_SPAWN_DIRECTORY'] ?? process.cwd();
     const sessionTag = randomUUID();
     const startedBy = options.startedBy ?? 'terminal';
     const runtimeAgent = extractClaudeAgent(options.claudeArgs);
