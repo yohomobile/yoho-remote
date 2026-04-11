@@ -16,7 +16,6 @@ import { tmpdir } from 'node:os'
 import type { IStore } from '../../store/interface'
 import type { IMAdapter, IMBridgeCallbacks, IMReply, IMReplyExtra } from '../types'
 import { buildFeishuMessage } from './formatter'
-import { textToSpeech } from './tts'
 import { enrichTextWithDocContent } from './docFetcher'
 import { extractFileContent } from './fileExtractor'
 import { buildCardJson } from './cardBuilder'
@@ -186,24 +185,7 @@ export class FeishuAdapter implements IMAdapter {
             // Filter out bot's own ID from @mentions; 'all' (@everyone) passes through
             const filteredAtIds = (atIds || []).filter(id => id === 'all' || id !== this.botOpenId)
 
-            // Short text without markdown → try voice (p2p only)
-            const isShortForVoice = chatType === 'p2p'
-                && textReply.length <= 200
-                && !/```|^\s*[-*+]\s|^\s*\d+\.\s|^\|.+\|/m.test(textReply)
-                && (!mediaRefs || mediaRefs.length === 0)
-
-            let sentAsVoice = false
-            if (isShortForVoice) {
-                console.log(`[FeishuAdapter] Sending voice to ${chatId.slice(0, 12)} (${textReply.length} chars)`)
-                sentAsVoice = await this.sendVoice(chatId, textReply, replyToMessageId)
-            }
-
-            if (!sentAsVoice) {
-                await this.sendPost(chatId, textReply, replyToMessageId, filteredAtIds.length > 0 ? filteredAtIds : undefined)
-            } else if (filteredAtIds.length > 0) {
-                // Voice sent — deliver @mentions via a lightweight notification message
-                await this.sendPost(chatId, '', undefined, filteredAtIds)
-            }
+            await this.sendPost(chatId, textReply, replyToMessageId, filteredAtIds.length > 0 ? filteredAtIds : undefined)
         }
 
         // 2. Send media attachments
@@ -1741,73 +1723,6 @@ export class FeishuAdapter implements IMAdapter {
             return this.extractMessageText(item.msg_type || 'text', item.body.content)
         } catch {
             return null
-        }
-    }
-
-    private async sendVoice(chatId: string, text: string, replyToMessageId?: string): Promise<boolean> {
-        try {
-            // Strip inline markdown for TTS
-            const ttsText = text
-                .replace(/\*\*(.+?)\*\*/g, '$1')
-                .replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '$1')
-                .replace(/~~(.+?)~~/g, '$1')
-                .replace(/`([^`]+)`/g, '$1')
-                .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-                .replace(/^#{1,6}\s+/gm, '')
-            const ttsResult = await textToSpeech(ttsText)
-            if (!ttsResult) return false
-
-            const token = await this.getToken()
-            const form = new FormData()
-            form.append('file_type', 'opus')
-            form.append('file_name', 'voice.opus')
-            form.append('duration', String(ttsResult.durationMs))
-            form.append('file', new Blob([ttsResult.opusBuffer], { type: 'audio/opus' }), 'voice.opus')
-
-            const uploadResp = await fetch('https://open.feishu.cn/open-apis/im/v1/files', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` },
-                body: form,
-            })
-            const uploadResult = await uploadResp.json() as any
-            if (uploadResult.code !== 0) {
-                console.error(`[FeishuAdapter] Voice upload failed: code=${uploadResult.code}, msg=${uploadResult.msg}`)
-                return false
-            }
-            const fileKey = uploadResult.data.file_key
-
-            const content = JSON.stringify({ file_key: fileKey })
-            let sendResp: Response
-            if (replyToMessageId) {
-                sendResp = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${replyToMessageId}/reply`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`,
-                    },
-                    body: JSON.stringify({ msg_type: 'audio', content }),
-                })
-            } else {
-                sendResp = await fetch(FeishuAdapter.SEND_URL, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`,
-                    },
-                    body: JSON.stringify({ receive_id: chatId, msg_type: 'audio', content }),
-                })
-            }
-            const sendResult = await sendResp.json() as { code?: number; msg?: string }
-            if (sendResult.code !== 0) {
-                console.error(`[FeishuAdapter] Voice send API error: code=${sendResult.code}, msg=${sendResult.msg}`)
-                return false
-            }
-
-            console.log(`[FeishuAdapter] Voice sent to ${chatId.slice(0, 12)} (${ttsResult.durationMs}ms audio)`)
-            return true
-        } catch (err) {
-            console.error(`[FeishuAdapter] sendVoice failed:`, err)
-            return false
         }
     }
 
