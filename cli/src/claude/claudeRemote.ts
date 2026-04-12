@@ -10,6 +10,7 @@ import { awaitFileExist } from "@/modules/watcher/awaitFileExist";
 import { systemPrompt } from "./utils/systemPrompt";
 import { PermissionResult } from "./sdk/types";
 import { buildMessageContent } from "./utils/imageMessage";
+import { resolveFileReferences } from "./utils/fileMessage";
 
 // Timeout for waiting on Claude API response (10 minutes)
 const THINKING_TIMEOUT_MS = 10 * 60 * 1000;
@@ -179,7 +180,8 @@ export async function claudeRemote(opts: {
 
     // Push initial message with image support
     let messages = new PushableAsyncIterable<SDKUserMessage>();
-    const initialContent = await buildMessageContent(initial.message, opts.path);
+    const initialResolved = await resolveFileReferences(initial.message, opts.path);
+    const initialContent = await buildMessageContent(initialResolved, opts.path);
     messages.push({
         type: 'user',
         message: {
@@ -314,7 +316,8 @@ export async function claudeRemote(opts: {
                 }
                 mode = next.mode;
                 turnStartTime = Date.now(); // Reset turn timer
-                const nextContent = await buildMessageContent(next.message, opts.path);
+                const nextResolved = await resolveFileReferences(next.message, opts.path);
+                const nextContent = await buildMessageContent(nextResolved, opts.path);
                 messages.push({ type: 'user', message: { role: 'user', content: nextContent } });
                 resetThinkingTimeout(); // Restart timeout after sending new message
             }

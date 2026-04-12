@@ -17,7 +17,6 @@ import type { IStore } from '../../store/interface'
 import type { IMAdapter, IMBridgeCallbacks, IMReply, IMReplyExtra } from '../types'
 import { buildFeishuMessage, buildPostPayload } from './formatter'
 import { enrichTextWithDocContent } from './docFetcher'
-import { extractFileContent } from './fileExtractor'
 import { buildCardJson } from './cardBuilder'
 import { buildFeishuBrainInitPrompt } from '../../web/prompts/initPrompt'
 import { getConfiguration } from '../../configuration'
@@ -1100,18 +1099,7 @@ export class FeishuAdapter implements IMAdapter {
             const serverPath = `server-uploads/${uploadSessionId}/${safeName}`
             console.log(`[FeishuAdapter] Downloaded file: ${serverPath} (${buffer.length} bytes)`)
 
-            // Try to extract readable content from the file
-            try {
-                const extracted = await extractFileContent(safeName, buffer)
-                if (extracted) {
-                    console.log(`[FeishuAdapter] Extracted content from ${safeName} (${extracted.length} chars)`)
-                    return extracted
-                }
-            } catch (err) {
-                console.warn(`[FeishuAdapter] Content extraction failed for ${safeName}:`, err)
-            }
-
-            return `[文件: ${safeName}（内容提取失败，文件路径：${serverPath}）]`
+            return `[File: ${serverPath}]`
         } catch (err) {
             console.error('[FeishuAdapter] handleFileMessage failed:', err)
             return null
