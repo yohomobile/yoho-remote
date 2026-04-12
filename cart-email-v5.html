@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your cart is waiting</title>
+    <style>
+        @media only screen and (max-width: 600px) {
+            .wrapper { padding: 20px 16px !important; }
+            .container { border-radius: 12px !important; }
+            .header { padding: 36px 24px !important; }
+            .content { padding: 32px 24px !important; }
+            .h1 { font-size: 22px !important; }
+            .button { width: 100% !important; padding: 16px 24px !important; box-sizing: border-box !important; }
+            .coupon-box { padding: 24px !important; }
+        }
+    </style>
+</head>
+<body style="margin: 0; padding: 0; background-color: #FAFAFA; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+
+
+    <!-- Wrapper -->
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #FAFAFA;">
+        <tr>
+            <td class="wrapper" style="padding: 32px 20px;">
+
+                <!-- Container -->
+                <table role="presentation" class="container" width="100%" max-width="560" cellspacing="0" cellpadding="0" border="0" style="max-width: 560px; margin: 0 auto; background-color: #FFFFFF; border-radius: 16px; overflow: hidden; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);">
+
+                    <!-- Logo Header -->
+                    <tr>
+                        <td class="header" style="padding: 48px 40px 32px; text-align: center; background: #FFFFFF;">
+                            <!-- Yoho Logo Base64 -->
+                            <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAScAAAB2CAYAAACK/1WnAAAACXBIWXMAAAsTAAALEwEAmpwYAAAKUGlUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPD94cGFja2V0IGJlZ2luPSLvu78iIGlkPSJXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQiPz4gPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iQWRvYmUgWE1QIENvcmUgOS4xLWMwMDIgNzkuYjdjNjRjY2Y5LCAyMDI0LzA3LzE2LTEyOjM5OjA0ICAgICAgICAiPiA8cmRmOlJERiB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRmLXN5bnRheC1ucyMiPiA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RFdnQ9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZUV2ZW50IyIgeG1sbnM6c3RSZWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZVJlZiMiIHhtbG5zOmRjPSJodHRwOi8vcHVybC5vcmcvZGMvZWxlbWVudHMvMS4xLyIgeG1sbnM6cGhvdG9zaG9wPSJodHRwOi8vbnMuYWRvYmUuY29tL3Bob3Rvc2hvcC8xLjAvIiB4bWxuczp0aWZmPSJodHRwOi8vbnMuYWRvYmUuY29tL3RpZmYvMS4wLyIgeG1sbnM6ZXhpZj0iaHR0cDovL25zLmFkb2JlLmNvbS9leGlmLzEuMC8iIHhtbG5zOnhtcD0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wLyIgeG1wTU06RG9jdW1lbnRJRD0iYWRvYmU6ZG9jaWQ6cGhvdG9zaG9wOjViM2U2MTRiLWY5ZGQtZGM0NS04OGY5LTJhODQ5YWVmMTUzNCIgeG1wTU06SW5zdGFuY2VJRD0ieG1wLmlpZDo2NDFkNTNiOC00MTJlLTRmYTYtOTNiMy1jMzZlMmFkYmNiOTAiIHhtcE1NOk9yaWdpbmFsRG9jdW1lbnRJRD0iNTVFNTdDRjA5MzQ5NTdGRkU0NTM5MTY1NDkxREZERDkiIGRjOmZvcm1hdD0iaW1hZ2UvcG5nIiBwaG90b3Nob3A6Q29sb3JNb2RlPSIzIiB0aWZmOkltYWdlV2lkdGg9IjY4OCIgdGlmZjpJbWFnZUxlbmd0aD0iMTYwMCIgdGlmZjpQaG90b21ldHJpY0ludGVycHJldGF0aW9uPSIyIiB0aWZmOlNhbXBsZXNQZXJQaXhlbD0iMyIgdGlmZjpYUmVzb2x1dGlvbj0iMS8xIiB0aWZmOllSZXNvbHV0aW9uPSIxLzEiIHRpZmY6UmVzb2x1dGlvblVuaXQ9IjEiIGV4aWY6RXhpZlZlcnNpb249IjAyMzEiIGV4aWY6Q29sb3JTcGFjZT0iNjU1MzUiIGV4aWY6UGl4ZWxYRGltZW5zaW9uPSI2ODgiIGV4aWY6UGl4ZWxZRGltZW5zaW9uPSIxNjAwIiB4bXA6Q3JlYXRlRGF0ZT0iMjAyNS0wMi0yNFQxNTo1MjoyNSswODowMCIgeG1wOk1vZGlmeURhdGU9IjIwMjUtMDItMjRUMjI6MDU6MDYrMDg6MDAiIHhtcDpNZXRhZGF0YURhdGU9IjIwMjUtMDItMjRUMjI6MDU6MDYrMDg6MDAiPiA8eG1wTU06SGlzdG9yeT4gPHJkZjpTZXE+IDxyZGY6bGkgc3RFdnQ6YWN0aW9uPSJzYXZlZCIgc3RFdnQ6aW5zdGFuY2VJRD0ieG1wLmlpZDozNGM0ZWQ2MC0wMTY5LTQ5YjctYmVhYS03MzliYjJkNzg2MTkiIHN0RXZ0OndoZW49IjIwMjUtMDItMjRUMjI6MDU6MDYrMDg6MDAiIHN0RXZ0OnNvZnR3YXJlQWdlbnQ9IkFkb2JlIFBob3Rvc2hvcCAyNi4wIChNYWNpbnRvc2gpIiBzdEV2dDpjaGFuZ2VkPSIvIi8+IDxyZGY6bGkgc3RFdnQ6YWN0aW9uPSJjb252ZXJ0ZWQiIHN0RXZ0OnBhcmFtZXRlcnM9ImZyb20gaW1hZ2UvanBlZyB0byBpbWFnZS9wbmciLz4gPHJkZjpsaSBzdEV2dDphY3Rpb249ImRlcml2ZWQiIHN0RXZ0OnBhcmFtZXRlcnM9ImNvbnZlcnRlZCBmcm9tIGltYWdlL2pwZWcgdG8gaW1hZ2UvcG5nIi8+IDxyZGY6bGkgc3RFdnQ6YWN0aW9uPSJzYXZlZCIgc3RFdnQ6aW5zdGFuY2VJRD0ieG1wLmlpZDo2NDFkNTNiOC00MTJlLTRmYTYtOTNiMy1jMzZlMmFkYmNiOTAiIHN0RXZ0OndoZW49IjIwMjUtMDItMjRUMjI6MDU6MDYrMDg6MDAiIHN0RXZ0OnNvZnR3YXJlQWdlbnQ9IkFkb2JlIFBob3Rvc2hvcCAyNi4wIChNYWNpbnRvc2gpIiBzdEV2dDpjaGFuZ2VkPSIvIi8+IDwvcmRmOlNlcT4gPC94bXBNTTpIaXN0b3J5PiA8eG1wTU06RGVyaXZlZEZyb20gc3RSZWY6aW5zdGFuY2VJRD0ieG1wLmlpZDozNGM0ZWQ2MC0wMTY5LTQ5YjctYmVhYS03MzliYjJkNzg2MTkiIHN0UmVmOmRvY3VtZW50SUQ9IjU1RTU3Q0YwOTM0OTU3RkZFNDUzOTE2NTQ5MURGREQ5IiBzdFJlZjpvcmlnaW5hbERvY3VtZW50SUQ9IjU1RTU3Q0YwOTM0OTU3RkZFNDUzOTE2NTQ5MURGREQ5Ii8+IDxwaG90b3Nob3A6VGV4dExheWVycz4gPHJkZjpCYWc+IDxyZGY6bGkgcGhvdG9zaG9wOkxheWVyTmFtZT0iQXNpYSdzIGxlYWRpbmcgZVNJTSBicmFuZCIgcGhvdG9zaG9wOkxheWVyVGV4dD0iQXNpYSdzIGxlYWRpbmcgZVNJTSBicmFuZCIvPiA8cmRmOmxpIHBob3Rvc2hvcDpMYXllck5hbWU9IkFzaWEncyBsZWFkaW5nIGVTSU0gYnJhbmQiIHBob3Rvc2hvcDpMYXllclRleHQ9IkFzaWEncyBsZWFkaW5nIGVTSU0gYnJhbmQiLz4gPC9yZGY6QmFnPiA8L3Bob3Rvc2hvcDpUZXh0TGF5ZXJzPiA8dGlmZjpCaXRzUGVyU2FtcGxlPiA8cmRmOlNlcT4gPHJkZjpsaT44PC9yZGY6bGk+IDxyZGY6bGk+ODwvcmRmOmxpPiA8cmRmOmxpPjg8L3JkZjpsaT4gPC9yZGY6U2VxPiA8L3RpZmY6Qml0c1BlclNhbXBsZT4gPC9yZGY6RGVzY3JpcHRpb24+IDwvcmRmOlJERj4gPC94OnhtcG1ldGE+IDw/eHBhY2tldCBlbmQ9InIi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" alt="yoho" width="140" style="display: block; margin: 0 auto; border: 0;">
+                            <!-- Orange Accent Line -->
+                            <div style="width: 40px; height: 3px; background: linear-gradient(90deg, #FF6B35, #FF8C42); border-radius: 2px; margin: 20px auto 0;"></div>
+                        </td>
+                    </tr>
+
+                    <!-- Hero Section -->
+                    <tr>
+                        <td style="padding: 0 40px 32px; text-align: center;">
+                            <!-- Shopping Cart Icon with Orange Circle -->
+                            <div style="width: 80px; height: 80px; background: linear-gradient(135deg, #FFF5F0 0%, #FFEEE5 100%); border-radius: 50%; margin: 0 auto 20px; display: inline-block; line-height: 80px; text-align: center; border: 2px solid #FFD4C4;">
+                                <span style="font-size: 36px;">🛒</span>
+                            </div>
+
+                            <h1 class="h1" style="margin: 0; color: #1A1A1A; font-size: 26px; font-weight: 700; line-height: 1.3;">Your cart misses you</h1>
+
+                            <p style="margin: 12px 0 0; color: #666666; font-size: 16px; line-height: 1.6;">
+                                Hi <span style="color: #FF6B35; font-weight: 600;">richard2900@outlook.com</span>
+                            </p>
+                        </td>
+                    </tr>
+
+                    <!-- Content -->
+                    <tr>
+                        <td class="content" style="padding: 0 40px 40px;">
+
+                            <p style="margin: 0 0 28px; color: #4A4A4A; font-size: 16px; line-height: 1.7; text-align: center;">
+                                You left something behind! Complete your checkout now and enjoy exclusive savings.
+                            </p>
+
+                            <!-- Coupon Card with Brand Color Accents -->
+                            <div class="coupon-box" style="background: linear-gradient(135deg, #FFF8F5 0%, #FFF0EB 100%); border-radius: 16px; padding: 32px; text-align: center; margin: 32px 0; position: relative; overflow: hidden;">
+
+                                <!-- Decorative Orange Dots -->
+                                <div style="position: absolute; top: 12px; right: 12px; width: 8px; height: 8px; background: #FF8C42; border-radius: 50%; opacity: 0.5;"></div>
+                                <div style="position: absolute; bottom: 16px; left: 16px; width: 6px; height: 6px; background: #FF6B35; border-radius: 50%; opacity: 0.4;"></div>
+
+                                <p style="margin: 0 0 8px; color: #FF6B35; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px;">Your Exclusive Code</p>
+
+                                <!-- Code Box with Orange Border -->
+                                <div style="background: #FFFFFF; border: 2px dashed #FF8C42; border-radius: 12px; padding: 20px 32px; margin: 20px 0; display: inline-block; min-width: 180px; box-shadow: 0 2px 8px rgba(255, 107, 53, 0.1);">
+                                    <span style="color: #FF6B35; font-size: 32px; font-weight: 800; letter-spacing: 4px;">YOHO2025</span>
+                                </div>
+
+                                <p style="margin: 16px 0 0; color: #1A1A1A; font-size: 20px; font-weight: 700;">10% off your order</p>
+
+                                <p style="margin: 8px 0 0; color: #999999; font-size: 13px;">
+                                    <span style="color: #FF8C42;">⏱</span> Limited time offer • Expires in 48 hours
+                                </p>
+                            </div>
+
+                            <!-- Primary CTA -->
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin: 32px 0;">
+                                <tr>
+                                    <td style="text-align: center;">
+                                        <a href="#" class="button" style="display: inline-block; background: linear-gradient(135deg, #FF6B35 0%, #FF8C42 100%); color: #FFFFFF; text-decoration: none; padding: 18px 48px; border-radius: 50px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 16px rgba(255, 107, 53, 0.35);">
+                                            Continue to Checkout →
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Divider with Orange Accent -->
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin: 36px 0;">
+                                <tr>
+                                    <td style="height: 1px; background: #E8E8E8;"></td>
+                                </tr>
+                                <tr>
+                                    <td style="text-align: center; padding-top: 8px;">
+                                        <div style="width: 24px; height: 3px; background: #FF8C42; border-radius: 2px; margin: 0 auto;"></div>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Help Section with Orange Left Border -->
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background: #F8F9FA; border-radius: 12px; border-left: 4px solid #FF8C42;">
+                                <tr>
+                                    <td style="padding: 24px;">
+                                        <p style="margin: 0 0 8px; color: #1A1A1A; font-size: 15px; font-weight: 600;">
+                                            <span style="color: #FF8C42; margin-right: 6px;">💬</span>Need help with checkout?
+                                        </p>
+                                        <p style="margin: 0 0 12px; color: #666666; font-size: 14px; line-height: 1.6;">If you experienced any issues, let us know and we'll fix it.</p>
+                                        <a href="#" style="color: #FF6B35; text-decoration: none; font-size: 14px; font-weight: 600;">Report an issue →</a>
+                                    </td>
+                                </tr>
+                            </table>
+
+                        </td>
+                    </tr>
+
+
+                </table>
+
+                <!-- Footer -->
+                <table role="presentation" width="100%" max-width="560" cellspacing="0" cellpadding="0" border="0" style="max-width: 560px; margin: 24px auto 0;">
+                    <tr>
+                        <td style="text-align: center; padding: 0 20px;">
+                            <p style="margin: 0 0 8px; color: #666666; font-size: 14px; font-weight: 600;">Yoho Mobile</p>
+                            <p style="margin: 0; color: #999999; font-size: 12px; line-height: 1.6;">
+                                Stay connected, wherever you go
+                            </p>
+                            <p style="margin: 16px 0 0; color: #BBBBBB; font-size: 11px;">
+                                Questions? <a href="mailto:support@yohomobile.com" style="color: #FF8C42; text-decoration: none;">support@yohomobile.com</a>
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+
+            </td>
+        </tr>
+    </table>
+
+</body>
+</html>
