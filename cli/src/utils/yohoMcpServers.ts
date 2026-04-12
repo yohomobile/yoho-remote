@@ -136,6 +136,7 @@ export async function getYohoAuxMcpServers(flavor: 'claude' | 'codex', options?:
         ?? await resolveProjectRepoRoot('src/mcp/stdio.ts', ['YohoVault', 'yoho-vault', 'YohoMemory', 'yoho-memory'], options)
         ?? resolveRepoRoot(`${homeDir}/happy/yoho-memory`, 'src/mcp/stdio.ts');
     const vaultLocalPath = vaultRepoRoot ? join(vaultRepoRoot, 'src/mcp/stdio.ts') : null;
+    const skillLocalPath = vaultRepoRoot ? join(vaultRepoRoot, 'src/mcp/skill-stdio.ts') : null;
 
     const result: Record<string, YohoMcpServerConfig> = {};
 
@@ -146,6 +147,14 @@ export async function getYohoAuxMcpServers(flavor: 'claude' | 'codex', options?:
             cwd: vaultRepoRoot ?? `${homeDir}/happy/yoho-memory`,
             env,
         };
+        if (skillLocalPath && existsSync(skillLocalPath)) {
+            result['skill'] = {
+                command: 'bun',
+                args: ['run', skillLocalPath],
+                cwd: vaultRepoRoot ?? `${homeDir}/happy/yoho-memory`,
+                env,
+            };
+        }
     } else if (flavor === 'claude') {
         const host = deriveAuxMcpHost();
         if (host) {

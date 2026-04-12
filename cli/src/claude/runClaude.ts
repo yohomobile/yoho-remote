@@ -288,6 +288,13 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
             'mcp__yoho-vault__skill_update',
             'mcp__yoho-vault__skill_discover',
             'mcp__yoho-vault__skill_import',
+            'mcp__skill__search',
+            'mcp__skill__get',
+            'mcp__skill__list',
+            'mcp__skill__save',
+            'mcp__skill__update',
+            'mcp__skill__discover',
+            'mcp__skill__import',
         ]
         : undefined; // Track current allowed tools
     let currentDisallowedTools: string[] | undefined = (sessionSource === 'openclaw' || sessionSource === 'brain') ? ['AskUserQuestion'] : undefined;
@@ -529,6 +536,13 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 'mcp__yoho-vault__skill_update',
                 'mcp__yoho-vault__skill_discover',
                 'mcp__yoho-vault__skill_import',
+                'mcp__skill__search',
+                'mcp__skill__get',
+                'mcp__skill__list',
+                'mcp__skill__save',
+                'mcp__skill__update',
+                'mcp__skill__discover',
+                'mcp__skill__import',
             ]
             : [
                 ...yohoRemoteServer.toolNames.map(toolName => `mcp__yoho_remote__${toolName}`),
@@ -545,6 +559,13 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 'mcp__yoho-vault__skill_update',
                 'mcp__yoho-vault__skill_discover',
                 'mcp__yoho-vault__skill_import',
+                'mcp__skill__search',
+                'mcp__skill__get',
+                'mcp__skill__list',
+                'mcp__skill__save',
+                'mcp__skill__update',
+                'mcp__skill__discover',
+                'mcp__skill__import',
             ],
         onModeChange: (newMode) => {
             session.sendSessionEvent({ type: 'switch', mode: newMode });

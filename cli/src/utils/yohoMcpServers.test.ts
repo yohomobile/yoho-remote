@@ -11,14 +11,14 @@ describe('getYohoAuxMcpServers', () => {
     it('returns correct server names for Claude', async () => {
         const servers = await getYohoAuxMcpServers('claude');
         for (const key of Object.keys(servers)) {
-            expect(['yoho-vault']).toContain(key);
+            expect(['yoho-vault', 'skill']).toContain(key);
         }
     });
 
     it('returns correct server names for Codex', async () => {
         const servers = await getYohoAuxMcpServers('codex');
         for (const key of Object.keys(servers)) {
-            expect(['yoho_vault']).toContain(key);
+            expect(['yoho_vault', 'skill']).toContain(key);
         }
     });
 
