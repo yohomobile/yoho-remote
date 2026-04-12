@@ -845,6 +845,13 @@ export default function SettingsPage() {
         setSelectedSharedProjectMachineId(sharedProjectMachines[0]?.id ?? null)
     }, [selectedSharedProjectMachineId, sharedProjectMachines])
 
+    // Default to 'machine' scope when no workspace groups exist
+    useEffect(() => {
+        if (!hasWorkspaceGroups) {
+            setProjectScope('machine')
+        }
+    }, [hasWorkspaceGroups])
+
     useEffect(() => {
         setShowAddProject(false)
         setEditingProject(null)
@@ -852,16 +859,6 @@ export default function SettingsPage() {
     }, [projectScope, selectedLocalProjectMachineId, selectedSharedProjectMachineId])
 
     // Projects
-    // Simple mode: no workspace groups → fetch all org projects without machine filter
-    const { data: allProjectsData, isLoading: allProjectsLoading } = useQuery({
-        queryKey: ['projects', currentOrgId, 'all'],
-        queryFn: async () => {
-            if (!api) throw new Error('API unavailable')
-            return await api.getProjects(currentOrgId)
-        },
-        enabled: Boolean(api && !hasWorkspaceGroups)
-    })
-
     const { data: sharedProjectsData, isLoading: sharedProjectsLoading } = useQuery({
         queryKey: ['projects', currentOrgId, 'shared', selectedSharedProjectMachineId],
         queryFn: async () => {
@@ -869,7 +866,7 @@ export default function SettingsPage() {
             if (!selectedSharedProjectMachineId) return { projects: [] }
             return await api.getProjects(currentOrgId, selectedSharedProjectMachineId)
         },
-        enabled: Boolean(api && hasWorkspaceGroups && selectedSharedProjectMachineId)
+        enabled: Boolean(api && selectedSharedProjectMachineId)
     })
 
     const { data: machineProjectsData, isLoading: machineProjectsLoading } = useQuery({
@@ -879,7 +876,7 @@ export default function SettingsPage() {
             if (!selectedLocalProjectMachineId) return { projects: [] }
             return await api.getProjects(currentOrgId, selectedLocalProjectMachineId)
         },
-        enabled: Boolean(api && hasWorkspaceGroups && selectedLocalProjectMachineId)
+        enabled: Boolean(api && selectedLocalProjectMachineId)
     })
 
     const sharedProjects = useMemo(() => {
@@ -896,41 +893,30 @@ export default function SettingsPage() {
     }, [machineProjectsData, selectedLocalProjectMachineId])
 
     const projects = useMemo(() => {
-        if (!hasWorkspaceGroups) {
-            return Array.isArray(allProjectsData?.projects) ? allProjectsData.projects : []
-        }
         return projectScope === 'shared' ? sharedProjects : machineProjects
-    }, [hasWorkspaceGroups, allProjectsData, machineProjects, projectScope, sharedProjects])
+    }, [machineProjects, projectScope, sharedProjects])
 
-    const projectsLoading = !hasWorkspaceGroups
-        ? allProjectsLoading
-        : projectScope === 'shared'
-            ? Boolean(selectedSharedProjectMachineId) && sharedProjectsLoading
-            : Boolean(selectedLocalProjectMachineId) && machineProjectsLoading
+    const projectsLoading = projectScope === 'shared'
+        ? Boolean(selectedSharedProjectMachineId) && sharedProjectsLoading
+        : Boolean(selectedLocalProjectMachineId) && machineProjectsLoading
 
-    const canAddProject = !hasWorkspaceGroups
-        ? true
-        : projectScope === 'shared'
-            ? Boolean(getMachineWorkspaceGroupId(selectedSharedProjectMachine))
-            : Boolean(selectedLocalProjectMachineId)
-    const projectSectionDescription = !hasWorkspaceGroups
-        ? 'Manage project paths for your organization'
-        : projectScope === 'shared'
-            ? selectedSharedProjectMachine && getMachineWorkspaceGroupId(selectedSharedProjectMachine)
-                ? `Paths shared with workspace group ${getMachineWorkspaceGroupId(selectedSharedProjectMachine)}`
-                : 'Select a machine with a workspace group to manage shared paths'
-            : selectedLocalProjectMachine
-                ? `Paths stored only on ${getMachineTitle(selectedLocalProjectMachine)}`
-                : 'Select a machine to manage local-only project paths'
-    const projectEmptyState = !hasWorkspaceGroups
-        ? 'No projects saved yet. Add your first project.'
-        : projectScope === 'shared'
-            ? selectedSharedProjectMachine && getMachineWorkspaceGroupId(selectedSharedProjectMachine)
-                ? `No shared projects saved for workspace group ${getMachineWorkspaceGroupId(selectedSharedProjectMachine)} yet.`
-                : 'Configure a workspace group on at least one machine first.'
-            : selectedLocalProjectMachine
-                ? `No local projects saved for ${getMachineTitle(selectedLocalProjectMachine)} yet. Standalone machines like a MacBook should create their own projects here.`
-                : 'Select a machine first.'
+    const canAddProject = projectScope === 'shared'
+        ? Boolean(getMachineWorkspaceGroupId(selectedSharedProjectMachine))
+        : Boolean(selectedLocalProjectMachineId)
+    const projectSectionDescription = projectScope === 'shared'
+        ? selectedSharedProjectMachine && getMachineWorkspaceGroupId(selectedSharedProjectMachine)
+            ? `Paths shared with workspace group ${getMachineWorkspaceGroupId(selectedSharedProjectMachine)}`
+            : 'Select a machine with a workspace group to manage shared paths'
+        : selectedLocalProjectMachine
+            ? `Paths stored only on ${getMachineTitle(selectedLocalProjectMachine)}`
+            : 'Select a machine to manage local-only project paths'
+    const projectEmptyState = projectScope === 'shared'
+        ? selectedSharedProjectMachine && getMachineWorkspaceGroupId(selectedSharedProjectMachine)
+            ? `No shared projects saved for workspace group ${getMachineWorkspaceGroupId(selectedSharedProjectMachine)} yet.`
+            : 'Configure a workspace group on at least one machine first.'
+        : selectedLocalProjectMachine
+            ? `No local projects saved for ${getMachineTitle(selectedLocalProjectMachine)} yet.`
+            : 'Select a machine first.'
 
     const addProjectMutation = useMutation({
         mutationFn: async (data: ProjectFormData) => {
@@ -1620,21 +1606,21 @@ export default function SettingsPage() {
                                                 className="flex items-center gap-1 px-2 py-1 text-xs font-medium rounded bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90 transition-opacity disabled:opacity-50"
                                             >
                                                 <PlusIcon className="w-3 h-3" />
-                                                {!hasWorkspaceGroups ? 'Add' : projectScope === 'shared' ? 'Add Shared' : 'Add Local'}
+                                                {projectScope === 'shared' ? 'Add Shared' : 'Add Local'}
                                             </button>
                                         </div>
                                     )}
                                 </div>
-                                {hasWorkspaceGroups && (
-                                    <div className="px-3 py-2.5 border-b border-[var(--app-divider)] space-y-2">
+                                <div className="px-3 py-2.5 border-b border-[var(--app-divider)] space-y-2">
                                         <div className="inline-flex rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)]/70 p-1">
                                             <button
                                                 type="button"
                                                 onClick={() => setProjectScope('shared')}
+                                                disabled={sharedProjectMachines.length === 0}
                                                 className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
                                                     projectScope === 'shared'
                                                         ? 'bg-[var(--app-button)] text-[var(--app-button-text)]'
-                                                        : 'text-[var(--app-hint)] hover:text-[var(--app-fg)]'
+                                                        : 'text-[var(--app-hint)] hover:text-[var(--app-fg)] disabled:opacity-40 disabled:cursor-not-allowed'
                                                 }`}
                                             >
                                                 Org Shared
@@ -1697,8 +1683,7 @@ export default function SettingsPage() {
                                                 </div>
                                             </div>
                                         )}
-                                    </div>
-                                )}
+                                </div>
                                 {showAddProject && (
                                     <ProjectForm
                                         scope={projectScope}
@@ -1756,7 +1741,7 @@ export default function SettingsPage() {
                                                         <div className="min-w-0 flex-1">
                                                             <div className="text-sm font-medium truncate">{project.name}</div>
                                                             <div className="text-xs text-[var(--app-hint)] font-mono truncate mt-0.5">{project.path}</div>
-                                                            {hasWorkspaceGroups && (
+                                                            {(
                                                                 <>
                                                                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                                                                         {(() => {
