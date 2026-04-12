@@ -565,11 +565,11 @@ export class BrainBridge implements IMBridgeCallbacks {
             } else if (hasPassive && !hasAddressed) {
                 const uniqueSenders = new Set(messages.map(m => m.senderId))
                 if (uniqueSenders.size > 1) {
-                    // Multiple people talking to each other — observe and stay quiet unless valuable
-                    combined = `[旁听模式] 群里有人在互相聊天，不用插话，输出 [silent]（除非你判断有必要参与）：\n${combined}`
+                    // Multiple people chatting — let LLM decide engagement level
+                    combined = `[群聊] 以下是群里的新消息，根据内容决定参与方式（回复/表情/沉默）：\n${combined}`
                 } else {
-                    // Single sender — likely talking to the bot; respond normally
-                    combined = `[旁听] 群里有消息，请直接回复：\n${combined}`
+                    // Single sender without @ — likely talking to the bot
+                    combined = `[群聊] 群里有消息（对方没有@你，但可能在跟你说话）：\n${combined}`
                 }
             }
         }
