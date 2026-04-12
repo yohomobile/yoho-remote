@@ -197,11 +197,7 @@ export function NewSession(props: {
         [machineId, projects]
     )
     const workspaceSharedProjects = useMemo(
-        () => projects.filter((project) => project.machineId === null && Boolean(project.workspaceGroupId)),
-        [projects]
-    )
-    const globalSharedProjects = useMemo(
-        () => projects.filter((project) => project.machineId === null && !project.workspaceGroupId),
+        () => projects.filter((project) => project.machineId === null),
         [projects]
     )
 
@@ -218,10 +214,7 @@ export function NewSession(props: {
                 ? `Machine local to ${getMachineTitle(currentMachine)}`
                 : 'Machine local project'
         }
-        if (selectedProject.workspaceGroupId) {
-            return `Org shared · ${selectedProject.workspaceGroupId}`
-        }
-        return 'Global shared project (legacy)'
+        return `Org shared · ${selectedProject.workspaceGroupId ?? 'default'}`
     }, [currentMachine, selectedProject, hasWorkspaceGroups])
 
     // Initialize with saved machine or first available
@@ -409,15 +402,6 @@ export function NewSession(props: {
                                     {workspaceSharedProjects.length > 0 ? (
                                         <optgroup label={currentMachineWorkspaceGroupId ? `Org Shared · ${currentMachineWorkspaceGroupId}` : 'Org Shared'}>
                                             {workspaceSharedProjects.map((project) => (
-                                                <option key={project.id} value={project.path}>
-                                                    {project.name}
-                                                </option>
-                                            ))}
-                                        </optgroup>
-                                    ) : null}
-                                    {globalSharedProjects.length > 0 ? (
-                                        <optgroup label="Global Shared (Legacy)">
-                                            {globalSharedProjects.map((project) => (
                                                 <option key={project.id} value={project.path}>
                                                     {project.name}
                                                 </option>

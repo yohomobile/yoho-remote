@@ -577,7 +577,7 @@ export function createCliRoutes(
 
     // Create org-shared project (query: sessionId, body: name, path, description?, machineId?)
     // When workspaceGroupId is not provided and the project is shared (no machineId),
-    // inherit workspaceGroupId from the session's machine to avoid creating Legacy projects.
+    // inherit workspaceGroupId from the session's machine. Reject if no group can be resolved.
     app.post('/projects', async (c) => {
         if (!store) return c.json({ error: 'Store not available' }, 503)
         const json = await c.req.json().catch(() => null)
@@ -588,6 +588,10 @@ export function createCliRoutes(
         const orgId = await resolveOrgId(sessionId, c.get('namespace'))
         const workspaceGroupId = parsed.data.workspaceGroupId
             ?? (!parsed.data.machineId ? resolveWorkspaceGroupId(sessionId) : null)
+        // Shared projects must belong to a workspace group
+        if (!parsed.data.machineId && !workspaceGroupId) {
+            return c.json({ error: 'Shared projects require a workspaceGroupId. Ensure the machine has a workspace group configured.' }, 400)
+        }
         const name = parsed.data.name ?? toPascalCase(parsed.data.path)
         const project = await store.addProject(
             name,

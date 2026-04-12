@@ -58,9 +58,9 @@ function getProjectScopeBadge(project: Project, machinesById: Map<string, Machin
 
     if (!project.machineId) {
         return {
-            label: 'Global Shared',
-            title: 'Legacy shared project visible on every machine',
-            className: 'border-fuchsia-500/20 bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300'
+            label: 'Org Shared',
+            title: 'Shared project visible on all machines in the organization',
+            className: 'border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300'
         }
     }
 
@@ -336,11 +336,9 @@ function ProjectForm(props: {
     const scopeHint = props.scope === 'shared'
         ? props.initial?.workspaceGroupId
             ? `Shared with machines in workspace group ${props.initial.workspaceGroupId}.`
-            : props.initial
-                ? 'Legacy global shared project. Saving keeps it global until you recreate it under an org workspace group.'
-                : selectedWorkspaceGroupId
-                    ? `Shared with machines in workspace group ${selectedWorkspaceGroupId}, based on the machine selected above.`
-                    : 'Pick a machine with a workspace group above before adding a shared project.'
+            : selectedWorkspaceGroupId
+                ? `Shared with machines in workspace group ${selectedWorkspaceGroupId}, based on the machine selected above.`
+                : 'Pick a machine with a workspace group above before adding a shared project.'
         : `Only available on ${props.machine ? getMachineTitle(props.machine) : (props.initial?.machineId?.slice(0, 8) ?? 'the selected machine')}. Use this for standalone machines like a MacBook.`
 
     const handleSubmit = useCallback((e: React.FormEvent) => {

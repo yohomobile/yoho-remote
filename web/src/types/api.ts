@@ -122,7 +122,7 @@ export type Project = {
     path: string
     description: string | null
     machineId: string | null  // 非 null = machine-local
-    workspaceGroupId: string | null  // null = global shared / local；非 null = shared workspace group
+    workspaceGroupId: string | null  // 共享项目必须有 workspaceGroupId；machine-local 项目为 null
     createdAt: number
     updatedAt: number
 }

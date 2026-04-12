@@ -87,6 +87,7 @@ Rules:
         name: z.string().optional().describe('New project name in PascalCase (e.g. "YohoRemote"). If omitted, unchanged.'),
         path: z.string().optional().describe('New absolute path. If omitted, unchanged.'),
         description: z.string().optional().describe('New human-readable description (max 500 chars). If omitted, unchanged.'),
+        workspaceGroupId: z.string().nullable().optional().describe('Workspace group ID for shared projects (e.g. "ncu-shared"). Set to null to make it machine-local. If omitted, unchanged.'),
     })
 
     mcp.registerTool<any, any>('project_update', {
@@ -97,12 +98,13 @@ Rules:
 - "name" must follow PascalCase convention derived from directory basename. No Chinese characters, no spaces.
 - Use "description" for human-readable context (Chinese is fine here).`,
         inputSchema: updateSchema,
-    }, async (args: { id: string; name?: string; path?: string; description?: string }) => {
+    }, async (args: { id: string; name?: string; path?: string; description?: string; workspaceGroupId?: string | null }) => {
         try {
             const project = await api.updateProject(sessionId, args.id, {
                 name: args.name,
                 path: args.path,
                 description: args.description,
+                workspaceGroupId: args.workspaceGroupId,
             })
             return {
                 content: [{ type: 'text' as const, text: JSON.stringify(project, null, 2) }],

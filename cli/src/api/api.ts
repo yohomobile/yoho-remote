@@ -427,12 +427,14 @@ export class ApiClient {
         name?: string
         path?: string
         description?: string
+        workspaceGroupId?: string | null
     }): Promise<Project> {
         const params = new URLSearchParams({ sessionId })
-        const payload: Record<string, string | undefined> = {}
+        const payload: Record<string, string | null | undefined> = {}
         if (opts.name !== undefined) payload.name = opts.name
         if (opts.path !== undefined) payload.path = opts.path
         if (opts.description !== undefined) payload.description = opts.description
+        if (opts.workspaceGroupId !== undefined) payload.workspaceGroupId = opts.workspaceGroupId
         const response = await axios.put(
             `${configuration.serverUrl}/cli/projects/${encodeURIComponent(id)}?${params}`,
             payload,
