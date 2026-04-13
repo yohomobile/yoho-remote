@@ -59,6 +59,7 @@ export class ApiClient {
             updatedAt: raw.updatedAt,
             active: raw.active,
             activeAt: raw.activeAt,
+            orgId: raw.orgId ?? null,
             metadata,
             metadataVersion: raw.metadataVersion,
             agentState,

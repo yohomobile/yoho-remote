@@ -277,6 +277,7 @@ export const CreateSessionResponseSchema = z.object({
         updatedAt: z.number(),
         active: z.boolean(),
         activeAt: z.number(),
+        orgId: z.string().nullable().optional(),
         metadata: z.unknown().nullable(),
         metadataVersion: z.number(),
         agentState: z.unknown().nullable(),

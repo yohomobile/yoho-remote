@@ -20,6 +20,7 @@ import { initialMachineMetadata } from '@/daemon/run';
 import { startYohoRemoteServer } from '@/claude/utils/startYohoRemoteServer';
 import { getYohoRemoteCliCommand } from '@/utils/spawnYohoRemoteCLI';
 import { registerKillSessionHandler } from '@/claude/registerKillSessionHandler';
+import { getYohoAuxMcpServers } from '@/utils/yohoMcpServers';
 
 function extractHistoryFromStoredMessages(messages: StoredMessage[]): HistoryMessage[] {
     const history: HistoryMessage[] = [];
@@ -61,6 +62,11 @@ export async function runAgentSession(opts: {
     agentType: string;
     startedBy?: 'daemon' | 'terminal';
 }): Promise<void> {
+    const workingDirectory = process.env['YR_SPAWN_DIRECTORY'] ?? process.cwd();
+    if (process.cwd() !== workingDirectory) {
+        process.chdir(workingDirectory);
+    }
+
     const sessionTag = randomUUID();
     const api = await ApiClient.create();
     const sessionSource = process.env.YR_SESSION_SOURCE?.trim();
@@ -82,7 +88,7 @@ export async function runAgentSession(opts: {
     };
 
     const metadata: Metadata = {
-        path: process.cwd(),
+        path: workingDirectory,
         host: os.hostname(),
         version: packageJson.version,
         os: os.platform(),
@@ -153,12 +159,18 @@ export async function runAgentSession(opts: {
             apiClient: api,
             machineId,
             yohoRemoteSessionId: response.id,
+            workingDirectory,
         });
     } catch (error) {
         await reportStartFailure('start-mcp', error);
         await backend.disconnect().catch(() => {});
         return;
     }
+    const auxMcpServers = await getYohoAuxMcpServers('codex', {
+        apiClient: api,
+        sessionId: response.id,
+        orgId: response.orgId ?? null,
+    });
     const bridgeCommand = getYohoRemoteCliCommand(['mcp', '--url', yohoRemoteServer.url]);
     const mcpServers = [
         {
@@ -166,13 +178,22 @@ export async function runAgentSession(opts: {
             command: bridgeCommand.command,
             args: bridgeCommand.args,
             env: []
-        }
+        },
+        ...Object.entries(auxMcpServers).map(([name, config]) => ({
+            name,
+            command: config.command,
+            args: config.args,
+            env: Object.entries(config.env ?? {}).map(([envName, value]) => ({
+                name: envName,
+                value,
+            })),
+        }))
     ];
 
     let agentSessionId: string;
     try {
         agentSessionId = await backend.newSession({
-            cwd: process.cwd(),
+            cwd: workingDirectory,
             mcpServers
         });
     } catch (error) {

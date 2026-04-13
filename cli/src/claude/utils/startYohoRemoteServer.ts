@@ -24,10 +24,12 @@ interface StartYohoRemoteServerOptions {
     apiClient?: ApiClient
     machineId?: string
     yohoRemoteSessionId?: string
+    workingDirectory?: string
 }
 
 export async function startYohoRemoteServer(client: ApiSessionClient, options?: StartYohoRemoteServerOptions) {
     logger.debug(`[yrMCP] startYohoRemoteServer: sessionSource=${options?.sessionSource}, clientSessionId=${client.sessionId}`)
+    const workingDirectory = options?.workingDirectory ?? process.cwd()
     // Handler that sends title updates via the client
     const handler = async (title: string) => {
         logger.debug('[yrMCP] Changing title to:', title);
@@ -131,7 +133,7 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
                 homeDir: os.homedir(),
                 yohoRemoteHomeDir: configuration.yohoRemoteHomeDir,
                 serverUrl: configuration.serverUrl,
-                cwd: process.cwd(),
+                cwd: workingDirectory,
                 nodeVersion: process.version,
                 cliVersion: packageJson.version,
                 sessionId: options?.yohoRemoteSessionId ?? client.sessionId ?? null,

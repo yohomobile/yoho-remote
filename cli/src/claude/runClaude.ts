@@ -66,8 +66,11 @@ export interface StartOptions {
 export async function runClaude(options: StartOptions = {}): Promise<void> {
     // When spawned by the daemon the process starts in a safe local cwd (non-NFS) to avoid
     // bun's getcwd() blocking on stale/slow NFS mounts. The real project directory is
-    // passed via YR_SPAWN_DIRECTORY — read it directly without chdir to keep cwd on local fs.
+    // passed via YR_SPAWN_DIRECTORY; after Bun finishes startup we can safely chdir back.
     const workingDirectory = process.env['YR_SPAWN_DIRECTORY'] ?? process.cwd();
+    if (process.cwd() !== workingDirectory) {
+        process.chdir(workingDirectory);
+    }
     const sessionTag = randomUUID();
     const startedBy = options.startedBy ?? 'terminal';
     const runtimeAgent = extractClaudeAgent(options.claudeArgs);
@@ -193,6 +196,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         apiClient: api,
         machineId,
         yohoRemoteSessionId: response.id,
+        workingDirectory,
     });
     logger.debug(`[START] YR MCP server started at ${yohoRemoteServer.url}`);
 
