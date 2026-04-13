@@ -29,7 +29,13 @@ export async function runCodex(opts: {
     yohoRemoteSessionId?: string;
     resumeSessionId?: string;
 }): Promise<void> {
-    const workingDirectory = process.cwd();
+    // When spawned by the daemon the process starts in a safe local cwd (non-NFS) to avoid
+    // Bun/Node startup touching a potentially slow project mount too early. The actual
+    // project directory is passed via YR_SPAWN_DIRECTORY and becomes the session cwd.
+    const workingDirectory = process.env['YR_SPAWN_DIRECTORY'] ?? process.cwd();
+    if (process.cwd() !== workingDirectory) {
+        process.chdir(workingDirectory);
+    }
     const sessionTag = randomUUID();
     const startedBy = opts.startedBy ?? 'terminal';
     const sessionSource = process.env.YR_SESSION_SOURCE?.trim();

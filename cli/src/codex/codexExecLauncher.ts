@@ -193,6 +193,7 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
     const yohoRemoteServer = await startYohoRemoteServer(session.client, {
         apiClient: session.api,
         yohoRemoteSessionId: session.client.sessionId,
+        workingDirectory: session.path,
     });
     const bridgeCommand = getYohoRemoteCliCommand(['mcp', '--url', yohoRemoteServer.url]);
     const auxServers = await getYohoAuxMcpServers('codex', {
