@@ -23,6 +23,11 @@ const setRolePromptSchema = z.object({
     prompt: z.string().max(10000)
 })
 
+function normalizeOptionalId(value: string | null | undefined): string | null {
+    const trimmed = value?.trim()
+    return trimmed ? trimmed : null
+}
+
 export function createSettingsRoutes(
     store: IStore
 ): Hono<WebAppEnv> {
@@ -62,14 +67,20 @@ export function createSettingsRoutes(
             return c.json({ error: 'Invalid project data' }, 400)
         }
 
+        const machineId = normalizeOptionalId(parsed.data.machineId)
+        const workspaceGroupId = machineId ? null : normalizeOptionalId(parsed.data.workspaceGroupId)
+        if (!machineId && !workspaceGroupId) {
+            return c.json({ error: 'Shared projects require a workspaceGroupId. Configure a workspace group or create the project as machine-local.' }, 400)
+        }
+
         const orgId = c.req.query('orgId')
         const project = await store.addProject(
             parsed.data.name,
             parsed.data.path,
             parsed.data.description,
-            parsed.data.machineId,
+            machineId,
             orgId,
-            parsed.data.workspaceGroupId
+            workspaceGroupId
         )
         if (!project) {
             return c.json({ error: 'Failed to add project. Path may already exist.' }, 400)
@@ -93,6 +104,18 @@ export function createSettingsRoutes(
         if (!existing) return c.json({ error: 'Project not found or path already exists' }, 404)
         if (existing.orgId !== null && existing.orgId !== orgId) {
             return c.json({ error: 'Project not found or path already exists' }, 404)
+        }
+
+        const effectiveMachineId = parsed.data.machineId !== undefined
+            ? normalizeOptionalId(parsed.data.machineId)
+            : existing.machineId
+        const effectiveWorkspaceGroupId = effectiveMachineId
+            ? null
+            : parsed.data.workspaceGroupId !== undefined
+                ? normalizeOptionalId(parsed.data.workspaceGroupId)
+                : existing.workspaceGroupId
+        if (!effectiveMachineId && !effectiveWorkspaceGroupId) {
+            return c.json({ error: 'Shared projects require a workspaceGroupId. Configure a workspace group before saving.' }, 400)
         }
 
         const project = await store.updateProject(id, {

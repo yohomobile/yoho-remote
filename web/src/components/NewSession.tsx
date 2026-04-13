@@ -197,7 +197,11 @@ export function NewSession(props: {
         [machineId, projects]
     )
     const workspaceSharedProjects = useMemo(
-        () => projects.filter((project) => project.machineId === null),
+        () => projects.filter((project) => project.machineId === null && Boolean(project.workspaceGroupId)),
+        [projects]
+    )
+    const legacySharedProjects = useMemo(
+        () => projects.filter((project) => project.machineId === null && !project.workspaceGroupId),
         [projects]
     )
 
@@ -208,14 +212,16 @@ export function NewSession(props: {
 
     const selectedProjectScopeText = useMemo(() => {
         if (!selectedProject) return null
-        if (!hasWorkspaceGroups) return null
         if (selectedProject.machineId) {
             return currentMachine
                 ? `Machine local to ${getMachineTitle(currentMachine)}`
                 : 'Machine local project'
         }
-        return `Org shared · ${selectedProject.workspaceGroupId ?? 'default'}`
-    }, [currentMachine, selectedProject, hasWorkspaceGroups])
+        if (selectedProject.workspaceGroupId) {
+            return `Org shared · ${selectedProject.workspaceGroupId}`
+        }
+        return 'Legacy shared project'
+    }, [currentMachine, selectedProject])
 
     // Initialize with saved machine or first available
     useEffect(() => {
@@ -402,6 +408,15 @@ export function NewSession(props: {
                                     {workspaceSharedProjects.length > 0 ? (
                                         <optgroup label={currentMachineWorkspaceGroupId ? `Org Shared · ${currentMachineWorkspaceGroupId}` : 'Org Shared'}>
                                             {workspaceSharedProjects.map((project) => (
+                                                <option key={project.id} value={project.path}>
+                                                    {project.name}
+                                                </option>
+                                            ))}
+                                        </optgroup>
+                                    ) : null}
+                                    {legacySharedProjects.length > 0 ? (
+                                        <optgroup label="Legacy Shared">
+                                            {legacySharedProjects.map((project) => (
                                                 <option key={project.id} value={project.path}>
                                                     {project.name}
                                                 </option>

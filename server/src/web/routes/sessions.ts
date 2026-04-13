@@ -1458,9 +1458,9 @@ export function createSessionsRoutes(
 
         let subscription
         if (chatId) {
-            subscription = store.subscribeToSessionNotifications(sessionId, chatId, namespace)
+            subscription = await store.subscribeToSessionNotifications(sessionId, chatId, namespace)
         } else if (clientId) {
-            subscription = store.subscribeToSessionNotificationsByClientId(sessionId, clientId, namespace)
+            subscription = await store.subscribeToSessionNotificationsByClientId(sessionId, clientId, namespace)
         }
 
         if (!subscription) {
@@ -1494,15 +1494,15 @@ export function createSessionsRoutes(
         let success = false
         if (chatId) {
             // First try to remove from subscriptions table
-            success = store.unsubscribeFromSessionNotifications(sessionId, chatId)
+            success = await store.unsubscribeFromSessionNotifications(sessionId, chatId)
             // Also check if this chatId is the creator and clear it
-            const creatorChatId = store.getSessionCreatorChatId(sessionId)
+            const creatorChatId = await store.getSessionCreatorChatId(sessionId)
             if (creatorChatId === chatId) {
-                const cleared = store.clearSessionCreatorChatId(sessionId, namespace)
+                const cleared = await store.clearSessionCreatorChatId(sessionId, namespace)
                 success = success || cleared
             }
         } else if (clientId) {
-            success = store.unsubscribeFromSessionNotificationsByClientId(sessionId, clientId)
+            success = await store.unsubscribeFromSessionNotificationsByClientId(sessionId, clientId)
         }
 
         return c.json({ ok: success })
@@ -1542,7 +1542,7 @@ export function createSessionsRoutes(
             return c.json({ error: 'Invalid body, expected { chatId: string }' }, 400)
         }
 
-        const success = store.setSessionCreatorChatId(sessionId, body.chatId, namespace)
+        const success = await store.setSessionCreatorChatId(sessionId, body.chatId, namespace)
         return c.json({ ok: success })
     })
 
@@ -1560,13 +1560,13 @@ export function createSessionsRoutes(
 
         let success = false
         if (type === 'clientId') {
-            success = store.unsubscribeFromSessionNotificationsByClientId(sessionId, subscriberId)
+            success = await store.unsubscribeFromSessionNotificationsByClientId(sessionId, subscriberId)
         } else {
             // chatId - 同时检查是否是 creator
-            success = store.unsubscribeFromSessionNotifications(sessionId, subscriberId)
-            const creatorChatId = store.getSessionCreatorChatId(sessionId)
+            success = await store.unsubscribeFromSessionNotifications(sessionId, subscriberId)
+            const creatorChatId = await store.getSessionCreatorChatId(sessionId)
             if (creatorChatId === subscriberId) {
-                const cleared = store.clearSessionCreatorChatId(sessionId, namespace)
+                const cleared = await store.clearSessionCreatorChatId(sessionId, namespace)
                 success = success || cleared
             }
         }
@@ -1584,19 +1584,19 @@ export function createSessionsRoutes(
         const namespace = c.get('namespace')
 
         // 清除所有 chatId 订阅者
-        const chatIdSubscribers = store.getSessionNotificationSubscribers(sessionId)
+        const chatIdSubscribers = await store.getSessionNotificationSubscribers(sessionId)
         for (const chatId of chatIdSubscribers) {
-            store.unsubscribeFromSessionNotifications(sessionId, chatId)
+            await store.unsubscribeFromSessionNotifications(sessionId, chatId)
         }
 
         // 清除所有 clientId 订阅者
-        const clientIdSubscribers = store.getSessionNotificationSubscriberClientIds(sessionId)
+        const clientIdSubscribers = await store.getSessionNotificationSubscriberClientIds(sessionId)
         for (const clientId of clientIdSubscribers) {
-            store.unsubscribeFromSessionNotificationsByClientId(sessionId, clientId)
+            await store.unsubscribeFromSessionNotificationsByClientId(sessionId, clientId)
         }
 
         // 清除 creator
-        store.clearSessionCreatorChatId(sessionId, namespace)
+        await store.clearSessionCreatorChatId(sessionId, namespace)
 
         return c.json({
             ok: true,
@@ -1617,6 +1617,10 @@ export function createSessionsRoutes(
     app.get('/sessions/:id/shares', async (c) => {
         const sessionId = c.req.param('id')
         const email = c.get('email')
+
+        if (!email) {
+            return c.json({ error: 'Email required' }, 400)
+        }
 
         // 验证session存在且用户有权限（是创建者或已被共享）
         const storedSession = await store.getSession(sessionId)

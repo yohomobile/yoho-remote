@@ -1,8 +1,12 @@
 import type {
     AddProjectResponse,
     AllowedUsersResponse,
+    AIProfilesResponse,
     AuthResponse,
+    CreateAIProfileInput,
+    CreateAIProfileResponse,
     DeleteSessionResponse,
+    DeleteAIProfileResponse,
     FileReadResponse,
     FileUploadResponse,
     GitCommandResponse,
@@ -13,6 +17,7 @@ import type {
     MessagesResponse,
     OnlineUsersResponse,
     ProjectsResponse,
+    RefreshAccountResponse,
     RemoveProjectResponse,
     ResumeSessionResponse,
     RolePromptsResponse,
@@ -30,6 +35,8 @@ import type {
     SessionResponse,
     SessionsResponse,
     UpdateMachineResponse,
+    UpdateAIProfileInput,
+    UpdateAIProfileResponse,
     UpdateProjectResponse,
     UpdateUserPreferencesResponse,
     UserPreferencesResponse,
@@ -317,6 +324,30 @@ export class ApiClient {
         })
     }
 
+    async getAIProfiles(): Promise<AIProfilesResponse> {
+        return await this.request<AIProfilesResponse>('/api/settings/ai-profiles')
+    }
+
+    async createAIProfile(data: CreateAIProfileInput): Promise<CreateAIProfileResponse> {
+        return await this.request<CreateAIProfileResponse>('/api/settings/ai-profiles', {
+            method: 'POST',
+            body: JSON.stringify(data)
+        })
+    }
+
+    async updateAIProfile(id: string, data: UpdateAIProfileInput): Promise<UpdateAIProfileResponse> {
+        return await this.request<UpdateAIProfileResponse>(`/api/settings/ai-profiles/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        })
+    }
+
+    async deleteAIProfile(id: string): Promise<DeleteAIProfileResponse> {
+        return await this.request<DeleteAIProfileResponse>(`/api/settings/ai-profiles/${encodeURIComponent(id)}`, {
+            method: 'DELETE'
+        })
+    }
+
     async getMessages(sessionId: string, options: { beforeSeq?: number | null; limit?: number }): Promise<MessagesResponse> {
         const params = new URLSearchParams()
         if (options.beforeSeq !== undefined && options.beforeSeq !== null) {
@@ -481,8 +512,8 @@ export class ApiClient {
         })
     }
 
-    async refreshAccount(sessionId: string): Promise<{ type: 'success'; sessionId: string; usedResume?: boolean; resumeVerified?: boolean; resumeMismatchSessionId?: string | null }> {
-        return await this.request<{ type: 'success'; sessionId: string; usedResume?: boolean; resumeVerified?: boolean; resumeMismatchSessionId?: string | null }>(`/api/sessions/${encodeURIComponent(sessionId)}/refresh-account`, {
+    async refreshAccount(sessionId: string): Promise<RefreshAccountResponse> {
+        return await this.request<RefreshAccountResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/refresh-account`, {
             method: 'POST',
             body: JSON.stringify({})
         })

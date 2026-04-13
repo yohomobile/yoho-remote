@@ -1,8 +1,9 @@
 export type PermissionMode = 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
 export type SpawnAgentType = 'claude' | 'codex'
+export type ClaudeModelMode = 'default' | 'sonnet' | 'opus'
 export type CodexModelMode = 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.2' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini'
 export type GrokModelMode = 'grok-4-1-fast-reasoning' | 'grok-4-1-fast-non-reasoning' | 'grok-code-fast-1' | 'grok-4-fast-reasoning' | 'grok-4-fast-non-reasoning' | 'grok-4-0709' | 'grok-3-mini' | 'grok-3'
-export type ModelMode = 'sonnet' | 'opus' | 'glm-5.1' | CodexModelMode | GrokModelMode
+export type ModelMode = ClaudeModelMode | 'glm-5.1' | CodexModelMode | GrokModelMode
 export type ModelReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
 
 export type WorktreeMetadata = {
@@ -24,6 +25,7 @@ export type SessionMetadataSummary = {
     mainSessionId?: string
     tools?: string[]
     flavor?: string | null
+    runtimeAgent?: string
     runtimeModel?: string
     runtimeModelReasoningEffort?: ModelReasoningEffort
     worktree?: WorktreeMetadata
@@ -86,6 +88,14 @@ export type ResumeSessionResponse = {
     usedResume?: boolean
 }
 
+export type RefreshAccountResponse = {
+    type: 'success'
+    sessionId: string
+    usedResume?: boolean
+    resumeVerified?: boolean
+    resumeMismatchSessionId?: string | null
+}
+
 export type SessionSummaryMetadata = {
     name?: string
     path: string
@@ -115,6 +125,46 @@ export type OnlineUser = {
 }
 
 export type UserRole = 'developer' | 'operator'
+
+export type AIProfileRole = 'developer' | 'architect' | 'reviewer' | 'pm' | 'tester' | 'devops'
+export type AIProfileStatus = 'idle' | 'working' | 'resting'
+
+export type AIProfile = {
+    id: string
+    namespace: string
+    name: string
+    role: AIProfileRole
+    specialties: string[]
+    personality: string | null
+    greetingTemplate: string | null
+    preferredProjects: string[]
+    workStyle: string | null
+    avatarEmoji: string
+    status: AIProfileStatus
+    stats: {
+        tasksCompleted: number
+        activeMinutes: number
+        lastActiveAt: number | null
+    }
+    createdAt: number
+    updatedAt: number
+}
+
+export type AIProfilesResponse = { profiles: AIProfile[] }
+export type CreateAIProfileInput = {
+    name: string
+    role: AIProfileRole
+    specialties?: string[]
+    personality?: string | null
+    greetingTemplate?: string | null
+    preferredProjects?: string[]
+    workStyle?: string | null
+    avatarEmoji?: string
+}
+export type UpdateAIProfileInput = Partial<CreateAIProfileInput>
+export type CreateAIProfileResponse = { ok: true; profile: AIProfile }
+export type UpdateAIProfileResponse = { ok: true; profile: AIProfile }
+export type DeleteAIProfileResponse = { ok: true }
 
 export type Project = {
     id: string
@@ -466,4 +516,3 @@ export type OrgInvitationsResponse = { invitations: OrgInvitation[] }
 export type PendingInvitationsResponse = { invitations: OrgInvitation[] }
 export type OrgActionResponse = { ok: true }
 export type CreateInvitationResponse = { ok: true; invitation: OrgInvitation }
-

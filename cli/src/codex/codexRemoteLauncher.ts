@@ -661,7 +661,11 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
         inFlightAbortRequested = false;
     }
 
-    function startInFlightWatchdog(kind: InFlightTurn['kind'], message: string, hash: string): void {
+    function getInFlightTurn(): InFlightTurn | null {
+        return inFlight;
+    }
+
+    function startInFlightWatchdog(kind: InFlightTurn['kind'], message: string, hash: string): InFlightTurn {
         clearInFlight();
         inFlight = {
             kind,
@@ -680,11 +684,12 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
             messageLength: inFlight.message.length
         });
         if (TURN_TIMEOUT_MS <= 0) {
-            return;
+            return inFlight;
         }
         inFlightTimeout = setTimeout(() => {
             requestInFlightAbort('timeout');
         }, TURN_TIMEOUT_MS);
+        return inFlight;
     }
 
     function scheduleCompletionAbort(reason: string): void {
@@ -893,20 +898,20 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
                         (startConfig.config as any).experimental_resume = resumeFile;
                     }
 
-                    startInFlightWatchdog('start', message.message, message.hash);
+                    const activeTurn = startInFlightWatchdog('start', message.message, message.hash);
                     const startResponse = await client.startSession(startConfig, { signal: abortController.signal });
-                    if (inFlight) {
-                        inFlight.rpcCompletedAt = Date.now();
+                    if (activeTurn) {
+                        activeTurn.rpcCompletedAt = Date.now();
                         logPerf('turn_rpc', {
-                            kind: inFlight.kind,
-                            hash: inFlight.hash,
-                            rpcMs: inFlight.rpcCompletedAt - inFlight.startedAt,
+                            kind: activeTurn.kind,
+                            hash: activeTurn.hash,
+                            rpcMs: activeTurn.rpcCompletedAt - activeTurn.startedAt,
                             error: startResponse.error ?? null
                         });
                     }
                     if (startResponse.error) {
-                        if (inFlight) {
-                            inFlight.abortReason = 'start_response_error';
+                        if (activeTurn) {
+                            activeTurn.abortReason = 'start_response_error';
                         }
                         messageBuffer.addMessage(startResponse.error, 'status');
                         session.sendSessionEvent({ type: 'message', message: startResponse.error });
@@ -916,20 +921,20 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
                     first = false;
                     syncSessionId();
                 } else {
-                    startInFlightWatchdog('continue', message.message, message.hash);
+                    const activeTurn = startInFlightWatchdog('continue', message.message, message.hash);
                     const continueResponse = await client.continueSession(outgoingMessage, { signal: abortController.signal });
-                    if (inFlight) {
-                        inFlight.rpcCompletedAt = Date.now();
+                    if (activeTurn) {
+                        activeTurn.rpcCompletedAt = Date.now();
                         logPerf('turn_rpc', {
-                            kind: inFlight.kind,
-                            hash: inFlight.hash,
-                            rpcMs: inFlight.rpcCompletedAt - inFlight.startedAt,
+                            kind: activeTurn.kind,
+                            hash: activeTurn.hash,
+                            rpcMs: activeTurn.rpcCompletedAt - activeTurn.startedAt,
                             error: continueResponse.error ?? null
                         });
                     }
                     if (continueResponse.error) {
-                        if (inFlight) {
-                            inFlight.abortReason = 'continue_response_error';
+                        if (activeTurn) {
+                            activeTurn.abortReason = 'continue_response_error';
                         }
                         messageBuffer.addMessage(continueResponse.error, 'status');
                         session.sendSessionEvent({ type: 'message', message: continueResponse.error });
@@ -943,8 +948,9 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
                 const isAbortRequested = inFlightAbortRequested || lastAbortReason !== null;
                 const isCompletionAbort = lastAbortReason === 'task_complete' || lastAbortReason === 'turn_aborted';
                 const shouldPreserveSession = isCompletionAbort && client.hasActiveSession();
-                if (inFlight && !inFlight.abortReason) {
-                    inFlight.abortReason = isAbortError ? 'abort_error' : 'exception';
+                const activeTurn = getInFlightTurn();
+                if (activeTurn && !activeTurn.abortReason) {
+                    activeTurn.abortReason = isAbortError ? 'abort_error' : 'exception';
                 }
 
                 if (isAbortError || isAbortRequested) {

@@ -1379,12 +1379,16 @@ export class PostgresStore implements IStore {
             if (workspaceGroupId) {
                 conditions.push(`(
                     machine_id = $${idx}
+                    OR (machine_id IS NULL AND workspace_group_id IS NULL)
                     OR (machine_id IS NULL AND workspace_group_id = $${idx + 1})
                 )`)
                 params.push(machineId, workspaceGroupId)
                 idx += 2
             } else {
-                conditions.push(`machine_id = $${idx}`)
+                conditions.push(`(
+                    machine_id = $${idx}
+                    OR (machine_id IS NULL AND workspace_group_id IS NULL)
+                )`)
                 params.push(machineId)
                 idx++
             }

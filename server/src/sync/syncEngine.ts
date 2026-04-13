@@ -94,7 +94,7 @@ export interface Session {
     thinkingAt: number
     todos?: TodoItem[]
     permissionMode?: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
-    modelMode?: 'default' | 'sonnet' | 'opus' | 'glm-5.1' | 'gpt-5.3-codex' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
+    modelMode?: 'default' | 'sonnet' | 'opus' | 'glm-5.1' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     fastMode?: boolean
     /** Timestamp of the last abort request; heartbeats within the grace window won't override thinking=false */
@@ -869,7 +869,7 @@ export class SyncEngine {
         thinking?: boolean
         mode?: 'local' | 'remote'
         permissionMode?: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
-        modelMode?: 'default' | 'sonnet' | 'opus' | 'glm-5.1' | 'gpt-5.3-codex' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
+        modelMode?: 'default' | 'sonnet' | 'opus' | 'glm-5.1' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
         modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
         fastMode?: boolean
     }): Promise<void> {
@@ -2000,7 +2000,7 @@ export class SyncEngine {
         sessionId: string,
         config: {
             permissionMode?: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
-            modelMode?: 'default' | 'sonnet' | 'opus' | 'glm-5.1' | 'gpt-5.3-codex' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
+            modelMode?: 'default' | 'sonnet' | 'opus' | 'glm-5.1' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
             modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
             fastMode?: boolean
         }

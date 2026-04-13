@@ -24,6 +24,7 @@ function createMachine(input: {
         daemonState: {
             status: input.active ? 'running' : 'offline',
         },
+        supportedAgents: null,
     }
 }
 

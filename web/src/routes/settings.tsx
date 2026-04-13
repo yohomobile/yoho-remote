@@ -58,9 +58,9 @@ function getProjectScopeBadge(project: Project, machinesById: Map<string, Machin
 
     if (!project.machineId) {
         return {
-            label: 'Org Shared',
-            title: 'Shared project visible on all machines in the organization',
-            className: 'border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+            label: 'Legacy Shared',
+            title: 'Legacy shared project without a workspace group',
+            className: 'border-fuchsia-500/20 bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300'
         }
     }
 
@@ -325,17 +325,22 @@ function ProjectForm(props: {
     const [path, setPath] = useState(props.initial?.path ?? '')
     const [description, setDescription] = useState(props.initial?.description ?? '')
     const selectedWorkspaceGroupId = getMachineWorkspaceGroupId(props.machine)
+    const initialWorkspaceGroupId = normalizeWorkspaceGroupId(props.initial?.workspaceGroupId)
     const effectiveMachineId = props.scope === 'machine'
         ? (props.initial?.machineId ?? props.machine?.id ?? null)
         : null
     const effectiveWorkspaceGroupId = props.scope === 'shared'
-        ? (props.initial ? props.initial.workspaceGroupId : selectedWorkspaceGroupId)
+        ? (initialWorkspaceGroupId ?? selectedWorkspaceGroupId)
         : null
-    const requiresWorkspaceGroup = props.scope === 'shared' && !props.initial
+    const requiresWorkspaceGroup = props.scope === 'shared' && !effectiveWorkspaceGroupId
     const scopeLabel = props.scope === 'shared' ? 'Org Shared Project' : 'Machine Local Project'
     const scopeHint = props.scope === 'shared'
-        ? props.initial?.workspaceGroupId
-            ? `Shared with machines in workspace group ${props.initial.workspaceGroupId}.`
+        ? initialWorkspaceGroupId
+            ? `Shared with machines in workspace group ${initialWorkspaceGroupId}.`
+            : props.initial
+                ? selectedWorkspaceGroupId
+                    ? `Legacy shared project. Saving will move it into workspace group ${selectedWorkspaceGroupId}.`
+                    : 'Legacy shared project. Pick a machine with a workspace group above before saving.'
             : selectedWorkspaceGroupId
                 ? `Shared with machines in workspace group ${selectedWorkspaceGroupId}, based on the machine selected above.`
                 : 'Pick a machine with a workspace group above before adding a shared project.'
@@ -889,8 +894,10 @@ export default function SettingsPage() {
         if (!selectedLocalProjectMachineId || !Array.isArray(machineProjectsData?.projects)) {
             return []
         }
-        return machineProjectsData.projects.filter((project) => project.machineId === selectedLocalProjectMachineId)
-    }, [machineProjectsData, selectedLocalProjectMachineId])
+        return hasWorkspaceGroups
+            ? machineProjectsData.projects.filter((project) => project.machineId === selectedLocalProjectMachineId)
+            : machineProjectsData.projects
+    }, [hasWorkspaceGroups, machineProjectsData, selectedLocalProjectMachineId])
 
     const projects = useMemo(() => {
         return projectScope === 'shared' ? sharedProjects : machineProjects
@@ -908,14 +915,18 @@ export default function SettingsPage() {
             ? `Paths shared with workspace group ${getMachineWorkspaceGroupId(selectedSharedProjectMachine)}`
             : 'Select a machine with a workspace group to manage shared paths'
         : selectedLocalProjectMachine
-            ? `Paths stored only on ${getMachineTitle(selectedLocalProjectMachine)}`
+            ? hasWorkspaceGroups
+                ? `Paths stored only on ${getMachineTitle(selectedLocalProjectMachine)}`
+                : `Paths visible on ${getMachineTitle(selectedLocalProjectMachine)}. Legacy shared paths appear here until migrated.`
             : 'Select a machine to manage local-only project paths'
     const projectEmptyState = projectScope === 'shared'
         ? selectedSharedProjectMachine && getMachineWorkspaceGroupId(selectedSharedProjectMachine)
             ? `No shared projects saved for workspace group ${getMachineWorkspaceGroupId(selectedSharedProjectMachine)} yet.`
             : 'Configure a workspace group on at least one machine first.'
         : selectedLocalProjectMachine
-            ? `No local projects saved for ${getMachineTitle(selectedLocalProjectMachine)} yet.`
+            ? hasWorkspaceGroups
+                ? `No local projects saved for ${getMachineTitle(selectedLocalProjectMachine)} yet.`
+                : `No projects visible on ${getMachineTitle(selectedLocalProjectMachine)} yet.`
             : 'Select a machine first.'
 
     const addProjectMutation = useMutation({
@@ -1764,7 +1775,11 @@ export default function SettingsPage() {
                                                                         <div className="text-xs text-[var(--app-hint)] mt-1">
                                                                             Org shared · {project.workspaceGroupId}
                                                                         </div>
-                                                                    ) : null}
+                                                                    ) : (
+                                                                        <div className="text-xs text-[var(--app-hint)] mt-1">
+                                                                            Legacy shared project. Assign a workspace group when editing.
+                                                                        </div>
+                                                                    )}
                                                                 </>
                                                             )}
                                                             {project.description && (

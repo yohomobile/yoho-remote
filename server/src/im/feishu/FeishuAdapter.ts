@@ -1089,7 +1089,7 @@ export class FeishuAdapter implements IMAdapter {
             const arrayBuffer = await resp.arrayBuffer()
             const buffer = Buffer.from(arrayBuffer)
 
-            const safeName = fileName || `feishu-${fileKey.slice(0, 16)}`
+            const safeName = basename(fileName || `feishu-${fileKey.slice(0, 16)}`) || `feishu-${fileKey.slice(0, 16)}`
             const uploadSessionId = sessionId || 'feishu-files'
             const config = getConfiguration()
             const uploadDir = join(config.dataDir, 'uploads', uploadSessionId)
@@ -1216,7 +1216,7 @@ export class FeishuAdapter implements IMAdapter {
             const arrayBuffer = await resp.arrayBuffer()
             const buffer = Buffer.from(arrayBuffer)
 
-            const safeName = fileName || `feishu-video-${fileKey.slice(0, 16)}.mp4`
+            const safeName = basename(fileName || `feishu-video-${fileKey.slice(0, 16)}.mp4`) || `feishu-video-${fileKey.slice(0, 16)}.mp4`
             const uploadSessionId = sessionId || 'feishu-media'
             const config = getConfiguration()
             const uploadDir = join(config.dataDir, 'uploads', uploadSessionId)

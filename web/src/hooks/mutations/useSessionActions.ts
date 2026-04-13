@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
-import type { ModelMode, ModelReasoningEffort } from '@/types/api'
+import type { ModelMode, ModelReasoningEffort, RefreshAccountResponse } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 
 type ModelConfig = { model: ModelMode; reasoningEffort?: ModelReasoningEffort | null }
@@ -11,7 +11,7 @@ export function useSessionActions(api: ApiClient | null, sessionId: string | nul
     setModelMode: (config: ModelConfig) => Promise<void>
     setFastMode: (fastMode: boolean) => Promise<void>
     deleteSession: () => Promise<void>
-    refreshAccount: () => Promise<void>
+    refreshAccount: () => Promise<RefreshAccountResponse>
     isPending: boolean
 } {
     const queryClient = useQueryClient()

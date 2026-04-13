@@ -53,6 +53,11 @@ const brainSpawnSchema = z.object({
     mainSessionId: z.string().optional(),
 })
 
+function normalizeWorkspaceGroupId(value: string | null | undefined): string | null {
+    const trimmed = value?.trim()
+    return trimmed ? trimmed : null
+}
+
 type CliEnv = {
     Variables: {
         namespace: string
@@ -548,30 +553,49 @@ export function createCliRoutes(
         workspaceGroupId: z.string().nullable().optional()
     })
 
-    // Helper: resolve orgId from sessionId — validates that the session belongs to the caller's namespace.
-    async function resolveOrgId(sessionId: string | undefined, namespace: string): Promise<string | null> {
-        if (!sessionId || !store) return null
+    async function resolveProjectContext(
+        sessionId: string | undefined,
+        namespace: string
+    ): Promise<
+        | { ok: true; orgId: string | null; machineId: string | null; workspaceGroupId: string | null }
+        | { ok: false; status: 400 | 404 | 503; error: string }
+    > {
+        if (!store) {
+            return { ok: false, status: 503, error: 'Store not available' }
+        }
+        if (!sessionId) {
+            return { ok: false, status: 400, error: 'sessionId is required' }
+        }
+
         const session = await store.getSessionByNamespace(sessionId, namespace)
-        return session?.orgId ?? null
+        if (!session) {
+            return { ok: false, status: 404, error: 'Session not found' }
+        }
+
+        const machineId = session.machineId?.trim() || null
+        let workspaceGroupId: string | null = null
+        if (machineId) {
+            const machine = await store.getMachine(machineId)
+            workspaceGroupId = normalizeWorkspaceGroupId((machine?.metadata as { workspaceGroupId?: string | null } | null)?.workspaceGroupId)
+        }
+
+        return {
+            ok: true,
+            orgId: session.orgId ?? null,
+            machineId,
+            workspaceGroupId,
+        }
     }
 
-    // Helper: resolve workspaceGroupId from session's machine
-    function resolveWorkspaceGroupId(sessionId: string | undefined): string | null {
-        if (!sessionId) return null
-        const engine = getSyncEngine()
-        if (!engine) return null
-        const session = engine.getSession(sessionId)
-        if (!session?.machineId) return null
-        const machine = engine.getMachine(session.machineId)
-        return machine?.metadata?.workspaceGroupId ?? null
-    }
-
-    // List org-shared projects (query: machineId, sessionId). machineId is accepted for compatibility only.
+    // List projects visible to the current session's machine.
     app.get('/projects', async (c) => {
         if (!store) return c.json({ error: 'Store not available' }, 503)
-        const sessionId = c.req.query('sessionId')
-        const orgId = await resolveOrgId(sessionId, c.get('namespace'))
-        const projects = await store.getProjects(undefined, orgId)
+        const context = await resolveProjectContext(c.req.query('sessionId'), c.get('namespace'))
+        if (!context.ok) {
+            return c.json({ error: context.error }, context.status)
+        }
+
+        const projects = await store.getProjects(context.machineId, context.orgId)
         return c.json({ projects })
     })
 
@@ -584,10 +608,13 @@ export function createCliRoutes(
         const parsed = addProjectSchema.safeParse(json)
         if (!parsed.success) return c.json({ error: 'Invalid project data' }, 400)
 
-        const sessionId = c.req.query('sessionId')
-        const orgId = await resolveOrgId(sessionId, c.get('namespace'))
+        const context = await resolveProjectContext(c.req.query('sessionId'), c.get('namespace'))
+        if (!context.ok) {
+            return c.json({ error: context.error }, context.status)
+        }
+
         const workspaceGroupId = parsed.data.workspaceGroupId
-            ?? (!parsed.data.machineId ? resolveWorkspaceGroupId(sessionId) : null)
+            ?? (!parsed.data.machineId ? context.workspaceGroupId : null)
         // Shared projects must belong to a workspace group
         if (!parsed.data.machineId && !workspaceGroupId) {
             return c.json({ error: 'Shared projects require a workspaceGroupId. Ensure the machine has a workspace group configured.' }, 400)
@@ -598,12 +625,12 @@ export function createCliRoutes(
             parsed.data.path,
             parsed.data.description,
             parsed.data.machineId,
-            orgId,
+            context.orgId,
             workspaceGroupId
         )
         if (!project) return c.json({ error: 'Failed to add project. Path may already exist.' }, 400)
 
-        const projects = await store.getProjects(undefined, orgId)
+        const projects = await store.getProjects(context.machineId, context.orgId)
         return c.json({ ok: true, project, projects })
     })
 
@@ -614,14 +641,28 @@ export function createCliRoutes(
         const json = await c.req.json().catch(() => null)
         const parsed = updateProjectSchema.safeParse(json)
         if (!parsed.success) return c.json({ error: 'Invalid project data' }, 400)
-        const sessionId = c.req.query('sessionId')
-        const orgId = await resolveOrgId(sessionId, c.get('namespace'))
+        const context = await resolveProjectContext(c.req.query('sessionId'), c.get('namespace'))
+        if (!context.ok) {
+            return c.json({ error: context.error }, context.status)
+        }
 
         // Verify caller owns this project (org-scoped projects can only be modified by the same org)
         const existing = await store.getProject(id)
         if (!existing) return c.json({ error: 'Project not found or path already exists' }, 404)
-        if (existing.orgId !== null && existing.orgId !== orgId) {
+        if (existing.orgId !== null && existing.orgId !== context.orgId) {
             return c.json({ error: 'Project not found or path already exists' }, 404)
+        }
+
+        const effectiveMachineId = parsed.data.machineId !== undefined
+            ? (parsed.data.machineId?.trim() || null)
+            : existing.machineId
+        const effectiveWorkspaceGroupId = effectiveMachineId
+            ? null
+            : parsed.data.workspaceGroupId !== undefined
+                ? normalizeWorkspaceGroupId(parsed.data.workspaceGroupId)
+                : existing.workspaceGroupId
+        if (!effectiveMachineId && !effectiveWorkspaceGroupId) {
+            return c.json({ error: 'Shared projects require a workspaceGroupId. Configure a workspace group before saving.' }, 400)
         }
 
         const project = await store.updateProject(id, {
@@ -629,12 +670,12 @@ export function createCliRoutes(
             path: parsed.data.path,
             description: parsed.data.description,
             machineId: parsed.data.machineId,
-            orgId,
+            orgId: context.orgId,
             workspaceGroupId: parsed.data.workspaceGroupId,
         })
         if (!project) return c.json({ error: 'Project not found or path already exists' }, 404)
 
-        const projects = await store.getProjects(undefined, orgId)
+        const projects = await store.getProjects(context.machineId, context.orgId)
         return c.json({ ok: true, project, projects })
     })
 
@@ -642,20 +683,22 @@ export function createCliRoutes(
     app.delete('/projects/:id', async (c) => {
         if (!store) return c.json({ error: 'Store not available' }, 503)
         const id = c.req.param('id')
-        const sessionId = c.req.query('sessionId')
-        const orgId = await resolveOrgId(sessionId, c.get('namespace'))
+        const context = await resolveProjectContext(c.req.query('sessionId'), c.get('namespace'))
+        if (!context.ok) {
+            return c.json({ error: context.error }, context.status)
+        }
 
         // Verify caller owns this project before deleting
         const existing = await store.getProject(id)
         if (!existing) return c.json({ error: 'Project not found' }, 404)
-        if (existing.orgId !== null && existing.orgId !== orgId) {
+        if (existing.orgId !== null && existing.orgId !== context.orgId) {
             return c.json({ error: 'Project not found' }, 404)
         }
 
         const success = await store.removeProject(id)
         if (!success) return c.json({ error: 'Project not found' }, 404)
 
-        const projects = await store.getProjects(undefined, orgId)
+        const projects = await store.getProjects(context.machineId, context.orgId)
         return c.json({ ok: true, projects })
     })
 

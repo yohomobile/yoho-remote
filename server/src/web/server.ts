@@ -284,7 +284,7 @@ export async function startWebServer(options: {
         },
     }
 
-    const server = Bun.serve({
+    const server = Bun.serve<WebSocketData>({
         port: configuration.webappPort,
         idleTimeout: Math.max(30, socketHandler.idleTimeout),
         maxRequestBodySize: maxHttpBodySize,

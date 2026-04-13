@@ -1,3 +1,4 @@
+import type { ComponentType } from 'react'
 import { useNavigate, useLocation } from '@tanstack/react-router'
 
 function SessionsIcon(props: { className?: string; filled?: boolean }) {
@@ -45,7 +46,7 @@ type TabItem = {
     key: string
     label: string
     path: string
-    icon: (props: { className?: string; filled?: boolean }) => JSX.Element
+    icon: ComponentType<{ className?: string; filled?: boolean }>
     matchPaths?: string[]  // Additional paths that should highlight this tab
 }
 

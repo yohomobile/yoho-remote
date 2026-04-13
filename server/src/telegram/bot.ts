@@ -168,7 +168,7 @@ export class YohoRemoteBot {
                 return
             }
 
-            const namespace = this.getNamespaceForChatId(ctx.from?.id ?? null)
+            const namespace = await this.getNamespaceForChatId(ctx.from?.id ?? null)
             if (!namespace) {
                 await ctx.answerCallbackQuery('Telegram account is not bound')
                 return
@@ -225,11 +225,11 @@ export class YohoRemoteBot {
         return session
     }
 
-    private getNamespaceForChatId(chatId: number | null | undefined): string | null {
+    private async getNamespaceForChatId(chatId: number | null | undefined): Promise<string | null> {
         if (!chatId) {
             return null
         }
-        const stored = this.store.getUser('telegram', String(chatId))
+        const stored = await this.store.getUser('telegram', String(chatId))
         return stored?.namespace ?? null
     }
 
@@ -443,15 +443,15 @@ export class YohoRemoteBot {
     /**
      * Get bound chat IDs for a namespace
      */
-    getBoundChatIds(namespace: string): number[] {
-        return this.getBoundChatIdsInternal(namespace)
+    async getBoundChatIds(namespace: string): Promise<number[]> {
+        return await this.getBoundChatIdsInternal(namespace)
     }
 
     /**
      * Get internal bound chat IDs
      */
-    private getBoundChatIdsInternal(namespace: string): number[] {
-        const users = this.store.getUsersByPlatformAndNamespace('telegram', namespace)
+    private async getBoundChatIdsInternal(namespace: string): Promise<number[]> {
+        const users = await this.store.getUsersByPlatformAndNamespace('telegram', namespace)
         const ids = new Set<number>()
         for (const user of users) {
             const chatId = Number(user.platformUserId)

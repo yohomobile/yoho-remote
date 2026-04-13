@@ -230,7 +230,14 @@ export class WebPushService {
         clientId?: string,
         chatId?: string
     ): Promise<StoredPushSubscription | null> {
-        return await this.store.addOrUpdatePushSubscription(namespace, endpoint, keys, userAgent, clientId, chatId)
+        return await this.store.addOrUpdatePushSubscription({
+            namespace,
+            endpoint,
+            keys,
+            userAgent,
+            clientId,
+            chatId
+        })
     }
 
     /**

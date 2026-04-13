@@ -22,7 +22,11 @@ const MODEL_MODE_VALUES = new Set([
     'default',
     'sonnet',
     'opus',
+    'glm-5.1',
+    'gpt-5.4',
+    'gpt-5.4-mini',
     'gpt-5.3-codex',
+    'gpt-5.3-codex-spark',
     'gpt-5.2-codex',
     'gpt-5.1-codex-max',
     'gpt-5.1-codex-mini',
@@ -178,13 +182,6 @@ export function SessionChat(props: {
         await switchSession()
         props.onRefresh()
     }, [switchSession, props.onRefresh])
-
-    const handleViewTerminal = useCallback(() => {
-        navigate({
-            to: '/sessions/$sessionId/terminal',
-            params: { sessionId: props.session.id }
-        })
-    }, [navigate, props.session.id])
 
     const handleDeleteClick = useCallback(() => {
         setDeleteDialogOpen(true)
@@ -418,7 +415,6 @@ export function SessionChat(props: {
                         onModelModeChange={handleModelModeChange}
                         onFastModeChange={handleFastModeChange}
                         onSwitchToRemote={handleSwitchToRemote}
-                        onTerminal={props.session.active ? handleViewTerminal : undefined}
                         autocompleteSuggestions={props.autocompleteSuggestions}
                         otherUserTyping={props.otherUserTyping}
                         setTextRef={composerSetTextRef}

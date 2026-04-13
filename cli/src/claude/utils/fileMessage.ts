@@ -4,7 +4,7 @@
  * [File: server-uploads/...] references with local paths so Claude can read them directly.
  */
 
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { logger } from '@/lib'
 import { configuration } from '@/configuration'
@@ -40,11 +40,12 @@ export async function resolveFileReferences(text: string, workingDirectory: stri
             }
 
             const buffer = Buffer.from(await response.arrayBuffer())
-            const filename = serverPath.split('/').pop() || 'unknown-file'
-
             const downloadDir = join(workingDirectory, '.feishu-files')
-            mkdirSync(downloadDir, { recursive: true })
-            const localPath = join(downloadDir, filename)
+            const relativePath = serverPath.startsWith('server-uploads/')
+                ? serverPath.slice('server-uploads/'.length)
+                : (serverPath.split('/').pop() || 'unknown-file')
+            const localPath = join(downloadDir, relativePath)
+            mkdirSync(dirname(localPath), { recursive: true })
             writeFileSync(localPath, buffer)
 
             logger.debug(`[fileMessage] Downloaded ${serverPath} → ${localPath} (${buffer.length} bytes)`)

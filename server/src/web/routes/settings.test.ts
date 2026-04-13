@@ -31,6 +31,17 @@ describe('createSettingsRoutes projects', () => {
         const updateCalls: Array<{ machineId: string | null | undefined; workspaceGroupId: string | null | undefined }> = []
         const store = {
             getProjects: async () => [],
+            getProject: async () => ({
+                id: 'project-1',
+                name: 'YohoRemote',
+                path: '/home/workspaces/repos/yoho-remote',
+                description: null,
+                machineId: null,
+                workspaceGroupId: 'workspace-a',
+                orgId: 'org-a',
+                createdAt: 1,
+                updatedAt: 1,
+            }),
             addProject: async (_name: string, _path: string, _description?: string, machineId?: string | null, orgId?: string | null, workspaceGroupId?: string | null) => {
                 addCalls.push({ machineId, orgId, workspaceGroupId })
                 return {
@@ -45,15 +56,15 @@ describe('createSettingsRoutes projects', () => {
                     updatedAt: 1,
                 }
             },
-            updateProject: async (_id: string, _name: string, _path: string, _description?: string, machineId?: string | null, _orgId?: string | null, workspaceGroupId?: string | null) => {
-                updateCalls.push({ machineId, workspaceGroupId })
+            updateProject: async (_id: string, fields: { machineId?: string | null; workspaceGroupId?: string | null }) => {
+                updateCalls.push({ machineId: fields.machineId, workspaceGroupId: fields.workspaceGroupId })
                 return {
                     id: 'project-1',
                     name: 'YohoRemote',
                     path: '/home/workspaces/repos/yoho-remote',
                     description: null,
                     machineId: null,
-                    workspaceGroupId,
+                    workspaceGroupId: fields.workspaceGroupId ?? null,
                     orgId: 'org-a',
                     createdAt: 1,
                     updatedAt: 2,
@@ -87,10 +98,60 @@ describe('createSettingsRoutes projects', () => {
         expect(updateResponse.status).toBe(200)
 
         expect(addCalls).toEqual([
-            { machineId: 'machine-a', orgId: 'org-a', workspaceGroupId: undefined },
+            { machineId: 'machine-a', orgId: 'org-a', workspaceGroupId: null },
         ])
         expect(updateCalls).toEqual([
             { machineId: undefined, workspaceGroupId: 'workspace-a' },
         ])
+    })
+
+    it('rejects shared projects without a workspace group', async () => {
+        let addCalled = false
+        let updateCalled = false
+        const store = {
+            getProject: async () => ({
+                id: 'project-1',
+                name: 'YohoRemote',
+                path: '/home/workspaces/repos/yoho-remote',
+                description: null,
+                machineId: null,
+                workspaceGroupId: null,
+                orgId: 'org-a',
+                createdAt: 1,
+                updatedAt: 1,
+            }),
+            addProject: async () => {
+                addCalled = true
+                return null
+            },
+            updateProject: async () => {
+                updateCalled = true
+                return null
+            },
+        }
+
+        const app = new Hono()
+        app.route('/api', createSettingsRoutes(store as any))
+
+        const createResponse = await app.request('/api/settings/projects?orgId=org-a', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                name: 'YohoRemote',
+                path: '/home/workspaces/repos/yoho-remote',
+            }),
+        })
+        expect(createResponse.status).toBe(400)
+
+        const updateResponse = await app.request('/api/settings/projects/project-1?orgId=org-a', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                description: 'rename without scope change'
+            }),
+        })
+        expect(updateResponse.status).toBe(400)
+        expect(addCalled).toBe(false)
+        expect(updateCalled).toBe(false)
     })
 })

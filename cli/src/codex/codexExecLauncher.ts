@@ -18,6 +18,7 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { CodexDisplay } from '@/ui/ink/CodexDisplay';
 import { getYohoRemoteCliCommand } from '@/utils/spawnYohoRemoteCLI';
 import { startYohoRemoteServer } from '@/claude/utils/startYohoRemoteServer';
+import { resolveFileReferences } from '@/claude/utils/fileMessage';
 import { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 import { restoreTerminalState } from '@/ui/terminalState';
 import { hasCodexCliOverrides } from './utils/codexCliOverrides';
@@ -303,8 +304,9 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
 
             messageBuffer.addMessage(message.message, 'user');
             currentModeHash = message.hash;
-            const outgoingMessage = normalizeCodexToolReferences(
-                appendTitleInstructionIfNeeded(message.message)
+            const resolvedMessage = await resolveFileReferences(message.message, session.path);
+            const outgoingPrompt = normalizeCodexToolReferences(
+                appendTitleInstructionIfNeeded(resolvedMessage)
             );
 
             console.error('[YR codex-exec] Processing message:', message.message.slice(0, 50));
@@ -312,7 +314,7 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
             try {
                 // Build codex start config to get resolved model/prompt
                 const startConfig = buildCodexStartConfig({
-                    message: outgoingMessage,
+                    message: outgoingPrompt,
                     mode: message.mode,
                     first,
                     mcpServers,

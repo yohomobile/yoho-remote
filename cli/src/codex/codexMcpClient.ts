@@ -532,7 +532,7 @@ export class CodexMcpClient {
             }));
         };
 
-        this.client.fallbackRequestHandler = async (request) => {
+        this.client.fallbackRequestHandler = async (request, _extra) => {
             logger.debug('[CodexMCP] Fallback request handler invoked:', stringifyForLog({
                 method: request.method,
                 id: request.id,
@@ -629,7 +629,9 @@ export class CodexMcpClient {
         logger.debug('[CodexMCP] Permission handlers registered');
     }
 
-    private async handleElicitationRequest(request: { method: 'elicitation/create'; params: Record<string, unknown> }): Promise<unknown> {
+    private async handleElicitationRequest(
+        request: { method: 'elicitation/create'; params: Record<string, unknown> }
+    ): Promise<ReturnType<typeof buildElicitationResult>> {
         const params = request.params as Record<string, unknown>;
         const requestedSchema = extractRequestedSchema(params);
         const approvalKind = extractApprovalKind(params);
