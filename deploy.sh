@@ -357,9 +357,29 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
         fi
 
         # Stop old daemon and detached session children (处理假死/僵尸 — 远程机器，无需排除本机进程)
+        # 这里不能用 pkill -f，因为远程 shell 的 argv 会带上匹配串，导致把当前 ssh 会话自己杀掉。
         ncu_exec "ssh $SSH_OPTS $SSH_TARGET 'sudo systemctl stop yoho-remote-daemon.service 2>/dev/null || true'"
         sleep 2
-        ncu_exec "ssh $SSH_OPTS $SSH_TARGET 'P=\"[y]oho-remote-daemon|[y]oho-remote( |$)\"; sudo pkill -f \"\$P\" 2>/dev/null; sleep 3; if pgrep -f \"\$P\" >/dev/null 2>&1; then echo \"  ⚠ SIGTERM failed, SIGKILL...\"; sudo pkill -9 -f \"\$P\" 2>/dev/null; sleep 2; fi; R=\$(pgrep -f \"\$P\" 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do sudo kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -f \"\$P\" >/dev/null 2>&1 && echo \"  ✗ WARNING: yoho-remote processes still alive\" || echo \"  ✓ Fully stopped\"'"
+        ncu_exec "ssh $SSH_OPTS $SSH_TARGET '
+            list_pids() {
+                { pgrep -x yoho-remote-daemon 2>/dev/null || true; pgrep -x yoho-remote 2>/dev/null || true; } | sort -u
+            }
+            for p in \$(list_pids); do sudo kill -TERM \$p 2>/dev/null || true; done
+            sleep 3
+            R=\$(list_pids)
+            if [ -n \"\$R\" ]; then
+                echo \"  ⚠ SIGTERM failed, SIGKILL...\"
+                for p in \$R; do sudo kill -9 \$p 2>/dev/null || true; done
+                sleep 2
+            fi
+            R=\$(list_pids)
+            if [ -n \"\$R\" ]; then
+                for p in \$R; do sudo kill -9 \$p 2>/dev/null || true; done
+                sleep 1
+            fi
+            R=\$(list_pids)
+            [ -n \"\$R\" ] && echo \"  ✗ WARNING: yoho-remote processes still alive\" || echo \"  ✓ Fully stopped\"
+        '"
 
         # Copy new binaries
         ncu_exec "scp $SSH_OPTS $NCU_EXE_DIR/bun-linux-x64/yoho-remote-daemon $SSH_TARGET:$INSTALL_DIR/ && scp $SSH_OPTS $NCU_EXE_DIR/bun-linux-x64/yoho-remote $SSH_TARGET:$INSTALL_DIR/"
@@ -380,7 +400,26 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
         log "Deploying daemon to macmini..."
         if ncu_exec "ssh $SSH_OPTS -o BatchMode=yes $MACMINI_SSH 'true'" 2>/dev/null; then
             # Stop old daemon and detached session children (处理假死/僵尸 — macOS，无 sudo)
-            ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'P=\"[y]oho-remote-daemon|[y]oho-remote( |$)\"; pkill -f \"\$P\" 2>/dev/null; sleep 3; if pgrep -f \"\$P\" >/dev/null 2>&1; then echo \"  ⚠ SIGTERM failed, SIGKILL...\"; pkill -9 -f \"\$P\" 2>/dev/null; sleep 2; fi; R=\$(pgrep -f \"\$P\" 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -f \"\$P\" >/dev/null 2>&1 && echo \"  ✗ WARNING: yoho-remote processes still alive\" || echo \"  ✓ Fully stopped\"'"
+            ncu_exec "ssh $SSH_OPTS $MACMINI_SSH '
+                list_pids() {
+                    { pgrep -x yoho-remote-daemon 2>/dev/null || true; pgrep -x yoho-remote 2>/dev/null || true; } | sort -u
+                }
+                for p in \$(list_pids); do kill -TERM \$p 2>/dev/null || true; done
+                sleep 3
+                R=\$(list_pids)
+                if [ -n \"\$R\" ]; then
+                    echo \"  ⚠ SIGTERM failed, SIGKILL...\"
+                    for p in \$R; do kill -9 \$p 2>/dev/null || true; done
+                    sleep 2
+                fi
+                R=\$(list_pids)
+                if [ -n \"\$R\" ]; then
+                    for p in \$R; do kill -9 \$p 2>/dev/null || true; done
+                    sleep 1
+                fi
+                R=\$(list_pids)
+                [ -n \"\$R\" ] && echo \"  ✗ WARNING: yoho-remote processes still alive\" || echo \"  ✓ Fully stopped\"
+            '"
 
             # Copy new binaries
             ncu_exec "rsync -az -e 'ssh $SSH_OPTS' $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote-daemon $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote $MACMINI_SSH:$INSTALL_DIR/"
@@ -407,7 +446,26 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
         log "Deploying daemon to macbook..."
         if ncu_exec "ssh $SSH_OPTS -o BatchMode=yes $MACBOOK_SSH 'true'" 2>/dev/null; then
             # Stop old daemon and detached session children
-            ncu_exec "ssh $SSH_OPTS $MACBOOK_SSH 'P=\"[y]oho-remote-daemon|[y]oho-remote( |$)\"; pkill -f \"\$P\" 2>/dev/null; sleep 3; if pgrep -f \"\$P\" >/dev/null 2>&1; then echo \"  ⚠ SIGTERM failed, SIGKILL...\"; pkill -9 -f \"\$P\" 2>/dev/null; sleep 2; fi; R=\$(pgrep -f \"\$P\" 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -f \"\$P\" >/dev/null 2>&1 && echo \"  ✗ WARNING: yoho-remote processes still alive\" || echo \"  ✓ Fully stopped\"'"
+            ncu_exec "ssh $SSH_OPTS $MACBOOK_SSH '
+                list_pids() {
+                    { pgrep -x yoho-remote-daemon 2>/dev/null || true; pgrep -x yoho-remote 2>/dev/null || true; } | sort -u
+                }
+                for p in \$(list_pids); do kill -TERM \$p 2>/dev/null || true; done
+                sleep 3
+                R=\$(list_pids)
+                if [ -n \"\$R\" ]; then
+                    echo \"  ⚠ SIGTERM failed, SIGKILL...\"
+                    for p in \$R; do kill -9 \$p 2>/dev/null || true; done
+                    sleep 2
+                fi
+                R=\$(list_pids)
+                if [ -n \"\$R\" ]; then
+                    for p in \$R; do kill -9 \$p 2>/dev/null || true; done
+                    sleep 1
+                fi
+                R=\$(list_pids)
+                [ -n \"\$R\" ] && echo \"  ✗ WARNING: yoho-remote processes still alive\" || echo \"  ✓ Fully stopped\"
+            '"
 
             # Copy new binaries
             ncu_exec "rsync -az -e 'ssh $SSH_OPTS' $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote-daemon $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote $MACBOOK_SSH:/opt/yoho-remote/"
@@ -435,7 +493,27 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
         # Stop daemon and detached session children (处理假死/僵尸)
         ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl stop yoho-remote-daemon.service 2>/dev/null || true"
         sleep 2
-        ncu_exec "P='[y]oho-remote-daemon|[y]oho-remote( |$)'; S='echo $NCU_SUDO_PASS | sudo -S'; \$S pkill -f \"\$P\" 2>/dev/null; sleep 3; if pgrep -f \"\$P\" >/dev/null 2>&1; then echo '  ⚠ SIGTERM failed, SIGKILL...'; \$S pkill -9 -f \"\$P\" 2>/dev/null; sleep 2; fi; R=\$(pgrep -f \"\$P\" 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do \$S kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -f \"\$P\" >/dev/null 2>&1 && echo '  ✗ WARNING: yoho-remote processes still alive' || echo '  ✓ Fully stopped'"
+        ncu_exec "
+            list_pids() {
+                { pgrep -x yoho-remote-daemon 2>/dev/null || true; pgrep -x yoho-remote 2>/dev/null || true; } | sort -u
+            }
+            S='echo $NCU_SUDO_PASS | sudo -S'
+            for p in \$(list_pids); do \$S kill -TERM \$p 2>/dev/null || true; done
+            sleep 3
+            R=\$(list_pids)
+            if [ -n \"\$R\" ]; then
+                echo '  ⚠ SIGTERM failed, SIGKILL...'
+                for p in \$R; do \$S kill -9 \$p 2>/dev/null || true; done
+                sleep 2
+            fi
+            R=\$(list_pids)
+            if [ -n \"\$R\" ]; then
+                for p in \$R; do \$S kill -9 \$p 2>/dev/null || true; done
+                sleep 1
+            fi
+            R=\$(list_pids)
+            [ -n \"\$R\" ] && echo '  ✗ WARNING: yoho-remote processes still alive' || echo '  ✓ Fully stopped'
+        "
         # Start
         ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl start yoho-remote-daemon.service"
         sleep 3
