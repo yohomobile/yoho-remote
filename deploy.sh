@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 
 # ==================== Configuration ====================
 NCU_SSH="guang@101.100.174.21"
-NCU_REPO="/home/guang/softwares/yoho-remote"
+NCU_REPO="/home/workspaces/repos/yoho-remote"
 NCU_EXE_DIR="$NCU_REPO/cli/dist-exe"
 NCU_SUDO_PASS="guang"
 

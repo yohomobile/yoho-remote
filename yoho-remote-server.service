@@ -5,11 +5,11 @@ After=network.target
 [Service]
 Type=simple
 User=guang
-WorkingDirectory=/home/guang/softwares/yoho-remote
+WorkingDirectory=/home/workspaces/repos/yoho-remote
 Environment=CLI_API_TOKEN=rDhnX0JCPIki0s6t1kNsHJkSLCvpAEt3wNCb_dkEyOc
 Environment=WEBAPP_PORT=3006
-EnvironmentFile=/home/guang/softwares/yoho-remote/.env
-ExecStart=/home/guang/softwares/yoho-remote/cli/dist-exe/bun-linux-x64/yoho-remote-server
+EnvironmentFile=/home/workspaces/repos/yoho-remote/.env
+ExecStart=/home/workspaces/repos/yoho-remote/cli/dist-exe/bun-linux-x64/yoho-remote-server
 Restart=on-failure
 RestartSec=5
 
