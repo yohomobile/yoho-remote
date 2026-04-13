@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your cart is waiting - Yoho Mobile</title>
+    <style>
+        @media only screen and (max-width: 600px) {
+            .container { width: 100% !important; }
+            .content { padding: 20px !important; }
+            .h1 { font-size: 22px !important; }
+        }
+    </style>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F5F5F5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #F5F5F5;">
+        <tr>
+            <td align="center" style="padding: 40px 20px;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" class="container" style="background-color: #FFFFFF; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                    
+                    <!-- Header with Logo -->
+                    <tr>
+                        <td style="padding: 40px; text-align: center; background: #FFFFFF; border-radius: 12px 12px 0 0;">
+                            <img src="data:image/png;base64,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" alt="yoho" width="140" style="display: block; margin: 0 auto; border: 0;">
+                        </td>
+                    </tr>
+
+                    <!-- Hero Section -->
+                    <tr>
+                        <td class="content" style="padding: 0 40px 32px; text-align: center;">
+                            <div style="width: 80px; height: 80px; background: linear-gradient(135deg, #FFF5F0 0%, #FFEEE5 100%); border-radius: 50%; margin: 0 auto 24px; line-height: 80px; text-align: center;">
+                                <span style="font-size: 36px;">🛒</span>
+                            </div>
+
+                            <h1 class="h1" style="margin: 0; color: #1A1A1A; font-size: 26px; font-weight: 700; line-height: 1.3;">Your cart misses you</h1>
+
+                            <p style="margin: 16px 0 0; color: #666666; font-size: 16px; line-height: 1.6;">
+                                Hi <span style="color: #FF6B35; font-weight: 600;">richard2900@outlook.com</span>
+                            </p>
+                            
+                            <p style="margin: 12px 0 0; color: #666666; font-size: 16px; line-height: 1.6;">
+                                You left something behind! Complete your order now.
+                            </p>
+                        </td>
+                    </tr>
+
+                    <!-- Cart Item -->
+                    <tr>
+                        <td style="padding: 0 40px 32px;">
+                            <div style="background: #FAFAFA; border-radius: 12px; padding: 24px; border: 1px solid #EEEEEE;">
+                                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                    <tr>
+                                        <td width="80" style="vertical-align: top;">
+                                            <div style="width: 72px; height: 72px; background: linear-gradient(135deg, #E8F4F8 0%, #D0E8F0 100%); border-radius: 10px; text-align: center; line-height: 72px;">
+                                                <span style="font-size: 32px;">🌐</span>
+                                            </div>
+                                        </td>
+                                        <td style="padding-left: 20px; vertical-align: top;">
+                                            <p style="margin: 0 0 6px; color: #1A1A1A; font-size: 16px; font-weight: 600;">Asia 9 Countries 10 Days eSIM Plan</p>
+                                            <p style="margin: 0; color: #999999; font-size: 14px;">Validity: 10 Days | Data: 10GB</p>
+                                            <p style="margin: 8px 0 0; color: #FF6B35; font-size: 18px; font-weight: 700;">US$ 23.90</p>
+                                        </td>
+                                    </tr>
+                                </table>
+                            </div>
+                        </td>
+                    </tr>
+
+                    <!-- CTA Button -->
+                    <tr>
+                        <td style="padding: 0 40px 40px; text-align: center;">
+                            <a href="#" style="display: inline-block; padding: 16px 40px; background: linear-gradient(135deg, #FF6B35 0%, #FF8C42 100%); color: #FFFFFF; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 12px rgba(255,107,53,0.3);">Complete Your Purchase →</a>
+                            
+                            <p style="margin: 24px 0 0; color: #999999; font-size: 13px;">
+                                Or use this discount code at checkout:
+                            </p>
+                            
+                            <div style="margin-top: 12px; padding: 12px 24px; background: #F5F5F5; border-radius: 6px; display: inline-block; border: 2px dashed #CCCCCC;">
+                                <span style="font-family: 'Courier New', monospace; color: #FF6B35; font-weight: 700; font-size: 18px; letter-spacing: 1px;">SAVE5</span>
+                            </div>
+                        </td>
+                    </tr>
+
+                    <!-- Help Section -->
+                    <tr>
+                        <td style="padding: 0 40px 32px;">
+                            <hr style="border: none; border-top: 1px solid #EEEEEE; margin: 0 0 24px;">
+                            
+                            <p style="margin: 0 0 16px; color: #333333; font-size: 14px; font-weight: 600; text-align: center;">Need help?</p>
+                            
+                            <p style="margin: 0; color: #666666; font-size: 14px; line-height: 1.6; text-align: center;">
+                                Email us at <a href="mailto:support@yohomobile.com" style="color: #FF6B35; text-decoration: none;">support@yohomobile.com</a>
+                            </p>
+                        </td>
+                    </tr>
+
+                    <!-- Footer -->
+                    <tr>
+                        <td style="padding: 24px 40px; background: #FAFAFA; border-radius: 0 0 12px 12px; text-align: center; border-top: 1px solid #EEEEEE;">
+                            <p style="margin: 0; color: #999999; font-size: 12px; line-height: 1.5;">
+                                Yoho Mobile | 新加坡 | 吉隆坡<br>
+                                You're receiving this because you left items in your cart.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
