@@ -103,6 +103,7 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
                     sessionId: session.sessionId,
                     onSessionFound: handleSessionFound,
                     abort: processAbortController.signal,
+                    serviceTier: session.codexCliOverrides?.serviceTier,
                     codexArgs: session.codexArgs
                 });
 

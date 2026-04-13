@@ -22,6 +22,7 @@ import { resolveFileReferences } from '@/claude/utils/fileMessage';
 import { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 import { restoreTerminalState } from '@/ui/terminalState';
 import { hasCodexCliOverrides } from './utils/codexCliOverrides';
+import { buildCodexServiceTierArgs } from './utils/codexServiceTier';
 import { buildCodexStartConfig, TITLE_INSTRUCTION } from './utils/codexStartConfig';
 import { buildCommandExecutionResult, getCommandExecutionPreview } from './utils/commandExecutionResult';
 import { resolveCodexBinary } from './codexBinary';
@@ -129,7 +130,7 @@ function normalizeCodexToolReferences(message: string): string {
 export async function codexExecLauncher(session: CodexSession): Promise<'switch' | 'exit'> {
     if (session.codexArgs && session.codexArgs.length > 0) {
         if (hasCodexCliOverrides(session.codexCliOverrides)) {
-            logger.debug(`[codex-exec] CLI args include sandbox/approval overrides; other args ignored in remote mode.`);
+            logger.debug(`[codex-exec] CLI args include supported sandbox/approval/service-tier overrides; other args ignored in remote mode.`);
         } else {
             logger.debug(`[codex-exec] Warning: CLI args [${session.codexArgs.join(', ')}] are ignored in remote mode.`);
         }
@@ -192,6 +193,8 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
     // ----- MCP servers setup -----
     const yohoRemoteServer = await startYohoRemoteServer(session.client, {
         apiClient: session.api,
+        machineId: session.machineId ?? undefined,
+        sessionSource: session.sessionSource ?? undefined,
         yohoRemoteSessionId: session.client.sessionId,
         workingDirectory: session.path,
     });
@@ -407,6 +410,7 @@ interface SpawnCodexExecOptions {
         prompt: string;
         model?: string;
         model_reasoning_effort?: string;
+        service_tier?: 'fast' | 'flex';
     };
     permissionMode: PermissionMode;
     mcpServers: Record<string, { command: string; args: string[]; cwd?: string; env?: Record<string, string> }>;
@@ -472,6 +476,10 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
         args.push('-c', `model_reasoning_effort="${startConfig.model_reasoning_effort}"`);
     }
 
+    if (startConfig.service_tier) {
+        args.push(...buildCodexServiceTierArgs(startConfig.service_tier));
+    }
+
     // Prompt
     args.push(prompt);
 
@@ -484,6 +492,7 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
         threadId,
         model: startConfig.model ?? '(default)',
         reasoningEffort: startConfig.model_reasoning_effort ?? '(default)',
+        serviceTier: startConfig.service_tier ?? '(default)',
         codexHome: codexBin.env.CODEX_HOME ?? '(not set)',
     });
 

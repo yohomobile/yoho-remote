@@ -11,6 +11,7 @@ export interface CodexSessionConfig {
     'include-plan-tool'?: boolean;
     model?: string;
     model_reasoning_effort?: 'low' | 'medium' | 'high' | 'xhigh';
+    service_tier?: 'fast' | 'flex';
     profile?: string;
     sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
 }

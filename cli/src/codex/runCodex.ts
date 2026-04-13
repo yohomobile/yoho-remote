@@ -300,6 +300,8 @@ export async function runCodex(opts: {
             codexArgs: opts.codexArgs,
             codexCliOverrides,
             startedBy,
+            machineId,
+            sessionSource: sessionSource || null,
             permissionMode: currentPermissionMode,
             onModeChange: (newMode) => {
                 session.sendSessionEvent({ type: 'switch', mode: newMode });

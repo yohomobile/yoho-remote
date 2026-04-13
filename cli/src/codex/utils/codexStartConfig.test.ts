@@ -42,6 +42,29 @@ describe('buildCodexStartConfig', () => {
         expect(config.model).toBe('o3');
     });
 
+    it('defaults service tier to fast', () => {
+        const config = buildCodexStartConfig({
+            message: 'hello',
+            mode: { permissionMode: 'default' },
+            first: false,
+            mcpServers
+        });
+
+        expect(config.service_tier).toBe('fast');
+    });
+
+    it('applies explicit service tier overrides even outside default permission mode', () => {
+        const config = buildCodexStartConfig({
+            message: 'hello',
+            mode: { permissionMode: 'yolo' },
+            first: false,
+            mcpServers,
+            cliOverrides: { serviceTier: 'flex' }
+        });
+
+        expect(config.service_tier).toBe('flex');
+    });
+
     it('normalizes Yoho MCP tool names for Codex prompts', () => {
         const config = buildCodexStartConfig({
             message: '先调用 `mcp__yoho_remote__environment_info`，再看 `mcp__yoho_remote__project_list`，必要时调用 `mcp__yoho-memory__recall` 和 `mcp__yoho-credentials__get_credential`',

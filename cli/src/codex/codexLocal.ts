@@ -2,6 +2,11 @@ import { logger } from '@/ui/logger';
 import { restoreTerminalState } from '@/ui/terminalState';
 import { spawnWithAbort } from '@/utils/spawnWithAbort';
 import { resolveCodexBinary } from './codexBinary';
+import {
+    buildCodexServiceTierArgs,
+    DEFAULT_CODEX_SERVICE_TIER,
+    type CodexServiceTier
+} from './utils/codexServiceTier';
 
 /**
  * Filter out 'resume' subcommand which is managed internally by yoho-remote.
@@ -28,6 +33,7 @@ export async function codexLocal(opts: {
     path: string;
     model?: string;
     sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+    serviceTier?: CodexServiceTier;
     onSessionFound: (id: string) => void;
     codexArgs?: string[];
 }): Promise<void> {
@@ -45,6 +51,8 @@ export async function codexLocal(opts: {
     if (opts.sandbox) {
         args.push('--sandbox', opts.sandbox);
     }
+
+    args.push(...buildCodexServiceTierArgs(opts.serviceTier ?? DEFAULT_CODEX_SERVICE_TIER));
 
     if (opts.codexArgs) {
         const safeArgs = filterResumeSubcommand(opts.codexArgs);

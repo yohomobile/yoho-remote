@@ -72,7 +72,9 @@ export type CliHandlersDeps = {
     rpcRegistry: RpcRegistry
     onSessionAlive?: (payload: SessionAlivePayload) => void
     onSessionEnd?: (payload: SessionEndPayload) => void
+    onSessionDisconnect?: (payload: SessionEndPayload) => void
     onMachineAlive?: (payload: MachineAlivePayload) => void
+    onMachineDisconnect?: (payload: MachineAlivePayload) => void
     onWebappEvent?: (event: SyncEvent) => void
     onLicenseBlock?: (sessionId: string, reason: string) => void
 }
@@ -81,6 +83,7 @@ export type CliHandlersDeps = {
 // When a different socket sends session-alive for the same session, the old socket
 // is evicted to prevent duplicate processes from both reporting heartbeats.
 const sessionOwnerSocketId = new Map<string, string>()
+const machineOwnerSocketId = new Map<string, string>()
 
 type AccessErrorReason = 'namespace-missing' | 'access-denied' | 'not-found'
 type AccessResult<T> =
@@ -88,7 +91,18 @@ type AccessResult<T> =
     | { ok: false; reason: AccessErrorReason }
 
 export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDeps): void {
-    const { io, store, rpcRegistry, onSessionAlive, onSessionEnd, onMachineAlive, onWebappEvent, onLicenseBlock } = deps
+    const {
+        io,
+        store,
+        rpcRegistry,
+        onSessionAlive,
+        onSessionEnd,
+        onSessionDisconnect,
+        onMachineAlive,
+        onMachineDisconnect,
+        onWebappEvent,
+        onLicenseBlock,
+    } = deps
     const namespace = typeof socket.data.namespace === 'string' ? socket.data.namespace : null
 
     // Cache: machineId → orgId（用于 session-alive license fallback，避免每次心跳查 DB）
@@ -189,10 +203,19 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
 
     socket.on('disconnect', () => {
         rpcRegistry.unregisterAll(socket)
-        // Clean up session ownership for this socket
+        const disconnectedAt = Date.now()
+
         for (const [sid, ownerSocketId] of sessionOwnerSocketId.entries()) {
             if (ownerSocketId === socket.id) {
                 sessionOwnerSocketId.delete(sid)
+                onSessionDisconnect?.({ sid, time: disconnectedAt })
+            }
+        }
+
+        for (const [ownedMachineId, ownerSocketId] of machineOwnerSocketId.entries()) {
+            if (ownerSocketId === socket.id) {
+                machineOwnerSocketId.delete(ownedMachineId)
+                onMachineDisconnect?.({ machineId: ownedMachineId, time: disconnectedAt })
             }
         }
     })
@@ -448,6 +471,23 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
             emitAccessError('machine', data.machineId, machineAccess.reason)
             return
         }
+
+        const existingOwner = machineOwnerSocketId.get(data.machineId)
+        if (existingOwner && existingOwner !== socket.id) {
+            const cliNamespace = io.of('/cli')
+            const oldSocket = cliNamespace.sockets.get(existingOwner)
+            if (oldSocket) {
+                console.warn(
+                    `[cli-socket] Machine ${data.machineId} conflict: new socket ${socket.id} replacing old socket ${existingOwner}. ` +
+                    `Disconnecting old socket to keep daemon ownership consistent.`
+                )
+                rpcRegistry.unregisterAll(oldSocket)
+                oldSocket.disconnect(true)
+            }
+            machineOwnerSocketId.delete(data.machineId)
+        }
+        machineOwnerSocketId.set(data.machineId, socket.id)
+
         onMachineAlive?.(data)
     })
 

@@ -86,7 +86,8 @@ export function createSettingsRoutes(
             return c.json({ error: 'Failed to add project. Path may already exist.' }, 400)
         }
 
-        const projects = await store.getProjects(undefined, orgId)
+        const responseMachineId = machineId ?? undefined
+        const projects = await store.getProjects(responseMachineId, orgId)
         return c.json({ ok: true, project, projects })
     })
 
@@ -122,15 +123,16 @@ export function createSettingsRoutes(
             name: parsed.data.name,
             path: parsed.data.path,
             description: parsed.data.description,
-            machineId: parsed.data.machineId,
+            machineId: parsed.data.machineId === undefined ? undefined : effectiveMachineId,
             orgId,
-            workspaceGroupId: parsed.data.workspaceGroupId,
+            workspaceGroupId: parsed.data.workspaceGroupId === undefined ? undefined : effectiveWorkspaceGroupId,
         })
         if (!project) {
             return c.json({ error: 'Project not found or path already exists' }, 404)
         }
 
-        const projects = await store.getProjects(undefined, orgId)
+        const responseMachineId = effectiveMachineId ?? undefined
+        const projects = await store.getProjects(responseMachineId, orgId)
         return c.json({ ok: true, project, projects })
     })
 
@@ -149,7 +151,8 @@ export function createSettingsRoutes(
             return c.json({ error: 'Project not found' }, 404)
         }
 
-        const projects = await store.getProjects(undefined, orgId)
+        const responseMachineId = existing.machineId ?? undefined
+        const projects = await store.getProjects(responseMachineId, orgId)
         return c.json({ ok: true, projects })
     })
 

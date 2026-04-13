@@ -25,7 +25,9 @@ export type SocketServerDeps = {
     onWebappEvent?: (event: SyncEvent) => void
     onSessionAlive?: (payload: { sid: string; time: number; thinking?: boolean; mode?: 'local' | 'remote' }) => void
     onSessionEnd?: (payload: { sid: string; time: number }) => void
+    onSessionDisconnect?: (payload: { sid: string; time: number }) => void
     onMachineAlive?: (payload: { machineId: string; time: number }) => void
+    onMachineDisconnect?: (payload: { machineId: string; time: number }) => void
     onLicenseBlock?: (sessionId: string, reason: string) => void
 }
 
@@ -83,7 +85,9 @@ export function createSocketServer(deps: SocketServerDeps): {
         rpcRegistry,
         onSessionAlive: deps.onSessionAlive,
         onSessionEnd: deps.onSessionEnd,
+        onSessionDisconnect: deps.onSessionDisconnect,
         onMachineAlive: deps.onMachineAlive,
+        onMachineDisconnect: deps.onMachineDisconnect,
         onWebappEvent: deps.onWebappEvent,
         onLicenseBlock: deps.onLicenseBlock,
     }))

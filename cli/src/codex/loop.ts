@@ -20,6 +20,8 @@ interface LoopOptions {
     startingMode?: 'local' | 'remote';
     startedBy?: 'daemon' | 'terminal';
     sessionId?: string | null;
+    machineId?: string | null;
+    sessionSource?: string | null;
     onModeChange: (mode: 'local' | 'remote') => void;
     messageQueue: MessageQueue2<EnhancedMode>;
     session: ApiSessionClient;
@@ -45,6 +47,8 @@ export async function loop(opts: LoopOptions): Promise<void> {
         mode: startingMode,
         startedBy,
         startingMode,
+        machineId: opts.machineId ?? null,
+        sessionSource: opts.sessionSource ?? null,
         codexArgs: opts.codexArgs,
         codexCliOverrides: opts.codexCliOverrides,
         permissionMode: opts.permissionMode ?? 'default'

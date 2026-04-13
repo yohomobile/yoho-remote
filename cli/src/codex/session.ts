@@ -16,6 +16,8 @@ export class CodexSession extends AgentSessionBase<EnhancedMode> {
     readonly codexCliOverrides?: CodexCliOverrides;
     readonly startedBy: 'daemon' | 'terminal';
     readonly startingMode: 'local' | 'remote';
+    readonly machineId: string | null;
+    readonly sessionSource: string | null;
     localLaunchFailure: LocalLaunchFailure | null = null;
     private runtimeModel: string | null = null;
     private runtimeModelReasoningEffort: SessionModelReasoningEffort | null = null;
@@ -31,6 +33,8 @@ export class CodexSession extends AgentSessionBase<EnhancedMode> {
         mode?: 'local' | 'remote';
         startedBy: 'daemon' | 'terminal';
         startingMode: 'local' | 'remote';
+        machineId?: string | null;
+        sessionSource?: string | null;
         codexArgs?: string[];
         codexCliOverrides?: CodexCliOverrides;
         permissionMode?: PermissionMode;
@@ -57,6 +61,8 @@ export class CodexSession extends AgentSessionBase<EnhancedMode> {
         this.codexCliOverrides = opts.codexCliOverrides;
         this.startedBy = opts.startedBy;
         this.startingMode = opts.startingMode;
+        this.machineId = opts.machineId ?? null;
+        this.sessionSource = opts.sessionSource ?? null;
         this.permissionMode = opts.permissionMode;
     }
 

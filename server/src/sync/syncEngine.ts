@@ -1435,6 +1435,47 @@ export class SyncEngine {
         }
     }
 
+    handleSessionDisconnect(payload: { sid: string; time: number }): void {
+        if (this.deletingSessions.has(payload.sid)) {
+            return
+        }
+
+        const session = this.sessions.get(payload.sid)
+        if (!session || !session.active) {
+            return
+        }
+
+        session.active = false
+        session.thinking = false
+        session.thinkingAt = clampAliveTime(payload.time) ?? Date.now()
+
+        this.emit({
+            type: 'session-updated',
+            sessionId: session.id,
+            data: {
+                active: false,
+                thinking: false,
+                wasThinking: false,
+            }
+        })
+    }
+
+    handleMachineDisconnect(payload: { machineId: string; time: number }): void {
+        const machine = this.machines.get(payload.machineId)
+        if (!machine || !machine.active) {
+            return
+        }
+
+        machine.active = false
+        this.emit({
+            type: 'machine-updated',
+            machineId: machine.id,
+            data: {
+                active: false,
+            }
+        })
+    }
+
     async handleMachineAlive(payload: { machineId: string; time: number }): Promise<void> {
         const t = clampAliveTime(payload.time)
         if (!t) return

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { SyncEngine, type Session } from './syncEngine'
+import { SyncEngine, type Machine, type Session } from './syncEngine'
 
 function createSession(id: string, metadata: Record<string, unknown>): Session {
     return {
@@ -17,6 +17,24 @@ function createSession(id: string, metadata: Record<string, unknown>): Session {
         thinking: false,
         thinkingAt: 0,
         modelMode: 'default',
+    }
+}
+
+function createMachine(id: string, metadata: Record<string, unknown>): Machine {
+    return {
+        id,
+        namespace: 'default',
+        seq: 0,
+        createdAt: 0,
+        updatedAt: 0,
+        active: true,
+        activeAt: 0,
+        metadata: metadata as Machine['metadata'],
+        metadataVersion: 1,
+        daemonState: null,
+        daemonStateVersion: 1,
+        orgId: null,
+        supportedAgents: null,
     }
 }
 
@@ -92,6 +110,7 @@ describe('SyncEngine', () => {
             broadcastToGroup() {},
         } as any)
         engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
 
         const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
         const childSession = createSession('child-session', {
@@ -148,6 +167,7 @@ describe('SyncEngine', () => {
             broadcastToGroup() {},
         } as any)
         engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
 
         const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
         const childSession = createSession('child-session', {
@@ -168,5 +188,104 @@ describe('SyncEngine', () => {
         expect(sent).toHaveLength(1)
         expect(sent[0]?.payload.text).toContain('总订单数：254')
         expect(sent[0]?.payload.text).not.toContain('让我汇总关键数据并生成执行报告')
+    })
+
+    test('marks disconnected sessions inactive in memory and allows heartbeat reactivation', async () => {
+        const setSessionActiveCalls: Array<{ id: string; active: boolean; activeAt: number; namespace: string }> = []
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getSession: async () => ({ active: true }),
+            setSessionActive: async (id: string, active: boolean, activeAt: number, namespace: string) => {
+                setSessionActiveCalls.push({ id, active, activeAt, namespace })
+            },
+            setSessionModelConfig: async () => {},
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const session = createSession('session-1', {
+            machineId: 'machine-1',
+            path: '/tmp/project',
+            flavor: 'codex',
+            codexSessionId: 'thread-1',
+        })
+        session.active = true
+        session.activeAt = Date.now() - 5_000
+        session.thinking = true
+
+        ;(engine as any).sessions.set(session.id, session)
+
+        engine.handleSessionDisconnect({ sid: session.id, time: Date.now() })
+
+        expect(session.active).toBe(false)
+        expect(session.thinking).toBe(false)
+        expect(setSessionActiveCalls).toHaveLength(0)
+
+        await engine.handleSessionAlive({ sid: session.id, time: Date.now(), thinking: false })
+
+        expect(session.active).toBe(true)
+        expect(setSessionActiveCalls).toHaveLength(1)
+        expect(setSessionActiveCalls[0]).toEqual({
+            id: session.id,
+            active: true,
+            activeAt: session.activeAt,
+            namespace: session.namespace,
+        })
+    })
+
+    test('machine disconnect creates an offline-to-online edge for auto-resume', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const machine = createMachine('machine-1', {
+            host: 'guang-instance',
+            platform: 'linux',
+            yohoRemoteCliVersion: 'test',
+        })
+        machine.active = true
+        machine.activeAt = Date.now() - 5_000
+        ;(engine as any).machines.set(machine.id, machine)
+
+        const autoResumeCalls: Array<{ machineId: string; namespace: string }> = []
+        ;(engine as any).autoResumeSessions = async (machineId: string, namespace: string) => {
+            autoResumeCalls.push({ machineId, namespace })
+        }
+
+        engine.handleMachineDisconnect({ machineId: machine.id, time: Date.now() })
+        expect(machine.active).toBe(false)
+
+        await engine.handleMachineAlive({ machineId: machine.id, time: Date.now() })
+
+        expect(machine.active).toBe(true)
+        expect(autoResumeCalls).toEqual([{ machineId: machine.id, namespace: machine.namespace }])
     })
 })

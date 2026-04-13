@@ -11,6 +11,7 @@ import { getMachineStatusLabel, getMachineTitle, sortMachinesForStableDisplay } 
 
 type AgentType = 'claude' | 'codex'
 type ClaudeModelMode = 'sonnet' | 'opus' | 'glm-5.1'
+type ClaudeSettingsType = 'default' | 'claude' | 'litellm'
 
 /** 上次创建 session 时的偏好设置，存储在 localStorage */
 interface SpawnPrefs {
@@ -18,12 +19,18 @@ interface SpawnPrefs {
     projectPath?: string
     agent?: AgentType
     claudeModel?: ClaudeModelMode
+    claudeSettingsType?: ClaudeSettingsType
+    claudeAgent?: string
     codexModel?: string
     codexReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
 }
 
 function sanitizeAgentType(agent: unknown): AgentType | null {
     return agent === 'claude' || agent === 'codex' ? agent : null
+}
+
+function sanitizeClaudeSettingsType(value: unknown): ClaudeSettingsType | null {
+    return value === 'default' || value === 'claude' || value === 'litellm' ? value : null
 }
 
 function getSpawnPrefsKey(userEmail: string | null): string {
@@ -155,6 +162,8 @@ export function NewSession(props: {
     const [projectPath, setProjectPath] = useState(savedPrefs.projectPath ?? '')
     const [agent, setAgent] = useState<AgentType>(sanitizeAgentType(savedPrefs.agent) ?? 'claude')
     const [claudeModel, setClaudeModel] = useState<ClaudeModelMode>(savedPrefs.claudeModel ?? 'sonnet')
+    const [claudeSettingsType, setClaudeSettingsType] = useState<ClaudeSettingsType>(sanitizeClaudeSettingsType(savedPrefs.claudeSettingsType) ?? 'default')
+    const [claudeAgent, setClaudeAgent] = useState(typeof savedPrefs.claudeAgent === 'string' ? savedPrefs.claudeAgent : '')
     const [codexModel, setCodexModel] = useState(savedPrefs.codexModel ?? CODEX_MODELS[0].value)
     const [codexReasoningEffort, setCodexReasoningEffort] = useState<'low' | 'medium' | 'high' | 'xhigh'>(savedPrefs.codexReasoningEffort ?? 'medium')
     const [error, setError] = useState<string | null>(null)
@@ -285,6 +294,8 @@ export function NewSession(props: {
                 agent,
                 yolo: true,
                 sessionType: 'simple',
+                claudeSettingsType: agent === 'claude' && claudeSettingsType !== 'default' ? claudeSettingsType : undefined,
+                claudeAgent: agent === 'claude' ? (claudeAgent.trim() || undefined) : undefined,
                 claudeModel: agent === 'claude' ? claudeModel : undefined,
                 codexModel: agent === 'codex' ? codexModel : undefined,
                 modelReasoningEffort: agent === 'codex' ? codexReasoningEffort : undefined,
@@ -303,6 +314,8 @@ export function NewSession(props: {
                     projectPath: directory,
                     agent,
                     claudeModel,
+                    claudeSettingsType,
+                    claudeAgent: claudeAgent.trim() || undefined,
                     codexModel,
                     codexReasoningEffort,
                 })
@@ -498,6 +511,30 @@ export function NewSession(props: {
                             </option>
                         ))}
                     </select>
+                    <label className="text-xs font-medium text-[var(--app-hint)] mt-2">
+                        Runtime
+                    </label>
+                    <select
+                        value={claudeSettingsType}
+                        onChange={(e) => setClaudeSettingsType(e.target.value as ClaudeSettingsType)}
+                        disabled={isFormDisabled}
+                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                    >
+                        <option value="default">Default</option>
+                        <option value="claude">Claude / OAuth Relay</option>
+                        <option value="litellm">LiteLLM</option>
+                    </select>
+                    <label className="text-xs font-medium text-[var(--app-hint)] mt-2">
+                        Claude Agent (optional)
+                    </label>
+                    <input
+                        type="text"
+                        value={claudeAgent}
+                        onChange={(e) => setClaudeAgent(e.target.value)}
+                        disabled={isFormDisabled}
+                        placeholder="Optional agent name, e.g. ClaudeOauthRelay"
+                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                    />
                 </div>
             ) : null}
 

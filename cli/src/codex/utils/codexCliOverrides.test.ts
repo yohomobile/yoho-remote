@@ -16,6 +16,16 @@ describe('parseCodexCliOverrides', () => {
         });
     });
 
+    it('parses service tier from config overrides', () => {
+        expect(parseCodexCliOverrides(['-c', 'service_tier=fast'])).toEqual({
+            serviceTier: 'fast'
+        });
+
+        expect(parseCodexCliOverrides(['--config=service_tier=flex'])).toEqual({
+            serviceTier: 'flex'
+        });
+    });
+
     it('parses convenience flags', () => {
         expect(parseCodexCliOverrides(['--full-auto'])).toEqual({
             sandbox: 'workspace-write',
@@ -40,6 +50,10 @@ describe('parseCodexCliOverrides', () => {
 
         expect(parseCodexCliOverrides(['-a', 'untrusted', '-a', 'on-failure'])).toEqual({
             approvalPolicy: 'on-failure'
+        });
+
+        expect(parseCodexCliOverrides(['-c', 'service_tier=fast', '--config', 'service_tier=flex'])).toEqual({
+            serviceTier: 'flex'
         });
     });
 

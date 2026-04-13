@@ -2,6 +2,7 @@ import { trimIdent } from '@/utils/trimIdent';
 import type { CodexSessionConfig } from '../types';
 import type { EnhancedMode } from '../loop';
 import type { CodexCliOverrides } from './codexCliOverrides';
+import { resolveCodexServiceTier } from './codexServiceTier';
 
 export const TITLE_INSTRUCTION = trimIdent(`Based on this message, call functions.yoho_remote__change_title to change chat session title that would represent the current task. If chat idea would change dramatically - call this function again to update the title.`);
 
@@ -53,9 +54,10 @@ export function buildCodexStartConfig(args: {
     const approvalPolicy = resolveApprovalPolicy(args.mode);
     const sandbox = resolveSandbox(args.mode);
     const allowCliOverrides = args.mode.permissionMode === 'default';
-    const cliOverrides = allowCliOverrides ? args.cliOverrides : undefined;
-    const resolvedApprovalPolicy = cliOverrides?.approvalPolicy ?? approvalPolicy;
-    const resolvedSandbox = cliOverrides?.sandbox ?? sandbox;
+    const permissionCliOverrides = allowCliOverrides ? args.cliOverrides : undefined;
+    const resolvedApprovalPolicy = permissionCliOverrides?.approvalPolicy ?? approvalPolicy;
+    const resolvedSandbox = permissionCliOverrides?.sandbox ?? sandbox;
+    const resolvedServiceTier = resolveCodexServiceTier(args.cliOverrides);
 
     const shouldAddTitleInstruction = args.first && (args.includeTitleInstruction ?? true);
     const normalizedMessage = normalizeCodexToolReferences(args.message);
@@ -68,6 +70,7 @@ export function buildCodexStartConfig(args: {
         prompt,
         sandbox: resolvedSandbox,
         'approval-policy': resolvedApprovalPolicy,
+        service_tier: resolvedServiceTier,
         config
     };
 

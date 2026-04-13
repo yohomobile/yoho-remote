@@ -34,7 +34,7 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
     // Warn if CLI args were passed that won't apply in remote mode
     if (session.codexArgs && session.codexArgs.length > 0) {
         if (hasCodexCliOverrides(session.codexCliOverrides)) {
-            logger.debug(`[codex-remote] CLI args include sandbox/approval overrides; other args ` +
+            logger.debug(`[codex-remote] CLI args include supported sandbox/approval/service-tier overrides; other args ` +
                 `are ignored in remote mode.`);
         } else {
             logger.debug(`[codex-remote] Warning: CLI args [${session.codexArgs.join(', ')}] are ignored in remote mode. ` +

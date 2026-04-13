@@ -174,7 +174,9 @@ async function main() {
         onWebappEvent: (event: SyncEvent) => syncEngine?.handleRealtimeEvent(event),
         onSessionAlive: (payload) => syncEngine?.handleSessionAlive(payload),
         onSessionEnd: (payload) => syncEngine?.handleSessionEnd(payload),
+        onSessionDisconnect: (payload) => syncEngine?.handleSessionDisconnect(payload),
         onMachineAlive: (payload) => syncEngine?.handleMachineAlive(payload),
+        onMachineDisconnect: (payload) => syncEngine?.handleMachineDisconnect(payload),
         onLicenseBlock: (sessionId, reason) => {
             // 1. Stamp termination reason on in-memory session before killing
             const session = syncEngine?.getSession(sessionId)

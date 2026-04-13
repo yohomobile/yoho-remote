@@ -154,4 +154,82 @@ describe('createSettingsRoutes projects', () => {
         expect(addCalled).toBe(false)
         expect(updateCalled).toBe(false)
     })
+
+    it('refreshes machine-local project lists using the affected machine scope', async () => {
+        const getProjectCalls: Array<{ machineId: string | null | undefined; orgId: string | null | undefined }> = []
+        const store = {
+            getProjects: async (machineId?: string | null, orgId?: string | null) => {
+                getProjectCalls.push({ machineId, orgId })
+                return []
+            },
+            getProject: async () => ({
+                id: 'project-1',
+                name: 'YohoRemote',
+                path: '/home/workspaces/repos/yoho-remote',
+                description: null,
+                machineId: 'machine-a',
+                workspaceGroupId: null,
+                orgId: 'org-a',
+                createdAt: 1,
+                updatedAt: 1,
+            }),
+            addProject: async () => ({
+                id: 'project-1',
+                name: 'YohoRemote',
+                path: '/home/workspaces/repos/yoho-remote',
+                description: null,
+                machineId: 'machine-a',
+                workspaceGroupId: null,
+                orgId: 'org-a',
+                createdAt: 1,
+                updatedAt: 1,
+            }),
+            updateProject: async () => ({
+                id: 'project-1',
+                name: 'YohoRemote',
+                path: '/home/workspaces/repos/yoho-remote',
+                description: null,
+                machineId: 'machine-a',
+                workspaceGroupId: null,
+                orgId: 'org-a',
+                createdAt: 1,
+                updatedAt: 2,
+            }),
+            removeProject: async () => true,
+        }
+
+        const app = new Hono()
+        app.route('/api', createSettingsRoutes(store as any))
+
+        const createResponse = await app.request('/api/settings/projects?orgId=org-a', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                name: 'YohoRemote',
+                path: '/home/workspaces/repos/yoho-remote',
+                machineId: 'machine-a'
+            }),
+        })
+        expect(createResponse.status).toBe(200)
+
+        const updateResponse = await app.request('/api/settings/projects/project-1?orgId=org-a', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                description: 'rename without scope change'
+            }),
+        })
+        expect(updateResponse.status).toBe(200)
+
+        const deleteResponse = await app.request('/api/settings/projects/project-1?orgId=org-a', {
+            method: 'DELETE',
+        })
+        expect(deleteResponse.status).toBe(200)
+
+        expect(getProjectCalls).toEqual([
+            { machineId: 'machine-a', orgId: 'org-a' },
+            { machineId: 'machine-a', orgId: 'org-a' },
+            { machineId: 'machine-a', orgId: 'org-a' },
+        ])
+    })
 })
