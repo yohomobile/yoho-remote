@@ -508,7 +508,13 @@ export type OrgLicense = {
 }
 
 export type OrgsResponse = { orgs: Organization[] }
-export type OrgDetailResponse = { org: Organization; members: OrgMember[]; myRole: OrgRole; license?: OrgLicense | null }
+export type OrgDetailResponse = {
+    org: Organization
+    members: OrgMember[]
+    myRole: OrgRole
+    license?: OrgLicense | null
+    licenseExempt?: boolean
+}
 export type CreateOrgResponse = { ok: true; org: Organization }
 export type UpdateOrgResponse = { ok: true; org: Organization }
 export type OrgMembersResponse = { members: OrgMember[] }

@@ -2,6 +2,11 @@ import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useAppContext } from '@/lib/app-context'
 import { useOrg } from '@/hooks/queries/useOrgs'
+import { deriveLicenseState } from '@/lib/license'
+
+function formatDate(ts: number): string {
+    return new Date(ts).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+}
 
 export function LicenseBanner() {
     const { api, currentOrgId } = useAppContext()
@@ -15,20 +20,24 @@ export function LicenseBanner() {
 
     if (!license || !currentOrgId) return null
 
-    const days = Math.ceil((license.expiresAt - Date.now()) / (1000 * 60 * 60 * 24))
-    const isBlocked = license.status === 'expired' || license.status === 'suspended' || days <= 0
-    const isWarningSoon = !isBlocked && license.status === 'active' && days <= 7
+    const {
+        daysUntilExpiry,
+        isBlocked,
+        isNotStarted,
+        isSuspended,
+        isWarningSoon,
+    } = deriveLicenseState(license)
 
     if (!isBlocked && !isWarningSoon) return null
     if (!isBlocked && dismissedOrgId === currentOrgId) return null
 
     const message = isBlocked
-        ? license.status === 'suspended'
+        ? isSuspended
             ? 'License suspended — new sessions are blocked.'
-            : 'License expired — new sessions are blocked.'
-        : days === 1
-            ? 'License expires tomorrow. Renew to avoid interruption.'
-            : `License expires in ${days} days. Renew to avoid interruption.`
+            : isNotStarted
+                ? `License starts on ${formatDate(license.startsAt)} — new sessions are blocked until then.`
+                : 'License expired — new sessions are blocked.'
+        : `License expires in ${daysUntilExpiry} day${daysUntilExpiry !== 1 ? 's' : ''}. Renew to avoid interruption.`
 
     return (
         <div className={`flex items-center gap-2 px-3 py-2 text-[13px] font-medium z-40 ${

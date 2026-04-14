@@ -86,6 +86,25 @@ function createAgentResultMessage(seq: number, text: string) {
     }
 }
 
+function createUserTextMessage(seq: number, text: string, sentFrom: string = 'webapp') {
+    return {
+        id: `m-${seq}`,
+        seq,
+        localId: null,
+        createdAt: 1_000 + seq,
+        content: {
+            role: 'user',
+            content: {
+                type: 'text',
+                text,
+            },
+            meta: {
+                sentFrom,
+            },
+        },
+    }
+}
+
 describe('SyncEngine', () => {
     test('waits for late tail messages before sending brain callback', async () => {
         let childMessages: ReturnType<typeof createAgentAssistantMessage>[] = []
@@ -188,6 +207,53 @@ describe('SyncEngine', () => {
         expect(sent).toHaveLength(1)
         expect(sent[0]?.payload.text).toContain('总订单数：254')
         expect(sent[0]?.payload.text).not.toContain('让我汇总关键数据并生成执行报告')
+    })
+
+    test('skips init prompt completion before forwarding real brain-child task results', async () => {
+        const sent: Array<{ sessionId: string; payload: { text: string } }> = []
+        const childMessages = [
+            createUserTextMessage(1, '#InitPrompt-Yoho开发规范（最高优先级）'),
+            createAgentAssistantMessage(2, '初始化完成，等待后续任务。'),
+        ]
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getMessages: async () => childMessages,
+            getMessageCount: async () => childMessages.length,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const childSession = createSession('child-session', {
+            source: 'brain-child',
+            mainSessionId: 'main-session',
+            summary: { text: 'Child', updatedAt: 0 },
+        })
+
+        ;(engine as any).sessions.set(mainSession.id, mainSession)
+        ;(engine as any).sessions.set(childSession.id, childSession)
+        ;(engine as any).sendMessage = async (sessionId: string, payload: { text: string }) => {
+            sent.push({ sessionId, payload })
+        }
+
+        await (engine as any).sendBrainCallbackIfNeeded(childSession)
+
+        expect(sent).toHaveLength(0)
+        expect(engine.isBrainChildInitDone(childSession.id)).toBe(true)
     })
 
     test('marks disconnected sessions inactive in memory and allows heartbeat reactivation', async () => {

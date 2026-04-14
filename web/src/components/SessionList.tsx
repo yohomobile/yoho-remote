@@ -1,13 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type { Machine, Project, SessionSummary } from '@/types/api'
 import { ViewersBadge } from './ViewersBadge'
 import { LoadingState } from './LoadingState'
 import { useVibingMessage } from '@/hooks/useVibingMessage'
 import { getMachineTitle } from '@/lib/machines'
-
-// Filter types
-type ArchiveFilter = boolean  // true = show archived (offline) sessions only
-type OwnerFilter = 'mine' | 'openclaw' | 'brain' | 'others'
+import type { ArchiveFilter, OwnerFilter } from '@/lib/session-filters'
 
 function getSessionPath(session: SessionSummary): string | null {
     return session.metadata?.worktree?.basePath ?? session.metadata?.path ?? null
@@ -53,9 +50,9 @@ function filterSessions(
     ownerFilter: OwnerFilter
 ): SessionSummary[] {
     return sessions.filter(session => {
-        // Archive filter: if true, show only offline sessions; if false, show only active sessions
-        if (archiveFilter && session.active) return false
-        if (!archiveFilter && !session.active) return false
+        // Archive filter
+        if (archiveFilter === 'archive' && session.active) return false
+        if (archiveFilter === 'active' && !session.active) return false
 
         // Owner filter
         const isOpenClawSession = session.metadata?.source === 'openclaw'
@@ -361,6 +358,10 @@ export function SessionList(props: {
     projects: Project[]
     currentUserEmail: string | null
     viewOthersSessions?: boolean
+    archiveFilter: ArchiveFilter
+    ownerFilter: OwnerFilter
+    onArchiveFilterChange: (value: ArchiveFilter) => void
+    onOwnerFilterChange: (value: OwnerFilter) => void
     onSelect: (sessionId: string) => void
     onDelete?: (sessionId: string) => void
     onNewSession: () => void
@@ -370,10 +371,6 @@ export function SessionList(props: {
     machines: Machine[]
 }) {
     const { renderHeader = true, viewOthersSessions = false, machines } = props
-
-    // Filter state - defaults: not archived, show mine by default
-    const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>(false)
-    const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>('mine')
 
     // Build session to project mapping (still used for display)
     const sessionProjectMap = useMemo(() => {
@@ -396,9 +393,9 @@ export function SessionList(props: {
 
     // Filter and sort sessions (flat display)
     const filteredSessions = useMemo(() => {
-        const filtered = filterSessions(props.sessions, archiveFilter, ownerFilter)
+        const filtered = filterSessions(props.sessions, props.archiveFilter, props.ownerFilter)
         return sortSessions(filtered)
-    }, [props.sessions, archiveFilter, ownerFilter])
+    }, [props.sessions, props.archiveFilter, props.ownerFilter])
 
     // Check if there are any openclaw sessions
     const hasOpenClawSessions = useMemo(() =>
@@ -438,19 +435,34 @@ export function SessionList(props: {
             <div className="flex items-center gap-4 px-3 py-2 border-b border-[var(--app-divider)]">
                 <div className="flex items-center gap-1.5 min-w-0">
                     <span className="text-xs text-[var(--app-hint)] shrink-0">Filter:</span>
-                    <button
-                        type="button"
-                        onClick={() => setArchiveFilter(!archiveFilter)}
-                        className={`
-                            px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
-                            ${archiveFilter
-                                ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm'
-                                : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
-                            }
-                        `}
-                    >
-                        {archiveFilter ? 'Archive' : 'Active'}
-                    </button>
+                    <div className="flex items-center gap-1">
+                        <button
+                            type="button"
+                            onClick={() => props.onArchiveFilterChange('active')}
+                            className={`
+                                px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
+                                ${props.archiveFilter === 'active'
+                                    ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm'
+                                    : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
+                                }
+                            `}
+                        >
+                            Active
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => props.onArchiveFilterChange('archive')}
+                            className={`
+                                px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
+                                ${props.archiveFilter === 'archive'
+                                    ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm'
+                                    : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
+                                }
+                            `}
+                        >
+                            Archive
+                        </button>
+                    </div>
                 </div>
                 {(viewOthersSessions || hasOpenClawSessions || hasBrainSessions) && (
                     <div className="flex items-center gap-1.5 min-w-0">
@@ -458,10 +470,10 @@ export function SessionList(props: {
                             {(viewOthersSessions || hasOpenClawSessions || hasBrainSessions) && (
                                 <button
                                     type="button"
-                                    onClick={() => setOwnerFilter('mine')}
+                                    onClick={() => props.onOwnerFilterChange('mine')}
                                     className={`
                                         px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
-                                        ${ownerFilter === 'mine'
+                                        ${props.ownerFilter === 'mine'
                                             ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm'
                                             : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
                                         }
@@ -473,10 +485,10 @@ export function SessionList(props: {
                             {hasOpenClawSessions && (
                                 <button
                                     type="button"
-                                    onClick={() => setOwnerFilter('openclaw')}
+                                    onClick={() => props.onOwnerFilterChange('openclaw')}
                                     className={`
                                         px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
-                                        ${ownerFilter === 'openclaw'
+                                        ${props.ownerFilter === 'openclaw'
                                             ? 'bg-gradient-to-r from-teal-500 to-emerald-600 text-white shadow-sm'
                                             : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
                                         }
@@ -488,10 +500,10 @@ export function SessionList(props: {
                             {hasBrainSessions && (
                                 <button
                                     type="button"
-                                    onClick={() => setOwnerFilter('brain')}
+                                    onClick={() => props.onOwnerFilterChange('brain')}
                                     className={`
                                         px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
-                                        ${ownerFilter === 'brain'
+                                        ${props.ownerFilter === 'brain'
                                             ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-sm'
                                             : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
                                         }
@@ -503,10 +515,10 @@ export function SessionList(props: {
                             {viewOthersSessions && (
                                 <button
                                     type="button"
-                                    onClick={() => setOwnerFilter('others')}
+                                    onClick={() => props.onOwnerFilterChange('others')}
                                     className={`
                                         px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
-                                        ${ownerFilter === 'others'
+                                        ${props.ownerFilter === 'others'
                                             ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm'
                                             : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
                                         }

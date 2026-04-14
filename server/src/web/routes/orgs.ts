@@ -110,8 +110,10 @@ export function createOrgsRoutes(store: IStore): Hono<WebAppEnv> {
         if ('error' in roleCheck) return c.json({ error: roleCheck.error }, roleCheck.status)
 
         const members = await store.getOrgMembers(orgId)
+        const licenseService = getLicenseService()
+        const licenseExempt = licenseService.isAdminOrg(orgId)
         const license = await store.getOrgLicense(orgId)
-        return c.json({ org, members, myRole: roleCheck.role, license })
+        return c.json({ org, members, myRole: roleCheck.role, license, licenseExempt })
     })
 
     // 更新组织

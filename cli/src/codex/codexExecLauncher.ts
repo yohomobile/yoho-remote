@@ -25,6 +25,7 @@ import { hasCodexCliOverrides } from './utils/codexCliOverrides';
 import { buildCodexServiceTierArgs } from './utils/codexServiceTier';
 import { buildCodexStartConfig, TITLE_INSTRUCTION } from './utils/codexStartConfig';
 import { buildCommandExecutionResult, getCommandExecutionPreview } from './utils/commandExecutionResult';
+import { normalizeCodexToolReferences } from './utils/normalizeCodexToolReferences';
 import { resolveCodexBinary } from './codexBinary';
 import { getYohoAuxMcpServers, VAULT_HTTP_PORT } from '@/utils/yohoMcpServers';
 import type { CodexSession } from './session';
@@ -110,17 +111,6 @@ function buildMcpConfigFlags(
         }
     }
     return flags;
-}
-
-// ---------------------------------------------------------------------------
-// Normalise tool references (same as codexStartConfig)
-// ---------------------------------------------------------------------------
-
-function normalizeCodexToolReferences(message: string): string {
-    return message
-        .replaceAll(/mcp__yoho_remote__([a-z0-9_]+)/gi, 'functions.yoho_remote__$1')
-        .replaceAll(/mcp__yoho-vault__([a-z0-9_]+)/gi, 'functions.yoho_vault__$1')
-        .replaceAll(/mcp__yoho_vault__([a-z0-9_]+)/gi, 'functions.yoho_vault__$1');
 }
 
 // ---------------------------------------------------------------------------

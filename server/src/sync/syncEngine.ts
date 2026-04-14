@@ -259,9 +259,22 @@ function clampAliveTime(t: number): number | null {
 }
 
 const DEBUG_THINKING = process.env.DEBUG_THINKING === '1'
+const INIT_PROMPT_PREFIX = '#InitPrompt-'
 
 function shortId(id: string): string {
     return id.length <= 8 ? id : id.slice(0, 8)
+}
+
+function getUserTextMessage(message: DecryptedMessage): string | null {
+    const content = message.content as Record<string, unknown> | null
+    if (!content || content.role !== 'user') {
+        return null
+    }
+    const inner = content.content as Record<string, unknown> | null | undefined
+    if (!inner || inner.type !== 'text' || typeof inner.text !== 'string') {
+        return null
+    }
+    return inner.text
 }
 
 /** Context window budget by model mode (matches web/src/chat/modelConfig.ts) */
@@ -1111,6 +1124,22 @@ export class SyncEngine {
         }
     }
 
+    private shouldSkipInitialBrainCallback(messages: DecryptedMessage[]): boolean {
+        let sawInitPrompt = false
+        for (const message of messages) {
+            const text = getUserTextMessage(message)
+            if (!text) {
+                continue
+            }
+            if (text.trimStart().startsWith(INIT_PROMPT_PREFIX)) {
+                sawInitPrompt = true
+                continue
+            }
+            return false
+        }
+        return sawInitPrompt
+    }
+
     private async sendBrainCallbackIfNeeded(session: Session): Promise<void> {
         try {
             const source = (session.metadata as any)?.source
@@ -1131,27 +1160,28 @@ export class SyncEngine {
             // Task-complete may arrive slightly before the final assistant/result messages.
             // Wait for the in-memory message tail to stop changing before extracting output.
             await this.waitForSessionMessagesToSettle(session.id)
+            const messages = await this.store.getMessages(session.id, 30)
 
-            // Skip the very first thinking→false per child session (init prompt completion).
-            // The init prompt fires before the brain sends any real task, so its completion
-            // must not be forwarded to the brain as a task result.
+            // Skip the first callback only when the message history shows the child is still
+            // finishing its init prompt. This avoids dropping legitimate task results in
+            // tests or resumed sessions where no init prompt is present in history.
             if (!this.brainChildInitCompleted.has(session.id)) {
                 this.brainChildInitCompleted.add(session.id)
-                console.log(`[brain-callback] Skipping init prompt callback for ${shortId(session.id)}`)
-                // Flush any brain messages that arrived before init was done
-                const pending = this.brainChildPendingMessages.get(session.id)
-                if (pending && pending.length > 0) {
-                    this.brainChildPendingMessages.delete(session.id)
-                    console.log(`[brain-queue] Flushing ${pending.length} buffered message(s) to ${shortId(session.id)}`)
-                    for (const text of pending) {
-                        await this.sendMessage(session.id, { text, sentFrom: 'brain' })
+                if (this.shouldSkipInitialBrainCallback(messages)) {
+                    console.log(`[brain-callback] Skipping init prompt callback for ${shortId(session.id)}`)
+                    // Flush any brain messages that arrived before init was done
+                    const pending = this.brainChildPendingMessages.get(session.id)
+                    if (pending && pending.length > 0) {
+                        this.brainChildPendingMessages.delete(session.id)
+                        console.log(`[brain-queue] Flushing ${pending.length} buffered message(s) to ${shortId(session.id)}`)
+                        for (const text of pending) {
+                            await this.sendMessage(session.id, { text, sentFrom: 'brain' })
+                        }
                     }
+                    return
                 }
-                return
             }
 
-            // Get the last few messages from child session to extract result + usage
-            const messages = await this.store.getMessages(session.id, 30)
             let resultText: string | null = null
             let resultSource: 'result' | 'assistant' | 'message' | 'raw-data' | 'none' = 'none'
             let resultSeq: number | null = null

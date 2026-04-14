@@ -36,6 +36,7 @@ export function useOrg(api: ApiClient | null, orgId: string | null) {
         members: query.data?.members ?? [],
         myRole: query.data?.myRole as OrgRole | undefined,
         license: (query.data?.license ?? null) as OrgLicense | null,
+        licenseExempt: query.data?.licenseExempt === true,
         isLoading: query.isLoading,
         error: query.error instanceof Error ? query.error.message : null,
     }

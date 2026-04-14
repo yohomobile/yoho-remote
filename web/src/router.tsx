@@ -5,6 +5,7 @@ import {
     createRootRoute,
     createRoute,
     createRouter,
+    useSearch,
     useNavigate,
     useParams,
 } from '@tanstack/react-router'
@@ -29,6 +30,13 @@ import { useSessionViewers } from '@/hooks/queries/useSessionViewers'
 import { useSendMessage } from '@/hooks/mutations/useSendMessage'
 import { useOtherUserTyping } from '@/hooks/useOtherUserTyping'
 import { queryKeys } from '@/lib/query-keys'
+import { deriveLicenseState } from '@/lib/license'
+import {
+    DEFAULT_SESSION_LIST_SEARCH,
+    type ArchiveFilter,
+    type OwnerFilter,
+    validateSessionListSearch,
+} from '@/lib/session-filters'
 import SettingsPage from '@/routes/settings'
 import AcceptInvitationPage from '@/routes/invitations/accept'
 import { LoginPage } from '@/routes/login'
@@ -123,7 +131,16 @@ function BrainIcon(props: { className?: string }) {
 function SessionsPage() {
     const { api, userEmail, currentOrgId, setCurrentOrgId } = useAppContext()
     const navigate = useNavigate()
+    const search = useSearch({ from: '/sessions' })
     const queryClient = useQueryClient()
+    const archiveFilter: ArchiveFilter = search.archive === 'archive'
+        ? 'archive'
+        : DEFAULT_SESSION_LIST_SEARCH.archive
+    const ownerFilter: OwnerFilter = search.owner === 'openclaw'
+        || search.owner === 'brain'
+        || search.owner === 'others'
+        ? search.owner
+        : DEFAULT_SESSION_LIST_SEARCH.owner
     const { sessions, isLoading, error, refetch } = useSessions(api, currentOrgId)
     const { machines, error: machinesError } = useMachines(api, true, currentOrgId)
     const { users: onlineUsers } = useOnlineUsers(api)
@@ -290,12 +307,25 @@ function SessionsPage() {
                     projects={projects}
                     currentUserEmail={userEmail}
                     viewOthersSessions={userPreferences?.viewOthersSessions}
+                    archiveFilter={archiveFilter}
+                    ownerFilter={ownerFilter}
+                    onArchiveFilterChange={(archive) => navigate({
+                        to: '/sessions',
+                        search: (prev) => ({ ...prev, archive }),
+                        replace: true,
+                    })}
+                    onOwnerFilterChange={(owner) => navigate({
+                        to: '/sessions',
+                        search: (prev) => ({ ...prev, owner }),
+                        replace: true,
+                    })}
                     onSelect={(sessionId) => navigate({
                         to: '/sessions/$sessionId',
                         params: { sessionId },
+                        search,
                     })}
                     onDelete={handleDeleteSession}
-                    onNewSession={() => navigate({ to: '/sessions/new' })}
+                    onNewSession={() => navigate({ to: '/sessions/new', search })}
                     onRefresh={handleRefresh}
                     isLoading={isLoading}
                     machines={machines}
@@ -421,12 +451,8 @@ function NewSessionPage() {
     const queryClient = useQueryClient()
     const { machines, isLoading: machinesLoading, error: machinesError } = useMachines(api, true, currentOrgId)
     const { license } = useOrg(api, currentOrgId)
-
-    const licenseBlocked = license !== null && (
-        license.status === 'expired' ||
-        license.status === 'suspended' ||
-        Math.ceil((license.expiresAt - Date.now()) / (1000 * 60 * 60 * 24)) <= 0
-    )
+    const licenseState = license ? deriveLicenseState(license) : null
+    const licenseBlocked = licenseState?.isBlocked === true
 
     const handleCancel = useCallback(() => {
         navigate({ to: '/sessions' })
@@ -479,10 +505,17 @@ function NewSessionPage() {
                             </div>
                             <div>
                                 <div className="text-sm font-semibold text-[var(--app-fg)]">
-                                    {license?.status === 'suspended' ? 'License suspended' : 'License expired'}
+                                    {licenseState?.isSuspended
+                                        ? 'License suspended'
+                                        : licenseState?.isNotStarted
+                                            ? 'License not active yet'
+                                            : 'License expired'}
                                 </div>
                                 <div className="text-[12px] text-[var(--app-hint)] mt-1 leading-relaxed">
-                                    Sessions are currently blocked.<br/>Contact your administrator to renew the license.
+                                    {licenseState?.isNotStarted
+                                        ? 'Sessions are currently blocked until the license start date.'
+                                        : 'Sessions are currently blocked.'}
+                                    <br/>Contact your administrator to review the license.
                                 </div>
                             </div>
                             <button
@@ -521,18 +554,21 @@ const indexRoute = createRoute({
 const sessionsRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/sessions',
+    validateSearch: validateSessionListSearch,
     component: SessionsPage,
 })
 
 const sessionRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/sessions/$sessionId',
+    validateSearch: validateSessionListSearch,
     component: SessionPage,
 })
 
 const newSessionRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/sessions/new',
+    validateSearch: validateSessionListSearch,
     component: NewSessionPage,
 })
 

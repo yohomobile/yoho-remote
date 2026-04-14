@@ -8,8 +8,9 @@ import { getCurrentUserSync, getExpiresAtSync } from '@/services/tokenStorage'
 import { useNotificationPermission, useWebPushSubscription } from '@/hooks/useNotification'
 import { useServerUrl } from '@/hooks/useServerUrl'
 import { getLogoutUrl, clearTokens } from '@/services/keycloak'
-import type { Project, Machine, OrgRole, OrgLicense, LicenseStatus } from '@/types/api'
+import type { Project, Machine, OrgRole, OrgLicense } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
+import { deriveLicenseState, type LicenseDisplayStatus } from '@/lib/license'
 import { useMyOrgs, useOrg } from '@/hooks/queries/useOrgs'
 import { useCreateOrg, useInviteMember, useUpdateMemberRole, useRemoveMember } from '@/hooks/mutations/useOrgMutations'
 import { formatMachineTimestamp, getMachineIp, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
@@ -78,17 +79,41 @@ function formatDate(ts: number): string {
     return new Date(ts).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-function daysUntil(ts: number): number {
-    return Math.ceil((ts - Date.now()) / (1000 * 60 * 60 * 24))
-}
-
-const LICENSE_STATUS_STYLE: Record<LicenseStatus, { badge: string; label: string }> = {
+const LICENSE_STATUS_STYLE: Record<LicenseDisplayStatus, { badge: string; label: string }> = {
     active: { badge: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400', label: 'Active' },
     expired: { badge: 'bg-red-500/15 text-red-600 dark:text-red-400', label: 'Expired' },
+    pending: { badge: 'bg-sky-500/15 text-sky-600 dark:text-sky-400', label: 'Pending' },
     suspended: { badge: 'bg-amber-500/15 text-amber-600 dark:text-amber-400', label: 'Suspended' },
 }
 
-function LicenseCard({ license, memberCount }: { license: OrgLicense | null; memberCount: number }) {
+function LicenseCard({
+    license,
+    licenseExempt,
+    memberCount,
+}: {
+    license: OrgLicense | null
+    licenseExempt: boolean
+    memberCount: number
+}) {
+    if (!license && licenseExempt) {
+        return (
+            <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
+                <div className="px-3 py-2 border-b border-[var(--app-divider)]">
+                    <h3 className="text-sm font-medium">License</h3>
+                </div>
+                <div className="px-3 py-4 flex items-center gap-2.5">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-500/10">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-500"><circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" /></svg>
+                    </div>
+                    <div>
+                        <div className="text-sm font-medium text-emerald-600 dark:text-emerald-400">License exempt</div>
+                        <div className="text-[11px] text-[var(--app-hint)] mt-0.5">This organization is configured as the admin org and can run without a stored license.</div>
+                    </div>
+                </div>
+            </div>
+        )
+    }
+
     if (!license) {
         return (
             <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
@@ -108,20 +133,31 @@ function LicenseCard({ license, memberCount }: { license: OrgLicense | null; mem
         )
     }
 
-    const style = LICENSE_STATUS_STYLE[license.status]
-    const days = daysUntil(license.expiresAt)
-    const isExpiredByDate = days <= 0
-    const isExpired = license.status === 'expired' || isExpiredByDate
-    const isSuspended = license.status === 'suspended'
-    const isBlocked = isExpired || isSuspended
-    const isWarningSoon = !isBlocked && days <= 7
+    const {
+        daysSinceExpiry,
+        daysUntilExpiry,
+        daysUntilStart,
+        displayStatus,
+        isBlocked,
+        isExpired,
+        isNotStarted,
+        isSuspended,
+        isWarningSoon,
+    } = deriveLicenseState(license)
+    const style = LICENSE_STATUS_STYLE[displayStatus]
     const memberPct = Math.min(100, Math.round((memberCount / license.maxMembers) * 100))
     const memberFull = memberCount >= license.maxMembers
 
     function daysLabel(): string {
-        if (days > 0) return `${days} day${days !== 1 ? 's' : ''}`
-        if (days === 0) return 'Expires today'
-        return `Expired ${Math.abs(days)} day${Math.abs(days) !== 1 ? 's' : ''} ago`
+        if (isNotStarted) {
+            if (daysUntilStart <= 0) return 'Starts today'
+            return `Starts in ${daysUntilStart} day${daysUntilStart !== 1 ? 's' : ''}`
+        }
+        if (isExpired) {
+            if (daysSinceExpiry <= 0) return 'Expired today'
+            return `Expired ${daysSinceExpiry} day${daysSinceExpiry !== 1 ? 's' : ''} ago`
+        }
+        return `${daysUntilExpiry} day${daysUntilExpiry !== 1 ? 's' : ''}`
     }
 
     return (
@@ -142,9 +178,11 @@ function LicenseCard({ license, memberCount }: { license: OrgLicense | null; mem
                     <div className={`text-[11px] leading-relaxed font-medium ${isBlocked ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}>
                         {isSuspended
                             ? 'License suspended — sessions are blocked. Contact your administrator.'
+                            : isNotStarted
+                                ? `License not active yet — sessions are blocked until ${formatDate(license.startsAt)}.`
                             : isExpired
                                 ? 'License expired — sessions are blocked. Contact your administrator.'
-                                : `License expires in ${days} day${days !== 1 ? 's' : ''}. Renew soon to avoid interruption.`
+                                : `License expires in ${daysUntilExpiry} day${daysUntilExpiry !== 1 ? 's' : ''}. Renew soon to avoid interruption.`
                         }
                     </div>
                 </div>
@@ -161,7 +199,7 @@ function LicenseCard({ license, memberCount }: { license: OrgLicense | null; mem
 
                 {/* Days remaining */}
                 <div className="px-3 py-2 flex items-center justify-between gap-2">
-                    <span className="text-xs text-[var(--app-hint)]">Expiry</span>
+                    <span className="text-xs text-[var(--app-hint)]">{isNotStarted ? 'Starts' : 'Expiry'}</span>
                     <span className={`text-xs font-semibold ${
                         isBlocked ? 'text-red-500' : isWarningSoon ? 'text-amber-500' : 'text-[var(--app-fg)]'
                     }`}>
@@ -739,7 +777,7 @@ export default function SettingsPage() {
     }, [createOrg, newOrgName, newOrgSlug, setCurrentOrgId])
 
     // Members management
-    const { members, myRole: orgRole, license: orgLicense } = useOrg(api, currentOrgId ?? '')
+    const { members, myRole: orgRole, license: orgLicense, licenseExempt } = useOrg(api, currentOrgId ?? '')
     const { inviteMember, isPending: isInviting, error: inviteError } = useInviteMember(api, currentOrgId ?? '')
     const { updateRole } = useUpdateMemberRole(api, currentOrgId ?? '')
     const { removeMember } = useRemoveMember(api, currentOrgId ?? '')
@@ -1501,7 +1539,7 @@ export default function SettingsPage() {
                             </h2>
 
                             {/* License Section */}
-                            <LicenseCard license={orgLicense} memberCount={members.length} />
+                            <LicenseCard license={orgLicense} licenseExempt={licenseExempt} memberCount={members.length} />
 
                             {/* Members Section */}
                             <div id="section-members" className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
