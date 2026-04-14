@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useAppContext } from '@/lib/app-context'
 import { useOrg } from '@/hooks/queries/useOrgs'
-import { deriveLicenseState } from '@/lib/license'
+import { deriveEffectiveLicenseState } from '@/lib/license'
 
 function formatDate(ts: number): string {
     return new Date(ts).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
@@ -10,7 +10,7 @@ function formatDate(ts: number): string {
 
 export function LicenseBanner() {
     const { api, currentOrgId } = useAppContext()
-    const { license } = useOrg(api, currentOrgId)
+    const { license, licenseExempt } = useOrg(api, currentOrgId)
     const [dismissedOrgId, setDismissedOrgId] = useState<string | null>(null)
 
     // Reset dismissed state when org changes
@@ -20,13 +20,17 @@ export function LicenseBanner() {
 
     if (!license || !currentOrgId) return null
 
+    const licenseState = deriveEffectiveLicenseState(license, { licenseExempt })
     const {
         daysUntilExpiry,
         isBlocked,
+        isExempt,
         isNotStarted,
         isSuspended,
         isWarningSoon,
-    } = deriveLicenseState(license)
+    } = licenseState
+
+    if (isExempt) return null
 
     if (!isBlocked && !isWarningSoon) return null
     if (!isBlocked && dismissedOrgId === currentOrgId) return null

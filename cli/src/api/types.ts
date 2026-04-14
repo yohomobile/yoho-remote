@@ -43,6 +43,7 @@ export type Metadata = {
     yohoRemoteToolsDir: string
     startedFromDaemon?: boolean
     hostPid?: number
+    hostProcessStartedAt?: number
     startedBy?: 'daemon' | 'terminal'
     lifecycleState?: 'running' | 'archiveRequested' | 'archived' | string
     lifecycleStateSince?: number
@@ -84,6 +85,7 @@ export const MetadataSchema = z.object({
     yohoRemoteToolsDir: z.string(),
     startedFromDaemon: z.boolean().optional(),
     hostPid: z.number().optional(),
+    hostProcessStartedAt: z.number().optional(),
     startedBy: z.enum(['daemon', 'terminal']).optional(),
     lifecycleState: z.string().optional(),
     lifecycleStateSince: z.number().optional(),

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { exchangeCodeForToken, saveTokens } from '@/services/keycloak'
+import { consumePostLoginRedirect } from '@/services/postLoginRedirect'
 import { useServerUrl } from '@/hooks/useServerUrl'
 
 export function AuthCallbackPage() {
@@ -36,7 +37,7 @@ export function AuthCallbackPage() {
 
                 // Force page reload to ensure KeycloakAuthProvider re-initializes with new token
                 // This fixes the issue where isAuthenticated state isn't updated immediately after login
-                window.location.href = '/sessions'
+                window.location.href = consumePostLoginRedirect() ?? '/sessions'
             } catch (e) {
                 console.error('[AuthCallback] Token exchange failed:', e)
                 setError(e instanceof Error ? e.message : 'Authentication failed')

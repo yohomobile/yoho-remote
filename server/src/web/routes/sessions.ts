@@ -133,6 +133,7 @@ function storedSessionToSummary(stored: StoredSession): SessionSummary {
 const permissionModeValues = ['bypassPermissions', 'read-only', 'safe-yolo', 'yolo'] as const
 const modelModeValues = ['default', 'sonnet', 'opus', 'glm-5.1', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2-codex', 'gpt-5.2', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini'] as const
 const reasoningEffortValues = ['low', 'medium', 'high', 'xhigh'] as const
+const claudeModelValues = ['sonnet', 'opus'] as const
 
 const permissionModeSchema = z.object({
     mode: z.enum(permissionModeValues)
@@ -148,7 +149,7 @@ const createSessionSchema = z.object({
     directory: z.string().min(1),
     agent: z.enum(['claude', 'codex']).optional(),
     yolo: z.boolean().optional(),
-    claudeModel: z.enum(['sonnet', 'opus']).optional(),
+    claudeModel: z.enum(claudeModelValues).optional(),
     codexModel: z.string().min(1).optional(),
     openrouterModel: z.string().min(1).optional(),
     permissionMode: z.enum(permissionModeValues).optional(),
@@ -156,6 +157,39 @@ const createSessionSchema = z.object({
     modelReasoningEffort: z.enum(reasoningEffortValues).optional(),
     source: z.string().min(1).max(100).optional(),
 })
+
+const createBrainSessionSchema = z.object({
+    agent: z.enum(['claude', 'codex']).optional(),
+    claudeSettingsType: z.enum(['litellm', 'claude']).optional(),
+    claudeAgent: z.string().min(1).optional(),
+    claudeModel: z.enum(claudeModelValues).optional(),
+    codexModel: z.string().min(1).optional(),
+    modelReasoningEffort: z.enum(reasoningEffortValues).optional(),
+})
+
+function isModelMode(value: string): value is NonNullable<Session['modelMode']> {
+    return (modelModeValues as readonly string[]).includes(value)
+}
+
+function resolveRequestedModelMode(options: {
+    modelMode?: string
+    claudeModel?: string
+    codexModel?: string
+}): Session['modelMode'] | undefined {
+    if (options.claudeModel && isModelMode(options.claudeModel)) {
+        return options.claudeModel
+    }
+    if (options.codexModel) {
+        const maybeModelMode = options.codexModel.replace(/^openai\//, '')
+        if (isModelMode(maybeModelMode)) {
+            return maybeModelMode
+        }
+    }
+    if (options.modelMode && isModelMode(options.modelMode)) {
+        return options.modelMode
+    }
+    return undefined
+}
 
 const RESUME_TIMEOUT_MS = 60_000
 const RESUME_CONTEXT_MAX_LINES = 60
@@ -555,15 +589,11 @@ export function createSessionsRoutes(
         const source = rawSource ? rawSource : 'external-api'
         const email = c.get('email')
         // 将 claudeModel/codexModel 转换为 modelMode
-        let modelMode = parsed.data.modelMode
-        if (parsed.data.claudeModel) {
-            // Claude 模型: sonnet, opus
-            modelMode = parsed.data.claudeModel
-        } else if (parsed.data.codexModel) {
-            // codex 模型值如 'openai/gpt-5.2-codex' -> 'gpt-5.2-codex'
-            const codexModelValue = parsed.data.codexModel.replace('openai/', '') as any
-            modelMode = codexModelValue
-        }
+        const modelMode = resolveRequestedModelMode({
+            modelMode: parsed.data.modelMode,
+            claudeModel: parsed.data.claudeModel,
+            codexModel: parsed.data.codexModel,
+        })
 
         const result = await engine.spawnSession(
             parsed.data.machineId,
@@ -620,35 +650,74 @@ export function createSessionsRoutes(
             return engine
         }
 
+        const body = await c.req.json().catch(() => ({}))
+        const parsed = createBrainSessionSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body', details: parsed.error.issues }, 400)
+        }
+
         const namespace = c.get('namespace')
         const email = c.get('email')
         const role = c.get('role')
         const userName = c.get('name')
         const orgId = c.req.query('orgId')
+        const brainConfig = await store.getBrainConfig(namespace || 'default')
+        const requestedAgent = parsed.data.agent ?? brainConfig?.agent ?? 'claude'
+        const modelMode = resolveRequestedModelMode({
+            claudeModel: requestedAgent === 'claude'
+                ? (parsed.data.claudeModel ?? brainConfig?.claudeModelMode)
+                : undefined,
+            codexModel: requestedAgent === 'codex'
+                ? (parsed.data.codexModel ?? brainConfig?.codexModel)
+                : undefined,
+        })
 
         // License check
         const licenseError = await checkSessionLicense(c, orgId)
         if (licenseError) return licenseError
 
-        // Find first online machine in this namespace (filtered by org if provided)
+        // Find compatible online machines in this namespace (filtered by org if provided)
         const machines = engine.getOnlineMachinesByNamespace(namespace, orgId ?? undefined)
         if (machines.length === 0) {
             return c.json({ type: 'error', message: 'No machines online' }, 503)
         }
-        const machine = machines[0]
-        const homeDir = machine.metadata?.homeDir || '/tmp'
-        const brainDirectory = `${homeDir}/.yoho-remote/brain-workspace`
+        const compatibleMachines = machines.filter((machine) => !machine.supportedAgents || machine.supportedAgents.includes(requestedAgent))
+        if (compatibleMachines.length === 0) {
+            return c.json({ type: 'error', message: `No online machines support agent "${requestedAgent}"` }, 503)
+        }
 
-        const result = await engine.spawnSession(
-            machine.id,
-            brainDirectory,
-            'claude',
-            true,        // yolo
-            {
-                source: 'brain',
-                permissionMode: 'bypassPermissions',
+        let result: Awaited<ReturnType<typeof engine.spawnSession>> | null = null
+        for (const machine of compatibleMachines) {
+            const homeDir = machine.metadata?.homeDir || '/tmp'
+            const brainDirectory = `${homeDir}/.yoho-remote/brain-workspace`
+            const candidate = await engine.spawnSession(
+                machine.id,
+                brainDirectory,
+                requestedAgent,
+                true,        // yolo
+                {
+                    source: 'brain',
+                    permissionMode: 'bypassPermissions',
+                    claudeSettingsType: requestedAgent === 'claude' ? parsed.data.claudeSettingsType : undefined,
+                    claudeAgent: requestedAgent === 'claude' ? parsed.data.claudeAgent : undefined,
+                    modelMode,
+                    modelReasoningEffort: requestedAgent === 'codex' ? parsed.data.modelReasoningEffort : undefined,
+                }
+            )
+            if (candidate.type === 'success') {
+                result = candidate
+                break
             }
-        )
+            if (candidate.message.includes('AGENT_NOT_AVAILABLE')) {
+                continue
+            }
+            result = candidate
+            break
+        }
+
+        if (!result) {
+            return c.json({ type: 'error', message: `Failed to create Brain session with agent "${requestedAgent}"` }, 503)
+        }
 
         if (result.type === 'success') {
             void (async () => {

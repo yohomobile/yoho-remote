@@ -101,6 +101,7 @@ export class ApiSessionClient extends EventEmitter {
             this.rpcHandlerManager.onSocketConnect(this.socket)
             if (this.hasConnectedOnce) {
                 this.needsBackfill = true
+                this.emit('reconnected')
             }
             void this.backfillIfNeeded()
             this.hasConnectedOnce = true
@@ -458,8 +459,9 @@ export class ApiSessionClient extends EventEmitter {
             ...(runtime ?? {})
         }
 
-        // thinking 状态变化时用可靠发送（不可丢包），否则用 volatile（容许丢包）
-        if (this._lastSentThinking !== null && this._lastSentThinking !== thinking) {
+        // 首个心跳决定 session 是否被 server 视为在线，不能走 volatile。
+        // 后续只有 thinking 未变化的心跳才允许降级为 volatile 以减少压力。
+        if (this._lastSentThinking === null || this._lastSentThinking !== thinking) {
             this.socket.emit('session-alive', payload)
         } else {
             this.socket.volatile.emit('session-alive', payload)

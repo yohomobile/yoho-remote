@@ -918,6 +918,7 @@ export class SyncEngine {
 
         session.active = true
         session.activeAt = Math.max(session.activeAt, t)
+        this._dbActiveSessionIds.add(session.id)
         // Resume guard fulfilled — new CLI is alive, clear the guard
         if (session.resumingUntil) {
             session.resumingUntil = undefined
@@ -1447,6 +1448,7 @@ export class SyncEngine {
 
         // Persist active=false (and terminationReason if set) to database so it survives server restarts
         await this.store.setSessionActive(session.id, false, t, session.namespace, session.terminationReason ?? null)
+        this._dbActiveSessionIds.delete(session.id)
 
         // 如果任务刚完成，使用带订阅者过滤的事件
         if (wasThinking) {
@@ -1541,6 +1543,7 @@ export class SyncEngine {
             if (now - session.activeAt <= sessionTimeoutMs) continue
             session.active = false
             session.thinking = false
+            this._dbActiveSessionIds.delete(session.id)
 
             // Persist active=false to database so it survives server restarts
             this.store.setSessionActive(session.id, false, now, session.namespace).catch(err => {
@@ -1591,14 +1594,26 @@ export class SyncEngine {
             const machine = this.machines.get(machineId)
             if (!machine?.active) return
 
+            // Give already-running session sockets a chance to reconnect on their own
+            // before we spawn replacements via the daemon.
+            const SESSION_RECONNECT_GRACE_MS = 10_000
+            await this.waitForAutoResumeGrace(SESSION_RECONNECT_GRACE_MS)
+
+            if (!this.machines.get(machineId)?.active) return
+
             const machineSupportedAgents = machine.supportedAgents
             const RESUME_WINDOW_MS = 24 * 60 * 60 * 1000 // only resume sessions active within last 24h
+            const RESUME_TIMEOUT_MS = 60_000
             const candidates = Array.from(this.sessions.values()).filter(s => {
                 if (s.active) return false
+                // Only auto-resume sessions that were last known active in DB.
+                if (!this._dbActiveSessionIds.has(s.id)) return false
                 // Skip sessions explicitly terminated (license block, etc.)
                 if (s.terminationReason) return false
                 // Skip sessions explicitly archived by user/CLI
                 if (s.metadata?.archivedBy) return false
+                // Only daemon-owned sessions may be auto-resumed via daemon spawn.
+                if (s.metadata?.startedFromDaemon !== true && s.metadata?.startedBy !== 'daemon') return false
                 // Skip sessions inactive for more than 24 hours (stale)
                 if (Date.now() - s.activeAt > RESUME_WINDOW_MS) return false
                 if (s.metadata?.machineId !== machineId) return false
@@ -1622,12 +1637,13 @@ export class SyncEngine {
                     if (typeof rawId !== 'string' || !rawId) continue
 
                     const directory = session.metadata!.path
-                    // Pre-activate so heartbeats are accepted
-                    const activateTime = Date.now()
-                    await this.store.setSessionActive(session.id, true, activateTime, namespace)
+                    const previousActiveAt = session.activeAt
+                    // Pre-activate so heartbeats are accepted, but keep the previous activeAt
+                    // so we can distinguish a real reconnect heartbeat from this optimistic state.
+                    await this.store.setSessionActive(session.id, true, previousActiveAt, namespace)
                     session.active = true
-                    session.activeAt = activateTime
                     session.thinking = false
+                    session.resumingUntil = Date.now() + RESUME_TIMEOUT_MS
 
                     const result = await this.spawnSession(
                         machineId, directory, flavor, undefined,
@@ -1641,10 +1657,24 @@ export class SyncEngine {
                     )
 
                     if (result.type === 'success') {
+                        const heartbeatReceived = await this.waitForSessionHeartbeatAfter(session.id, previousActiveAt, RESUME_TIMEOUT_MS)
+                        if (!heartbeatReceived) {
+                            await this.store.setSessionActive(session.id, false, previousActiveAt, namespace)
+                            this._dbActiveSessionIds.delete(session.id)
+                            session.active = false
+                            session.activeAt = previousActiveAt
+                            session.thinking = false
+                            session.resumingUntil = undefined
+                            console.warn(`[auto-resume] Session ${session.id.slice(0, 8)} spawn succeeded but no reconnect heartbeat arrived within ${RESUME_TIMEOUT_MS}ms`)
+                            continue
+                        }
                         console.log(`[auto-resume] Resumed session ${session.id.slice(0, 8)}`)
                     } else {
-                        await this.store.setSessionActive(session.id, false, activateTime, namespace)
+                        await this.store.setSessionActive(session.id, false, previousActiveAt, namespace)
+                        this._dbActiveSessionIds.delete(session.id)
                         session.active = false
+                        session.activeAt = previousActiveAt
+                        session.resumingUntil = undefined
                         console.warn(`[auto-resume] Failed to resume session ${session.id.slice(0, 8)}: ${result.message}`)
                     }
                 } catch (err) {
@@ -1656,6 +1686,53 @@ export class SyncEngine {
         } finally {
             this._autoResumeInProgress.delete(machineId)
         }
+    }
+
+    private async waitForSessionHeartbeatAfter(sessionId: string, afterActiveAt: number, timeoutMs: number): Promise<boolean> {
+        const existing = this.sessions.get(sessionId)
+        if (existing?.active && existing.activeAt > afterActiveAt) {
+            return true
+        }
+
+        return await new Promise((resolve) => {
+            let settled = false
+            let unsubscribe = () => {}
+
+            const finish = (value: boolean) => {
+                if (settled) return
+                settled = true
+                clearTimeout(timer)
+                unsubscribe()
+                resolve(value)
+            }
+
+            const timer = setTimeout(() => finish(false), timeoutMs)
+
+            unsubscribe = this.subscribe((event) => {
+                if (event.sessionId !== sessionId) {
+                    return
+                }
+                if (event.type !== 'session-added' && event.type !== 'session-updated') {
+                    return
+                }
+                const current = this.sessions.get(sessionId)
+                if (current?.active && current.activeAt > afterActiveAt) {
+                    finish(true)
+                }
+            })
+
+            const current = this.sessions.get(sessionId)
+            if (current?.active && current.activeAt > afterActiveAt) {
+                finish(true)
+            }
+        })
+    }
+
+    private async waitForAutoResumeGrace(timeoutMs: number): Promise<void> {
+        if (timeoutMs <= 0) {
+            return
+        }
+        await new Promise(resolve => setTimeout(resolve, timeoutMs))
     }
 
     /** Public alias for refreshSession - used by guards.ts and events.ts */

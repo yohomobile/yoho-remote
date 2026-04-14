@@ -16,6 +16,10 @@ export type DerivedLicenseState = {
     isWarningSoon: boolean
 }
 
+export type EffectiveLicenseState = DerivedLicenseState & {
+    isExempt: boolean
+}
+
 export function deriveLicenseState(license: OrgLicense): DerivedLicenseState {
     const now = Date.now()
     const isSuspended = license.status === 'suspended'
@@ -45,5 +49,28 @@ export function deriveLicenseState(license: OrgLicense): DerivedLicenseState {
         isNotStarted,
         isSuspended,
         isWarningSoon,
+    }
+}
+
+export function deriveEffectiveLicenseState(
+    license: OrgLicense,
+    options?: { licenseExempt?: boolean }
+): EffectiveLicenseState {
+    const state = deriveLicenseState(license)
+    if (options?.licenseExempt) {
+        return {
+            ...state,
+            displayStatus: 'active',
+            isBlocked: false,
+            isExpired: false,
+            isExempt: true,
+            isNotStarted: false,
+            isSuspended: false,
+            isWarningSoon: false,
+        }
+    }
+    return {
+        ...state,
+        isExempt: false,
     }
 }

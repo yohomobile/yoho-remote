@@ -21,7 +21,7 @@ const spawnBodySchema = z.object({
     claudeAgent: z.string().min(1).optional(),
     opencodeModel: z.string().min(1).optional(),
     opencodeVariant: z.string().min(1).optional(),
-    claudeModel: z.enum(['sonnet', 'opus', 'glm-5.1']).optional(),
+    claudeModel: z.enum(['sonnet', 'opus']).optional(),
     codexModel: z.string().min(1).optional(),
 
     modelReasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),

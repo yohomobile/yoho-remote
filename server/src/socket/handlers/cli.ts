@@ -151,16 +151,25 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
 
     const auth = socket.handshake.auth as Record<string, unknown> | undefined
     const sessionId = typeof auth?.sessionId === 'string' ? auth.sessionId : null
+    const joinRoom = async (room: string): Promise<boolean> => {
+        try {
+            await socket.join(room)
+            return true
+        } catch (error) {
+            console.warn(`[cli-socket] Failed to join room ${room}:`, error)
+            return false
+        }
+    }
     // Track when socket.join() is complete for the session room
     // This ensures session-alive events are only processed after the socket can receive messages
     let sessionJoinPromise: Promise<boolean> | null = null
     if (sessionId) {
         const joinStartTime = Date.now()
-        sessionJoinPromise = resolveSessionAccess(sessionId).then((result) => {
+        sessionJoinPromise = resolveSessionAccess(sessionId).then(async (result) => {
             if (result.ok) {
-                socket.join(`session:${sessionId}`)
-                console.log(`[cli-socket] Socket joined session room ${sessionId} in ${Date.now() - joinStartTime}ms`)
-                return true
+                const joined = await joinRoom(`session:${sessionId}`)
+                console.log(`[cli-socket] Socket joined session room ${sessionId} in ${Date.now() - joinStartTime}ms, joined=${joined}`)
+                return joined
             }
             console.log(`[cli-socket] Socket failed to join session room ${sessionId}: access denied`)
             return false
@@ -169,9 +178,9 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
 
     const machineId = typeof auth?.machineId === 'string' ? auth.machineId : null
     if (machineId) {
-        resolveMachineAccess(machineId).then((result) => {
+        void resolveMachineAccess(machineId).then(async (result) => {
             if (result.ok) {
-                socket.join(`machine:${machineId}`)
+                await joinRoom(`machine:${machineId}`)
             }
         })
     }

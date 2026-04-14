@@ -3,6 +3,41 @@ import spawn from 'cross-spawn';
 
 export const isWindows = (): boolean => process.platform === 'win32';
 
+export function getCurrentProcessStartedAtMs(): number {
+  const startedAt = Date.now() - Math.round(process.uptime() * 1000);
+  return startedAt > 0 ? startedAt : Date.now();
+}
+
+export function getProcessStartedAtMs(pid: number): number | null {
+  if (!Number.isFinite(pid) || pid <= 0) {
+    return null;
+  }
+
+  try {
+    const result = isWindows()
+      ? spawn.sync('powershell', [
+          '-NoProfile',
+          '-Command',
+          `(Get-Process -Id ${pid}).StartTime.ToUniversalTime().ToString("o")`
+        ], { stdio: 'pipe' })
+      : spawn.sync('ps', ['-p', pid.toString(), '-o', 'lstart='], { stdio: 'pipe' });
+
+    if (result.error || result.status !== 0) {
+      return null;
+    }
+
+    const raw = result.stdout?.toString().trim();
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export function isProcessAlive(pid: number): boolean {
   if (!Number.isFinite(pid) || pid <= 0) {
     return false;

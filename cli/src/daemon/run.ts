@@ -18,6 +18,8 @@ import { isProcessAlive, isWindows, killProcess, killProcessByChildProcess } fro
 
 import { cleanupDaemonState, getInstalledCliMtimeMs, isDaemonRunningCurrentlyInstalledVersion, stopDaemon } from './controlClient';
 import { startDaemonControlServer } from './controlServer';
+import { EXTERNAL_TRACKED_SESSION_LABEL, recoverTrackedSessionsFromServer } from './recoverTrackedSessions';
+import { isSessionProcessIdentityCurrent, isTrackedSessionProcessCurrent } from './trackedSessionIdentity';
 import { createWorktree, removeWorktree, type WorktreeInfo } from './worktree';
 import { join } from 'path';
 import { runtimePath } from '@/projectPath';
@@ -177,6 +179,10 @@ export async function startDaemon(): Promise<void> {
         logger.debug(`[DAEMON RUN] Session webhook missing hostPid for sessionId: ${sessionId}`);
         return;
       }
+      if (!isSessionProcessIdentityCurrent(sessionMetadata)) {
+        logger.debug(`[DAEMON RUN] Session webhook rejected for ${sessionId}: process identity no longer matches PID ${pid}`);
+        return;
+      }
 
       logger.debug(`[DAEMON RUN] Session webhook: ${sessionId}, PID: ${pid}, started by: ${sessionMetadata.startedBy || 'unknown'}`);
       logger.debug(`[DAEMON RUN] Current tracked sessions before webhook: ${Array.from(pidToTrackedSession.keys()).join(', ')}`);
@@ -200,7 +206,7 @@ export async function startDaemon(): Promise<void> {
       } else if (!existingSession) {
         // New session started externally
         const trackedSession: TrackedSession = {
-          startedBy: 'yr directly - likely by user from terminal',
+          startedBy: EXTERNAL_TRACKED_SESSION_LABEL,
           yohoRemoteSessionId: sessionId,
           yohoRemoteSessionMetadataFromLocalWebhook: sessionMetadata,
           pid
@@ -255,6 +261,11 @@ export async function startDaemon(): Promise<void> {
       if (sessionId) {
         for (const [pid, tracked] of pidToTrackedSession.entries()) {
           if (tracked.yohoRemoteSessionId === sessionId) {
+            if (!isTrackedSessionProcessCurrent(tracked)) {
+              logger.debug(`[DAEMON RUN] Removing stale tracked session PID ${pid} for ${sessionId} before respawn`);
+              pidToTrackedSession.delete(pid);
+              continue;
+            }
             logger.debug(`[DAEMON RUN] Session ${sessionId} already running as PID ${pid}, killing old process before respawn`);
             addLog('dedup', `Killing existing process PID ${pid} for session ${sessionId}`, 'running');
             try {
@@ -705,6 +716,11 @@ export async function startDaemon(): Promise<void> {
       for (const [pid, session] of pidToTrackedSession.entries()) {
         if (session.yohoRemoteSessionId === sessionId ||
           (sessionId.startsWith('PID-') && pid === parseInt(sessionId.replace('PID-', '')))) {
+          if (!isTrackedSessionProcessCurrent(session)) {
+            logger.debug(`[DAEMON RUN] Session ${sessionId} matched stale PID ${pid}, removing without killing`);
+            pidToTrackedSession.delete(pid);
+            continue;
+          }
 
           if (session.startedBy === 'daemon' && session.childProcess) {
             try {
@@ -781,6 +797,19 @@ export async function startDaemon(): Promise<void> {
     });
     logger.debug(`[DAEMON RUN] Machine registered: ${machine.id}`);
 
+    try {
+      const recovered = await recoverTrackedSessionsFromServer({
+        api,
+        machineId,
+        pidToTrackedSession
+      });
+      if (recovered > 0) {
+        logger.debug(`[DAEMON RUN] Recovered ${recovered} live session(s) from server state before reconnect`);
+      }
+    } catch (error) {
+      logger.debug('[DAEMON RUN] Failed to recover live sessions from server state', error);
+    }
+
     // Create realtime machine session
     const apiMachine = api.machineSyncClient(machine);
 
@@ -823,9 +852,9 @@ export async function startDaemon(): Promise<void> {
       }
 
       // Prune stale sessions
-      for (const [pid, _] of pidToTrackedSession.entries()) {
-        if (!isProcessAlive(pid)) {
-          logger.debug(`[DAEMON RUN] Removing stale session with PID ${pid} (process no longer exists)`);
+      for (const [pid, tracked] of pidToTrackedSession.entries()) {
+        if (!isTrackedSessionProcessCurrent(tracked)) {
+          logger.debug(`[DAEMON RUN] Removing stale session with PID ${pid} (process no longer exists or identity changed)`);
           pidToTrackedSession.delete(pid);
         }
       }

@@ -6,6 +6,18 @@ export type SessionListSearch = {
     owner?: OwnerFilter
 }
 
+export type NewSessionKind = 'brain'
+
+export type NewSessionSearch = SessionListSearch & {
+    kind?: NewSessionKind
+}
+
+export type OwnerFilterAvailability = {
+    viewOthersSessions?: boolean
+    hasOpenClawSessions: boolean
+    hasBrainSessions: boolean
+}
+
 export const DEFAULT_SESSION_LIST_SEARCH: Readonly<{
     archive: ArchiveFilter
     owner: OwnerFilter
@@ -24,4 +36,27 @@ export function validateSessionListSearch(search: Record<string, unknown>): Sess
         archive,
         owner,
     }
+}
+
+export function validateNewSessionSearch(search: Record<string, unknown>): NewSessionSearch {
+    const base = validateSessionListSearch(search)
+    const kind = search.kind === 'brain' ? 'brain' : undefined
+
+    return {
+        ...base,
+        kind,
+    }
+}
+
+export function normalizeOwnerFilter(owner: OwnerFilter, availability: OwnerFilterAvailability): OwnerFilter {
+    if (owner === 'others' && availability.viewOthersSessions !== true) {
+        return DEFAULT_SESSION_LIST_SEARCH.owner
+    }
+    if (owner === 'openclaw' && !availability.hasOpenClawSessions) {
+        return DEFAULT_SESSION_LIST_SEARCH.owner
+    }
+    if (owner === 'brain' && !availability.hasBrainSessions) {
+        return DEFAULT_SESSION_LIST_SEARCH.owner
+    }
+    return owner
 }

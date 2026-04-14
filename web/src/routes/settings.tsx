@@ -95,7 +95,7 @@ function LicenseCard({
     licenseExempt: boolean
     memberCount: number
 }) {
-    if (!license && licenseExempt) {
+    if (licenseExempt) {
         return (
             <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
                 <div className="px-3 py-2 border-b border-[var(--app-divider)]">
@@ -107,7 +107,11 @@ function LicenseCard({
                     </div>
                     <div>
                         <div className="text-sm font-medium text-emerald-600 dark:text-emerald-400">License exempt</div>
-                        <div className="text-[11px] text-[var(--app-hint)] mt-0.5">This organization is configured as the admin org and can run without a stored license.</div>
+                        <div className="text-[11px] text-[var(--app-hint)] mt-0.5">
+                            {license
+                                ? 'This organization is configured as the admin org. Stored license limits are not enforced here.'
+                                : 'This organization is configured as the admin org and can run without a stored license.'}
+                        </div>
                     </div>
                 </div>
             </div>

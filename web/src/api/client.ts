@@ -612,7 +612,7 @@ export class ApiClient {
         worktreeName?: string,
         claudeSettingsType?: 'litellm' | 'claude',
         claudeAgent?: string,
-        claudeModel?: 'sonnet' | 'opus' | 'glm-5.1',
+        claudeModel?: 'sonnet' | 'opus',
         codexModel?: string,
         modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh',
         orgId?: string | null
@@ -636,11 +636,26 @@ export class ApiClient {
         })
     }
 
-    async createBrainSession(orgId?: string | null): Promise<SpawnResponse> {
-        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+    async createBrainSession(input?: {
+        agent?: 'claude' | 'codex'
+        claudeSettingsType?: 'litellm' | 'claude'
+        claudeAgent?: string
+        claudeModel?: 'sonnet' | 'opus'
+        codexModel?: string
+        modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
+        orgId?: string | null
+    }): Promise<SpawnResponse> {
+        const qs = input?.orgId ? `?orgId=${encodeURIComponent(input.orgId)}` : ''
         return await this.request<SpawnResponse>(`/api/brain/sessions${qs}`, {
             method: 'POST',
-            body: JSON.stringify({})
+            body: JSON.stringify({
+                agent: input?.agent,
+                claudeSettingsType: input?.claudeSettingsType,
+                claudeAgent: input?.claudeAgent,
+                claudeModel: input?.claudeModel,
+                codexModel: input?.codexModel,
+                modelReasoningEffort: input?.modelReasoningEffort,
+            })
         })
     }
 

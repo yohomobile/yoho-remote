@@ -4,14 +4,20 @@ import type { ApiClient } from '@/api/client'
 import type { Machine, SpawnLogEntry } from '@/types/api'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/Spinner'
+import {
+    DEFAULT_CLAUDE_MODEL,
+    DEFAULT_CLAUDE_SETTINGS_TYPE,
+    DEFAULT_CODEX_MODEL,
+    DEFAULT_CODEX_REASONING_EFFORT,
+    SessionAgentFields,
+    type AgentType,
+    type ClaudeModelMode,
+    type ClaudeSettingsType,
+} from '@/components/SessionAgentFields'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
 import { useAppContext } from '@/lib/app-context'
 import { getMachineStatusLabel, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
-
-type AgentType = 'claude' | 'codex'
-type ClaudeModelMode = 'sonnet' | 'opus' | 'glm-5.1'
-type ClaudeSettingsType = 'default' | 'claude' | 'litellm'
 
 /** 上次创建 session 时的偏好设置，存储在 localStorage */
 interface SpawnPrefs {
@@ -63,36 +69,7 @@ function normalizeWorkspaceGroupId(value: string | null | undefined): string | n
 function getMachineWorkspaceGroupId(machine: Machine | null | undefined): string | null {
     return normalizeWorkspaceGroupId(machine?.metadata?.workspaceGroupId)
 }
-
-// Claude 模型选项
-const CLAUDE_MODES: { value: ClaudeModelMode; label: string; description: string }[] = [
-    { value: 'sonnet', label: 'Sonnet', description: 'Claude Sonnet 4.5+' },
-    { value: 'opus', label: 'Opus', description: 'Claude Opus 4.6' },
-    { value: 'glm-5.1', label: 'GLM 5.1', description: '智谱 GLM-5.1 (思考模式)' },
-]
-
-// Codex 模型选项
-const CODEX_MODELS: { value: string; label: string }[] = [
-    { value: 'openai/gpt-5.4', label: 'GPT-5.4 (Latest)' },
-    { value: 'openai/gpt-5.4-mini', label: 'GPT-5.4 Mini' },
-    { value: 'openai/gpt-5.3-codex', label: 'GPT-5.3 Codex' },
-    { value: 'openai/gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark (Ultra-fast)' },
-    { value: 'openai/gpt-5.2-codex', label: 'GPT-5.2 Codex' },
-    { value: 'openai/gpt-5.2', label: 'GPT-5.2' },
-    { value: 'openai/gpt-5.1-codex-max', label: 'GPT-5.1 Codex Max' },
-    { value: 'openai/gpt-5.1-codex-mini', label: 'GPT-5.1 Codex Mini' },
-]
-
-// Codex reasoning effort levels
-const CODEX_REASONING_EFFORTS = [
-    { value: 'low' as const, label: 'Low (快速)' },
-    { value: 'medium' as const, label: 'Medium (默认)' },
-    { value: 'high' as const, label: 'High (更强推理)' },
-    { value: 'xhigh' as const, label: 'X-High (最强推理)' },
-]
-
-
-function SpawnLogPanel({ logs }: { logs: SpawnLogEntry[] }) {
+export function SpawnLogPanel({ logs }: { logs: SpawnLogEntry[] }) {
     if (logs.length === 0) return null
 
     const getStatusIcon = (status: SpawnLogEntry['status']) => {
@@ -161,11 +138,11 @@ export function NewSession(props: {
     const [machineId, setMachineId] = useState<string | null>(savedPrefs.machineId ?? null)
     const [projectPath, setProjectPath] = useState(savedPrefs.projectPath ?? '')
     const [agent, setAgent] = useState<AgentType>(sanitizeAgentType(savedPrefs.agent) ?? 'claude')
-    const [claudeModel, setClaudeModel] = useState<ClaudeModelMode>(savedPrefs.claudeModel ?? 'sonnet')
-    const [claudeSettingsType, setClaudeSettingsType] = useState<ClaudeSettingsType>(sanitizeClaudeSettingsType(savedPrefs.claudeSettingsType) ?? 'default')
+    const [claudeModel, setClaudeModel] = useState<ClaudeModelMode>(savedPrefs.claudeModel ?? DEFAULT_CLAUDE_MODEL)
+    const [claudeSettingsType, setClaudeSettingsType] = useState<ClaudeSettingsType>(sanitizeClaudeSettingsType(savedPrefs.claudeSettingsType) ?? DEFAULT_CLAUDE_SETTINGS_TYPE)
     const [claudeAgent, setClaudeAgent] = useState(typeof savedPrefs.claudeAgent === 'string' ? savedPrefs.claudeAgent : '')
-    const [codexModel, setCodexModel] = useState(savedPrefs.codexModel ?? CODEX_MODELS[0].value)
-    const [codexReasoningEffort, setCodexReasoningEffort] = useState<'low' | 'medium' | 'high' | 'xhigh'>(savedPrefs.codexReasoningEffort ?? 'medium')
+    const [codexModel, setCodexModel] = useState(savedPrefs.codexModel ?? DEFAULT_CODEX_MODEL)
+    const [codexReasoningEffort, setCodexReasoningEffort] = useState<'low' | 'medium' | 'high' | 'xhigh'>(savedPrefs.codexReasoningEffort ?? DEFAULT_CODEX_REASONING_EFFORT)
     const [error, setError] = useState<string | null>(null)
     const [isCustomPath, setIsCustomPath] = useState(false)
     const [spawnLogs, setSpawnLogs] = useState<SpawnLogEntry[]>([])
@@ -463,116 +440,25 @@ export function NewSession(props: {
                 )}
             </div>
 
-            {/* Agent Selector */}
-            <div className="flex flex-col gap-1.5 px-3 py-3">
-                <label className="text-xs font-medium text-[var(--app-hint)]">
-                    Agent
-                </label>
-                <div className="flex flex-wrap gap-x-3 gap-y-2">
-                    {(['claude', 'codex'] as const).map((agentType) => {
-                        const machineSupports = !currentMachine?.supportedAgents || currentMachine.supportedAgents.includes(agentType)
-                        return (
-                            <label
-                                key={agentType}
-                                className={`flex items-center gap-1 ${machineSupports ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
-                                title={!machineSupports ? `${getMachineTitle(currentMachine!)} does not support ${agentType}` : undefined}
-                            >
-                                <input
-                                    type="radio"
-                                    name="agent"
-                                    value={agentType}
-                                    checked={agent === agentType}
-                                    onChange={() => setAgent(agentType)}
-                                    disabled={isFormDisabled || !machineSupports}
-                                    className="accent-[var(--app-link)] w-3.5 h-3.5"
-                                />
-                                <span className="text-xs capitalize">{agentType}</span>
-                            </label>
-                        )
-                    })}
-                </div>
-            </div>
-
-            {/* Claude Model Selector */}
-            {agent === 'claude' ? (
-                <div className="flex flex-col gap-1.5 px-3 pb-3">
-                    <label className="text-xs font-medium text-[var(--app-hint)]">
-                        Model
-                    </label>
-                    <select
-                        value={claudeModel}
-                        onChange={(e) => setClaudeModel(e.target.value as ClaudeModelMode)}
-                        disabled={isFormDisabled}
-                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                    >
-                        {CLAUDE_MODES.map((mode) => (
-                            <option key={mode.value} value={mode.value}>
-                                {mode.label} - {mode.description}
-                            </option>
-                        ))}
-                    </select>
-                    <label className="text-xs font-medium text-[var(--app-hint)] mt-2">
-                        Runtime
-                    </label>
-                    <select
-                        value={claudeSettingsType}
-                        onChange={(e) => setClaudeSettingsType(e.target.value as ClaudeSettingsType)}
-                        disabled={isFormDisabled}
-                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                    >
-                        <option value="default">Default</option>
-                        <option value="claude">Claude / OAuth Relay</option>
-                        <option value="litellm">LiteLLM</option>
-                    </select>
-                    <label className="text-xs font-medium text-[var(--app-hint)] mt-2">
-                        Claude Agent (optional)
-                    </label>
-                    <input
-                        type="text"
-                        value={claudeAgent}
-                        onChange={(e) => setClaudeAgent(e.target.value)}
-                        disabled={isFormDisabled}
-                        placeholder="Optional agent name, e.g. ClaudeOauthRelay"
-                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                    />
-                </div>
-            ) : null}
-
-            {/* Codex Model + Reasoning Effort Selector */}
-            {agent === 'codex' ? (
-                <div className="flex flex-col gap-1.5 px-3 pb-3">
-                    <label className="text-xs font-medium text-[var(--app-hint)]">
-                        Model (Codex)
-                    </label>
-                    <select
-                        value={codexModel}
-                        onChange={(e) => setCodexModel(e.target.value)}
-                        disabled={isFormDisabled}
-                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                    >
-                        {CODEX_MODELS.map((model) => (
-                            <option key={model.value} value={model.value}>
-                                {model.label}
-                            </option>
-                        ))}
-                    </select>
-                    <label className="text-xs font-medium text-[var(--app-hint)] mt-2">
-                        Reasoning Effort
-                    </label>
-                    <select
-                        value={codexReasoningEffort}
-                        onChange={(e) => setCodexReasoningEffort(e.target.value as 'low' | 'medium' | 'high' | 'xhigh')}
-                        disabled={isFormDisabled}
-                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                    >
-                        {CODEX_REASONING_EFFORTS.map((effort) => (
-                            <option key={effort.value} value={effort.value}>
-                                {effort.label}
-                            </option>
-                        ))}
-                    </select>
-                </div>
-            ) : null}
+            <SessionAgentFields
+                agent={agent}
+                claudeModel={claudeModel}
+                claudeSettingsType={claudeSettingsType}
+                claudeAgent={claudeAgent}
+                codexModel={codexModel}
+                codexReasoningEffort={codexReasoningEffort}
+                onAgentChange={setAgent}
+                onClaudeModelChange={setClaudeModel}
+                onClaudeSettingsTypeChange={setClaudeSettingsType}
+                onClaudeAgentChange={setClaudeAgent}
+                onCodexModelChange={setCodexModel}
+                onCodexReasoningEffortChange={setCodexReasoningEffort}
+                isFormDisabled={isFormDisabled}
+                supportedAgents={currentMachine?.supportedAgents ?? null}
+                getUnsupportedTitle={(agentType) => currentMachine
+                    ? `${getMachineTitle(currentMachine)} does not support ${agentType}`
+                    : undefined}
+            />
 
             {/* Spawn Logs */}
             {spawnLogs.length > 0 && (

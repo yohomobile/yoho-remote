@@ -15,12 +15,13 @@ import { AgentRegistry } from '@/agent/AgentRegistry';
 import { convertAgentMessage } from '@/agent/messageConverter';
 import { PermissionAdapter } from '@/agent/permissionAdapter';
 import type { AgentBackend, HistoryMessage, PromptContent } from '@/agent/types';
-import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
 import { initialMachineMetadata } from '@/daemon/run';
+import { startDaemonSessionReporter } from '@/daemon/sessionReporter';
 import { startYohoRemoteServer } from '@/claude/utils/startYohoRemoteServer';
 import { getYohoRemoteCliCommand } from '@/utils/spawnYohoRemoteCLI';
 import { registerKillSessionHandler } from '@/claude/registerKillSessionHandler';
 import { getYohoAuxMcpServers } from '@/utils/yohoMcpServers';
+import { getCurrentProcessStartedAtMs } from '@/utils/process';
 
 function extractHistoryFromStoredMessages(messages: StoredMessage[]): HistoryMessage[] {
     const history: HistoryMessage[] = [];
@@ -100,6 +101,7 @@ export async function runAgentSession(opts: {
         yohoRemoteToolsDir: resolve(runtimePath(), 'tools', 'unpacked'),
         startedFromDaemon: opts.startedBy === 'daemon',
         hostPid: process.pid,
+        hostProcessStartedAt: getCurrentProcessStartedAtMs(),
         startedBy: opts.startedBy || 'terminal',
         lifecycleState: 'running',
         lifecycleStateSince: Date.now(),
@@ -108,15 +110,11 @@ export async function runAgentSession(opts: {
 
     const response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
     const session = api.sessionSyncClient(response);
-
-    try {
-        const result = await notifyDaemonSessionStarted(response.id, metadata);
-        if (result.error) {
-            logger.debug(`[START] Failed to report session to daemon: ${result.error}`);
-        }
-    } catch (error) {
-        logger.debug('[START] Failed to report session to daemon', error);
-    }
+    const daemonSessionReporter = startDaemonSessionReporter({
+        session,
+        sessionId: response.id,
+        metadata
+    });
 
     session.updateAgentState((currentState) => ({
         ...currentState,
@@ -132,6 +130,7 @@ export async function runAgentSession(opts: {
     const reportStartFailure = async (stage: string, error: unknown): Promise<void> => {
         const message = error instanceof Error ? error.message : String(error);
         logger.warn(`[ACP] Failed to start ${opts.agentType} agent (${stage}): ${message}`);
+        daemonSessionReporter.stop();
         session.sendSessionEvent({
             type: 'message',
             message: `Failed to start ${opts.agentType} agent (${stage}): ${message}`
@@ -356,6 +355,7 @@ export async function runAgentSession(opts: {
     } finally {
         clearInterval(keepAliveInterval);
         await permissionAdapter.cancelAll('Session ended');
+        daemonSessionReporter.stop();
         session.sendSessionDeath();
         await session.flush();
         session.close();

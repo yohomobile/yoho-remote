@@ -15,8 +15,8 @@ import { extractSDKMetadataAsync } from '@/claude/sdk/metadataExtractor';
 import { parseSpecialCommand } from '@/parsers/specialCommands';
 import { getEnvironmentInfo } from '@/ui/doctor';
 import { configuration } from '@/configuration';
-import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
 import { initialMachineMetadata } from '@/daemon/run';
+import { startDaemonSessionReporter } from '@/daemon/sessionReporter';
 import { startYohoRemoteServer } from '@/claude/utils/startYohoRemoteServer';
 import { startHookServer } from '@/claude/utils/startHookServer';
 import { generateHookSettingsFile, cleanupHookSettingsFile, updateHookSettingsFastMode, readHookSettingsFastMode } from '@/claude/utils/generateHookSettings';
@@ -26,6 +26,7 @@ import { resolve } from 'node:path';
 import type { Session } from './session';
 import { readModeEnv } from '@/utils/modeEnv';
 import { getYohoAuxMcpServers } from '@/utils/yohoMcpServers';
+import { getCurrentProcessStartedAtMs } from '@/utils/process';
 
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
 
@@ -126,6 +127,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         yohoRemoteToolsDir: resolve(runtimePath(), 'tools', 'unpacked'),
         startedFromDaemon: startedBy === 'daemon',
         hostPid: process.pid,
+        hostProcessStartedAt: getCurrentProcessStartedAtMs(),
         startedBy,
         // Initialize lifecycle state
         lifecycleState: 'running',
@@ -146,19 +148,6 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     if (!response) {
         response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
         logger.debug(`Session created: ${response.id}`);
-    }
-
-    // Always report to daemon if it exists
-    try {
-        logger.debug(`[START] Reporting session ${response.id} to daemon`);
-        const result = await notifyDaemonSessionStarted(response.id, metadata);
-        if (result.error) {
-            logger.debug(`[START] Failed to report to daemon (may not be running):`, result.error);
-        } else {
-            logger.debug(`[START] Reported session ${response.id} to daemon`);
-        }
-    } catch (error) {
-        logger.debug('[START] Failed to report to daemon (may not be running):', error);
     }
 
     // Extract SDK metadata in background and update session when ready
@@ -188,6 +177,11 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
             codexSessionId: current.codexSessionId ?? metadata.codexSessionId
         }));
     }
+    const daemonSessionReporter = startDaemonSessionReporter({
+        session,
+        sessionId: response.id,
+        metadata
+    });
 
     // Start YR MCP server
     const yohoRemoteServer = await startYohoRemoteServer(session, {
@@ -415,6 +409,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         restoreTerminalState();
 
         try {
+            daemonSessionReporter.stop();
             // Update lifecycle state to archived before closing
             if (session) {
                 const reason = archiveReason ?? 'User terminated';

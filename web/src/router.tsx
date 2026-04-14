@@ -12,6 +12,7 @@ import {
 import { App } from '@/App'
 import { SessionChat } from '@/components/SessionChat'
 import { SessionList } from '@/components/SessionList'
+import { NewBrainSession } from '@/components/NewBrainSession'
 import { NewSession } from '@/components/NewSession'
 import { LoadingState } from '@/components/LoadingState'
 import { OnlineUsersBadge } from '@/components/OnlineUsersBadge'
@@ -30,11 +31,13 @@ import { useSessionViewers } from '@/hooks/queries/useSessionViewers'
 import { useSendMessage } from '@/hooks/mutations/useSendMessage'
 import { useOtherUserTyping } from '@/hooks/useOtherUserTyping'
 import { queryKeys } from '@/lib/query-keys'
-import { deriveLicenseState } from '@/lib/license'
+import { deriveEffectiveLicenseState } from '@/lib/license'
 import {
     DEFAULT_SESSION_LIST_SEARCH,
     type ArchiveFilter,
+    type NewSessionSearch,
     type OwnerFilter,
+    validateNewSessionSearch,
     validateSessionListSearch,
 } from '@/lib/session-filters'
 import SettingsPage from '@/routes/settings'
@@ -146,8 +149,6 @@ function SessionsPage() {
     const { users: onlineUsers } = useOnlineUsers(api)
     const { orgs } = useMyOrgs(api)
     const [isRefreshing, setIsRefreshing] = useState(false)
-    const [isCreatingBrain, setIsCreatingBrain] = useState(false)
-
     const currentOrg = orgs.find(o => o.id === currentOrgId) ?? orgs[0] ?? null
 
     const { data: projectsData } = useQuery({
@@ -203,29 +204,6 @@ function SessionsPage() {
         }
     }, [api, queryClient])
 
-    const handleCreateBrainSession = useCallback(async () => {
-        if (isCreatingBrain) return
-        setIsCreatingBrain(true)
-        try {
-            const result = await api.createBrainSession(currentOrgId)
-            if (result.type === 'success' && result.sessionId) {
-                void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
-                navigate({
-                    to: '/sessions/$sessionId',
-                    params: { sessionId: result.sessionId },
-                })
-            } else if (result.type === 'error') {
-                console.error('Brain session creation failed:', result.message)
-                alert(`创建 Brain Session 失败: ${result.message}`)
-            }
-        } catch (err) {
-            console.error('Failed to create brain session:', err)
-            alert(`创建 Brain Session 出错: ${err instanceof Error ? err.message : '未知错误'}`)
-        } finally {
-            setIsCreatingBrain(false)
-        }
-    }, [api, currentOrgId, navigate, queryClient, isCreatingBrain])
-
     const projectCount = new Set(sessions.map(s => s.metadata?.path ?? 'Other')).size
     const gitCommitHash = typeof __GIT_COMMIT_HASH__ !== 'undefined' ? __GIT_COMMIT_HASH__ : 'dev'
     const gitCommitMessage = typeof __GIT_COMMIT_MESSAGE__ !== 'undefined' ? __GIT_COMMIT_MESSAGE__ : ''
@@ -273,8 +251,10 @@ function SessionsPage() {
                         </button>
                         <button
                             type="button"
-                            onClick={handleCreateBrainSession}
-                            disabled={isCreatingBrain}
+                            onClick={() => navigate({
+                                to: '/sessions/new',
+                                search: { ...search, kind: 'brain' },
+                            })}
                             className="flex items-center justify-center h-7 w-7 rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 text-white shadow-sm hover:shadow-md transition-all hover:scale-105 disabled:opacity-50"
                             title="New Brain Session"
                         >
@@ -282,7 +262,7 @@ function SessionsPage() {
                         </button>
                         <button
                             type="button"
-                            onClick={() => navigate({ to: '/sessions/new' })}
+                            onClick={() => navigate({ to: '/sessions/new', search })}
                             className="session-list-new-button flex items-center justify-center h-7 w-7 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-sm hover:shadow-md transition-all hover:scale-105"
                             title="New Session"
                         >
@@ -448,28 +428,35 @@ function NewSessionPage() {
     const { api, currentOrgId } = useAppContext()
     const navigate = useNavigate()
     const goBack = useAppGoBack()
+    const search = useSearch({ from: '/sessions/new' })
     const queryClient = useQueryClient()
     const { machines, isLoading: machinesLoading, error: machinesError } = useMachines(api, true, currentOrgId)
-    const { license } = useOrg(api, currentOrgId)
-    const licenseState = license ? deriveLicenseState(license) : null
+    const { license, licenseExempt } = useOrg(api, currentOrgId)
+    const licenseState = license ? deriveEffectiveLicenseState(license, { licenseExempt }) : null
     const licenseBlocked = licenseState?.isBlocked === true
+    const sessionListSearch = {
+        archive: search.archive ?? DEFAULT_SESSION_LIST_SEARCH.archive,
+        owner: search.owner ?? DEFAULT_SESSION_LIST_SEARCH.owner,
+    } satisfies NewSessionSearch
+    const isBrainCreation = search.kind === 'brain'
 
     const handleCancel = useCallback(() => {
-        navigate({ to: '/sessions' })
-    }, [navigate])
+        goBack()
+    }, [goBack])
 
     const handleSuccess = useCallback((sessionId: string) => {
         void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
         // Replace current page with /sessions to clear spawn flow from history
-        navigate({ to: '/sessions', replace: true })
+        navigate({ to: '/sessions', search: sessionListSearch, replace: true })
         // Then navigate to new session
         requestAnimationFrame(() => {
             navigate({
                 to: '/sessions/$sessionId',
                 params: { sessionId },
+                search: sessionListSearch,
             })
         })
-    }, [navigate, queryClient])
+    }, [navigate, queryClient, sessionListSearch])
 
     return (
         <div className="flex h-full flex-col">
@@ -484,7 +471,9 @@ function NewSessionPage() {
                             <BackIcon />
                         </button>
                     )}
-                    <div className="flex-1 font-medium text-sm">Create Session</div>
+                    <div className="flex-1 font-medium text-sm">
+                        {isBrainCreation ? 'Create Brain Session' : 'Create Session'}
+                    </div>
                 </div>
             </div>
 
@@ -527,13 +516,23 @@ function NewSessionPage() {
                             </button>
                         </div>
                     ) : (
-                        <NewSession
-                            api={api}
-                            machines={machines}
-                            isLoading={machinesLoading}
-                            onCancel={handleCancel}
-                            onSuccess={handleSuccess}
-                        />
+                        isBrainCreation ? (
+                            <NewBrainSession
+                                api={api}
+                                machines={machines}
+                                isLoading={machinesLoading}
+                                onCancel={handleCancel}
+                                onSuccess={handleSuccess}
+                            />
+                        ) : (
+                            <NewSession
+                                api={api}
+                                machines={machines}
+                                isLoading={machinesLoading}
+                                onCancel={handleCancel}
+                                onSuccess={handleSuccess}
+                            />
+                        )
                     )}
                 </div>
             </div>
@@ -568,7 +567,7 @@ const sessionRoute = createRoute({
 const newSessionRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/sessions/new',
-    validateSearch: validateSessionListSearch,
+    validateSearch: validateNewSessionSearch,
     component: NewSessionPage,
 })
 

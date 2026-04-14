@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from '@tanstack/react-router'
 import { useAppContext } from '@/lib/app-context'
 import { LoadingState } from '@/components/LoadingState'
+import { setPostLoginRedirect } from '@/services/postLoginRedirect'
 
 /**
  * AcceptInvitationPage - 接受组织邀请页面
@@ -20,9 +21,8 @@ export function AcceptInvitationPage() {
 
         const acceptInvitation = async () => {
             if (!userEmail) {
-                // 未登录，跳转到登录页
-                // TODO: 实现登录后重定向回邀请接受页面
-                navigate({ to: '/login' })
+                setPostLoginRedirect(`/invitations/accept/${invitationId}`)
+                navigate({ to: '/login', replace: true })
                 return
             }
 

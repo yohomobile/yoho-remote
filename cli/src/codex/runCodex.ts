@@ -10,8 +10,8 @@ import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { hashObject } from '@/utils/deterministicJson';
 import { readSettings } from '@/persistence';
 import { configuration } from '@/configuration';
-import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
 import { initialMachineMetadata } from '@/daemon/run';
+import { startDaemonSessionReporter } from '@/daemon/sessionReporter';
 import { registerKillSessionHandler } from '@/claude/registerKillSessionHandler';
 import type { AgentState, Metadata, SessionModelMode, SessionModelReasoningEffort } from '@/api/types';
 import packageJson from '../../package.json';
@@ -19,6 +19,7 @@ import { runtimePath } from '@/projectPath';
 import type { CodexSession } from './session';
 import { parseCodexCliOverrides } from './utils/codexCliOverrides';
 import { readModeEnv } from '@/utils/modeEnv';
+import { getCurrentProcessStartedAtMs } from '@/utils/process';
 
 export { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 
@@ -74,6 +75,7 @@ export async function runCodex(opts: {
         yohoRemoteToolsDir: resolve(runtimePath(), 'tools', 'unpacked'),
         startedFromDaemon: startedBy === 'daemon',
         hostPid: process.pid,
+        hostProcessStartedAt: getCurrentProcessStartedAtMs(),
         startedBy,
         lifecycleState: 'running',
         lifecycleStateSince: Date.now(),
@@ -103,18 +105,11 @@ export async function runCodex(opts: {
             codexSessionId: current.codexSessionId ?? metadata.codexSessionId
         }));
     }
-
-    try {
-        logger.debug(`[START] Reporting session ${response.id} to daemon`);
-        const result = await notifyDaemonSessionStarted(response.id, metadata);
-        if (result.error) {
-            logger.debug(`[START] Failed to report to daemon (may not be running):`, result.error);
-        } else {
-            logger.debug(`[START] Reported session ${response.id} to daemon`);
-        }
-    } catch (error) {
-        logger.debug('[START] Failed to report to daemon (may not be running):', error);
-    }
+    const daemonSessionReporter = startDaemonSessionReporter({
+        session,
+        sessionId: response.id,
+        metadata
+    });
 
     const startingMode: 'local' | 'remote' = startedBy === 'daemon' ? 'remote' : 'local';
 
@@ -188,6 +183,7 @@ export async function runCodex(opts: {
         logger.debug('[codex] Cleanup start');
         restoreTerminalState();
         try {
+            daemonSessionReporter.stop();
             const sessionWrapper = sessionWrapperRef.current;
             if (sessionWrapper) {
                 sessionWrapper.stopKeepAlive();

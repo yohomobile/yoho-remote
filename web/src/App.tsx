@@ -21,6 +21,7 @@ import { notifyTaskComplete, getPendingNotification, clearPendingNotification, u
 import { getAccessTokenSync } from '@/services/keycloak'
 import { useMyOrgs } from '@/hooks/queries/useOrgs'
 import { OrgSetup } from '@/components/OrgSetup'
+import { shouldBypassOrgGate } from '@/lib/org-gate'
 
 export function App() {
     const { baseUrl } = useServerUrl()
@@ -447,6 +448,7 @@ function OrgGate({ children }: { children: React.ReactNode }) {
     const { api, currentOrgId, setCurrentOrgId } = useAppContext()
     const { orgs, isLoading } = useMyOrgs(api)
     const [setupDismissed, setSetupDismissed] = useState(false)
+    const pathname = useLocation({ select: (location) => location.pathname })
 
     // Auto-set default org when orgs load
     useEffect(() => {
@@ -463,6 +465,10 @@ function OrgGate({ children }: { children: React.ReactNode }) {
                 <LoadingState label="Loading..." className="text-sm" />
             </div>
         )
+    }
+
+    if (shouldBypassOrgGate(pathname)) {
+        return <>{children}</>
     }
 
     if (orgs.length === 0 && !setupDismissed) {

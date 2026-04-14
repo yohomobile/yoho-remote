@@ -12,7 +12,7 @@ type SpawnInput = {
     worktreeName?: string
     claudeSettingsType?: 'litellm' | 'claude'
     claudeAgent?: string
-    claudeModel?: 'sonnet' | 'opus' | 'glm-5.1'
+    claudeModel?: 'sonnet' | 'opus'
     codexModel?: string
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     orgId?: string | null

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { getLoginUrl, isAuthenticatedSync } from '@/services/keycloak'
+import { consumePostLoginRedirect } from '@/services/postLoginRedirect'
 import { useServerUrl } from '@/hooks/useServerUrl'
 
 export function LoginPage() {
@@ -12,7 +13,7 @@ export function LoginPage() {
     // If already authenticated, redirect to sessions
     useEffect(() => {
         if (isAuthenticatedSync()) {
-            navigate({ to: '/sessions', replace: true })
+            window.location.href = consumePostLoginRedirect() ?? '/sessions'
         }
     }, [navigate])
 
