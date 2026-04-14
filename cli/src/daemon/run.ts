@@ -441,6 +441,7 @@ export async function startDaemon(): Promise<void> {
 
         if (options.tokenSourceType === 'claude' && agent === 'claude' && options.tokenSourceBaseUrl && options.tokenSourceApiKey) {
           addLog('env', `Applying Token Source for Claude: ${options.tokenSourceName ?? options.tokenSourceId ?? 'unnamed'}`, 'running');
+          delete extraEnv.CLAUDE_CODE_OAUTH_TOKEN;
           extraEnv = {
             ...extraEnv,
             ...buildClaudeTokenSourceEnv({
