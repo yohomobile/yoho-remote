@@ -60,6 +60,18 @@ export function createLicensesRoutes(store: IStore): Hono<WebAppEnv> {
         return c.json({ licenses })
     })
 
+    // 获取可管理的组织列表（用于 license 管理面板）
+    app.get('/licenses/orgs', async (c) => {
+        const email = c.get('email')
+        if (!email) return c.json({ error: 'Unauthorized' }, 401)
+
+        const adminCheck = await requireAdminOrg(email)
+        if ('error' in adminCheck) return c.json({ error: adminCheck.error }, adminCheck.status as any)
+
+        const orgs = await store.getAllOrganizations()
+        return c.json({ orgs })
+    })
+
     // 获取指定 org 的 license
     app.get('/licenses/:orgId', async (c) => {
         const email = c.get('email')

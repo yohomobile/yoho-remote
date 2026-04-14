@@ -17,6 +17,7 @@ import { configuration } from "@/configuration";
 import packageJson from "../../../package.json";
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
+import { getBrainSessionPreferencesFromMetadata, type BrainSessionPreferences } from '@/utils/brainSessionPreferences'
 
 interface StartYohoRemoteServerOptions {
     sessionSource?: string
@@ -25,11 +26,13 @@ interface StartYohoRemoteServerOptions {
     machineId?: string
     yohoRemoteSessionId?: string
     workingDirectory?: string
+    brainPreferences?: BrainSessionPreferences | null
 }
 
 export async function startYohoRemoteServer(client: ApiSessionClient, options?: StartYohoRemoteServerOptions) {
     logger.debug(`[yrMCP] startYohoRemoteServer: sessionSource=${options?.sessionSource}, clientSessionId=${client.sessionId}`)
     const workingDirectory = options?.workingDirectory ?? process.cwd()
+    const brainPreferences = options?.brainPreferences ?? getBrainSessionPreferencesFromMetadata(client.getMetadata())
     // Handler that sends title updates via the client
     const handler = async (title: string) => {
         logger.debug('[yrMCP] Changing title to:', title);
@@ -216,6 +219,7 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
             apiClient: options.apiClient,
             machineId: options.machineId,
             brainSessionId: options.yohoRemoteSessionId,
+            brainPreferences,
         });
         logger.debug('[yrMCP] Brain tools registered');
     }

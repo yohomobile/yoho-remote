@@ -233,3 +233,130 @@ describe('createSettingsRoutes projects', () => {
         ])
     })
 })
+
+describe('createSettingsRoutes token sources', () => {
+    function createAuthedApp(store: Record<string, unknown>, email = 'owner@example.com') {
+        const app = new Hono<any>()
+        app.use('/api/*', async (c, next) => {
+            c.set('email', email)
+            await next()
+        })
+        app.route('/api', createSettingsRoutes(store as any))
+        return app
+    }
+
+    it('hides apiKey from non-admin members', async () => {
+        const store = {
+            getUserOrgRole: async () => 'member',
+            getOrganization: async () => ({
+                id: 'org-a',
+                name: 'Org A',
+                slug: 'org-a',
+                createdBy: 'owner@example.com',
+                createdAt: 1,
+                updatedAt: 1,
+                settings: {
+                    tokenSources: [
+                        {
+                            id: 'ts-1',
+                            name: 'Shared Claude',
+                            baseUrl: 'https://proxy.example.com/v1',
+                            apiKey: 'secret-token-value',
+                            supportedAgents: ['claude'],
+                            createdAt: 1,
+                            updatedAt: 1,
+                        },
+                    ],
+                },
+            }),
+        }
+
+        const app = createAuthedApp(store, 'member@example.com')
+        const response = await app.request('/api/settings/token-sources?orgId=org-a&includeSecrets=1')
+        expect(response.status).toBe(200)
+
+        const data = await response.json() as {
+            canManage: boolean
+            includeSecrets: boolean
+            tokenSources: Array<{ apiKey?: string; apiKeyMasked?: string | null }>
+        }
+        expect(data.canManage).toBe(false)
+        expect(data.includeSecrets).toBe(false)
+        expect(data.tokenSources[0]?.apiKey).toBeUndefined()
+        expect(data.tokenSources[0]?.apiKeyMasked).toBeTruthy()
+    })
+
+    it('supports admin CRUD with org-backed settings storage', async () => {
+        let settings: Record<string, unknown> = {}
+        const store = {
+            getUserOrgRole: async () => 'admin',
+            getOrganization: async () => ({
+                id: 'org-a',
+                name: 'Org A',
+                slug: 'org-a',
+                createdBy: 'owner@example.com',
+                createdAt: 1,
+                updatedAt: 1,
+                settings,
+            }),
+            updateOrganization: async (_id: string, data: { settings?: Record<string, unknown> }) => {
+                settings = data.settings ?? settings
+                return {
+                    id: 'org-a',
+                    name: 'Org A',
+                    slug: 'org-a',
+                    createdBy: 'owner@example.com',
+                    createdAt: 1,
+                    updatedAt: Date.now(),
+                    settings,
+                }
+            },
+        }
+
+        const app = createAuthedApp(store)
+
+        const createResponse = await app.request('/api/settings/token-sources?orgId=org-a', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                name: 'Codex Proxy',
+                baseUrl: 'https://proxy.example.com/v1/',
+                apiKey: 'codex-secret',
+                supportedAgents: ['codex'],
+            }),
+        })
+        expect(createResponse.status).toBe(200)
+        const created = await createResponse.json() as { tokenSource: { id: string; apiKey?: string; baseUrl: string } }
+        expect(created.tokenSource.apiKey).toBe('codex-secret')
+        expect(created.tokenSource.baseUrl).toBe('https://proxy.example.com/v1')
+
+        const listResponse = await app.request('/api/settings/token-sources?orgId=org-a&includeSecrets=1')
+        expect(listResponse.status).toBe(200)
+        const listed = await listResponse.json() as { includeSecrets: boolean; tokenSources: Array<{ id: string; apiKey?: string }> }
+        expect(listed.includeSecrets).toBe(true)
+        expect(listed.tokenSources[0]?.apiKey).toBe('codex-secret')
+
+        const updateResponse = await app.request(`/api/settings/token-sources/${created.tokenSource.id}?orgId=org-a`, {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                name: 'Unified Proxy',
+                supportedAgents: ['claude', 'codex'],
+            }),
+        })
+        expect(updateResponse.status).toBe(200)
+        const updated = await updateResponse.json() as { tokenSource: { name: string; supportedAgents: string[]; apiKey?: string } }
+        expect(updated.tokenSource.name).toBe('Unified Proxy')
+        expect(updated.tokenSource.supportedAgents).toEqual(['claude', 'codex'])
+        expect(updated.tokenSource.apiKey).toBe('codex-secret')
+
+        const deleteResponse = await app.request(`/api/settings/token-sources/${created.tokenSource.id}?orgId=org-a`, {
+            method: 'DELETE',
+        })
+        expect(deleteResponse.status).toBe(200)
+
+        const finalList = await app.request('/api/settings/token-sources?orgId=org-a&includeSecrets=1')
+        const finalData = await finalList.json() as { tokenSources: unknown[] }
+        expect(finalData.tokenSources).toHaveLength(0)
+    })
+})

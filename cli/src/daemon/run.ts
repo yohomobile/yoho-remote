@@ -41,6 +41,10 @@ export const initialMachineMetadata: MachineMetadata = {
   ...(process.env.YOHO_MACHINE_NAME ? { displayName: process.env.YOHO_MACHINE_NAME } : {}),
 };
 
+function toTomlString(value: string): string {
+  return JSON.stringify(value);
+}
+
 function machineMetadataChanged(currentMetadata: MachineMetadata | null | undefined, nextMetadata: MachineMetadata): boolean {
   if (!currentMetadata) {
     return true;
@@ -434,6 +438,48 @@ export async function startDaemon(): Promise<void> {
           }
         }
 
+        if (options.tokenSourceType === 'claude' && agent === 'claude' && options.tokenSourceBaseUrl && options.tokenSourceApiKey) {
+          addLog('env', `Applying Token Source for Claude: ${options.tokenSourceName ?? options.tokenSourceId ?? 'unnamed'}`, 'running');
+          extraEnv = {
+            ...extraEnv,
+            ANTHROPIC_BASE_URL: options.tokenSourceBaseUrl,
+            ANTHROPIC_AUTH_TOKEN: options.tokenSourceApiKey,
+            ANTHROPIC_API_KEY: options.tokenSourceApiKey,
+            YR_TOKEN_SOURCE_ID: options.tokenSourceId ?? '',
+            YR_TOKEN_SOURCE_NAME: options.tokenSourceName ?? '',
+            YR_TOKEN_SOURCE_TYPE: 'claude',
+          };
+          addLog('env', `Claude Token Source configured`, 'success');
+        }
+
+        if (options.tokenSourceType === 'codex' && agent === 'codex' && options.tokenSourceBaseUrl && options.tokenSourceApiKey) {
+          addLog('env', `Applying Token Source for Codex: ${options.tokenSourceName ?? options.tokenSourceId ?? 'unnamed'}`, 'running');
+          const codexHomeDir = await fs.mkdtemp(join(os.tmpdir(), 'yr-codex-provider-'));
+          const defaultCodexHome = process.env.CODEX_HOME || join(os.homedir(), '.codex');
+          const existingConfigPath = join(defaultCodexHome, 'config.toml');
+          let configContent = '';
+          if (existsSync(existingConfigPath)) {
+            try {
+              configContent = await fs.readFile(existingConfigPath, 'utf8');
+            } catch (error) {
+              logger.debug('[DAEMON RUN] Failed to read existing Codex config.toml for Token Source:', error);
+            }
+          }
+          const normalizedBaseUrl = options.tokenSourceBaseUrl.replace(/\/+$/, '');
+          const providerId = 'yoho_remote_token_source';
+          const providerBlock = `${configContent.trimEnd() ? `${configContent.trimEnd()}\n\n` : ''}model_provider = "${providerId}"\n[model_providers.${providerId}]\nname = ${toTomlString(options.tokenSourceName ?? 'Yoho Remote Token Source')}\nbase_url = ${toTomlString(normalizedBaseUrl)}\nwire_api = "responses"\nenv_key = "YOHO_REMOTE_TOKEN_SOURCE_API_KEY"\nenv_key_instructions = "Managed by Yoho Remote Token Source"\n`;
+          await fs.writeFile(join(codexHomeDir, 'config.toml'), providerBlock);
+          extraEnv = {
+            ...extraEnv,
+            CODEX_HOME: codexHomeDir,
+            YOHO_REMOTE_TOKEN_SOURCE_API_KEY: options.tokenSourceApiKey,
+            YR_TOKEN_SOURCE_ID: options.tokenSourceId ?? '',
+            YR_TOKEN_SOURCE_NAME: options.tokenSourceName ?? '',
+            YR_TOKEN_SOURCE_TYPE: 'codex',
+          };
+          addLog('env', `Codex Token Source configured`, 'success');
+        }
+
         if (worktreeInfo) {
           extraEnv = {
             ...extraEnv,
@@ -464,6 +510,9 @@ export async function startDaemon(): Promise<void> {
         }
         if (options.caller) {
           extraEnv = { ...extraEnv, YR_CALLER: options.caller };
+        }
+        if (options.brainPreferences) {
+          extraEnv = { ...extraEnv, YR_BRAIN_SESSION_PREFERENCES: JSON.stringify(options.brainPreferences) };
         }
         // Pass Claude settings type (litellm or claude)
         if (options.claudeSettingsType) {

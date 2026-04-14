@@ -2219,6 +2219,11 @@ export class SyncEngine {
             token?: string
             sessionType?: 'simple' | 'worktree'
             worktreeName?: string
+            tokenSourceId?: string
+            tokenSourceName?: string
+            tokenSourceType?: 'claude' | 'codex'
+            tokenSourceBaseUrl?: string
+            tokenSourceApiKey?: string
             claudeSettingsType?: 'litellm' | 'claude'
             claudeAgent?: string
             opencodeModel?: string
@@ -2231,6 +2236,7 @@ export class SyncEngine {
             source?: string
             mainSessionId?: string
             caller?: string
+            brainPreferences?: Record<string, unknown>
             reuseExistingWorktree?: boolean
         }
     ): Promise<{ type: 'success'; sessionId: string; logs?: unknown[] } | { type: 'error'; message: string; logs?: unknown[] }> {
@@ -2261,6 +2267,11 @@ export class SyncEngine {
                     sessionId: options?.sessionId,
                     resumeSessionId: options?.resumeSessionId,
                     token: options?.token,
+                    tokenSourceId: options?.tokenSourceId,
+                    tokenSourceName: options?.tokenSourceName,
+                    tokenSourceType: options?.tokenSourceType,
+                    tokenSourceBaseUrl: options?.tokenSourceBaseUrl,
+                    tokenSourceApiKey: options?.tokenSourceApiKey,
                     claudeSettingsType: options?.claudeSettingsType,
                     claudeAgent: options?.claudeAgent,
                     opencodeModel: options?.opencodeModel,
@@ -2273,6 +2284,7 @@ export class SyncEngine {
                     source: options?.source,
                     mainSessionId: options?.mainSessionId,
                     caller: options?.caller,
+                    brainPreferences: options?.brainPreferences,
                     reuseExistingWorktree: options?.reuseExistingWorktree,
                 }
             )

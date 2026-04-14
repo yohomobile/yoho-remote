@@ -37,4 +37,32 @@ describe('buildInitPrompt', () => {
         expect(prompt).not.toContain('部署 dev 必须先合入 dev-release')
         expect(prompt).not.toContain('部署线上必须先合入 main')
     })
+
+    it('renders brain child-session capability boundaries from session preferences', async () => {
+        const prompt = await buildBrainInitPrompt('developer', {
+            projectRoot: '/vm/shared/yoho-remote',
+            brainPreferences: {
+                machineSelection: {
+                    mode: 'manual',
+                    machineId: 'machine-1',
+                },
+                childModels: {
+                    claude: {
+                        allowed: ['opus'],
+                        defaultModel: 'opus',
+                    },
+                    codex: {
+                        allowed: [],
+                        defaultModel: 'gpt-5.4',
+                    },
+                },
+            },
+        })
+
+        expect(prompt).toContain('当前 Brain 的子任务边界')
+        expect(prompt).toContain('默认子 session 机器：当前 Brain 所在机器（由用户手动固定）')
+        expect(prompt).toContain('Claude 子 session 可用模型：opus；默认 opus')
+        expect(prompt).toContain('Codex 子 session：禁用（当前 Brain 不允许创建 Codex 子任务）')
+        expect(prompt).toContain('不在以上白名单里的模型不要使用')
+    })
 })

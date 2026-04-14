@@ -1,42 +1,37 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
-import type { Machine, SpawnLogEntry } from '@/types/api'
+import type { Machine, SpawnLogEntry, TokenSource } from '@/types/api'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/Spinner'
 import {
     DEFAULT_CLAUDE_MODEL,
-    DEFAULT_CLAUDE_SETTINGS_TYPE,
     DEFAULT_CODEX_MODEL,
     DEFAULT_CODEX_REASONING_EFFORT,
     SessionAgentFields,
     type AgentType,
     type ClaudeModelMode,
-    type ClaudeSettingsType,
 } from '@/components/SessionAgentFields'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
 import { useAppContext } from '@/lib/app-context'
+import { queryKeys } from '@/lib/query-keys'
 import { getMachineStatusLabel, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
+import { LOCAL_TOKEN_SOURCE, LOCAL_TOKEN_SOURCE_ID } from '@/lib/tokenSources'
 
 /** 上次创建 session 时的偏好设置，存储在 localStorage */
 interface SpawnPrefs {
     machineId?: string
     projectPath?: string
     agent?: AgentType
+    tokenSourceId?: string
     claudeModel?: ClaudeModelMode
-    claudeSettingsType?: ClaudeSettingsType
-    claudeAgent?: string
     codexModel?: string
     codexReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
 }
 
 function sanitizeAgentType(agent: unknown): AgentType | null {
     return agent === 'claude' || agent === 'codex' ? agent : null
-}
-
-function sanitizeClaudeSettingsType(value: unknown): ClaudeSettingsType | null {
-    return value === 'default' || value === 'claude' || value === 'litellm' ? value : null
 }
 
 function getSpawnPrefsKey(userEmail: string | null): string {
@@ -68,6 +63,10 @@ function normalizeWorkspaceGroupId(value: string | null | undefined): string | n
 
 function getMachineWorkspaceGroupId(machine: Machine | null | undefined): string | null {
     return normalizeWorkspaceGroupId(machine?.metadata?.workspaceGroupId)
+}
+
+function getCompatibleTokenSources(tokenSources: TokenSource[], agent: AgentType): TokenSource[] {
+    return tokenSources.filter((tokenSource) => tokenSource.supportedAgents.includes(agent))
 }
 export function SpawnLogPanel({ logs }: { logs: SpawnLogEntry[] }) {
     if (logs.length === 0) return null
@@ -138,9 +137,8 @@ export function NewSession(props: {
     const [machineId, setMachineId] = useState<string | null>(savedPrefs.machineId ?? null)
     const [projectPath, setProjectPath] = useState(savedPrefs.projectPath ?? '')
     const [agent, setAgent] = useState<AgentType>(sanitizeAgentType(savedPrefs.agent) ?? 'claude')
+    const [tokenSourceId, setTokenSourceId] = useState(typeof savedPrefs.tokenSourceId === 'string' ? savedPrefs.tokenSourceId : '')
     const [claudeModel, setClaudeModel] = useState<ClaudeModelMode>(savedPrefs.claudeModel ?? DEFAULT_CLAUDE_MODEL)
-    const [claudeSettingsType, setClaudeSettingsType] = useState<ClaudeSettingsType>(sanitizeClaudeSettingsType(savedPrefs.claudeSettingsType) ?? DEFAULT_CLAUDE_SETTINGS_TYPE)
-    const [claudeAgent, setClaudeAgent] = useState(typeof savedPrefs.claudeAgent === 'string' ? savedPrefs.claudeAgent : '')
     const [codexModel, setCodexModel] = useState(savedPrefs.codexModel ?? DEFAULT_CODEX_MODEL)
     const [codexReasoningEffort, setCodexReasoningEffort] = useState<'low' | 'medium' | 'high' | 'xhigh'>(savedPrefs.codexReasoningEffort ?? DEFAULT_CODEX_REASONING_EFFORT)
     const [error, setError] = useState<string | null>(null)
@@ -149,6 +147,21 @@ export function NewSession(props: {
     const onlineMachines = useMemo(
         () => sortMachinesForStableDisplay(props.machines).filter((machine) => machine.active),
         [props.machines]
+    )
+    const { data: tokenSourcesData } = useQuery({
+        queryKey: queryKeys.tokenSources(currentOrgId ?? '', false),
+        queryFn: async () => {
+            return await props.api.getTokenSources(currentOrgId, false)
+        },
+        enabled: Boolean(currentOrgId)
+    })
+    const tokenSources = useMemo(() => {
+        const remoteTokenSources = Array.isArray(tokenSourcesData?.tokenSources) ? tokenSourcesData.tokenSources : []
+        return [LOCAL_TOKEN_SOURCE, ...remoteTokenSources]
+    }, [tokenSourcesData])
+    const compatibleTokenSources = useMemo(
+        () => getCompatibleTokenSources(tokenSources, agent),
+        [agent, tokenSources]
     )
 
     // Fetch projects for selected machine (shared + machine-specific).
@@ -223,6 +236,18 @@ export function NewSession(props: {
         }
     }, [onlineMachines, machineId])
 
+    useEffect(() => {
+        if (compatibleTokenSources.length === 0) {
+            setTokenSourceId('')
+            return
+        }
+        if (compatibleTokenSources.some((tokenSource) => tokenSource.id === tokenSourceId)) {
+            return
+        }
+        const restored = compatibleTokenSources.find((tokenSource) => tokenSource.id === savedPrefs.tokenSourceId)
+        setTokenSourceId(restored?.id ?? compatibleTokenSources[0]?.id ?? '')
+    }, [compatibleTokenSources, savedPrefs.tokenSourceId, tokenSourceId])
+
     // Reset project path when machine changes (different machine may have different projects)
     const [initialProjectRestored, setInitialProjectRestored] = useState(false)
     useEffect(() => {
@@ -253,7 +278,7 @@ export function NewSession(props: {
     async function handleCreate() {
         if (!machineId) return
         const directory = projectPath.trim()
-        if (!directory) return
+        if (!directory || !tokenSourceId) return
 
         setError(null)
         setSpawnLogs([])
@@ -271,8 +296,7 @@ export function NewSession(props: {
                 agent,
                 yolo: true,
                 sessionType: 'simple',
-                claudeSettingsType: agent === 'claude' && claudeSettingsType !== 'default' ? claudeSettingsType : undefined,
-                claudeAgent: agent === 'claude' ? (claudeAgent.trim() || undefined) : undefined,
+                tokenSourceId: tokenSourceId === LOCAL_TOKEN_SOURCE_ID ? undefined : tokenSourceId,
                 claudeModel: agent === 'claude' ? claudeModel : undefined,
                 codexModel: agent === 'codex' ? codexModel : undefined,
                 modelReasoningEffort: agent === 'codex' ? codexReasoningEffort : undefined,
@@ -290,9 +314,8 @@ export function NewSession(props: {
                     machineId: machineId ?? undefined,
                     projectPath: directory,
                     agent,
+                    tokenSourceId,
                     claudeModel,
-                    claudeSettingsType,
-                    claudeAgent: claudeAgent.trim() || undefined,
                     codexModel,
                     codexReasoningEffort,
                 })
@@ -317,7 +340,14 @@ export function NewSession(props: {
         }
     }
 
-    const canCreate = Boolean(machineId && currentMachine?.active && projectPath.trim() && !isFormDisabled)
+    const canCreate = Boolean(
+        machineId
+        && currentMachine?.active
+        && projectPath.trim()
+        && tokenSourceId
+        && compatibleTokenSources.some((tokenSource) => tokenSource.id === tokenSourceId)
+        && !isFormDisabled
+    )
 
     return (
         <div className="flex flex-col divide-y divide-[var(--app-divider)]">
@@ -442,15 +472,14 @@ export function NewSession(props: {
 
             <SessionAgentFields
                 agent={agent}
+                tokenSources={tokenSources}
+                tokenSourceId={tokenSourceId}
                 claudeModel={claudeModel}
-                claudeSettingsType={claudeSettingsType}
-                claudeAgent={claudeAgent}
                 codexModel={codexModel}
                 codexReasoningEffort={codexReasoningEffort}
                 onAgentChange={setAgent}
+                onTokenSourceChange={setTokenSourceId}
                 onClaudeModelChange={setClaudeModel}
-                onClaudeSettingsTypeChange={setClaudeSettingsType}
-                onClaudeAgentChange={setClaudeAgent}
                 onCodexModelChange={setCodexModel}
                 onCodexReasoningEffortChange={setCodexReasoningEffort}
                 isFormDisabled={isFormDisabled}

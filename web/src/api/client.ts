@@ -52,7 +52,16 @@ import type {
     BrainConfigResponse,
     UpdateBrainConfigResponse,
     BrainAgent,
+    CreateTokenSourceInput,
+    CreateTokenSourceResponse,
+    DeleteTokenSourceResponse,
     MeResponse,
+    TokenSourcesResponse,
+    UpdateTokenSourceInput,
+    UpdateTokenSourceResponse,
+    AdminLicensesResponse,
+    LicenseOrganizationsResponse,
+    UpsertLicenseResponse,
 } from '@/types/api'
 
 type ApiClientOptions = {
@@ -348,6 +357,37 @@ export class ApiClient {
         })
     }
 
+    async getTokenSources(orgId?: string | null, includeSecrets = false): Promise<TokenSourcesResponse> {
+        const params = new URLSearchParams()
+        if (orgId) params.set('orgId', orgId)
+        if (includeSecrets) params.set('includeSecrets', '1')
+        const qs = params.toString()
+        return await this.request<TokenSourcesResponse>(`/api/settings/token-sources${qs ? `?${qs}` : ''}`)
+    }
+
+    async createTokenSource(data: CreateTokenSourceInput, orgId?: string | null): Promise<CreateTokenSourceResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<CreateTokenSourceResponse>(`/api/settings/token-sources${qs}`, {
+            method: 'POST',
+            body: JSON.stringify(data)
+        })
+    }
+
+    async updateTokenSource(id: string, data: UpdateTokenSourceInput, orgId?: string | null): Promise<UpdateTokenSourceResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<UpdateTokenSourceResponse>(`/api/settings/token-sources/${encodeURIComponent(id)}${qs}`, {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        })
+    }
+
+    async deleteTokenSource(id: string, orgId?: string | null): Promise<DeleteTokenSourceResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<DeleteTokenSourceResponse>(`/api/settings/token-sources/${encodeURIComponent(id)}${qs}`, {
+            method: 'DELETE'
+        })
+    }
+
     async getMessages(sessionId: string, options: { beforeSeq?: number | null; limit?: number }): Promise<MessagesResponse> {
         const params = new URLSearchParams()
         if (options.beforeSeq !== undefined && options.beforeSeq !== null) {
@@ -610,6 +650,7 @@ export class ApiClient {
         yolo?: boolean,
         sessionType?: 'simple' | 'worktree',
         worktreeName?: string,
+        tokenSourceId?: string,
         claudeSettingsType?: 'litellm' | 'claude',
         claudeAgent?: string,
         claudeModel?: 'sonnet' | 'opus',
@@ -626,6 +667,7 @@ export class ApiClient {
                 yolo,
                 sessionType,
                 worktreeName,
+                tokenSourceId,
                 claudeSettingsType,
                 claudeAgent,
                 claudeModel,
@@ -637,24 +679,32 @@ export class ApiClient {
     }
 
     async createBrainSession(input?: {
+        machineId?: string
         agent?: 'claude' | 'codex'
+        tokenSourceId?: string
         claudeSettingsType?: 'litellm' | 'claude'
         claudeAgent?: string
         claudeModel?: 'sonnet' | 'opus'
         codexModel?: string
         modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
+        childClaudeModels?: ('sonnet' | 'opus')[]
+        childCodexModels?: string[]
         orgId?: string | null
     }): Promise<SpawnResponse> {
         const qs = input?.orgId ? `?orgId=${encodeURIComponent(input.orgId)}` : ''
         return await this.request<SpawnResponse>(`/api/brain/sessions${qs}`, {
             method: 'POST',
             body: JSON.stringify({
+                machineId: input?.machineId,
                 agent: input?.agent,
+                tokenSourceId: input?.tokenSourceId,
                 claudeSettingsType: input?.claudeSettingsType,
                 claudeAgent: input?.claudeAgent,
                 claudeModel: input?.claudeModel,
                 codexModel: input?.codexModel,
                 modelReasoningEffort: input?.modelReasoningEffort,
+                childClaudeModels: input?.childClaudeModels,
+                childCodexModels: input?.childCodexModels,
             })
         })
     }
@@ -997,6 +1047,42 @@ export class ApiClient {
     async acceptInvitation(invitationId: string): Promise<OrgActionResponse> {
         return await this.request<OrgActionResponse>(`/api/invitations/${encodeURIComponent(invitationId)}/accept`, {
             method: 'POST'
+        })
+    }
+
+    async getAdminLicenses(): Promise<AdminLicensesResponse> {
+        return await this.request<AdminLicensesResponse>('/api/licenses')
+    }
+
+    async getLicenseOrganizations(): Promise<LicenseOrganizationsResponse> {
+        return await this.request<LicenseOrganizationsResponse>('/api/licenses/orgs')
+    }
+
+    async upsertLicense(input: {
+        orgId: string
+        startsAt: number
+        expiresAt: number
+        maxMembers: number
+        maxConcurrentSessions?: number | null
+        status?: 'active' | 'expired' | 'suspended'
+        note?: string | null
+    }): Promise<UpsertLicenseResponse> {
+        return await this.request<UpsertLicenseResponse>('/api/licenses', {
+            method: 'POST',
+            body: JSON.stringify(input)
+        })
+    }
+
+    async updateLicenseStatus(orgId: string, status: 'active' | 'expired' | 'suspended'): Promise<OrgActionResponse> {
+        return await this.request<OrgActionResponse>(`/api/licenses/${encodeURIComponent(orgId)}/status`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status })
+        })
+    }
+
+    async deleteLicense(orgId: string): Promise<OrgActionResponse> {
+        return await this.request<OrgActionResponse>(`/api/licenses/${encodeURIComponent(orgId)}`, {
+            method: 'DELETE'
         })
     }
 

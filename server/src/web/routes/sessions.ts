@@ -4,9 +4,16 @@ import type { DecryptedMessage, Session, SyncEngine } from '../../sync/syncEngin
 import type { SSEManager } from '../../sse/sseManager'
 import type { IStore, UserRole, StoredSession } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
+import { resolveTokenSourceForAgent } from '../tokenSources'
 import { requireMachine, requireSessionFromParam, requireSessionFromParamWithShareCheck, requireSyncEngine } from './guards'
 import { buildInitPrompt, buildBrainInitPrompt } from '../prompts/initPrompt'
 import { getLicenseService } from '../../license/licenseService'
+import {
+    BRAIN_CLAUDE_CHILD_MODELS,
+    buildBrainSessionPreferences,
+    extractBrainChildModelDefaults,
+    extractBrainSessionPreferencesFromMetadata,
+} from '../../brain/brainSessionPreferences'
 
 /**
  * License 检查：如果指定了 orgId，校验是否可创建会话
@@ -149,6 +156,7 @@ const createSessionSchema = z.object({
     directory: z.string().min(1),
     agent: z.enum(['claude', 'codex']).optional(),
     yolo: z.boolean().optional(),
+    tokenSourceId: z.string().min(1).optional(),
     claudeModel: z.enum(claudeModelValues).optional(),
     codexModel: z.string().min(1).optional(),
     openrouterModel: z.string().min(1).optional(),
@@ -159,12 +167,16 @@ const createSessionSchema = z.object({
 })
 
 const createBrainSessionSchema = z.object({
+    machineId: z.string().min(1).optional(),
     agent: z.enum(['claude', 'codex']).optional(),
+    tokenSourceId: z.string().min(1).optional(),
     claudeSettingsType: z.enum(['litellm', 'claude']).optional(),
     claudeAgent: z.string().min(1).optional(),
     claudeModel: z.enum(claudeModelValues).optional(),
     codexModel: z.string().min(1).optional(),
     modelReasoningEffort: z.enum(reasoningEffortValues).optional(),
+    childClaudeModels: z.array(z.enum(BRAIN_CLAUDE_CHILD_MODELS)).optional(),
+    childCodexModels: z.array(z.string().min(1)).optional(),
 })
 
 function isModelMode(value: string): value is NonNullable<Session['modelMode']> {
@@ -351,9 +363,10 @@ async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserR
     const session = engine.getSession(sessionId)
     const projectRoot = session?.metadata?.path?.trim() || null
     const source = session?.metadata?.source
+    const brainPreferences = extractBrainSessionPreferencesFromMetadata((session?.metadata as Record<string, unknown> | null | undefined) ?? null)
     console.log(`[sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}, source=${source}`)
     const prompt = source === 'brain'
-        ? await buildBrainInitPrompt(role, { projectRoot, userName })
+        ? await buildBrainInitPrompt(role, { projectRoot, userName, brainPreferences })
         : await buildInitPrompt(role, { projectRoot, userName })
     if (!prompt.trim()) {
         console.warn(`[sendInitPrompt] Empty prompt for session ${sessionId}, skipping`)
@@ -588,6 +601,7 @@ export function createSessionsRoutes(
         const rawSource = parsed.data.source?.trim()
         const source = rawSource ? rawSource : 'external-api'
         const email = c.get('email')
+        const requestedAgent = parsed.data.agent ?? 'claude'
         // 将 claudeModel/codexModel 转换为 modelMode
         const modelMode = resolveRequestedModelMode({
             modelMode: parsed.data.modelMode,
@@ -595,12 +609,37 @@ export function createSessionsRoutes(
             codexModel: parsed.data.codexModel,
         })
 
+        let resolvedTokenSource: Awaited<ReturnType<typeof resolveTokenSourceForAgent>> | null = null
+        if (parsed.data.tokenSourceId) {
+            if (!orgId) {
+                return c.json({ error: 'orgId is required when using Token Source' }, 400)
+            }
+            resolvedTokenSource = await resolveTokenSourceForAgent(
+                store,
+                orgId,
+                parsed.data.tokenSourceId,
+                requestedAgent
+            )
+            if ('error' in resolvedTokenSource) {
+                return c.json({ error: resolvedTokenSource.error }, resolvedTokenSource.status as 400 | 404)
+            }
+        }
+
         const result = await engine.spawnSession(
             parsed.data.machineId,
             parsed.data.directory,
-            parsed.data.agent,
+            requestedAgent,
             parsed.data.yolo,
             {
+                tokenSourceId: resolvedTokenSource?.tokenSource.id,
+                tokenSourceName: resolvedTokenSource?.tokenSource.name,
+                tokenSourceType: resolvedTokenSource?.tokenSource.supportedAgents.includes('codex') && requestedAgent === 'codex'
+                    ? 'codex'
+                    : resolvedTokenSource?.tokenSource.supportedAgents.includes('claude') && requestedAgent === 'claude'
+                        ? 'claude'
+                        : undefined,
+                tokenSourceBaseUrl: resolvedTokenSource?.tokenSource.baseUrl,
+                tokenSourceApiKey: resolvedTokenSource?.tokenSource.apiKey,
                 openrouterModel: parsed.data.openrouterModel,
                 permissionMode: parsed.data.permissionMode,
                 modelMode: modelMode as Session['modelMode'] | undefined,
@@ -662,6 +701,7 @@ export function createSessionsRoutes(
         const userName = c.get('name')
         const orgId = c.req.query('orgId')
         const brainConfig = await store.getBrainConfig(namespace || 'default')
+        const childModelDefaults = extractBrainChildModelDefaults(brainConfig?.extra)
         const requestedAgent = parsed.data.agent ?? brainConfig?.agent ?? 'claude'
         const modelMode = resolveRequestedModelMode({
             claudeModel: requestedAgent === 'claude'
@@ -671,25 +711,68 @@ export function createSessionsRoutes(
                 ? (parsed.data.codexModel ?? brainConfig?.codexModel)
                 : undefined,
         })
+        const childClaudeModels = parsed.data.childClaudeModels ?? childModelDefaults.childClaudeModels
+        const childCodexModels = parsed.data.childCodexModels ?? childModelDefaults.childCodexModels
 
         // License check
         const licenseError = await checkSessionLicense(c, orgId)
         if (licenseError) return licenseError
 
-        // Find compatible online machines in this namespace (filtered by org if provided)
-        const machines = engine.getOnlineMachinesByNamespace(namespace, orgId ?? undefined)
-        if (machines.length === 0) {
+        if ((childClaudeModels?.length ?? 0) === 0 && (childCodexModels?.length ?? 0) === 0) {
+            return c.json({ type: 'error', message: 'At least one child-session model must be enabled for Brain.' }, 400)
+        }
+
+        const requestedMachineId = parsed.data.machineId?.trim()
+        const candidateMachines = requestedMachineId
+            ? (() => {
+                const selected = requireMachine(c, engine, requestedMachineId)
+                if (selected instanceof Response) {
+                    return selected
+                }
+                return [selected]
+            })()
+            : engine.getOnlineMachinesByNamespace(namespace, orgId ?? undefined)
+        if (candidateMachines instanceof Response) {
+            return candidateMachines
+        }
+        const onlineCandidateMachines = candidateMachines.filter((machine) => machine.active)
+        if (onlineCandidateMachines.length === 0) {
             return c.json({ type: 'error', message: 'No machines online' }, 503)
         }
-        const compatibleMachines = machines.filter((machine) => !machine.supportedAgents || machine.supportedAgents.includes(requestedAgent))
+
+        const compatibleMachines = onlineCandidateMachines.filter((machine) => !machine.supportedAgents || machine.supportedAgents.includes(requestedAgent))
         if (compatibleMachines.length === 0) {
-            return c.json({ type: 'error', message: `No online machines support agent "${requestedAgent}"` }, 503)
+            return c.json({ type: 'error', message: requestedMachineId
+                ? `Selected machine does not support agent "${requestedAgent}"`
+                : `No online machines support agent "${requestedAgent}"` }, 503)
+        }
+
+        let resolvedTokenSource: Awaited<ReturnType<typeof resolveTokenSourceForAgent>> | null = null
+        if (parsed.data.tokenSourceId) {
+            if (!orgId) {
+                return c.json({ error: 'orgId is required when using Token Source' }, 400)
+            }
+            resolvedTokenSource = await resolveTokenSourceForAgent(
+                store,
+                orgId,
+                parsed.data.tokenSourceId,
+                requestedAgent
+            )
+            if ('error' in resolvedTokenSource) {
+                return c.json({ error: resolvedTokenSource.error }, resolvedTokenSource.status as 400 | 404)
+            }
         }
 
         let result: Awaited<ReturnType<typeof engine.spawnSession>> | null = null
         for (const machine of compatibleMachines) {
             const homeDir = machine.metadata?.homeDir || '/tmp'
             const brainDirectory = `${homeDir}/.yoho-remote/brain-workspace`
+            const brainPreferences = buildBrainSessionPreferences({
+                machineSelectionMode: requestedMachineId ? 'manual' : 'auto',
+                machineId: machine.id,
+                childClaudeModels,
+                childCodexModels,
+            })
             const candidate = await engine.spawnSession(
                 machine.id,
                 brainDirectory,
@@ -698,10 +781,20 @@ export function createSessionsRoutes(
                 {
                     source: 'brain',
                     permissionMode: 'bypassPermissions',
+                    tokenSourceId: resolvedTokenSource?.tokenSource.id,
+                    tokenSourceName: resolvedTokenSource?.tokenSource.name,
+                    tokenSourceType: resolvedTokenSource?.tokenSource.supportedAgents.includes('codex') && requestedAgent === 'codex'
+                        ? 'codex'
+                        : resolvedTokenSource?.tokenSource.supportedAgents.includes('claude') && requestedAgent === 'claude'
+                            ? 'claude'
+                            : undefined,
+                    tokenSourceBaseUrl: resolvedTokenSource?.tokenSource.baseUrl,
+                    tokenSourceApiKey: resolvedTokenSource?.tokenSource.apiKey,
                     claudeSettingsType: requestedAgent === 'claude' ? parsed.data.claudeSettingsType : undefined,
                     claudeAgent: requestedAgent === 'claude' ? parsed.data.claudeAgent : undefined,
                     modelMode,
                     modelReasoningEffort: requestedAgent === 'codex' ? parsed.data.modelReasoningEffort : undefined,
+                    brainPreferences,
                 }
             )
             if (candidate.type === 'success') {

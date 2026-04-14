@@ -153,6 +153,11 @@ export interface SpawnSessionOptions {
     sessionType?: 'simple' | 'worktree';
     worktreeName?: string;
     reuseExistingWorktree?: boolean;
+    tokenSourceId?: string;
+    tokenSourceName?: string;
+    tokenSourceType?: 'claude' | 'codex';
+    tokenSourceBaseUrl?: string;
+    tokenSourceApiKey?: string;
     claudeSettingsType?: 'litellm' | 'claude';
     claudeAgent?: string;
     opencodeModel?: string;
@@ -165,6 +170,7 @@ export interface SpawnSessionOptions {
     source?: string;
     mainSessionId?: string;
     caller?: string;
+    brainPreferences?: Record<string, unknown>;
 }
 
 export interface SpawnLogEntry {

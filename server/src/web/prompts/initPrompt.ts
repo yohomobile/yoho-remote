@@ -1,4 +1,5 @@
 import type { UserRole } from '../../store'
+import type { BrainSessionPreferences } from '../../brain/brainSessionPreferences'
 
 type InitPromptOptions = {
     projectRoot?: string | null
@@ -9,6 +10,7 @@ type InitPromptOptions = {
         name?: string | null
         worktreePath?: string | null
     } | null
+    brainPreferences?: BrainSessionPreferences | null
 }
 
 export type FeishuBrainInitPromptOptions = InitPromptOptions & {
@@ -23,6 +25,33 @@ ${projectRoot ? `\n- 当前会话工作目录：${projectRoot}` : ''}
 - \`mcp__yoho_remote__project_list\` 查看所有 Project（名称、路径、所属机器）
 - 可切换到其他 Project 目录工作
 - \`project_create\` / \`project_update\` / \`project_delete\` 管理 Project 列表`
+}
+
+function renderChildModelLine(agent: 'claude' | 'codex', preferences: BrainSessionPreferences | null): string {
+    if (!preferences) {
+        return agent === 'claude'
+            ? '- Claude 子 session 可用模型：sonnet（默认）、opus'
+            : '- Codex 子 session 可用模型：gpt-5.4（默认）、gpt-5.4-mini、gpt-5.3-codex、gpt-5.3-codex-spark、gpt-5.2-codex、gpt-5.2、gpt-5.1-codex-max、gpt-5.1-codex-mini'
+    }
+
+    const config = preferences.childModels[agent]
+    if (config.allowed.length === 0) {
+        return agent === 'claude'
+            ? '- Claude 子 session：禁用（当前 Brain 不允许创建 Claude 子任务）'
+            : '- Codex 子 session：禁用（当前 Brain 不允许创建 Codex 子任务）'
+    }
+
+    const label = agent === 'claude' ? 'Claude' : 'Codex'
+    return `- ${label} 子 session 可用模型：${config.allowed.join('、')}；默认 ${config.defaultModel}`
+}
+
+function renderBrainMachinePolicy(preferences: BrainSessionPreferences | null): string {
+    if (!preferences) {
+        return '- 默认子 session 机器：当前 Brain 所在机器；如需跨机，显式传 machineId'
+    }
+    return preferences.machineSelection.mode === 'manual'
+        ? '- 默认子 session 机器：当前 Brain 所在机器（由用户手动固定）；如需跨机，显式传 machineId'
+        : '- 默认子 session 机器：当前 Brain 所在机器（由系统自动选择）；如需跨机，显式传 machineId'
 }
 
 export async function buildInitPrompt(_role: UserRole, options?: InitPromptOptions): Promise<string> {
@@ -51,6 +80,7 @@ ${workspaceBlock(projectRoot)}
 export async function buildBrainInitPrompt(_role: UserRole, options?: InitPromptOptions): Promise<string> {
     const userName = options?.userName
     const projectRoot = options?.projectRoot
+    const brainPreferences = options?.brainPreferences ?? null
 
     return `#InitPrompt-Brain编排中枢
 
@@ -83,7 +113,12 @@ ${workspaceBlock(projectRoot)}
 
 大多数任务用默认 claude+sonnet，不需显式指定。
 
-**机器选择**：不指定 machineId 时，子 session 在 brain 所在机器创建，共享文件系统。每台机器不一定同时装了 Claude Code 和 Codex CLI，系统自动检查并 fallback。
+## 当前 Brain 的子任务边界
+
+${renderBrainMachinePolicy(brainPreferences)}
+${renderChildModelLine('claude', brainPreferences)}
+${renderChildModelLine('codex', brainPreferences)}
+- 不在以上白名单里的模型不要使用；如果用户要求某个未开放模型，先明确告知限制。
 
 ## 自主推进
 

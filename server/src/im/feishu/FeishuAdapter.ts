@@ -20,6 +20,7 @@ import { enrichTextWithDocContent } from './docFetcher'
 import { buildCardJson } from './cardBuilder'
 import { buildFeishuBrainInitPrompt } from '../../web/prompts/initPrompt'
 import { getConfiguration } from '../../configuration'
+import type { BrainSessionPreferences } from '../../brain/brainSessionPreferences'
 
 export interface FeishuAdapterConfig {
     store: IStore
@@ -517,11 +518,17 @@ export class FeishuAdapter implements IMAdapter {
             : `飞书: 与${senderName || chatName || '未知'}的对话 · ${timeStr}`
     }
 
-    async buildInitPrompt(chatType: string, chatName?: string, senderName?: string): Promise<string> {
+    async buildInitPrompt(
+        chatType: string,
+        chatName?: string,
+        senderName?: string,
+        brainPreferences?: BrainSessionPreferences | null
+    ): Promise<string> {
         const options = {
             feishuChatType: chatType as 'p2p' | 'group',
             feishuChatName: chatName,
             ...(chatType === 'p2p' && senderName ? { userName: senderName } : {}),
+            brainPreferences,
         }
         return await buildFeishuBrainInitPrompt('developer', options)
     }

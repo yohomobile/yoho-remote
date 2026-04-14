@@ -12,6 +12,13 @@ import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { ApiClient } from '@/api/api'
 import { logger } from '@/ui/logger'
+import {
+    BRAIN_CLAUDE_CHILD_MODELS,
+    BRAIN_CODEX_CHILD_MODELS,
+    getAllowedBrainChildAgents,
+    type BrainChildAgent,
+    type BrainSessionPreferences,
+} from '@/utils/brainSessionPreferences'
 
 /** Context window budget by model mode (matches web/src/chat/modelConfig.ts) */
 function getContextBudget(modelMode?: string): number {
@@ -32,6 +39,7 @@ interface BrainToolsOptions {
     apiClient: ApiClient
     machineId: string
     brainSessionId: string
+    brainPreferences?: BrainSessionPreferences | null
 }
 
 export function registerBrainTools(
@@ -40,6 +48,91 @@ export function registerBrainTools(
     options: BrainToolsOptions
 ): void {
     const { apiClient: api, machineId, brainSessionId } = options
+    const brainPreferences = options.brainPreferences ?? null
+    const allowedChildAgents = getAllowedBrainChildAgents(brainPreferences)
+    const defaultChildAgent: BrainChildAgent = allowedChildAgents.includes('claude')
+        ? 'claude'
+        : (allowedChildAgents[0] ?? 'claude')
+    const allowedClaudeModels = brainPreferences
+        ? [...brainPreferences.childModels.claude.allowed]
+        : [...BRAIN_CLAUDE_CHILD_MODELS]
+    const allowedCodexModels = brainPreferences
+        ? [...brainPreferences.childModels.codex.allowed]
+        : [...BRAIN_CODEX_CHILD_MODELS]
+    const defaultClaudeModel = brainPreferences?.childModels.claude.defaultModel ?? 'sonnet'
+    const defaultCodexModel = brainPreferences?.childModels.codex.defaultModel ?? 'gpt-5.4'
+
+    const describeAllowedValues = (values: readonly string[]): string =>
+        values.length > 0 ? values.join(' / ') : '无'
+
+    const childCapabilityGuide = [
+        '当前 Brain 的子任务能力边界：',
+        `- 默认子 session 机器：当前 Brain 所在机器${brainPreferences?.machineSelection.mode === 'manual' ? '（手动固定）' : '（自动选择）'}`,
+        `- 可用子 session agent：${describeAllowedValues(allowedChildAgents)}`,
+        `- Claude 子任务模型：${describeAllowedValues(allowedClaudeModels)}${allowedClaudeModels.length > 0 ? `；默认 ${defaultClaudeModel}` : ''}`,
+        `- Codex 子任务模型：${describeAllowedValues(allowedCodexModels)}${allowedCodexModels.length > 0 ? `；默认 ${defaultCodexModel}` : ''}`,
+    ].join('\n')
+
+    const normalizeCodexModel = (value?: string): string | undefined => {
+        const trimmed = value?.trim()
+        if (!trimmed) return undefined
+        return trimmed.replace(/^openai\//, '')
+    }
+    const defaultMachineId = brainPreferences?.machineSelection.machineId ?? machineId
+
+    const resolveChildAgent = (value?: string): BrainChildAgent => {
+        if (allowedChildAgents.length === 0) {
+            throw new Error('当前 Brain 未开放任何子 session agent，请先在 Brain 配置中启用至少一个子任务模型。')
+        }
+        const trimmed = value?.trim()
+        if (!trimmed) {
+            return defaultChildAgent
+        }
+        if (trimmed !== 'claude' && trimmed !== 'codex') {
+            throw new Error(`不支持的 agent "${trimmed}"。允许值：${describeAllowedValues(allowedChildAgents)}`)
+        }
+        if (!allowedChildAgents.includes(trimmed)) {
+            throw new Error(`当前 Brain 不允许使用 agent "${trimmed}"。允许值：${describeAllowedValues(allowedChildAgents)}`)
+        }
+        return trimmed
+    }
+
+    const resolveClaudeModel = (value?: string): string => {
+        if (allowedClaudeModels.length === 0) {
+            throw new Error('当前 Brain 未开放 Claude 子 session。')
+        }
+        const trimmed = value?.trim()
+        if (!trimmed || trimmed === 'default') {
+            return defaultClaudeModel
+        }
+        if (!allowedClaudeModels.includes(trimmed as typeof allowedClaudeModels[number])) {
+            throw new Error(`当前 Brain 不允许 Claude 模型 "${trimmed}"。允许值：${describeAllowedValues(allowedClaudeModels)}`)
+        }
+        return trimmed
+    }
+
+    const resolveCodexModel = (value?: string): string => {
+        if (allowedCodexModels.length === 0) {
+            throw new Error('当前 Brain 未开放 Codex 子 session。')
+        }
+        const normalized = normalizeCodexModel(value)
+        if (!normalized) {
+            return defaultCodexModel
+        }
+        if (!allowedCodexModels.includes(normalized as typeof allowedCodexModels[number])) {
+            throw new Error(`当前 Brain 不允许 Codex 模型 "${normalized}"。允许值：${describeAllowedValues(allowedCodexModels)}`)
+        }
+        return normalized
+    }
+
+    const MODEL_SELECTION_GUIDE = [
+        childCapabilityGuide,
+        '',
+        '使用规则：',
+        `- 默认子 session agent：${defaultChildAgent}`,
+        `- 不显式传 machineId 时，默认在机器 ${defaultMachineId.slice(0, 8)} 上创建或复用子 session`,
+        '- 不要请求白名单外的 agent 或模型；运行时会直接拒绝。',
+    ].join('\n')
 
     // ===== Helper: wait for session to come online AND finish its init prompt =====
     // Uses getSessionStatus.initDone — a server-side flag set when the first thinking→false
@@ -72,35 +165,32 @@ export function registerBrainTools(
     type MachineCandidate = { id: string; displayName: string }
 
     // ===== Helper: resolve machine + agent =====
-    // Determines the best machine to use and validates/falls back the agent.
-    //
-    // When requestedMachineId is given → use that machine only (validate supportedAgents).
-    // When not given → expand to all online machines in the same workspaceGroup as the
-    //   Brain session's machine, then pick the best one that supports the requested agent.
-    //
-    // Returns: resolved machineId, agent, model params, the full candidate set (for
-    //   session search across the group), an ordered list for spawn fallback, and an
-    //   optional pre-spawn notice (agent remapped due to supportedAgents restriction).
+    // Child sessions are pinned to the Brain session's configured default machine unless
+    // the Brain explicitly overrides machineId. Agent/model must stay within the
+    // session-level white list captured in brainPreferences.
     async function resolveMachineAndAgent(
         requestedMachineId: string | undefined,
-        requestedAgent: string,
+        requestedAgent: string | undefined,
         requestedModelMode?: string,
         requestedCodexModel?: string,
     ): Promise<{
         machineId: string
-        agent: string
+        agent: BrainChildAgent
         modelMode?: string
         codexModel?: string
         candidateMachineIds: Set<string>
-        orderedCandidates: MachineCandidate[]  // primary first, for spawn fallback iteration
+        orderedCandidates: MachineCandidate[]
         fallbackNotice: string | null
     }> {
-        const defaultId = requestedMachineId ?? machineId
+        const agent = resolveChildAgent(requestedAgent)
+        const modelMode = agent === 'claude' ? resolveClaudeModel(requestedModelMode) : undefined
+        const codexModel = agent === 'codex' ? resolveCodexModel(requestedCodexModel) : undefined
+        const defaultId = requestedMachineId?.trim() || defaultMachineId
         const fallback = {
             machineId: defaultId,
-            agent: requestedAgent,
-            modelMode: requestedModelMode,
-            codexModel: requestedCodexModel,
+            agent,
+            modelMode,
+            codexModel,
             candidateMachineIds: new Set([defaultId]),
             orderedCandidates: [{ id: defaultId, displayName: defaultId.slice(0, 8) }],
             fallbackNotice: null as string | null,
@@ -109,66 +199,33 @@ export function registerBrainTools(
         try {
             const allMachines = await api.listMachines()
             const online = allMachines.filter(m => m.active)
-            const displayOf = (m: typeof online[0]): string =>
+            const displayOf = (m: (typeof online)[number]): string =>
                 (m.metadata?.displayName || m.metadata?.host || m.id.slice(0, 8)) as string
 
-            // ── Determine candidate set ──
-            let candidates: typeof online
-            if (requestedMachineId) {
-                candidates = online.filter(m => m.id === requestedMachineId)
-                if (candidates.length === 0) {
-                    // Offline or unknown — let the server produce the error
-                    return { ...fallback, candidateMachineIds: new Set([requestedMachineId]) }
-                }
-            } else {
-                // Auto — pin to brain's own machine so child sessions share the same filesystem
-                // (files created by child sessions must be accessible to brain for <feishu-actions> file refs)
-                candidates = online.filter(m => m.id === machineId)
-
-                if (candidates.length === 0) {
-                    // Brain's machine is offline or has no workspaceGroup — no candidates available
-                    return { ...fallback, orderedCandidates: [], candidateMachineIds: new Set<string>(), fallbackNotice: null }
-                }
+            const candidates = online.filter(m => m.id === defaultId)
+            if (candidates.length === 0) {
+                return fallback
             }
 
-            const candidateMachineIds = new Set(candidates.map(m => m.id))
-
-            // ── Find machines that support the requested agent ──
-            const agentCompatible = candidates.filter(m =>
-                !m.supportedAgents || m.supportedAgents.length === 0 || m.supportedAgents.includes(requestedAgent)
-            )
-
-            if (agentCompatible.length > 0) {
-                // Prefer Brain's own machine to minimise latency; otherwise first compatible
-                const pick = agentCompatible.find(m => m.id === machineId) ?? agentCompatible[0]
-                // Build ordered candidate list: pick first, then remaining compatible, then incompatible as last resort
-                const rest = agentCompatible.filter(m => m.id !== pick.id)
-                const incompatible = candidates.filter(m => !agentCompatible.includes(m))
-                const orderedCandidates: MachineCandidate[] = [...[pick, ...rest, ...incompatible].map(m => ({ id: m.id, displayName: displayOf(m) }))]
-                return { machineId: pick.id, agent: requestedAgent, modelMode: requestedModelMode, codexModel: requestedCodexModel, candidateMachineIds, orderedCandidates, fallbackNotice: null }
+            const pick = candidates[0]
+            const supportedAgents = pick?.supportedAgents ?? null
+            if (supportedAgents && supportedAgents.length > 0 && !supportedAgents.includes(agent)) {
+                throw new Error(`机器 "${displayOf(pick)}" 不支持 agent "${agent}"。支持：${supportedAgents.join(', ')}`)
             }
 
-            // ── No candidate supports requested agent — pick best available and remap ──
-            const pick = candidates.find(m => m.id === machineId) ?? candidates[0]
-            const fallbackAgent = pick.supportedAgents?.[0] ?? requestedAgent
-            let fallbackModelMode = requestedModelMode
-            let fallbackCodexModel = requestedCodexModel
-
-            if (fallbackAgent === 'claude' && requestedAgent === 'codex') {
-                fallbackCodexModel = undefined
-                fallbackModelMode = requestedCodexModel === 'gpt-5.4' ? 'opus' : 'sonnet'
-            } else if (fallbackAgent === 'codex' && requestedAgent === 'claude') {
-                fallbackModelMode = undefined
-                fallbackCodexModel = requestedModelMode === 'opus' ? 'gpt-5.4' : 'gpt-5.4-mini'
+            return {
+                machineId: pick.id,
+                agent,
+                modelMode,
+                codexModel,
+                candidateMachineIds: new Set([pick.id]),
+                orderedCandidates: [{ id: pick.id, displayName: displayOf(pick) }],
+                fallbackNotice: null,
             }
-
-            const supported = pick.supportedAgents?.join(', ') || '全部'
-            const modelLabel = fallbackAgent === 'claude' ? `/${fallbackModelMode || 'sonnet'}` : `/${fallbackCodexModel || 'gpt-5.4'}`
-            const notice = `⚠️ 当前机器组没有机器支持 ${requestedAgent}，已选机器 "${displayOf(pick)}"（支持: ${supported}），切换为 ${fallbackAgent}${modelLabel}`
-            const orderedCandidates: MachineCandidate[] = candidates.map(m => ({ id: m.id, displayName: displayOf(m) }))
-
-            return { machineId: pick.id, agent: fallbackAgent, modelMode: fallbackModelMode, codexModel: fallbackCodexModel, candidateMachineIds, orderedCandidates, fallbackNotice: notice }
-        } catch {
+        } catch (error) {
+            if (error instanceof Error && error.message) {
+                throw error
+            }
             return fallback
         }
     }
@@ -225,33 +282,11 @@ export function registerBrainTools(
     // ===== 1. session_create =====
     const createSchema: z.ZodTypeAny = z.object({
         directory: z.string().describe('工作目录的绝对路径，如 /home/guang/softwares/yoho-remote'),
-        machineId: z.string().optional().describe('目标机器 ID。不填时自动从当前机器所在的 workspaceGroup 中选择最佳可用机器（支持所需 agent 的优先）。'),
-        agent: z.enum(['claude', 'codex']).optional().describe('Agent 后端。claude（默认）= Claude Code CLI，codex = OpenAI Codex CLI。根据任务特性选择，详见 description。'),
-        modelMode: z.enum(['default', 'sonnet', 'opus']).optional().describe('Claude 模型选择（agent=claude 时生效）。sonnet 默认，opus 用于高复杂度任务。'),
-        codexModel: z.enum(['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark']).optional().describe('Codex 模型选择（agent=codex 时生效）。gpt-5.4 默认旗舰，gpt-5.4-mini 更快更省，gpt-5.3-codex 纯编码优化，gpt-5.3-codex-spark 超快速迭代。'),
+        machineId: z.string().optional().describe(`目标机器 ID。不填时默认使用当前 Brain 的默认机器（${defaultMachineId.slice(0, 8)}）。`),
+        agent: z.string().optional().describe(`子 session agent。允许值：${describeAllowedValues(allowedChildAgents)}；默认 ${defaultChildAgent}。`),
+        modelMode: z.string().optional().describe(`Claude 模型（agent=claude 时生效）。允许值：${describeAllowedValues(allowedClaudeModels)}；默认 ${defaultClaudeModel}。`),
+        codexModel: z.string().optional().describe(`Codex 模型（agent=codex 时生效）。允许值：${describeAllowedValues(allowedCodexModels)}；默认 ${defaultCodexModel}。`),
     })
-
-    const MODEL_SELECTION_GUIDE = [
-        '模型选择指南（2026 年 4 月）：',
-        '',
-        '【Claude 系列】 agent=claude — 擅长：遵循复杂指令、代码理解与重构、中文交互、谨慎安全的代码修改',
-        '  • sonnet（默认）— 90% 的任务首选。日常开发、bug 修复、写测试、代码补全、文档、脚本、标准功能开发。速度快，性价比最高。',
-        '  • opus — 10% 的高复杂度任务。大规模代码库重构（数万行架构调整）、安全审计、跨多文件的深度架构设计、需要极深推理的多步任务。成本 5x sonnet，推理深度更强。',
-        '',
-        '【Codex 系列】 agent=codex — 擅长：新颖/困难的编码问题、SWE-bench Pro 得分更高、强推理 + 工具使用',
-        '  • gpt-5.4（默认）— Codex 旗舰。新颖编码难题（SWE-bench Pro 57.7%）、复杂算法、跨语言、前端 UI、多文件变更。综合能力最强。',
-        '  • gpt-5.4-mini — 快速低成本。SWE-bench Pro 54.38%（接近 5.4），速度 2x+，成本 1/6。适合子任务并行、批量编码、轻量修改。',
-        '  • gpt-5.3-codex — 纯编码专精。专为编码环境优化，标准编码任务的高效选择。',
-        '  • gpt-5.3-codex-spark — 超快速编码。1000+ tokens/sec，近乎实时。适合快速迭代、原型验证、需要极低延迟的交互式编码。',
-        '',
-        '决策流程：',
-        '1. 大多数任务 → claude + sonnet',
-        '2. 需要深度架构推理/安全审计 → claude + opus',
-        '3. 新颖/困难编码 + 需要强推理 → codex + gpt-5.4',
-        '4. 子任务并行/轻量编码 → codex + gpt-5.4-mini',
-        '5. 纯编码专精 → codex + gpt-5.3-codex',
-        '6. 快速迭代/原型验证/极低延迟 → codex + gpt-5.3-codex-spark',
-    ].join('\n')
 
     mcp.registerTool<any, any>('session_create', {
         title: 'Create Session',
@@ -259,8 +294,8 @@ export function registerBrainTools(
         inputSchema: createSchema,
     }, async (args: { directory: string; machineId?: string; agent?: string; modelMode?: string; codexModel?: string }) => {
         try {
-            const resolved = await resolveMachineAndAgent(args.machineId, args.agent || 'claude', args.modelMode, args.codexModel)
-            logger.debug(`[brain] Creating session: machine=${resolved.machineId}, dir=${args.directory}, agent=${resolved.agent}${resolved.fallbackNotice ? ' (agent-fallback)' : ''}`)
+            const resolved = await resolveMachineAndAgent(args.machineId, args.agent, args.modelMode, args.codexModel)
+            logger.debug(`[brain] Creating session: machine=${resolved.machineId}, dir=${args.directory}, agent=${resolved.agent}`)
 
             const spawnResult = await spawnWithFallback({
                 orderedCandidates: resolved.orderedCandidates,
@@ -272,9 +307,8 @@ export function registerBrainTools(
 
             if (spawnResult.type === 'success') {
                 const ready = await waitForSessionOnline(spawnResult.sessionId)
-                const agentNotice = resolved.fallbackNotice ? `\n${resolved.fallbackNotice}` : ''
-                const machineNote = spawnResult.machineId !== machineId
-                    ? `\n机器: ${spawnResult.machineId.slice(0, 8)}（workspaceGroup 内其他机器）`
+                const machineNote = spawnResult.machineId !== defaultMachineId
+                    ? `\n机器: ${spawnResult.machineId.slice(0, 8)}`
                     : ''
                 const skipNote = spawnResult.skippedLog.length > 0
                     ? `\n⚠️ 已跳过 ${spawnResult.skippedLog.length} 台失败机器:\n${spawnResult.skippedLog.map(s => `  - ${s}`).join('\n')}`
@@ -282,7 +316,7 @@ export function registerBrainTools(
                 return {
                     content: [{
                         type: 'text' as const,
-                        text: `Session 创建成功。\n\nsessionId: ${spawnResult.sessionId}\n状态: ${ready ? '已上线' : '启动中（可能需要等待几秒）'}${machineNote}${skipNote}${agentNotice}`,
+                        text: `Session 创建成功。\n\nsessionId: ${spawnResult.sessionId}\n状态: ${ready ? '已上线' : '启动中（可能需要等待几秒）'}${machineNote}${skipNote}`,
                     }],
                 }
             }
@@ -309,42 +343,34 @@ export function registerBrainTools(
     const findOrCreateSchema: z.ZodTypeAny = z.object({
         directory: z.string().describe('工作目录的绝对路径'),
         hint: z.string().optional().describe('任务意图关键词（如 "订单API 优惠券"），用于匹配已有上下文的 session，优先复用做过相关工作的 session，省去重新理解代码的成本'),
-        machineId: z.string().optional().describe('目标机器 ID。不填时自动搜索当前机器所在 workspaceGroup 内所有在线机器的空闲 session，找不到则在最佳机器上创建新 session。'),
-        agent: z.enum(['claude', 'codex']).optional().describe('Agent 后端。claude（默认）= Claude Code CLI，codex = OpenAI Codex CLI。'),
-        modelMode: z.enum(['default', 'sonnet', 'opus']).optional().describe('Claude 模型选择（agent=claude 时生效）。'),
-        codexModel: z.enum(['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark']).optional().describe('Codex 模型选择（agent=codex 时生效）。'),
+        machineId: z.string().optional().describe(`目标机器 ID。不填时只在默认机器 ${defaultMachineId.slice(0, 8)} 上查找或创建子 session。`),
+        agent: z.string().optional().describe(`子 session agent。允许值：${describeAllowedValues(allowedChildAgents)}；默认 ${defaultChildAgent}。`),
+        modelMode: z.string().optional().describe(`Claude 模型（agent=claude 时生效）。允许值：${describeAllowedValues(allowedClaudeModels)}；默认 ${defaultClaudeModel}。`),
+        codexModel: z.string().optional().describe(`Codex 模型（agent=codex 时生效）。允许值：${describeAllowedValues(allowedCodexModels)}；默认 ${defaultCodexModel}。`),
     })
 
     mcp.registerTool<any, any>('session_find_or_create', {
         title: 'Find or Create Session',
-        description: `智能查找可复用的空闲子 session。在 workspaceGroup 内所有在线机器上搜索匹配 directory + 属于当前 Brain + agent 的空闲 session，并通过 hint 优先选择上下文相关的 session。找不到则在最佳机器上创建新 session。推荐优先使用此工具。\n\n${MODEL_SELECTION_GUIDE}\n\n复用逻辑：优先匹配相同 agent + modelMode 的 session。`,
+        description: `智能查找可复用的空闲子 session。默认只在当前 Brain 的默认机器上搜索匹配 directory + 属于当前 Brain + agent 的空闲 session；显式传 machineId 时只搜索那台机器。找不到则在对应机器上创建新 session。推荐优先使用此工具。\n\n${MODEL_SELECTION_GUIDE}\n\n复用逻辑：优先匹配相同 agent + modelMode 的 session。`,
         inputSchema: findOrCreateSchema,
     }, async (args: { directory: string; hint?: string; machineId?: string; agent?: string; modelMode?: string; codexModel?: string }) => {
         try {
-            const targetAgent = args.agent || 'claude'
-            const targetModelMode = args.modelMode || 'sonnet'
-
-            // Resolve machine candidates (workspace group expansion) + agent/model for creation
-            const resolved = await resolveMachineAndAgent(args.machineId, targetAgent, args.modelMode, args.codexModel)
+            const resolved = await resolveMachineAndAgent(args.machineId, args.agent, args.modelMode, args.codexModel)
             const { candidateMachineIds } = resolved
 
             // Step 1: List online sessions
             const data = await api.listSessions({ includeOffline: false })
 
-            // Step 2: Find reusable child session across all candidate machines
+            // Step 2: Find reusable child session on the selected machine
             const candidates = data.sessions.filter(s => {
                 if (!s.metadata) return false
                 if (s.metadata.source !== 'brain-child') return false
                 if (s.metadata.mainSessionId !== brainSessionId) return false
                 if (s.metadata.path !== args.directory) return false
-                // Accept sessions on any machine in the candidate set (workspace group)
-                // Reject sessions with no machineId, or on machines outside the candidate set
                 if (!s.metadata.machineId || !candidateMachineIds.has(s.metadata.machineId)) return false
                 if (!s.active) return false
                 if (s.thinking) return false
-                // Don't reuse sessions with pending permission requests
                 if (s.pendingRequestsCount > 0) return false
-                // Match agent type using resolved agent (accounts for agent remap when requested agent unavailable)
                 const sessionFlavor = s.metadata.flavor || 'claude'
                 if (sessionFlavor !== resolved.agent) return false
                 return true
@@ -355,16 +381,13 @@ export function registerBrainTools(
                 let best = candidates.sort((a, b) => b.activeAt - a.activeAt)[0]
                 let matchReason = '最近活跃'
 
-                // Step 1: Prefer exact model match
-                // For claude sessions, match by modelMode; for codex sessions, match by codexModel (stored as modelMode)
-                // Use resolved agent/model (not raw args) to correctly handle agent-remap scenarios
                 const normalizeModel = (mode?: string) => {
                     if (!mode || mode === 'default') return 'sonnet'
                     return mode
                 }
                 const targetModel = resolved.agent === 'codex'
                     ? (resolved.codexModel || 'gpt-5.4')
-                    : (resolved.modelMode || targetModelMode)
+                    : (resolved.modelMode || defaultClaudeModel)
                 const exactModelMatches = candidates.filter(s => {
                     return normalizeModel(s.modelMode) === normalizeModel(targetModel)
                 })
@@ -400,8 +423,8 @@ export function registerBrainTools(
                 const title = best.metadata?.summary?.text || best.metadata?.brainSummary || '未命名'
                 const summary = best.metadata?.brainSummary ? `\n上次总结: ${best.metadata.brainSummary}` : ''
                 const sessionMachineId = best.metadata?.machineId
-                const machineNote = sessionMachineId && sessionMachineId !== machineId
-                    ? `\n机器: ${sessionMachineId.slice(0, 8)}（workspaceGroup 内其他机器）`
+                const machineNote = sessionMachineId && sessionMachineId !== defaultMachineId
+                    ? `\n机器: ${sessionMachineId.slice(0, 8)}`
                     : ''
                 return {
                     content: [{
@@ -412,7 +435,7 @@ export function registerBrainTools(
             }
 
             // Step 3: No reusable session — create on the best resolved machine (with fallback)
-            logger.debug(`[brain] No reusable session for dir=${args.directory}, agent=${resolved.agent}, machine=${resolved.machineId}${resolved.fallbackNotice ? ' (agent-fallback)' : ''}`)
+            logger.debug(`[brain] No reusable session for dir=${args.directory}, agent=${resolved.agent}, machine=${resolved.machineId}`)
 
             const spawnResult = await spawnWithFallback({
                 orderedCandidates: resolved.orderedCandidates,
@@ -424,9 +447,8 @@ export function registerBrainTools(
 
             if (spawnResult.type === 'success') {
                 const ready = await waitForSessionOnline(spawnResult.sessionId)
-                const agentNotice = resolved.fallbackNotice ? `\n${resolved.fallbackNotice}` : ''
-                const machineNote = spawnResult.machineId !== machineId
-                    ? `\n机器: ${spawnResult.machineId.slice(0, 8)}（workspaceGroup 内其他机器）`
+                const machineNote = spawnResult.machineId !== defaultMachineId
+                    ? `\n机器: ${spawnResult.machineId.slice(0, 8)}`
                     : ''
                 const skipNote = spawnResult.skippedLog.length > 0
                     ? `\n⚠️ 已跳过 ${spawnResult.skippedLog.length} 台失败机器:\n${spawnResult.skippedLog.map(s => `  - ${s}`).join('\n')}`
@@ -434,7 +456,7 @@ export function registerBrainTools(
                 return {
                     content: [{
                         type: 'text' as const,
-                        text: `无可复用 session，已创建新 session。\n\nsessionId: ${spawnResult.sessionId}\n状态: ${ready ? '已上线' : '启动中（可能需要等待几秒）'}${machineNote}${skipNote}${agentNotice}`,
+                        text: `无可复用 session，已创建新 session。\n\nsessionId: ${spawnResult.sessionId}\n状态: ${ready ? '已上线' : '启动中（可能需要等待几秒）'}${machineNote}${skipNote}`,
                     }],
                 }
             }

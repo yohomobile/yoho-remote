@@ -27,6 +27,7 @@ import type { Session } from './session';
 import { readModeEnv } from '@/utils/modeEnv';
 import { getYohoAuxMcpServers } from '@/utils/yohoMcpServers';
 import { getCurrentProcessStartedAtMs } from '@/utils/process';
+import { getBrainSessionPreferencesFromEnv } from '@/utils/brainSessionPreferences';
 
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
 
@@ -78,6 +79,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     const sessionSource = process.env.YR_SESSION_SOURCE?.trim();
     const mainSessionId = process.env.YR_MAIN_SESSION_ID?.trim();
     const sessionCaller = process.env.YR_CALLER?.trim();
+    const brainPreferences = getBrainSessionPreferencesFromEnv();
     logger.debug(`[START] sessionSource=${sessionSource}, mainSessionId=${mainSessionId}, caller=${sessionCaller}`);
 
     // Log environment info at startup
@@ -134,6 +136,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         lifecycleStateSince: Date.now(),
         flavor: 'claude',
         runtimeAgent: runtimeAgent ?? undefined,
+        ...(brainPreferences ? { brainPreferences } : {}),
     };
     let response: Awaited<ReturnType<typeof api.getOrCreateSession>> | null = null;
     const yohoRemoteSessionId = options.yohoRemoteSessionId?.trim() || null;

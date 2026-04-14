@@ -222,6 +222,10 @@ export class ApiSessionClient extends EventEmitter {
         }
     }
 
+    getMetadata(): Metadata | null {
+        return this.metadata
+    }
+
     private enqueueUserMessage(message: UserMessage): void {
         if (this.pendingMessageCallback) {
             this.pendingMessageCallback(message)

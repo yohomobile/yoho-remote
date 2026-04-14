@@ -3721,6 +3721,13 @@ export class PostgresStore implements IStore {
         return result.rows.length > 0 ? this.toStoredOrganization(result.rows[0]) : null
     }
 
+    async getAllOrganizations(): Promise<StoredOrganization[]> {
+        const result = await this.pool.query(
+            'SELECT * FROM organizations ORDER BY created_at ASC, name ASC'
+        )
+        return result.rows.map((row: any) => this.toStoredOrganization(row))
+    }
+
     async getOrganizationsForUser(email: string): Promise<(StoredOrganization & { myRole: OrgRole })[]> {
         const result = await this.pool.query(
             `SELECT o.*, m.role as my_role FROM organizations o

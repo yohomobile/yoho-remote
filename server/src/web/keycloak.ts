@@ -9,11 +9,19 @@ import * as jose from 'jose';
 export const KEYCLOAK_CONFIG = {
     url: process.env.KEYCLOAK_URL || 'https://auth.yohomobile.dev',
     // Internal URL for server-to-Keycloak communication (bypasses Cloudflare)
-    internalUrl: process.env.KEYCLOAK_INTERNAL_URL || 'https://auth.yohomobile.dev',
+    internalUrl: process.env.KEYCLOAK_INTERNAL_URL || process.env.KEYCLOAK_URL || 'https://auth.yohomobile.dev',
     realm: process.env.KEYCLOAK_REALM || 'yoho',
     clientId: process.env.KEYCLOAK_CLIENT_ID || 'yoho-remote',
-    clientSecret: process.env.KEYCLOAK_CLIENT_SECRET || '9mUnapjvGFmcLsf6yfHde2NY4LRLbLnp',
+    clientSecret: process.env.KEYCLOAK_CLIENT_SECRET || '',
 };
+
+function getRequiredClientSecret(): string {
+    const secret = KEYCLOAK_CONFIG.clientSecret.trim();
+    if (!secret) {
+        throw new Error('KEYCLOAK_CLIENT_SECRET is required for Keycloak code exchange and refresh');
+    }
+    return secret;
+}
 
 // JWKS client for JWT signature verification
 let jwksClient: jose.JWTVerifyGetKey | null = null;
@@ -95,7 +103,7 @@ export async function exchangeCodeForToken(code: string, redirectUri: string): P
         body: new URLSearchParams({
             grant_type: 'authorization_code',
             client_id: KEYCLOAK_CONFIG.clientId,
-            client_secret: KEYCLOAK_CONFIG.clientSecret,
+            client_secret: getRequiredClientSecret(),
             code,
             redirect_uri: redirectUri,
         }),
@@ -135,7 +143,7 @@ export async function refreshKeycloakToken(refreshToken: string): Promise<{
         body: new URLSearchParams({
             grant_type: 'refresh_token',
             client_id: KEYCLOAK_CONFIG.clientId,
-            client_secret: KEYCLOAK_CONFIG.clientSecret,
+            client_secret: getRequiredClientSecret(),
             refresh_token: refreshToken,
         }),
     });

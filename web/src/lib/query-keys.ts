@@ -18,10 +18,13 @@ export const queryKeys = {
     me: ['me'] as const,
     userPreferences: ['user-preferences'] as const,
     aiProfiles: ['ai-profiles'] as const,
+    tokenSources: (orgId: string, includeSecrets: boolean) => ['token-sources', orgId, includeSecrets ? 'secret' : 'public'] as const,
     orgs: ['orgs'] as const,
     org: (orgId: string) => ['org', orgId] as const,
     orgMembers: (orgId: string) => ['org-members', orgId] as const,
     orgInvitations: (orgId: string) => ['org-invitations', orgId] as const,
     pendingInvitations: ['pending-invitations'] as const,
+    adminLicenses: ['admin-licenses'] as const,
+    licenseOrganizations: ['license-organizations'] as const,
     sessionDownloads: (sessionId: string) => ['session-downloads', sessionId] as const,
 }

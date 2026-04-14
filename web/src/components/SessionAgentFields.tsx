@@ -1,3 +1,5 @@
+import type { TokenSource } from '@/types/api'
+
 type AgentType = 'claude' | 'codex'
 type ClaudeModelMode = 'sonnet' | 'opus'
 type ClaudeSettingsType = 'default' | 'claude' | 'litellm'
@@ -38,6 +40,10 @@ function normalizeSupportedAgents(supportedAgents: readonly string[] | null | un
     return supportedAgents.filter((agent): agent is AgentType => agent === 'claude' || agent === 'codex')
 }
 
+function getCompatibleTokenSources(tokenSources: TokenSource[], agent: AgentType): TokenSource[] {
+    return tokenSources.filter((tokenSource) => tokenSource.supportedAgents.includes(agent))
+}
+
 function normalizeCodexModelValue(value: string | null | undefined): string {
     const trimmed = value?.trim()
     if (!trimmed) {
@@ -57,15 +63,14 @@ function sanitizeClaudeModelMode(value: unknown, fallback: ClaudeModelMode = DEF
 
 type SessionAgentFieldsProps = {
     agent: AgentType
+    tokenSources: TokenSource[]
+    tokenSourceId: string
     claudeModel: ClaudeModelMode
-    claudeSettingsType: ClaudeSettingsType
-    claudeAgent: string
     codexModel: string
     codexReasoningEffort: CodexReasoningEffort
     onAgentChange: (agent: AgentType) => void
+    onTokenSourceChange: (tokenSourceId: string) => void
     onClaudeModelChange: (model: ClaudeModelMode) => void
-    onClaudeSettingsTypeChange: (settingsType: ClaudeSettingsType) => void
-    onClaudeAgentChange: (agentName: string) => void
     onCodexModelChange: (model: string) => void
     onCodexReasoningEffortChange: (effort: CodexReasoningEffort) => void
     isFormDisabled?: boolean
@@ -75,6 +80,8 @@ type SessionAgentFieldsProps = {
 
 export function SessionAgentFields(props: SessionAgentFieldsProps) {
     const supportedAgents = normalizeSupportedAgents(props.supportedAgents)
+    const compatibleTokenSources = getCompatibleTokenSources(props.tokenSources, props.agent)
+    const selectedTokenSource = compatibleTokenSources.find((item) => item.id === props.tokenSourceId) ?? null
 
     return (
         <>
@@ -107,6 +114,36 @@ export function SessionAgentFields(props: SessionAgentFieldsProps) {
                 </div>
             </div>
 
+            <div className="flex flex-col gap-1.5 px-3 pb-3">
+                <label className="text-xs font-medium text-[var(--app-hint)]">
+                    Token Source
+                </label>
+                <select
+                    value={selectedTokenSource?.id ?? ''}
+                    onChange={(e) => props.onTokenSourceChange(e.target.value)}
+                    disabled={props.isFormDisabled || compatibleTokenSources.length === 0}
+                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                >
+                    {compatibleTokenSources.length === 0 ? (
+                        <option value="">No Token Source supports {props.agent}</option>
+                    ) : null}
+                    {compatibleTokenSources.map((tokenSource) => (
+                        <option key={tokenSource.id} value={tokenSource.id}>
+                            {tokenSource.name}
+                        </option>
+                    ))}
+                </select>
+                {selectedTokenSource ? (
+                    <div className="text-xs text-[var(--app-hint)]">
+                        {selectedTokenSource.baseUrl}
+                    </div>
+                ) : compatibleTokenSources.length === 0 ? (
+                    <div className="text-xs text-[var(--app-hint)]">
+                        Add a compatible Token Source in Settings before creating this session.
+                    </div>
+                ) : null}
+            </div>
+
             {props.agent === 'claude' ? (
                 <div className="flex flex-col gap-1.5 px-3 pb-3">
                     <label className="text-xs font-medium text-[var(--app-hint)]">
@@ -124,30 +161,6 @@ export function SessionAgentFields(props: SessionAgentFieldsProps) {
                             </option>
                         ))}
                     </select>
-                    <label className="text-xs font-medium text-[var(--app-hint)] mt-2">
-                        Runtime
-                    </label>
-                    <select
-                        value={props.claudeSettingsType}
-                        onChange={(e) => props.onClaudeSettingsTypeChange(e.target.value as ClaudeSettingsType)}
-                        disabled={props.isFormDisabled}
-                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                    >
-                        <option value="default">Default</option>
-                        <option value="claude">Claude / OAuth Relay</option>
-                        <option value="litellm">LiteLLM</option>
-                    </select>
-                    <label className="text-xs font-medium text-[var(--app-hint)] mt-2">
-                        Claude Agent (optional)
-                    </label>
-                    <input
-                        type="text"
-                        value={props.claudeAgent}
-                        onChange={(e) => props.onClaudeAgentChange(e.target.value)}
-                        disabled={props.isFormDisabled}
-                        placeholder="Optional agent name, e.g. ClaudeOauthRelay"
-                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                    />
                 </div>
             ) : null}
 

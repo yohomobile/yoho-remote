@@ -17,7 +17,9 @@ See `src/configuration.ts` for all options.
 
 ### Required
 
-- `CLI_API_TOKEN` - Base shared secret used by CLI and web login. Clients append `:<namespace>` for isolation.
+- `CLI_API_TOKEN` - Shared secret used by CLI and daemon connections.
+- `PG_HOST`/`PG_PORT`/`PG_USER`/`PG_PASSWORD`/`PG_DATABASE` - PostgreSQL connection settings.
+- `KEYCLOAK_URL`/`KEYCLOAK_REALM`/`KEYCLOAK_CLIENT_ID`/`KEYCLOAK_CLIENT_SECRET` - Browser/PWA SSO settings.
 
 ### Optional (Telegram)
 
@@ -35,7 +37,10 @@ See `src/configuration.ts` for all options.
 - `WEBAPP_PORT` - HTTP port (default: 3006).
 - `CORS_ORIGINS` - Comma-separated origins, or `*`.
 - `YOHO_REMOTE_HOME` - Data directory (default: ~/.yoho-remote).
-- `DATABASE_URL` - PostgreSQL connection string.
+- `KEYCLOAK_INTERNAL_URL` - Internal Keycloak URL for JWKS/token exchange.
+- `ADMIN_ORG_ID` - Organization ID that can manage licenses and is exempt from license checks.
+- `WEB_URL` - Public web origin used in invitation emails.
+- `SMTP_HOST`/`SMTP_PORT`/`SMTP_SECURE`/`SMTP_USER`/`SMTP_PASSWORD`/`SMTP_FROM` - Email invitation settings.
 
 ## Running
 
@@ -45,6 +50,15 @@ Binary (single executable):
 export TELEGRAM_BOT_TOKEN="..."
 export CLI_API_TOKEN="shared-secret"
 export WEBAPP_URL="https://your-domain.example"
+export PG_HOST="127.0.0.1"
+export PG_PORT="5432"
+export PG_USER="yoho_remote"
+export PG_PASSWORD="..."
+export PG_DATABASE="yoho_remote"
+export KEYCLOAK_URL="https://sso.example.com"
+export KEYCLOAK_REALM="yoho"
+export KEYCLOAK_CLIENT_ID="yoho-remote"
+export KEYCLOAK_CLIENT_SECRET="..."
 
 hapi server
 ```
@@ -64,10 +78,12 @@ bun run dev:server
 
 See `src/web/routes/` for all endpoints.
 
-### Authentication (`src/web/routes/auth.ts`)
+### Authentication (`src/web/routes/keycloak-auth.ts`)
 
-- `POST /api/auth` - Get JWT token (Telegram initData or `CLI_API_TOKEN[:namespace]`).
-- `POST /api/bind` - Bind a Telegram account using initData + `CLI_API_TOKEN:<namespace>`.
+- `POST /api/auth/keycloak` - Get Keycloak login URL.
+- `POST /api/auth/keycloak/callback` - Exchange authorization code for tokens.
+- `POST /api/auth/keycloak/refresh` - Refresh Keycloak access token.
+- `POST /api/auth/keycloak/logout` - Get Keycloak logout URL.
 
 ### Sessions (`src/web/routes/sessions.ts`)
 
@@ -221,8 +237,8 @@ The script uses `CLI_API_TOKEN` (or `~/.yoho-remote/settings.json`) to authentic
 ## Security model
 
 Access is controlled by:
-- Telegram initData verification plus bound Telegram users (bound via `CLI_API_TOKEN:<namespace>`).
-- `CLI_API_TOKEN` base secret for CLI and browser access (namespace is appended by clients).
+- Browser/PWA: Keycloak access tokens.
+- CLI/daemon: `CLI_API_TOKEN`.
 
 Transport security depends on HTTPS in front of the server.
 

@@ -1,7 +1,17 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import type { WebAppEnv } from '../middleware/auth'
-import type { IStore, UserRole } from '../../store'
+import type { IStore, OrgRole, UserRole } from '../../store'
+import {
+    createTokenSourceForOrg,
+    deleteTokenSourceForOrg,
+    getOrgRole,
+    getTokenSourcesForOrg,
+    serializeTokenSource,
+    tokenSourceInputSchema,
+    tokenSourceUpdateSchema,
+    updateTokenSourceForOrg,
+} from '../tokenSources'
 
 const addProjectSchema = z.object({
     name: z.string().min(1).max(100),
@@ -26,6 +36,10 @@ const setRolePromptSchema = z.object({
 function normalizeOptionalId(value: string | null | undefined): string | null {
     const trimmed = value?.trim()
     return trimmed ? trimmed : null
+}
+
+function canManageOrgSettings(role: OrgRole | null): boolean {
+    return role === 'owner' || role === 'admin'
 }
 
 export function createSettingsRoutes(
@@ -154,6 +168,117 @@ export function createSettingsRoutes(
         const responseMachineId = existing.machineId ?? undefined
         const projects = await store.getProjects(responseMachineId, orgId)
         return c.json({ ok: true, projects })
+    })
+
+    // ==================== Token Source 管理 ====================
+
+    app.get('/settings/token-sources', async (c) => {
+        const email = c.get('email')
+        if (!email) {
+            return c.json({ error: 'Unauthorized' }, 401)
+        }
+
+        const orgId = c.req.query('orgId')
+        if (!orgId) {
+            return c.json({ error: 'orgId is required' }, 400)
+        }
+
+        const orgRole = await getOrgRole(store, orgId, email)
+        if (!orgRole) {
+            return c.json({ error: 'Not a member of this organization' }, 403)
+        }
+
+        const includeSecrets = c.req.query('includeSecrets') === '1' && canManageOrgSettings(orgRole)
+        const tokenSources = await getTokenSourcesForOrg(store, orgId)
+        return c.json({
+            tokenSources: tokenSources.map((item) => serializeTokenSource(item, includeSecrets)),
+            canManage: canManageOrgSettings(orgRole),
+            includeSecrets,
+        })
+    })
+
+    app.post('/settings/token-sources', async (c) => {
+        const email = c.get('email')
+        if (!email) {
+            return c.json({ error: 'Unauthorized' }, 401)
+        }
+
+        const orgId = c.req.query('orgId')
+        if (!orgId) {
+            return c.json({ error: 'orgId is required' }, 400)
+        }
+
+        const orgRole = await getOrgRole(store, orgId, email)
+        if (!canManageOrgSettings(orgRole)) {
+            return c.json({ error: 'Insufficient permissions' }, 403)
+        }
+
+        const json = await c.req.json().catch(() => null)
+        const parsed = tokenSourceInputSchema.safeParse(json)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid token source data' }, 400)
+        }
+
+        const tokenSource = await createTokenSourceForOrg(store, orgId, parsed.data)
+        if (!tokenSource) {
+            return c.json({ error: 'Failed to create token source' }, 500)
+        }
+
+        return c.json({ ok: true, tokenSource: serializeTokenSource(tokenSource, true) })
+    })
+
+    app.put('/settings/token-sources/:id', async (c) => {
+        const email = c.get('email')
+        if (!email) {
+            return c.json({ error: 'Unauthorized' }, 401)
+        }
+
+        const orgId = c.req.query('orgId')
+        if (!orgId) {
+            return c.json({ error: 'orgId is required' }, 400)
+        }
+
+        const orgRole = await getOrgRole(store, orgId, email)
+        if (!canManageOrgSettings(orgRole)) {
+            return c.json({ error: 'Insufficient permissions' }, 403)
+        }
+
+        const json = await c.req.json().catch(() => null)
+        const parsed = tokenSourceUpdateSchema.safeParse(json)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid token source data' }, 400)
+        }
+
+        const tokenSource = await updateTokenSourceForOrg(store, orgId, c.req.param('id'), parsed.data)
+        if (!tokenSource) {
+            return c.json({ error: 'Token source not found' }, 404)
+        }
+
+        return c.json({ ok: true, tokenSource: serializeTokenSource(tokenSource, true) })
+    })
+
+    app.delete('/settings/token-sources/:id', async (c) => {
+        const email = c.get('email')
+        if (!email) {
+            return c.json({ error: 'Unauthorized' }, 401)
+        }
+
+        const orgId = c.req.query('orgId')
+        if (!orgId) {
+            return c.json({ error: 'orgId is required' }, 400)
+        }
+
+        const orgRole = await getOrgRole(store, orgId, email)
+        if (!canManageOrgSettings(orgRole)) {
+            return c.json({ error: 'Insufficient permissions' }, 403)
+        }
+
+        const removed = await deleteTokenSourceForOrg(store, orgId, c.req.param('id'))
+        if (!removed) {
+            return c.json({ error: 'Token source not found' }, 404)
+        }
+
+        return c.json({ ok: true })
     })
 
     // ==================== 角色预设 Prompt ====================

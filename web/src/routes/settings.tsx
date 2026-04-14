@@ -8,12 +8,14 @@ import { getCurrentUserSync, getExpiresAtSync } from '@/services/tokenStorage'
 import { useNotificationPermission, useWebPushSubscription } from '@/hooks/useNotification'
 import { useServerUrl } from '@/hooks/useServerUrl'
 import { getLogoutUrl, clearTokens } from '@/services/keycloak'
-import type { Project, Machine, OrgRole, OrgLicense } from '@/types/api'
+import type { Project, Machine, OrgRole, OrgLicense, TokenSource, TokenSourceAgent } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 import { deriveLicenseState, type LicenseDisplayStatus } from '@/lib/license'
+import { LOCAL_TOKEN_SOURCE } from '@/lib/tokenSources'
 import { useMyOrgs, useOrg } from '@/hooks/queries/useOrgs'
 import { useCreateOrg, useInviteMember, useUpdateMemberRole, useRemoveMember } from '@/hooks/mutations/useOrgMutations'
 import { formatMachineTimestamp, getMachineIp, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
+import { LicenseAdminPanel } from '@/components/LicenseAdminPanel'
 
 const ROLE_LABELS: Record<OrgRole, string> = {
     owner: 'Owner',
@@ -354,6 +356,13 @@ type ProjectFormData = {
     workspaceGroupId: string | null
 }
 
+type TokenSourceFormData = {
+    name: string
+    baseUrl: string
+    apiKey: string
+    supportedAgents: TokenSourceAgent[]
+}
+
 function ProjectForm(props: {
     initial?: ProjectFormData
     onSubmit: (data: ProjectFormData) => void
@@ -454,6 +463,118 @@ function ProjectForm(props: {
                         || (props.scope === 'machine' && !effectiveMachineId)
                         || (requiresWorkspaceGroup && !effectiveWorkspaceGroupId)
                     }
+                    className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium rounded bg-[var(--app-button)] text-[var(--app-button-text)] disabled:opacity-50 hover:opacity-90 transition-opacity"
+                >
+                    {props.isPending && <Spinner size="sm" label={null} />}
+                    {props.submitLabel}
+                </button>
+            </div>
+        </form>
+    )
+}
+
+function TokenSourceForm(props: {
+    initial?: TokenSourceFormData
+    onSubmit: (data: TokenSourceFormData) => void
+    onCancel: () => void
+    isPending: boolean
+    submitLabel: string
+}) {
+    const [name, setName] = useState(props.initial?.name ?? '')
+    const [baseUrl, setBaseUrl] = useState(props.initial?.baseUrl ?? '')
+    const [apiKey, setApiKey] = useState(props.initial?.apiKey ?? '')
+    const [supportedAgents, setSupportedAgents] = useState<TokenSourceAgent[]>(
+        props.initial?.supportedAgents && props.initial.supportedAgents.length > 0
+            ? props.initial.supportedAgents
+            : ['claude']
+    )
+
+    const toggleAgent = useCallback((agent: TokenSourceAgent) => {
+        setSupportedAgents((current) => {
+            if (current.includes(agent)) {
+                const next = current.filter((item) => item !== agent)
+                return next.length > 0 ? next : current
+            }
+            return [...current, agent]
+        })
+    }, [])
+
+    const handleSubmit = useCallback((e: React.FormEvent) => {
+        e.preventDefault()
+        if (!name.trim() || !baseUrl.trim() || !apiKey.trim() || supportedAgents.length === 0) return
+        props.onSubmit({
+            name: name.trim(),
+            baseUrl: baseUrl.trim(),
+            apiKey: apiKey.trim(),
+            supportedAgents,
+        })
+    }, [apiKey, baseUrl, name, props, supportedAgents])
+
+    return (
+        <form onSubmit={handleSubmit} className="px-3 py-2 space-y-2 border-b border-[var(--app-divider)]">
+            <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)]/70 px-3 py-2">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--app-hint)]">
+                    Token Source
+                </div>
+                <div className="mt-1 text-[11px] leading-relaxed text-[var(--app-hint)]">
+                    Configure the upstream base URL and API key used when creating Claude or Codex sessions.
+                </div>
+            </div>
+            <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Token Source name"
+                className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
+                disabled={props.isPending}
+            />
+            <input
+                type="text"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="Base URL (e.g. https://proxy.example.com/v1)"
+                className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
+                disabled={props.isPending}
+            />
+            <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="API key"
+                className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
+                disabled={props.isPending}
+            />
+            <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)]/70 px-3 py-2">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--app-hint)]">
+                    Supported Agents
+                </div>
+                <div className="mt-2 flex gap-3">
+                    {(['claude', 'codex'] as const).map((agent) => (
+                        <label key={agent} className="flex items-center gap-1.5 text-sm text-[var(--app-fg)] cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={supportedAgents.includes(agent)}
+                                disabled={props.isPending}
+                                onChange={() => toggleAgent(agent)}
+                                className="accent-[var(--app-button)]"
+                            />
+                            {agent === 'claude' ? 'Claude' : 'Codex'}
+                        </label>
+                    ))}
+                </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+                <button
+                    type="button"
+                    onClick={props.onCancel}
+                    disabled={props.isPending}
+                    className="px-3 py-1.5 text-sm rounded border border-[var(--app-border)] text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors disabled:opacity-50"
+                >
+                    Cancel
+                </button>
+                <button
+                    type="submit"
+                    disabled={props.isPending || !name.trim() || !baseUrl.trim() || !apiKey.trim() || supportedAgents.length === 0}
                     className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium rounded bg-[var(--app-button)] text-[var(--app-button-text)] disabled:opacity-50 hover:opacity-90 transition-opacity"
                 >
                     {props.isPending && <Spinner size="sm" label={null} />}
@@ -724,9 +845,12 @@ export default function SettingsPage() {
     const queryClient = useQueryClient()
     const { baseUrl } = useServerUrl()
     const [projectError, setProjectError] = useState<string | null>(null)
+    const [tokenSourceError, setTokenSourceError] = useState<string | null>(null)
     const [machineWorkspaceError, setMachineWorkspaceError] = useState<string | null>(null)
     const [showAddProject, setShowAddProject] = useState(false)
+    const [showAddTokenSource, setShowAddTokenSource] = useState(false)
     const [editingProject, setEditingProject] = useState<Project | null>(null)
+    const [editingTokenSource, setEditingTokenSource] = useState<TokenSource | null>(null)
     const [projectScope, setProjectScope] = useState<ProjectScope>('shared')
     const [selectedLocalProjectMachineId, setSelectedLocalProjectMachineId] = useState<string | null>(null)
     const [selectedSharedProjectMachineId, setSelectedSharedProjectMachineId] = useState<string | null>(null)
@@ -789,6 +913,19 @@ export default function SettingsPage() {
     const [inviteRole, setInviteRole] = useState<'admin' | 'member'>('member')
     const [showInviteForm, setShowInviteForm] = useState(false)
     const canManageMembers = orgRole === 'owner' || orgRole === 'admin'
+    const canManageTokenSources = canManageMembers
+
+    const { data: tokenSourcesData, isLoading: tokenSourcesLoading } = useQuery({
+        queryKey: queryKeys.tokenSources(currentOrgId ?? '', canManageTokenSources),
+        queryFn: async () => {
+            if (!api || !currentOrgId) throw new Error('API unavailable')
+            return await api.getTokenSources(currentOrgId, canManageTokenSources)
+        },
+        enabled: Boolean(api && currentOrgId),
+    })
+    const tokenSources = useMemo(() => {
+        return Array.isArray(tokenSourcesData?.tokenSources) ? tokenSourcesData.tokenSources : []
+    }, [tokenSourcesData])
 
     // K1 Brain Config
     const { data: brainConfig, isLoading: brainConfigLoading } = useQuery({
@@ -904,6 +1041,12 @@ export default function SettingsPage() {
         setEditingProject(null)
         setProjectError(null)
     }, [projectScope, selectedLocalProjectMachineId, selectedSharedProjectMachineId])
+
+    useEffect(() => {
+        setShowAddTokenSource(false)
+        setEditingTokenSource(null)
+        setTokenSourceError(null)
+    }, [currentOrgId])
 
     // Projects
     const { data: sharedProjectsData, isLoading: sharedProjectsLoading } = useQuery({
@@ -1029,6 +1172,51 @@ export default function SettingsPage() {
         }
     })
 
+    const tokenSourceQueryPrefix = ['token-sources', currentOrgId ?? ''] as const
+
+    const addTokenSourceMutation = useMutation({
+        mutationFn: async (data: TokenSourceFormData) => {
+            if (!api || !currentOrgId) throw new Error('API unavailable')
+            return await api.createTokenSource(data, currentOrgId)
+        },
+        onSuccess: () => {
+            setShowAddTokenSource(false)
+            setTokenSourceError(null)
+            void queryClient.invalidateQueries({ queryKey: tokenSourceQueryPrefix })
+        },
+        onError: (err) => {
+            setTokenSourceError(err instanceof Error ? err.message : 'Failed to add Token Source')
+        }
+    })
+
+    const updateTokenSourceMutation = useMutation({
+        mutationFn: async ({ id, data }: { id: string; data: TokenSourceFormData }) => {
+            if (!api || !currentOrgId) throw new Error('API unavailable')
+            return await api.updateTokenSource(id, data, currentOrgId)
+        },
+        onSuccess: () => {
+            setEditingTokenSource(null)
+            setTokenSourceError(null)
+            void queryClient.invalidateQueries({ queryKey: tokenSourceQueryPrefix })
+        },
+        onError: (err) => {
+            setTokenSourceError(err instanceof Error ? err.message : 'Failed to update Token Source')
+        }
+    })
+
+    const removeTokenSourceMutation = useMutation({
+        mutationFn: async (id: string) => {
+            if (!api || !currentOrgId) throw new Error('API unavailable')
+            return await api.deleteTokenSource(id, currentOrgId)
+        },
+        onSuccess: () => {
+            void queryClient.invalidateQueries({ queryKey: tokenSourceQueryPrefix })
+        },
+        onError: (err) => {
+            setTokenSourceError(err instanceof Error ? err.message : 'Failed to remove Token Source')
+        }
+    })
+
     const updateMachineWorkspaceGroupMutation = useMutation({
         mutationFn: async ({ machineId, workspaceGroupId }: { machineId: string; workspaceGroupId: string | null }) => {
             if (!api) throw new Error('API unavailable')
@@ -1056,6 +1244,20 @@ export default function SettingsPage() {
     const handleRemoveProject = useCallback((id: string) => {
         removeProjectMutation.mutate(id)
     }, [removeProjectMutation])
+
+    const handleAddTokenSource = useCallback((data: TokenSourceFormData) => {
+        addTokenSourceMutation.mutate(data)
+    }, [addTokenSourceMutation])
+
+    const handleUpdateTokenSource = useCallback((data: TokenSourceFormData) => {
+        if (!editingTokenSource) return
+        updateTokenSourceMutation.mutate({ id: editingTokenSource.id, data })
+    }, [editingTokenSource, updateTokenSourceMutation])
+
+    const handleRemoveTokenSource = useCallback((id: string) => {
+        if (!confirm('Remove this Token Source?')) return
+        removeTokenSourceMutation.mutate(id)
+    }, [removeTokenSourceMutation])
 
     const handleSaveWorkspaceGroup = useCallback((machineId: string, workspaceGroupId: string | null) => {
         updateMachineWorkspaceGroupMutation.mutate({ machineId, workspaceGroupId })
@@ -1544,6 +1746,9 @@ export default function SettingsPage() {
 
                             {/* License Section */}
                             <LicenseCard license={orgLicense} licenseExempt={licenseExempt} memberCount={members.length} />
+                            {licenseExempt && canManageMembers && (
+                                <LicenseAdminPanel api={api} currentOrgId={currentOrgId ?? null} />
+                            )}
 
                             {/* Members Section */}
                             <div id="section-members" className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
@@ -1639,6 +1844,152 @@ export default function SettingsPage() {
                                         )
                                     })}
                                 </div>
+                            </div>
+
+                            {/* Token Sources Section */}
+                            <div id="section-token-sources" className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
+                                <div className="px-3 py-2 border-b border-[var(--app-divider)] flex items-center justify-between">
+                                    <div>
+                                        <h3 className="text-sm font-medium">Token Sources</h3>
+                                        <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
+                                            Local is built in. Add remote Token Sources here when you need custom base URLs and API keys.
+                                        </p>
+                                    </div>
+                                    {canManageTokenSources && !showAddTokenSource && !editingTokenSource ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowAddTokenSource(true)}
+                                            className="flex items-center gap-1 px-2 py-1 text-xs font-medium rounded bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90 transition-opacity"
+                                        >
+                                            <PlusIcon className="w-3 h-3" />
+                                            Add Source
+                                        </button>
+                                    ) : null}
+                                </div>
+                                <div className="px-3 py-2 border-b border-[var(--app-divider)]">
+                                    <div className="text-sm font-medium">{LOCAL_TOKEN_SOURCE.name}</div>
+                                    <div className="text-xs text-[var(--app-hint)] mt-0.5">{LOCAL_TOKEN_SOURCE.baseUrl}</div>
+                                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                        {LOCAL_TOKEN_SOURCE.supportedAgents.map((agent) => (
+                                            <span
+                                                key={agent}
+                                                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                                                    agent === 'claude'
+                                                        ? 'border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+                                                        : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                                }`}
+                                            >
+                                                {agent}
+                                            </span>
+                                        ))}
+                                        <span className="inline-flex items-center rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/70 px-2 py-0.5 text-[10px] font-medium text-[var(--app-hint)]">
+                                            Built-in
+                                        </span>
+                                    </div>
+                                </div>
+                                {!canManageTokenSources ? (
+                                    <div className="px-3 py-2 border-b border-[var(--app-divider)] text-[11px] text-[var(--app-hint)]">
+                                        You can use configured Token Sources when creating sessions, but only org admins can edit them.
+                                    </div>
+                                ) : null}
+                                {showAddTokenSource ? (
+                                    <TokenSourceForm
+                                        onSubmit={handleAddTokenSource}
+                                        onCancel={() => {
+                                            setShowAddTokenSource(false)
+                                            setTokenSourceError(null)
+                                        }}
+                                        isPending={addTokenSourceMutation.isPending}
+                                        submitLabel="Add Token Source"
+                                    />
+                                ) : null}
+                                {tokenSourceError ? (
+                                    <div className="px-3 py-2 text-sm text-red-500 border-b border-[var(--app-divider)]">
+                                        {tokenSourceError}
+                                    </div>
+                                ) : null}
+                                {tokenSourcesLoading ? (
+                                    <div className="px-3 py-4 flex justify-center">
+                                        <Spinner size="sm" label="Loading..." />
+                                    </div>
+                                ) : tokenSources.length === 0 && !showAddTokenSource ? (
+                                    <div className="px-3 py-4 text-center text-sm text-[var(--app-hint)]">
+                                        No remote Token Sources configured yet.
+                                    </div>
+                                ) : (
+                                    <div className="divide-y divide-[var(--app-divider)]">
+                                        {tokenSources.map((tokenSource) => (
+                                            editingTokenSource?.id === tokenSource.id ? (
+                                                <TokenSourceForm
+                                                    key={tokenSource.id}
+                                                    initial={{
+                                                        name: tokenSource.name,
+                                                        baseUrl: tokenSource.baseUrl,
+                                                        apiKey: tokenSource.apiKey ?? '',
+                                                        supportedAgents: tokenSource.supportedAgents,
+                                                    }}
+                                                    onSubmit={handleUpdateTokenSource}
+                                                    onCancel={() => {
+                                                        setEditingTokenSource(null)
+                                                        setTokenSourceError(null)
+                                                    }}
+                                                    isPending={updateTokenSourceMutation.isPending}
+                                                    submitLabel="Save"
+                                                />
+                                            ) : (
+                                                <div key={tokenSource.id} className="px-3 py-2">
+                                                    <div className="flex items-start justify-between gap-2">
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="text-sm font-medium truncate">{tokenSource.name}</div>
+                                                            <div className="text-xs text-[var(--app-hint)] font-mono truncate mt-0.5">{tokenSource.baseUrl}</div>
+                                                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                                                {tokenSource.supportedAgents.map((agent) => (
+                                                                    <span
+                                                                        key={agent}
+                                                                        className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                                                                            agent === 'claude'
+                                                                                ? 'border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+                                                                                : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                                                        }`}
+                                                                    >
+                                                                        {agent}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                            <div className="text-xs text-[var(--app-hint)] mt-1">
+                                                                {tokenSource.hasApiKey
+                                                                    ? (tokenSource.apiKeyMasked ? `API key: ${tokenSource.apiKeyMasked}` : 'API key configured')
+                                                                    : 'No API key configured'}
+                                                            </div>
+                                                        </div>
+                                                        {canManageTokenSources ? (
+                                                            <div className="flex items-center gap-1 shrink-0">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setEditingTokenSource(tokenSource)}
+                                                                    disabled={removeTokenSourceMutation.isPending}
+                                                                    className="flex h-7 w-7 items-center justify-center rounded text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors disabled:opacity-50"
+                                                                    title="Edit token source"
+                                                                >
+                                                                    <EditIcon />
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleRemoveTokenSource(tokenSource.id)}
+                                                                    disabled={removeTokenSourceMutation.isPending}
+                                                                    className="flex h-7 w-7 items-center justify-center rounded text-[var(--app-hint)] hover:text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                                                                    title="Remove token source"
+                                                                >
+                                                                    <TrashIcon />
+                                                                </button>
+                                                            </div>
+                                                        ) : null}
+                                                    </div>
+                                                </div>
+                                            )
+                                        ))}
+                                    </div>
+                                )}
                             </div>
 
                             {/* Projects Section */}

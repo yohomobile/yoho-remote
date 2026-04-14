@@ -61,6 +61,7 @@ export type Metadata = {
         createdAt?: number
     }
     mainSessionId?: string
+    brainPreferences?: Record<string, unknown>
 }
 
 export const MetadataSchema = z.object({
@@ -95,6 +96,7 @@ export const MetadataSchema = z.object({
     runtimeAgent: z.string().optional(),
     runtimeModel: z.string().optional(),
     runtimeModelReasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
+    brainPreferences: z.record(z.string(), z.unknown()).optional(),
     worktree: z.object({
         basePath: z.string(),
         branch: z.string(),

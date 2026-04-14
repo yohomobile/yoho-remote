@@ -478,6 +478,7 @@ export interface IStore {
     createOrganization(data: { name: string; slug: string; createdBy: string }): Promise<StoredOrganization | null>
     getOrganization(id: string): Promise<StoredOrganization | null>
     getOrganizationBySlug(slug: string): Promise<StoredOrganization | null>
+    getAllOrganizations(): Promise<StoredOrganization[]>
     getOrganizationsForUser(email: string): Promise<(StoredOrganization & { myRole: OrgRole })[]>
     updateOrganization(id: string, data: { name?: string; settings?: Record<string, unknown> }): Promise<StoredOrganization | null>
     deleteOrganization(id: string): Promise<boolean>

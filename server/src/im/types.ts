@@ -5,6 +5,7 @@
 
 import type { SyncEngine } from '../sync/syncEngine'
 import type { IStore } from '../store/interface'
+import type { BrainSessionPreferences } from '../brain/brainSessionPreferences'
 
 /**
  * Incoming message from an IM platform, normalized to a common format.
@@ -91,7 +92,12 @@ export interface IMAdapter {
     buildSessionTitle(chatType: string, chatName?: string, senderName?: string): string
 
     /** Build the init prompt for a new Brain session */
-    buildInitPrompt(chatType: string, chatName?: string, senderName?: string): Promise<string>
+    buildInitPrompt(
+        chatType: string,
+        chatName?: string,
+        senderName?: string,
+        brainPreferences?: BrainSessionPreferences | null
+    ): Promise<string>
 
     /** Edit a previously sent message (optional) */
     editMessage?(messageId: string, msgType: string, content: string): Promise<boolean>

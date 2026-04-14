@@ -14,8 +14,7 @@ React Mini App / PWA for monitoring and controlling Yoho Remote sessions.
 
 ## Runtime behavior
 
-- When opened inside Telegram, auth uses Telegram WebApp init data.
-- When opened in a normal browser, you can log in with `CLI_API_TOKEN:<namespace>` (or `CLI_API_TOKEN` for the default namespace).
+- When opened in a normal browser, login redirects to the configured Keycloak SSO.
 - The login screen includes a top-right server picker; if unset, the app uses the same origin it was loaded from.
 - Live updates come from the server via SSE.
 
@@ -69,10 +68,9 @@ See `src/router.tsx` for route definitions.
 
 ## Authentication
 
-See `src/hooks/useAuth.ts` and `src/hooks/useAuthSource.ts`.
+See `src/services/keycloak.ts` and `src/providers/KeycloakAuthProvider.tsx`.
 
-- Telegram Mini App: Uses initData from WebApp SDK.
-- Browser: Uses CLI_API_TOKEN from login prompt.
+- Browser/PWA: Uses Keycloak OAuth2/OIDC.
 - JWT tokens with auto-refresh.
 
 ## Data fetching

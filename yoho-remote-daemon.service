@@ -1,16 +1,14 @@
 [Unit]
 Description=Yoho Remote Daemon
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=guang
-WorkingDirectory=/home/workspaces/repos/yoho-remote
-Environment=CLI_API_TOKEN=rDhnX0JCPIki0s6t1kNsHJkSLCvpAEt3wNCb_dkEyOc
-Environment=YOHO_REMOTE_URL=http://127.0.0.1:3006
-Environment=PATH=/home/guang/.local/bin:/home/guang/.nvm/versions/node/v22.18.0/bin:/usr/local/bin:/usr/bin:/bin
-EnvironmentFile=/home/workspaces/repos/yoho-remote/.env
-ExecStart=/home/workspaces/repos/yoho-remote/cli/dist-exe/bun-linux-x64/yoho-remote-daemon
+User=yoho
+WorkingDirectory=/var/lib/yoho-remote
+EnvironmentFile=/etc/yoho-remote/daemon.env
+ExecStart=/opt/yoho-remote/yoho-remote daemon start-sync
 Restart=always
 RestartSec=10
 

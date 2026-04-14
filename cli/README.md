@@ -43,7 +43,7 @@ See `src/commands/auth.ts`.
 - `hapi daemon list` - List active sessions managed by daemon.
 - `hapi daemon stop-session <sessionId>` - Terminate specific session.
 - `hapi daemon logs` - Print path to latest daemon log file.
-- `hapi daemon install` - Install daemon as system service.
+- `hapi daemon install` - Install daemon as system service (Linux systemd or macOS LaunchDaemon).
 - `hapi daemon uninstall` - Remove daemon system service.
 
 See `src/daemon/run.ts`.
@@ -107,8 +107,7 @@ From the repo root:
 
 ```bash
 bun install
-bun run build:cli
-bun run build:cli:exe
+bun run build
 ```
 
 For an all-in-one binary that also embeds the web app:

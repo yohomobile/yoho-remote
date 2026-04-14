@@ -43,7 +43,7 @@ hapi server
 hapi
 ```
 
-3. Open the UI at `http://localhost:3006` and log in with the token in `~/.yoho-remote/settings.json`.
+3. Open the UI at `http://localhost:3006` and sign in through the configured Keycloak SSO.
 
 ## Docker (server only)
 
@@ -57,6 +57,7 @@ More setup options: [Installation guide](docs/guide/installation.md)
 
 - [Quick Start](docs/guide/quick-start.md)
 - [Installation](docs/guide/installation.md)
+- [External Deployment](docs/guide/external-deployment.md)
 - [PWA](docs/guide/pwa.md)
 - [How it Works](docs/guide/how-it-works.md)
 - [Why Yoho Remote](docs/guide/why-yoho-remote.md)

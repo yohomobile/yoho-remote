@@ -1,15 +1,14 @@
 [Unit]
 Description=Yoho Remote Server
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=guang
-WorkingDirectory=/home/workspaces/repos/yoho-remote
-Environment=CLI_API_TOKEN=rDhnX0JCPIki0s6t1kNsHJkSLCvpAEt3wNCb_dkEyOc
-Environment=WEBAPP_PORT=3006
-EnvironmentFile=/home/workspaces/repos/yoho-remote/.env
-ExecStart=/home/workspaces/repos/yoho-remote/cli/dist-exe/bun-linux-x64/yoho-remote-server
+User=yoho
+WorkingDirectory=/var/lib/yoho-remote
+EnvironmentFile=/etc/yoho-remote/server.env
+ExecStart=/opt/yoho-remote/yoho-remote-server
 Restart=on-failure
 RestartSec=5
 

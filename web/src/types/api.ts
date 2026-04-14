@@ -166,6 +166,38 @@ export type CreateAIProfileResponse = { ok: true; profile: AIProfile }
 export type UpdateAIProfileResponse = { ok: true; profile: AIProfile }
 export type DeleteAIProfileResponse = { ok: true }
 
+export type TokenSourceAgent = 'claude' | 'codex'
+
+export type TokenSource = {
+    id: string
+    name: string
+    baseUrl: string
+    supportedAgents: TokenSourceAgent[]
+    createdAt: number
+    updatedAt: number
+    apiKey?: string
+    apiKeyMasked?: string | null
+    hasApiKey: boolean
+}
+
+export type TokenSourcesResponse = {
+    tokenSources: TokenSource[]
+    canManage: boolean
+    includeSecrets: boolean
+}
+
+export type CreateTokenSourceInput = {
+    name: string
+    baseUrl: string
+    apiKey: string
+    supportedAgents: TokenSourceAgent[]
+}
+
+export type UpdateTokenSourceInput = Partial<CreateTokenSourceInput>
+export type CreateTokenSourceResponse = { ok: true; tokenSource: TokenSource }
+export type UpdateTokenSourceResponse = { ok: true; tokenSource: TokenSource }
+export type DeleteTokenSourceResponse = { ok: true }
+
 export type Project = {
     id: string
     name: string
@@ -507,6 +539,11 @@ export type OrgLicense = {
     updatedAt: number
 }
 
+export type AdminLicense = OrgLicense & {
+    orgName: string
+    orgSlug: string
+}
+
 export type OrgsResponse = { orgs: Organization[] }
 export type OrgDetailResponse = {
     org: Organization
@@ -522,3 +559,6 @@ export type OrgInvitationsResponse = { invitations: OrgInvitation[] }
 export type PendingInvitationsResponse = { invitations: OrgInvitation[] }
 export type OrgActionResponse = { ok: true }
 export type CreateInvitationResponse = { ok: true; invitation: OrgInvitation }
+export type AdminLicensesResponse = { licenses: AdminLicense[] }
+export type LicenseOrganizationsResponse = { orgs: Organization[] }
+export type UpsertLicenseResponse = { ok: true; license: OrgLicense }

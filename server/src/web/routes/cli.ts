@@ -48,7 +48,7 @@ const brainSpawnSchema = z.object({
     directory: z.string().min(1),
     agent: z.enum(['claude', 'codex']).default('claude'),
     modelMode: z.enum(['default', 'sonnet', 'opus']).optional(),
-    codexModel: z.enum(['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark']).optional(),
+    codexModel: z.string().min(1).optional(),
     source: z.string().default('brain-child'),
     mainSessionId: z.string().optional(),
 })

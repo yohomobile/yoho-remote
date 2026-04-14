@@ -20,6 +20,7 @@ import type { CodexSession } from './session';
 import { parseCodexCliOverrides } from './utils/codexCliOverrides';
 import { readModeEnv } from '@/utils/modeEnv';
 import { getCurrentProcessStartedAtMs } from '@/utils/process';
+import { getBrainSessionPreferencesFromEnv } from '@/utils/brainSessionPreferences';
 
 export { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 
@@ -40,6 +41,7 @@ export async function runCodex(opts: {
     const sessionTag = randomUUID();
     const startedBy = opts.startedBy ?? 'terminal';
     const sessionSource = process.env.YR_SESSION_SOURCE?.trim();
+    const brainPreferences = getBrainSessionPreferencesFromEnv();
 
     logger.debug(`[codex] Starting with options: startedBy=${startedBy}`);
 
@@ -80,6 +82,7 @@ export async function runCodex(opts: {
         lifecycleState: 'running',
         lifecycleStateSince: Date.now(),
         flavor: 'codex',
+        ...(brainPreferences ? { brainPreferences } : {}),
     };
 
     let response: Awaited<ReturnType<typeof api.getOrCreateSession>> | null = null;

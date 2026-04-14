@@ -15,6 +15,11 @@ import type { SyncEngine, SyncEvent } from '../sync/syncEngine'
 import type { IStore } from '../store/interface'
 import type { StoredMessage } from '../store/types'
 import type { IMAdapter, IMMessage, IMBridgeCallbacks, BrainBridgeConfig } from './types'
+import {
+    buildBrainSessionPreferences,
+    extractBrainChildModelDefaults,
+    extractBrainSessionPreferencesFromMetadata,
+} from '../brain/brainSessionPreferences'
 import { extractAgentText, extractAgentMessageMeta, isInternalBrainMessage } from './agentMessage'
 import { buildFeishuMessage, buildFeishuMessageForEdit } from './feishu/formatter'
 import { extractActions, actionsToExtras } from './feishu/actionExtractor'
@@ -713,6 +718,7 @@ export class BrainBridge implements IMBridgeCallbacks {
             // Load Brain config first to know which agent we need
             const brainConfig = await this.store.getBrainConfig(namespace)
             const agent = brainConfig?.agent ?? 'claude'
+            const childModelDefaults = extractBrainChildModelDefaults(brainConfig?.extra)
 
             const machines = this.syncEngine.getOnlineMachinesByNamespace(namespace)
             if (machines.length === 0) {
@@ -742,17 +748,6 @@ export class BrainBridge implements IMBridgeCallbacks {
                 return null
             }
 
-            const spawnOptions: Record<string, unknown> = {
-                source: 'brain',
-                permissionMode: 'bypassPermissions',
-                caller: this.adapter.platform,
-            }
-            if (agent === 'claude') {
-                spawnOptions.modelMode = brainConfig?.claudeModelMode ?? 'opus'
-            } else if (agent === 'codex') {
-                spawnOptions.codexModel = brainConfig?.codexModel ?? 'gpt-5.4'
-            }
-
             // Try each compatible machine in order; skip on license failure or AGENT_NOT_AVAILABLE
             let spawnResult: Awaited<ReturnType<typeof this.syncEngine.spawnSession>> | null = null
             let selectedMachine: typeof orderedMachines[0] | null = null
@@ -770,6 +765,23 @@ export class BrainBridge implements IMBridgeCallbacks {
 
                 const homeDir = (m.metadata as Record<string, unknown>)?.homeDir as string || '/tmp'
                 const brainDirectory = `${homeDir}/.yoho-remote/brain-workspace`
+                const brainPreferences = buildBrainSessionPreferences({
+                    machineSelectionMode: 'auto',
+                    machineId: m.id,
+                    childClaudeModels: childModelDefaults.childClaudeModels,
+                    childCodexModels: childModelDefaults.childCodexModels,
+                })
+                const spawnOptions: Record<string, unknown> = {
+                    source: 'brain',
+                    permissionMode: 'bypassPermissions',
+                    caller: this.adapter.platform,
+                    brainPreferences,
+                }
+                if (agent === 'claude') {
+                    spawnOptions.modelMode = brainConfig?.claudeModelMode ?? 'opus'
+                } else if (agent === 'codex') {
+                    spawnOptions.codexModel = brainConfig?.codexModel ?? 'gpt-5.4'
+                }
                 console.log(`${this.logPrefix} Trying ${m.id.slice(0, 8)}: agent=${agent}`)
                 const r = await this.syncEngine.spawnSession(m.id, brainDirectory, agent, true, spawnOptions as any)
 
@@ -871,7 +883,11 @@ export class BrainBridge implements IMBridgeCallbacks {
             await this.syncEngine.waitForSocketInRoom(sessionId, 5000)
 
             // Build init prompt (delegated to adapter)
-            const prompt = await this.adapter.buildInitPrompt(chatType, chatName, senderName)
+            const session = this.syncEngine.getSession(sessionId)
+            const brainPreferences = extractBrainSessionPreferencesFromMetadata(
+                (session?.metadata as Record<string, unknown> | null | undefined) ?? null
+            )
+            const prompt = await this.adapter.buildInitPrompt(chatType, chatName, senderName, brainPreferences)
 
             await this.syncEngine.sendMessage(sessionId, {
                 text: prompt,
@@ -979,6 +995,11 @@ export class BrainBridge implements IMBridgeCallbacks {
             // Load Brain config to know which agent we need
             const brainConfig = await this.store.getBrainConfig(namespace)
             const agent = brainConfig?.agent ?? 'claude'
+            const childModelDefaults = extractBrainChildModelDefaults(brainConfig?.extra)
+            const existingSession = this.syncEngine.getSession(oldSessionId)
+            const existingPreferences = extractBrainSessionPreferencesFromMetadata(
+                (existingSession?.metadata as Record<string, unknown> | null | undefined) ?? null
+            )
 
             const machines = this.syncEngine.getOnlineMachinesByNamespace(namespace)
             if (machines.length === 0) return false
@@ -1005,19 +1026,6 @@ export class BrainBridge implements IMBridgeCallbacks {
                 return false
             }
 
-            const spawnOptions: Record<string, unknown> = {
-                sessionId: oldSessionId,
-                resumeSessionId: underlyingSessionId,
-                source: 'brain',
-                permissionMode: 'bypassPermissions',
-                caller: this.adapter.platform,
-            }
-            if (agent === 'claude') {
-                spawnOptions.modelMode = brainConfig?.claudeModelMode ?? 'opus'
-            } else if (agent === 'codex') {
-                spawnOptions.codexModel = brainConfig?.codexModel ?? 'gpt-5.4'
-            }
-
             // Try each compatible machine in order
             for (const m of orderedMachines) {
                 if (m.orgId) {
@@ -1033,6 +1041,25 @@ export class BrainBridge implements IMBridgeCallbacks {
 
                 const homeDir = (m.metadata as Record<string, unknown>)?.homeDir as string || '/tmp'
                 const brainDirectory = `${homeDir}/.yoho-remote/brain-workspace`
+                const brainPreferences = buildBrainSessionPreferences({
+                    machineSelectionMode: existingPreferences?.machineSelection.mode ?? 'auto',
+                    machineId: m.id,
+                    childClaudeModels: existingPreferences?.childModels.claude.allowed ?? childModelDefaults.childClaudeModels,
+                    childCodexModels: existingPreferences?.childModels.codex.allowed ?? childModelDefaults.childCodexModels,
+                })
+                const spawnOptions: Record<string, unknown> = {
+                    sessionId: oldSessionId,
+                    resumeSessionId: underlyingSessionId,
+                    source: 'brain',
+                    permissionMode: 'bypassPermissions',
+                    caller: this.adapter.platform,
+                    brainPreferences,
+                }
+                if (agent === 'claude') {
+                    spawnOptions.modelMode = brainConfig?.claudeModelMode ?? 'opus'
+                } else if (agent === 'codex') {
+                    spawnOptions.codexModel = brainConfig?.codexModel ?? 'gpt-5.4'
+                }
 
                 // Only strip thinking blocks for Claude sessions
                 if (agent === 'claude') {

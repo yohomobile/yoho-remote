@@ -62,7 +62,7 @@ docker run -d \
 git clone https://github.com/tiann/yoho-remote.git
 cd yoho-remote
 bun install
-bun build:single-exe
+bun run build:single-exe
 
 ./cli/dist/hapi
 ```
@@ -84,6 +84,8 @@ On first run, Yoho Remote:
 2. Generates a secure access token
 3. Prints the token and saves it to `~/.yoho-remote/settings.json`
 
+Browser and PWA access use Keycloak SSO. `CLI_API_TOKEN` is still required for CLI and daemon connections.
+
 <details>
 <summary>Config files</summary>
 
@@ -100,12 +102,22 @@ On first run, Yoho Remote:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLI_API_TOKEN` | Auto-generated | Shared secret for authentication |
-| `YOHO_REMOTE_URL` | `http://localhost:3006` | Server URL for CLI |
+| `CLI_API_TOKEN` | Auto-generated | Shared secret for CLI and daemon authentication |
+| `YOHO_REMOTE_URL` | `http://localhost:3006` | Server URL for CLI and daemon |
 | `WEBAPP_PORT` | `3006` | HTTP server port |
+| `WEBAPP_URL` | - | Public HTTPS URL for the web app / Telegram Mini App |
+| `WEB_URL` | - | Public web origin used in invitation emails |
 | `YOHO_REMOTE_HOME` | `~/.yoho-remote` | Config directory path |
-| `DATABASE_URL` | - | PostgreSQL connection string |
-| `CORS_ORIGINS` | - | Allowed CORS origins |
+| `PG_HOST` / `PG_PORT` / `PG_USER` / `PG_PASSWORD` / `PG_DATABASE` | - | PostgreSQL connection settings |
+| `PG_SSL` | `false` | Enable PostgreSQL SSL |
+| `CORS_ORIGINS` | - | Allowed browser origins |
+| `KEYCLOAK_URL` | `https://auth.yohomobile.dev` | Public Keycloak base URL |
+| `KEYCLOAK_INTERNAL_URL` | `KEYCLOAK_URL` | Internal Keycloak base URL for server-to-server requests |
+| `KEYCLOAK_REALM` | `yoho` | Keycloak realm |
+| `KEYCLOAK_CLIENT_ID` | `yoho-remote` | Keycloak client ID |
+| `KEYCLOAK_CLIENT_SECRET` | - | Keycloak client secret |
+| `ADMIN_ORG_ID` | - | License-exempt admin organization ID |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` | - | Invitation email settings |
 | `FEISHU_APP_ID` | - | Feishu/Lark app ID (speech-to-text) |
 | `FEISHU_APP_SECRET` | - | Feishu/Lark app secret (speech-to-text) |
 | `FEISHU_BASE_URL` | `https://open.feishu.cn` | Feishu/Lark OpenAPI base URL |
@@ -187,7 +199,7 @@ export WEBAPP_URL="https://your-public-url"
 hapi server
 ```
 
-Then message your bot with `/start`, open the app, and enter your `CLI_API_TOKEN`.
+Then message your bot with `/start`, open the app, and sign in through the configured Keycloak SSO.
 
 ### Daemon setup
 
@@ -195,9 +207,11 @@ Run a background service for remote session spawning:
 
 ```bash
 hapi daemon start
+hapi daemon install
 hapi daemon status
 hapi daemon logs
 hapi daemon stop
+hapi daemon uninstall
 ```
 
 With the daemon running:
@@ -205,6 +219,8 @@ With the daemon running:
 - Your machine appears in the "Machines" list
 - You can spawn sessions remotely from the web app
 - Sessions persist even when the terminal is closed
+
+On Linux, `hapi daemon install` creates a systemd service and persists the current daemon environment to `~/.yoho-remote/daemon.systemd.env`.
 
 ### Security notes
 

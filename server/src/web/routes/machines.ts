@@ -6,6 +6,7 @@ import type { SSEManager } from '../../sse/sseManager'
 import type { WebAppEnv } from '../middleware/auth'
 import { resolvePersonalWorktreeSpawnOptions } from '../personalWorktree'
 import { buildInitPrompt } from '../prompts/initPrompt'
+import { resolveTokenSourceForAgent } from '../tokenSources'
 import { requireMachine } from './guards'
 import { isMachineBlocked } from './blocklist'
 import { serializeMachine, sortMachinesForDisplay } from './machinePayload'
@@ -17,6 +18,7 @@ const spawnBodySchema = z.object({
     yolo: z.boolean().optional(),
     sessionType: z.enum(['simple', 'worktree']).optional(),
     worktreeName: z.string().optional(),
+    tokenSourceId: z.string().min(1).optional(),
     claudeSettingsType: z.enum(['litellm', 'claude']).optional(),
     claudeAgent: z.string().min(1).optional(),
     opencodeModel: z.string().min(1).optional(),
@@ -175,14 +177,40 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
             }
         }
 
+        const requestedAgent = parsed.data.agent ?? 'claude'
+        let resolvedTokenSource: Awaited<ReturnType<typeof resolveTokenSourceForAgent>> | null = null
+        if (parsed.data.tokenSourceId) {
+            if (!orgIdForLicense) {
+                return c.json({ error: 'orgId is required when using Token Source' }, 400)
+            }
+            resolvedTokenSource = await resolveTokenSourceForAgent(
+                store,
+                orgIdForLicense,
+                parsed.data.tokenSourceId,
+                requestedAgent
+            )
+            if ('error' in resolvedTokenSource) {
+                return c.json({ error: resolvedTokenSource.error }, resolvedTokenSource.status as 400 | 404)
+            }
+        }
+
         const result = await engine.spawnSession(
             machineId,
             parsed.data.directory,
-            parsed.data.agent,
+            requestedAgent,
             parsed.data.yolo,
             {
                 sessionType: spawnTarget.sessionType,
                 worktreeName: spawnTarget.worktreeName,
+                tokenSourceId: resolvedTokenSource?.tokenSource.id,
+                tokenSourceName: resolvedTokenSource?.tokenSource.name,
+                tokenSourceType: resolvedTokenSource?.tokenSource.supportedAgents.includes('codex') && requestedAgent === 'codex'
+                    ? 'codex'
+                    : resolvedTokenSource?.tokenSource.supportedAgents.includes('claude') && requestedAgent === 'claude'
+                        ? 'claude'
+                        : undefined,
+                tokenSourceBaseUrl: resolvedTokenSource?.tokenSource.baseUrl,
+                tokenSourceApiKey: resolvedTokenSource?.tokenSource.apiKey,
                 claudeSettingsType: parsed.data.claudeSettingsType,
                 claudeAgent: parsed.data.claudeAgent,
                 opencodeModel: parsed.data.opencodeModel,

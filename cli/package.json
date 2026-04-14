@@ -33,6 +33,7 @@
     "@twsxtd/hapi-win32-x64": "v2026.04.07.1452"
   },
   "scripts": {
+    "build": "bun run build:exe:cli",
     "typecheck": "tsc --noEmit",
     "build:exe": "bun run scripts/build-executable.ts",
     "build:exe:all": "bun run scripts/build-executable.ts --all",
