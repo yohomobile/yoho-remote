@@ -7,6 +7,9 @@ import { shouldIncludeCoAuthoredBy } from "./claudeSettings";
 const BASE_SYSTEM_PROMPT = (() => trimIdent(`
     ALWAYS when you start a new chat - if tool "mcp__yoho_remote__change_title" is available in this session, call it to set a chat title. When you think chat title is not relevant anymore - call the tool again to change it. When chat name is too generic and you have a chance to make it more specific - call the tool again to change it. If the tool is unavailable in this session, skip title updates. This title is needed to easily find the chat in the future. Help human.
     If the first user message looks like an init prompt (starts with "#InitPrompt-"), do NOT call change_title yet. Wait until the first real task request, then call change_title once.
+    In Yoho Remote Claude sessions, MCP tools can be injected at runtime. Judge MCP availability by the actual tool list in this session and by init.mcp_servers status, not by shell commands like "claude mcp list" and not by reading ~/.claude/settings.json.
+    Common Yoho MCP namespaces in Claude sessions are "mcp__yoho_remote__*", "mcp__yoho-vault__*", "mcp__skill__*", plus user-configured servers such as "mcp__yoho-memory__*" and "mcp__yoho-credentials__*".
+    When the user asks for environment info, recall, remember, credentials, project list, or skill search, call the matching runtime MCP tool directly if it is available in this session. Do not claim MCP is unavailable unless the runtime tool list/init status actually shows that.
 `))();
 
 /**

@@ -14,6 +14,9 @@ describe('buildInitPrompt', () => {
         expect(prompt).not.toContain('开发规范（不可违背）')
         expect(prompt).not.toContain('部署 dev 环境前，必须确认代码已合入 `dev-release`')
         expect(prompt).not.toContain('部署线上环境前，必须确认代码已合入 `main`')
+        expect(prompt).toContain('mcp__yoho_remote__environment_info')
+        expect(prompt).toContain('不要通过 `claude mcp list`')
+        expect(prompt).toContain('mcp__skill__search')
     })
 
     it('renders shared-directory guidance without worktree instructions', async () => {
@@ -25,6 +28,8 @@ describe('buildInitPrompt', () => {
         expect(prompt).toContain('共享代码目录（path），默认按组织共享')
         expect(prompt).not.toContain('所有查看、编辑、测试、提交都必须在当前会话目录进行')
         expect(prompt).not.toContain('Git worktree')
+        expect(prompt).toContain('mcp__yoho-vault__recall')
+        expect(prompt).toContain('mcp__yoho-memory__remember')
     })
 
     it('uses the same shared-directory rules in brain init prompts', async () => {
@@ -36,6 +41,8 @@ describe('buildInitPrompt', () => {
         expect(prompt).not.toContain('Git worktree')
         expect(prompt).not.toContain('部署 dev 必须先合入 dev-release')
         expect(prompt).not.toContain('部署线上必须先合入 main')
+        expect(prompt).toContain('不要通过 `claude mcp list`')
+        expect(prompt).toContain('mcp__skill__search')
     })
 
     it('renders brain child-session capability boundaries from session preferences', async () => {

@@ -70,9 +70,10 @@ ${userName ? `- 称呼当前用户为：${userName}\n` : ''}\
 ${workspaceBlock(projectRoot)}
 
 3) MCP 工具规则
-- [强制] recall / remember / get_credential 等工具的触发时机和调用规则已写在各自的 MCP description 中，严格遵守，此处不重复。
-- [强制] **开始任何非简单任务前**（生成文档、数据分析、代码审查、报告撰写、调试等），必须先调用 \`skill_search\` 检查是否有可复用的 skill。有则用 \`skill_get\` 加载并严格遵循其指令执行。
-- [强制] 每轮对话结束前，回顾是否有值得保存的知识，有则立即 remember。
+- [强制] 以当前会话里的**运行时 MCP 工具列表**为准判断工具是否可用；不要通过 \`claude mcp list\`、读取 \`~/.claude/settings.json\` 或其他 shell 命令判断本会话的 MCP 可用性。
+- [强制] \`mcp__yoho-vault__recall\` / \`mcp__yoho-memory__recall\`、\`mcp__yoho-vault__remember\` / \`mcp__yoho-memory__remember\`、\`mcp__yoho-vault__get_credential\` / \`mcp__yoho-credentials__get_credential\` 等工具的触发时机和调用规则已写在各自 MCP description 中，严格遵守，此处不重复。
+- [强制] **开始任何非简单任务前**（生成文档、数据分析、代码审查、报告撰写、调试等），必须先调用 \`mcp__skill__search\`；若当前会话没有该工具，则调用 \`mcp__yoho-vault__skill_search\` 或 \`mcp__yoho-memory__skill_search\` 检查是否有可复用 skill。有则再调用对应的 \`*_skill_get\` 加载并严格遵循其指令执行。
+- [强制] 每轮对话结束前，回顾是否有值得保存的知识，有则立即调用 \`mcp__yoho-vault__remember\` 或 \`mcp__yoho-memory__remember\`。
 - **[强制] 输出顺序**：先输出主任务核心结果，再执行附加操作（保存知识库等）。最终回复必须是主任务结果，不能以"已保存到知识库"等收尾。
 `
 }
@@ -129,9 +130,10 @@ ${renderChildModelLine('codex', brainPreferences)}
 
 ## 知识与记忆
 
-- [强制] recall / remember / get_credential 等工具的触发时机已写在各自 MCP description 中，严格遵守。
-- [强制] **分配任务给子 session 前**，先调用 \`skill_search\` 检查是否有可复用的 skill。有则用 \`skill_get\` 加载，将 skill 内容作为指令的一部分传给子 session。
-- [强制] 每轮对话结束前，回顾是否有值得保存的信息，有则立即 remember。**用户跟你聊的内容，就是你该记住的内容。**
+- [强制] 以当前会话里的**运行时 MCP 工具列表**为准判断工具是否可用；不要通过 \`claude mcp list\`、读取 \`~/.claude/settings.json\` 或其他 shell 命令判断本会话的 MCP 可用性。
+- [强制] \`mcp__yoho-vault__recall\` / \`mcp__yoho-memory__recall\`、\`mcp__yoho-vault__remember\` / \`mcp__yoho-memory__remember\`、\`mcp__yoho-vault__get_credential\` / \`mcp__yoho-credentials__get_credential\` 等工具的触发时机已写在各自 MCP description 中，严格遵守。
+- [强制] **分配任务给子 session 前**，先调用 \`mcp__skill__search\`；若当前会话没有该工具，则调用 \`mcp__yoho-vault__skill_search\` 或 \`mcp__yoho-memory__skill_search\` 检查是否有可复用 skill。有则再调用对应的 \`*_skill_get\` 加载，将 skill 内容作为指令的一部分传给子 session。
+- [强制] 每轮对话结束前，回顾是否有值得保存的信息，有则立即调用 \`mcp__yoho-vault__remember\` 或 \`mcp__yoho-memory__remember\`。**用户跟你聊的内容，就是你该记住的内容。**
 - 运行环境信息请调用 \`mcp__yoho_remote__environment_info\` 获取
 
 ## 规则
