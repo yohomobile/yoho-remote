@@ -25,6 +25,47 @@ const CO_AUTHORED_CREDITS = (() => trimIdent(`
     Co-Authored-By: Yoho Remote <it@yohomobile.com>
 `))();
 
+export function buildRuntimeMcpSystemPrompt(tools?: string[]): string | undefined {
+    const mcpTools = (tools ?? []).filter(tool => tool.startsWith('mcp__'))
+    if (mcpTools.length === 0) {
+        return undefined
+    }
+
+    const namespaces = [...new Set(
+        mcpTools
+            .map(tool => tool.match(/^mcp__(.+?)__/))
+            .map(match => match ? `mcp__${match[1]}__*` : null)
+            .filter((value): value is string => Boolean(value))
+    )].sort()
+
+    const keyRuntimeTools = [
+        'mcp__yoho_remote__environment_info',
+        'mcp__yoho_remote__project_list',
+        'mcp__yoho_remote__change_title',
+        'mcp__yoho-vault__recall',
+        'mcp__yoho-vault__remember',
+        'mcp__yoho-vault__get_credential',
+        'mcp__yoho-vault__skill_search',
+        'mcp__yoho-vault__skill_get',
+        'mcp__skill__search',
+        'mcp__skill__get',
+        'mcp__yoho-memory__recall',
+        'mcp__yoho-memory__remember',
+        'mcp__yoho-memory__skill_search',
+        'mcp__yoho-memory__skill_get',
+        'mcp__yoho-credentials__get_credential',
+    ].filter(tool => mcpTools.includes(tool))
+
+    return trimIdent(`
+        Runtime MCP tools are available in this session.
+        Detected MCP namespaces: ${namespaces.join(', ')}.
+        ${keyRuntimeTools.length > 0 ? `Key runtime MCP tools already available here: ${keyRuntimeTools.join(', ')}.` : ''}
+        If the user asks which MCP tools are available, answer from this runtime set.
+        Do NOT use Bash or shell commands such as "which mcp", "env | grep MCP", "claude mcp list", or reading ~/.claude/settings.json to decide MCP availability. Those reflect shell/config state, not this session's runtime-injected tools.
+        When the user asks for environment info, project list, recall, remember, credentials, or skill search, call the matching MCP tool directly from the runtime namespaces above.
+    `)
+}
+
 /**
  * System prompt with conditional Co-Authored-By lines based on Claude's settings.json configuration.
  * Settings are read once on startup for performance.

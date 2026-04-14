@@ -11,7 +11,7 @@ import { readSettings } from '@/persistence';
 import { EnhancedMode, PermissionMode } from './loop';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { hashObject } from '@/utils/deterministicJson';
-import { extractSDKMetadataAsync } from '@/claude/sdk/metadataExtractor';
+import { extractSDKMetadata } from '@/claude/sdk/metadataExtractor';
 import { parseSpecialCommand } from '@/parsers/specialCommands';
 import { getEnvironmentInfo } from '@/ui/doctor';
 import { configuration } from '@/configuration';
@@ -30,6 +30,7 @@ import { getCurrentProcessStartedAtMs } from '@/utils/process';
 import { getBrainSessionPreferencesFromEnv } from '@/utils/brainSessionPreferences';
 import { readClaudeSettingsMcpServers } from '@/claude/utils/claudeSettings';
 import { getDefaultClaudeCodePath } from '@/claude/sdk/utils';
+import { buildRuntimeMcpSystemPrompt } from '@/claude/utils/systemPrompt';
 
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
 
@@ -255,6 +256,9 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     let currentFastMode = readHookSettingsFastMode(hookSettingsPath); // Restore from settings file (e.g. merged from source settings)
     let currentCustomSystemPrompt: string | undefined = undefined; // Track current custom system prompt
     let currentAppendSystemPrompt: string | undefined = undefined; // Track current append system prompt
+    let mergeAppendSystemPrompt = (userAppendSystemPrompt?: string): string | undefined => {
+        return userAppendSystemPrompt;
+    };
     let currentAllowedTools: string[] | undefined = sessionSource === 'brain'
         ? [
             'WebSearch',
@@ -325,7 +329,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         // Resolve append system prompt - use message.meta.appendSystemPrompt if provided, otherwise use current
         let messageAppendSystemPrompt = currentAppendSystemPrompt;
         if (message.meta?.hasOwnProperty('appendSystemPrompt')) {
-            messageAppendSystemPrompt = message.meta.appendSystemPrompt || undefined; // null becomes undefined
+            messageAppendSystemPrompt = mergeAppendSystemPrompt(message.meta.appendSystemPrompt || undefined); // null becomes undefined
             currentAppendSystemPrompt = messageAppendSystemPrompt;
             logger.debug(`[loop] Append system prompt updated from user message: ${messageAppendSystemPrompt ? 'set' : 'reset to none'}`);
         } else {
@@ -501,24 +505,29 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         ...auxMcpServers,
     };
 
-    // Extract SDK metadata in background using the real MCP config so the stored
-    // tool list reflects the session's actual MCP toolset.
-    extractSDKMetadataAsync(async (sdkMetadata) => {
-        logger.debug('[start] SDK metadata extracted, updating session:', sdkMetadata);
-        try {
-            api.sessionSyncClient(response).updateMetadata((currentMetadata) => ({
-                ...currentMetadata,
-                tools: sdkMetadata.tools,
-                slashCommands: sdkMetadata.slashCommands
-            }));
-            logger.debug('[start] Session metadata updated with SDK capabilities');
-        } catch (error) {
-            logger.debug('[start] Failed to update session metadata:', error);
-        }
-    }, {
+    const sdkMetadata = await extractSDKMetadata({
         cwd: workingDirectory,
         mcpServers,
     });
+    logger.debug('[start] SDK metadata extracted, updating session:', sdkMetadata);
+    try {
+        api.sessionSyncClient(response).updateMetadata((currentMetadata) => ({
+            ...currentMetadata,
+            tools: sdkMetadata.tools,
+            slashCommands: sdkMetadata.slashCommands
+        }));
+        logger.debug('[start] Session metadata updated with SDK capabilities');
+    } catch (error) {
+        logger.debug('[start] Failed to update session metadata:', error);
+    }
+
+    const runtimeMcpSystemPrompt = buildRuntimeMcpSystemPrompt(sdkMetadata.tools);
+    mergeAppendSystemPrompt = (userAppendSystemPrompt?: string): string | undefined => {
+        return [userAppendSystemPrompt, runtimeMcpSystemPrompt]
+            .filter((value): value is string => Boolean(value && value.trim()))
+            .join('\n\n') || undefined;
+    };
+    currentAppendSystemPrompt = mergeAppendSystemPrompt();
 
     // Create claude loop
     await loop({
