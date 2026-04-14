@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, writeFileSync, unlinkSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { readClaudeSettings, shouldIncludeCoAuthoredBy } from './claudeSettings';
+import { readClaudeSettings, readClaudeSettingsMcpServers, shouldIncludeCoAuthoredBy } from './claudeSettings';
 
 describe('Claude Settings', () => {
   let testClaudeDir: string;
@@ -90,6 +90,46 @@ describe('Claude Settings', () => {
 
       const result = shouldIncludeCoAuthoredBy();
       expect(result).toBe(true);
+    });
+  });
+
+  describe('readClaudeSettingsMcpServers', () => {
+    it('returns empty object when no settings files exist', () => {
+      expect(readClaudeSettingsMcpServers()).toEqual({});
+    });
+
+    it('reads MCP servers from default settings.json', () => {
+      const settingsPath = join(testClaudeDir, 'settings.json');
+      writeFileSync(settingsPath, JSON.stringify({
+        mcpServers: {
+          alpha: { command: 'bun', args: ['run', 'alpha.ts'] }
+        }
+      }));
+
+      expect(readClaudeSettingsMcpServers()).toEqual({
+        alpha: { command: 'bun', args: ['run', 'alpha.ts'] }
+      });
+    });
+
+    it('merges default and typed settings MCP servers with typed override', () => {
+      writeFileSync(join(testClaudeDir, 'settings.json'), JSON.stringify({
+        mcpServers: {
+          alpha: { command: 'bun', args: ['run', 'alpha.ts'] },
+          shared: { command: 'bun', args: ['run', 'default.ts'] }
+        }
+      }));
+      writeFileSync(join(testClaudeDir, 'settings.litellm.json'), JSON.stringify({
+        mcp_servers: {
+          beta: { command: 'bun', args: ['run', 'beta.ts'] },
+          shared: { command: 'bun', args: ['run', 'typed.ts'] }
+        }
+      }));
+
+      expect(readClaudeSettingsMcpServers('litellm')).toEqual({
+        alpha: { command: 'bun', args: ['run', 'alpha.ts'] },
+        beta: { command: 'bun', args: ['run', 'beta.ts'] },
+        shared: { command: 'bun', args: ['run', 'typed.ts'] }
+      });
     });
   });
 });

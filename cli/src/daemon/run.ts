@@ -633,6 +633,24 @@ export async function startDaemon(): Promise<void> {
           ...extraEnv
         };
 
+        if (options.tokenSourceType === 'claude' && agent === 'claude') {
+          const removedEnvKeys = [
+            'ANTHROPIC_AUTH_TOKEN',
+            'CLAUDE_CODE_OAUTH_TOKEN'
+          ].filter((key) => childEnv[key] !== undefined);
+
+          for (const key of removedEnvKeys) {
+            delete childEnv[key];
+          }
+
+          if (removedEnvKeys.length > 0) {
+            logger.debug('[DAEMON RUN] Cleared inherited Claude auth env overrides for Token Source', {
+              removedEnvKeys
+            });
+            addLog('env', `Cleared inherited Claude auth env overrides: ${removedEnvKeys.join(', ')}`, 'success');
+          }
+        }
+
         if (agent === 'codex') {
           const removedEnvKeys = [
             'OPENAI_API_KEY',
