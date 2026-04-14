@@ -22,10 +22,10 @@ import { resolveFileReferences } from '@/claude/utils/fileMessage';
 import { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 import { restoreTerminalState } from '@/ui/terminalState';
 import { hasCodexCliOverrides } from './utils/codexCliOverrides';
-import { buildCodexServiceTierArgs } from './utils/codexServiceTier';
 import { buildCodexStartConfig, TITLE_INSTRUCTION } from './utils/codexStartConfig';
 import { buildCommandExecutionResult, getCommandExecutionPreview } from './utils/commandExecutionResult';
 import { normalizeCodexToolReferences } from './utils/normalizeCodexToolReferences';
+import { buildCodexExecArgs } from './utils/codexExecArgs';
 import { resolveCodexBinary } from './codexBinary';
 import { getYohoAuxMcpServers, VAULT_HTTP_PORT } from '@/utils/yohoMcpServers';
 import type { CodexSession } from './session';
@@ -88,34 +88,6 @@ type ExecEvent =
     | { type: 'item.completed'; item: ExecItem }
     | { type: 'turn.completed'; usage?: { input_tokens?: number; output_tokens?: number } }
     | { type: string; [key: string]: unknown };
-
-// ---------------------------------------------------------------------------
-// MCP server config → codex `-c` flags
-// ---------------------------------------------------------------------------
-
-function buildMcpConfigFlags(
-    mcpServers: Record<string, { command: string; args: string[]; cwd?: string; env?: Record<string, string> }>
-): string[] {
-    const flags: string[] = [];
-    for (const [name, cfg] of Object.entries(mcpServers)) {
-        flags.push('-c', `mcp_servers.${name}.command="${cfg.command}"`);
-        const argsToml = `[${cfg.args.map((a) => `"${a}"`).join(', ')}]`;
-        flags.push('-c', `mcp_servers.${name}.args=${argsToml}`);
-        if (cfg.cwd) {
-            flags.push('-c', `mcp_servers.${name}.cwd="${cfg.cwd}"`);
-        }
-        if (cfg.env) {
-            for (const [k, v] of Object.entries(cfg.env)) {
-                flags.push('-c', `mcp_servers.${name}.env.${k}="${v}"`);
-            }
-        }
-    }
-    return flags;
-}
-
-// ---------------------------------------------------------------------------
-// Launcher
-// ---------------------------------------------------------------------------
 
 export async function codexExecLauncher(session: CodexSession): Promise<'switch' | 'exit'> {
     if (session.codexArgs && session.codexArgs.length > 0) {
@@ -425,59 +397,22 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
         shouldExit, permissionMode
     } = opts;
 
-    const args: string[] = [];
-
-    if (threadId) {
-        // Resume existing session
-        args.push('exec', 'resume', threadId);
-    } else {
-        args.push('exec');
-    }
-
-    args.push('--json');
-
-    // Permission mode → codex exec flags
-    // In exec mode without TTY, approval prompts cause "user cancelled" errors.
-    // Map yoho permission modes directly to codex exec flags:
-    //   yolo       → --dangerously-bypass-approvals-and-sandbox (skip all approvals + no sandbox)
-    //   safe-yolo  → --full-auto + --sandbox workspace-write
-    //   read-only  → --sandbox read-only
-    //   default    → --sandbox workspace-write
-    if (permissionMode === 'yolo') {
-        args.push('--dangerously-bypass-approvals-and-sandbox');
-    } else if (permissionMode === 'safe-yolo') {
-        args.push('--full-auto');
-    } else if (permissionMode === 'read-only') {
-        args.push('--sandbox', 'read-only');
-    } else {
-        args.push('--sandbox', 'workspace-write');
-    }
-
-    // Model
-    if (startConfig.model) {
-        args.push('-m', startConfig.model);
-    }
-
-    // MCP servers
-    args.push(...buildMcpConfigFlags(mcpServers));
-
-    // Model reasoning effort
-    if (startConfig.model_reasoning_effort) {
-        args.push('-c', `model_reasoning_effort="${startConfig.model_reasoning_effort}"`);
-    }
-
-    if (startConfig.service_tier) {
-        args.push(...buildCodexServiceTierArgs(startConfig.service_tier));
-    }
-
-    // Prompt
-    args.push(prompt);
+    const skipGitRepoCheck = session.startedBy === 'daemon';
+    const args = buildCodexExecArgs({
+        threadId,
+        permissionMode,
+        startConfig,
+        mcpServers,
+        prompt,
+        skipGitRepoCheck,
+    });
 
     logger.debug('[codex-exec] Spawning codex exec', {
         command: codexBin.command,
         version: codexBin.version,
         args,
         cwd: session.path,
+        skipGitRepoCheck,
         permissionMode,
         threadId,
         model: startConfig.model ?? '(default)',
