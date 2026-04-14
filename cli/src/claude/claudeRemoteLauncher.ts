@@ -23,7 +23,7 @@ import {
     shouldUseOpenAiOverloadFallback
 } from "./utils/overloadFallback";
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
-const TITLE_INSTRUCTION = 'Based on this message, call mcp__yoho_remote__change_title to change chat session title that would represent the current task. If chat idea would change dramatically - call this function again to update the title.';
+const TITLE_INSTRUCTION = 'If tool mcp__yoho_remote__change_title is available in this session, call it to set a chat title that represents the current task. If the chat idea changes dramatically, call it again to update the title. If the tool is unavailable in this session, skip title updates.';
 
 function isInitPromptMessage(message: string): boolean {
     return message.trimStart().startsWith(INIT_PROMPT_PREFIX);

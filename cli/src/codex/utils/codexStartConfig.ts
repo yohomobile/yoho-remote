@@ -5,7 +5,7 @@ import type { CodexCliOverrides } from './codexCliOverrides';
 import { normalizeCodexToolReferences } from './normalizeCodexToolReferences';
 import { resolveCodexServiceTier } from './codexServiceTier';
 
-export const TITLE_INSTRUCTION = trimIdent(`Based on this message, call functions.yoho_remote__change_title to change chat session title that would represent the current task. If chat idea would change dramatically - call this function again to update the title.`);
+export const TITLE_INSTRUCTION = trimIdent(`If tool functions.yoho_remote__change_title is available in this session, call it to set a chat title that represents the current task. If the chat idea changes dramatically, call it again to update the title. If the tool is unavailable in this session, skip title updates.`);
 
 function resolveApprovalPolicy(mode: EnhancedMode): CodexSessionConfig['approval-policy'] {
     switch (mode.permissionMode) {

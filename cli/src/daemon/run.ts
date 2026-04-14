@@ -20,6 +20,7 @@ import { cleanupDaemonState, getInstalledCliMtimeMs, isDaemonRunningCurrentlyIns
 import { startDaemonControlServer } from './controlServer';
 import { EXTERNAL_TRACKED_SESSION_LABEL, recoverTrackedSessionsFromServer } from './recoverTrackedSessions';
 import { isSessionProcessIdentityCurrent, isTrackedSessionProcessCurrent } from './trackedSessionIdentity';
+import { buildClaudeTokenSourceEnv } from './tokenSourceEnv';
 import { createWorktree, removeWorktree, type WorktreeInfo } from './worktree';
 import { join } from 'path';
 import { runtimePath } from '@/projectPath';
@@ -442,12 +443,12 @@ export async function startDaemon(): Promise<void> {
           addLog('env', `Applying Token Source for Claude: ${options.tokenSourceName ?? options.tokenSourceId ?? 'unnamed'}`, 'running');
           extraEnv = {
             ...extraEnv,
-            ANTHROPIC_BASE_URL: options.tokenSourceBaseUrl,
-            ANTHROPIC_AUTH_TOKEN: options.tokenSourceApiKey,
-            ANTHROPIC_API_KEY: options.tokenSourceApiKey,
-            YR_TOKEN_SOURCE_ID: options.tokenSourceId ?? '',
-            YR_TOKEN_SOURCE_NAME: options.tokenSourceName ?? '',
-            YR_TOKEN_SOURCE_TYPE: 'claude',
+            ...buildClaudeTokenSourceEnv({
+              baseUrl: options.tokenSourceBaseUrl,
+              apiKey: options.tokenSourceApiKey,
+              tokenSourceId: options.tokenSourceId,
+              tokenSourceName: options.tokenSourceName,
+            }),
           };
           addLog('env', `Claude Token Source configured`, 'success');
         }

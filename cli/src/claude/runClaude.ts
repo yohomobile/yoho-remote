@@ -153,22 +153,6 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         logger.debug(`Session created: ${response.id}`);
     }
 
-    // Extract SDK metadata in background and update session when ready
-    extractSDKMetadataAsync(async (sdkMetadata) => {
-        logger.debug('[start] SDK metadata extracted, updating session:', sdkMetadata);
-        try {
-            // Update session metadata with tools and slash commands
-            api.sessionSyncClient(response).updateMetadata((currentMetadata) => ({
-                ...currentMetadata,
-                tools: sdkMetadata.tools,
-                slashCommands: sdkMetadata.slashCommands
-            }));
-            logger.debug('[start] Session metadata updated with SDK capabilities');
-        } catch (error) {
-            logger.debug('[start] Failed to update session metadata:', error);
-        }
-    });
-
     // Create realtime session
     const session = api.sessionSyncClient(response);
     if (yohoRemoteSessionId) {
@@ -503,6 +487,32 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         sessionId: response.id,
         orgId: response.orgId ?? null,
     });
+    const mcpServers = {
+        'yoho_remote': {
+            type: 'http' as const,
+            url: yohoRemoteServer.url,
+        },
+        ...auxMcpServers,
+    };
+
+    // Extract SDK metadata in background using the real MCP config so the stored
+    // tool list reflects the session's actual MCP toolset.
+    extractSDKMetadataAsync(async (sdkMetadata) => {
+        logger.debug('[start] SDK metadata extracted, updating session:', sdkMetadata);
+        try {
+            api.sessionSyncClient(response).updateMetadata((currentMetadata) => ({
+                ...currentMetadata,
+                tools: sdkMetadata.tools,
+                slashCommands: sdkMetadata.slashCommands
+            }));
+            logger.debug('[start] Session metadata updated with SDK capabilities');
+        } catch (error) {
+            logger.debug('[start] Failed to update session metadata:', error);
+        }
+    }, {
+        cwd: workingDirectory,
+        mcpServers,
+    });
 
     // Create claude loop
     await loop({
@@ -580,13 +590,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
             currentSessionRef.current = sessionInstance;
             syncSessionModes();
         },
-        mcpServers: {
-            'yoho_remote': {
-                type: 'http' as const,
-                url: yohoRemoteServer.url,
-            },
-            ...auxMcpServers,
-        },
+        mcpServers,
         session,
         claudeEnvVars: options.claudeEnvVars,
         claudeArgs: options.claudeArgs,
