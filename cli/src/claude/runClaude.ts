@@ -29,6 +29,7 @@ import { getYohoAuxMcpServers } from '@/utils/yohoMcpServers';
 import { getCurrentProcessStartedAtMs } from '@/utils/process';
 import { getBrainSessionPreferencesFromEnv } from '@/utils/brainSessionPreferences';
 import { readClaudeSettingsMcpServers } from '@/claude/utils/claudeSettings';
+import { getDefaultClaudeCodePath } from '@/claude/sdk/utils';
 
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
 
@@ -483,6 +484,8 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
 
     const resumeSessionId = (options.resumeSessionId ?? response.metadata?.claudeSessionId ?? null) || null;
     const userMcpServers = readClaudeSettingsMcpServers(claudeSettingsType);
+    const claudeExecutable = getDefaultClaudeCodePath();
+    logger.debug(`[START] Using Claude executable: ${claudeExecutable}`);
 
     const auxMcpServers = await getYohoAuxMcpServers('claude', {
         apiClient: api,
@@ -577,7 +580,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         claudeArgs: options.claudeArgs,
         startedBy,
         hookSettingsPath,
-        executableCommand: 'claude'
+        executableCommand: claudeExecutable
     });
 
     const localFailure = currentSessionRef.current?.localLaunchFailure;
