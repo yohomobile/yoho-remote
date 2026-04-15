@@ -19,6 +19,7 @@ import { useAppContext } from '@/lib/app-context'
 import { queryKeys } from '@/lib/query-keys'
 import { getMachineStatusLabel, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
 import { LOCAL_TOKEN_SOURCE, LOCAL_TOKEN_SOURCE_ID } from '@/lib/tokenSources'
+import { isFlutterApp } from '@/hooks/useFlutterApp'
 
 /** 上次创建 session 时的偏好设置，存储在 localStorage */
 interface SpawnPrefs {
@@ -400,24 +401,26 @@ export function NewSession(props: {
                 )}
             </div>
 
-            <SessionAgentFields
-                agent={agent}
-                tokenSources={tokenSources}
-                tokenSourceId={tokenSourceId}
-                claudeModel={claudeModel}
-                codexModel={codexModel}
-                codexReasoningEffort={codexReasoningEffort}
-                onAgentChange={setAgent}
-                onTokenSourceChange={setTokenSourceId}
-                onClaudeModelChange={setClaudeModel}
-                onCodexModelChange={setCodexModel}
-                onCodexReasoningEffortChange={setCodexReasoningEffort}
-                isFormDisabled={isFormDisabled}
-                supportedAgents={currentMachine?.supportedAgents ?? null}
-                getUnsupportedTitle={(agentType) => currentMachine
-                    ? `${getMachineTitle(currentMachine)} does not support ${agentType}`
-                    : undefined}
-            />
+            {!isFlutterApp() && (
+                <SessionAgentFields
+                    agent={agent}
+                    tokenSources={tokenSources}
+                    tokenSourceId={tokenSourceId}
+                    claudeModel={claudeModel}
+                    codexModel={codexModel}
+                    codexReasoningEffort={codexReasoningEffort}
+                    onAgentChange={setAgent}
+                    onTokenSourceChange={setTokenSourceId}
+                    onClaudeModelChange={setClaudeModel}
+                    onCodexModelChange={setCodexModel}
+                    onCodexReasoningEffortChange={setCodexReasoningEffort}
+                    isFormDisabled={isFormDisabled}
+                    supportedAgents={currentMachine?.supportedAgents ?? null}
+                    getUnsupportedTitle={(agentType) => currentMachine
+                        ? `${getMachineTitle(currentMachine)} does not support ${agentType}`
+                        : undefined}
+                />
+            )}
 
             {/* Spawn Logs */}
             {spawnLogs.length > 0 && (

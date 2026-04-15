@@ -212,11 +212,12 @@ function SessionsPage() {
     useEffect(() => {
         if (!isFlutterApp()) return
         pushSessionsHeader({
+            orgName: currentOrg?.name,
             onlineUsers: getOnlineUsersForBadge(onlineUsers),
             activeCount: sessions.filter(s => s.active).length,
             gitHash: gitCommitHash,
         })
-    }, [onlineUsers, sessions, gitCommitHash])
+    }, [onlineUsers, sessions, gitCommitHash, currentOrg])
 
     return (
         <div className="flex h-full flex-col">
@@ -472,22 +473,24 @@ function NewSessionPage() {
 
     return (
         <div className="flex h-full flex-col">
-            <div className="bg-[var(--app-bg)] border-b border-[var(--app-divider)] pt-[env(safe-area-inset-top)]">
-                <div className="mx-auto w-full max-w-content flex items-center gap-2 px-3 py-1.5">
-                    {!isTelegramApp() && (
-                        <button
-                            type="button"
-                            onClick={goBack}
-                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                        >
-                            <BackIcon />
-                        </button>
-                    )}
-                    <div className="flex-1 font-medium text-sm">
-                        {isBrainCreation ? 'Create Brain Session' : 'Create Session'}
+            {!isFlutterApp() && (
+                <div className="bg-[var(--app-bg)] border-b border-[var(--app-divider)] pt-[env(safe-area-inset-top)]">
+                    <div className="mx-auto w-full max-w-content flex items-center gap-2 px-3 py-1.5">
+                        {!isTelegramApp() && (
+                            <button
+                                type="button"
+                                onClick={goBack}
+                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                            >
+                                <BackIcon />
+                            </button>
+                        )}
+                        <div className="flex-1 font-medium text-sm">
+                            {isBrainCreation ? 'Create Brain Session' : 'Create Session'}
+                        </div>
                     </div>
                 </div>
-            </div>
+            )}
 
             <div className="flex-1 overflow-y-auto">
                 <div className="mx-auto w-full max-w-content">

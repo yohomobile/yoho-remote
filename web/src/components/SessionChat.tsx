@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
 import type { DecryptedMessage, ModelMode, ModelReasoningEffort, Session, SessionViewer, TypingUser } from '@/types/api'
@@ -105,6 +105,13 @@ export function SessionChat(props: {
     const navigate = useNavigate()
     const queryClient = useQueryClient()
     const controlsDisabled = !props.session.active
+
+    const { data: privacyData } = useQuery({
+        queryKey: ['session-privacy-mode', props.session.id],
+        queryFn: async () => props.api.getSessionPrivacyMode(props.session.id),
+        enabled: Boolean(props.session.id),
+    })
+    const privacyMode = privacyData?.privacyMode ?? false
     const normalizedCacheRef = useRef<Map<string, { source: DecryptedMessage; normalized: NormalizedMessage | NormalizedMessage[] | null }>>(new Map())
     const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
     const { abortSession, switchSession, setModelMode, setFastMode, deleteSession, refreshAccount, isPending } = useSessionActions(props.api, props.session.id)
@@ -362,6 +369,17 @@ export function SessionChat(props: {
         void navigator.clipboard.writeText(url)
     }, [props.session.id])
 
+    const handleBridgeTogglePrivacy = useCallback(async () => {
+        try {
+            const result = await props.api.setSessionPrivacyMode(props.session.id, !privacyMode)
+            queryClient.setQueryData(['session-privacy-mode', props.session.id], {
+                privacyMode: result.privacyMode
+            })
+        } catch (e) {
+            console.error('Failed to toggle privacy:', e)
+        }
+    }, [props.api, props.session.id, privacyMode, queryClient])
+
     const handleBridgeUploadImages = useCallback(async (images: string[]) => {
         for (const image of images) {
             try {
@@ -387,6 +405,17 @@ export function SessionChat(props: {
         }
     }, [props.api, props.session.id])
 
+    const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+    const handleBridgeTyping = useCallback(() => {
+        if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current)
+        }
+        typingTimeoutRef.current = setTimeout(() => {
+            props.api.sendTyping(props.session.id, '').catch(() => {})
+        }, 300)
+    }, [props.api, props.session.id])
+
     const handleBridgeRequestAutocomplete = useCallback(async (prefix: string) => {
         if (!props.autocompleteSuggestions) return
         const suggestions = await props.autocompleteSuggestions(prefix)
@@ -398,10 +427,19 @@ export function SessionChat(props: {
         })))
     }, [props.autocompleteSuggestions])
 
+    useEffect(() => {
+        return () => {
+            if (typingTimeoutRef.current) {
+                clearTimeout(typingTimeoutRef.current)
+            }
+        }
+    }, [])
+
     useFlutterBridgeSessionActions({
         sessionId: props.session.id,
         onSend: handleBridgeSendMessage,
         onAbort: handleAbort,
+        onTogglePrivacy: handleBridgeTogglePrivacy,
         onShare: handleBridgeShare,
         onRefreshAccount: handleRefreshAccount,
         onDelete: handleDeleteConfirm,
@@ -409,6 +447,7 @@ export function SessionChat(props: {
         onSetFastMode: handleFastModeChange,
         onSetReasoningLevel: handleBridgeSetReasoningLevel,
         onRequestAutocomplete: handleBridgeRequestAutocomplete,
+        onTyping: handleBridgeTyping,
         onUploadImages: handleBridgeUploadImages,
         onUploadFiles: handleBridgeUploadFiles,
     })
@@ -428,10 +467,10 @@ export function SessionChat(props: {
                 branch: props.session.metadata?.worktree?.branch ?? undefined,
             },
             viewers: viewersToBadgeUsers(props.viewers),
-            isPrivate: false,
+            isPrivate: privacyMode,
             isGenerating: props.session.thinking ?? false,
         })
-    }, [props.session, props.viewers])
+    }, [props.session, props.viewers, privacyMode])
 
     // Push composer state to Flutter
     useEffect(() => {

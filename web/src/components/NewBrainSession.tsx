@@ -22,6 +22,7 @@ import { useAppContext } from '@/lib/app-context'
 import { getMachineStatusLabel, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
 import { queryKeys } from '@/lib/query-keys'
 import { LOCAL_TOKEN_SOURCE, LOCAL_TOKEN_SOURCE_ID } from '@/lib/tokenSources'
+import { isFlutterApp } from '@/hooks/useFlutterApp'
 
 function sanitizeAgentType(agent: unknown): AgentType {
     return agent === 'codex' ? 'codex' : 'claude'
@@ -271,22 +272,24 @@ export function NewBrainSession(props: {
                 ) : null}
             </div>
 
-            <SessionAgentFields
-                agent={agent}
-                tokenSources={tokenSources}
-                tokenSourceId={tokenSourceId}
-                claudeModel={claudeModel}
-                codexModel={codexModel}
-                codexReasoningEffort={codexReasoningEffort}
-                onAgentChange={setAgent}
-                onTokenSourceChange={setTokenSourceId}
-                onClaudeModelChange={setClaudeModel}
-                onCodexModelChange={setCodexModel}
-                onCodexReasoningEffortChange={setCodexReasoningEffort}
-                isFormDisabled={isFormDisabled}
-                supportedAgents={supportedAgents}
-                getUnsupportedTitle={(agentType) => `No online machine supports ${agentType}`}
-            />
+            {!isFlutterApp() && (
+                <SessionAgentFields
+                    agent={agent}
+                    tokenSources={tokenSources}
+                    tokenSourceId={tokenSourceId}
+                    claudeModel={claudeModel}
+                    codexModel={codexModel}
+                    codexReasoningEffort={codexReasoningEffort}
+                    onAgentChange={setAgent}
+                    onTokenSourceChange={setTokenSourceId}
+                    onClaudeModelChange={setClaudeModel}
+                    onCodexModelChange={setCodexModel}
+                    onCodexReasoningEffortChange={setCodexReasoningEffort}
+                    isFormDisabled={isFormDisabled}
+                    supportedAgents={supportedAgents}
+                    getUnsupportedTitle={(agentType) => `No online machine supports ${agentType}`}
+                />
+            )}
 
             <div className="flex flex-col gap-3 px-3 py-3">
                 <div>

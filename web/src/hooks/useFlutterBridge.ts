@@ -53,6 +53,7 @@ function throttledPush<T>(name: string, delay = 100) {
 
 export const pushRouteChanged = throttledPush<{ path: string }>('routeChanged', 50)
 export const pushSessionsHeader = throttledPush<{
+  orgName?: string
   onlineUsers: { name: string; color: string }[]
   activeCount: number
   gitHash: string

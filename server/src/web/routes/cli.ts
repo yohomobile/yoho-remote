@@ -577,10 +577,13 @@ export function createCliRoutes(
             return { ok: false, status: 404, error: 'Session not found' }
         }
 
+        const metadataMachineId = typeof session.metadata === 'object' && session.metadata !== null
+            ? (session.metadata as Record<string, unknown>).machineId as string | undefined
+            : undefined
         return {
             ok: true,
             orgId: session.orgId ?? null,
-            machineId: session.machineId?.trim() || null,
+            machineId: session.machineId?.trim() || metadataMachineId?.trim() || null,
         }
     }
 
