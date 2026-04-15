@@ -1051,8 +1051,11 @@ export function normalizeDecryptedMessage(message: DecryptedMessage): Normalized
         // If normalizeAgentRecord explicitly returned null for a known output
         // type (system status, filtered events, etc.), suppress the message
         // instead of falling back to raw JSON stringify.
-        if (!normalized && isObject(record.content) && (record.content as Record<string, unknown>).type === 'output') {
-            return null
+        if (!normalized && isObject(record.content)) {
+            const contentType = (record.content as Record<string, unknown>).type
+            if (contentType === 'output' || contentType === 'event') {
+                return null
+            }
         }
         if (!normalized) {
             return {

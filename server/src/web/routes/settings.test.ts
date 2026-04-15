@@ -22,13 +22,12 @@ describe('createSettingsRoutes projects', () => {
         ])
     })
 
-    it('stores created and updated projects with machine and workspace-group scope', async () => {
+    it('stores created and updated projects with machineId', async () => {
         const addCalls: Array<{
             machineId: string | null | undefined
             orgId: string | null | undefined
-            workspaceGroupId: string | null | undefined
         }> = []
-        const updateCalls: Array<{ machineId: string | null | undefined; workspaceGroupId: string | null | undefined }> = []
+        const updateCalls: Array<{ machineId: string | null | undefined }> = []
         const store = {
             getProjects: async () => [],
             getProject: async () => ({
@@ -36,35 +35,32 @@ describe('createSettingsRoutes projects', () => {
                 name: 'YohoRemote',
                 path: '/home/workspaces/repos/yoho-remote',
                 description: null,
-                machineId: null,
-                workspaceGroupId: 'workspace-a',
+                machineId: 'machine-a',
                 orgId: 'org-a',
                 createdAt: 1,
                 updatedAt: 1,
             }),
-            addProject: async (_name: string, _path: string, _description?: string, machineId?: string | null, orgId?: string | null, workspaceGroupId?: string | null) => {
-                addCalls.push({ machineId, orgId, workspaceGroupId })
+            addProject: async (_name: string, _path: string, _description?: string, machineId?: string | null, orgId?: string | null) => {
+                addCalls.push({ machineId, orgId })
                 return {
                     id: 'project-1',
                     name: 'YohoRemote',
                     path: '/home/workspaces/repos/yoho-remote',
                     description: null,
-                    machineId: null,
-                    workspaceGroupId,
+                    machineId,
                     orgId,
                     createdAt: 1,
                     updatedAt: 1,
                 }
             },
-            updateProject: async (_id: string, fields: { machineId?: string | null; workspaceGroupId?: string | null }) => {
-                updateCalls.push({ machineId: fields.machineId, workspaceGroupId: fields.workspaceGroupId })
+            updateProject: async (_id: string, fields: { machineId?: string | null }) => {
+                updateCalls.push({ machineId: fields.machineId })
                 return {
                     id: 'project-1',
                     name: 'YohoRemote',
                     path: '/home/workspaces/repos/yoho-remote',
                     description: null,
-                    machineId: null,
-                    workspaceGroupId: fields.workspaceGroupId ?? null,
+                    machineId: fields.machineId ?? 'machine-a',
                     orgId: 'org-a',
                     createdAt: 1,
                     updatedAt: 2,
@@ -92,67 +88,16 @@ describe('createSettingsRoutes projects', () => {
             body: JSON.stringify({
                 name: 'YohoRemote',
                 path: '/home/workspaces/repos/yoho-remote',
-                workspaceGroupId: 'workspace-a'
             }),
         })
         expect(updateResponse.status).toBe(200)
 
         expect(addCalls).toEqual([
-            { machineId: 'machine-a', orgId: 'org-a', workspaceGroupId: null },
+            { machineId: 'machine-a', orgId: 'org-a' },
         ])
         expect(updateCalls).toEqual([
-            { machineId: undefined, workspaceGroupId: 'workspace-a' },
+            { machineId: undefined },
         ])
-    })
-
-    it('rejects shared projects without a workspace group', async () => {
-        let addCalled = false
-        let updateCalled = false
-        const store = {
-            getProject: async () => ({
-                id: 'project-1',
-                name: 'YohoRemote',
-                path: '/home/workspaces/repos/yoho-remote',
-                description: null,
-                machineId: null,
-                workspaceGroupId: null,
-                orgId: 'org-a',
-                createdAt: 1,
-                updatedAt: 1,
-            }),
-            addProject: async () => {
-                addCalled = true
-                return null
-            },
-            updateProject: async () => {
-                updateCalled = true
-                return null
-            },
-        }
-
-        const app = new Hono()
-        app.route('/api', createSettingsRoutes(store as any))
-
-        const createResponse = await app.request('/api/settings/projects?orgId=org-a', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-                name: 'YohoRemote',
-                path: '/home/workspaces/repos/yoho-remote',
-            }),
-        })
-        expect(createResponse.status).toBe(400)
-
-        const updateResponse = await app.request('/api/settings/projects/project-1?orgId=org-a', {
-            method: 'PUT',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-                description: 'rename without scope change'
-            }),
-        })
-        expect(updateResponse.status).toBe(400)
-        expect(addCalled).toBe(false)
-        expect(updateCalled).toBe(false)
     })
 
     it('refreshes machine-local project lists using the affected machine scope', async () => {
@@ -168,7 +113,6 @@ describe('createSettingsRoutes projects', () => {
                 path: '/home/workspaces/repos/yoho-remote',
                 description: null,
                 machineId: 'machine-a',
-                workspaceGroupId: null,
                 orgId: 'org-a',
                 createdAt: 1,
                 updatedAt: 1,
@@ -179,7 +123,6 @@ describe('createSettingsRoutes projects', () => {
                 path: '/home/workspaces/repos/yoho-remote',
                 description: null,
                 machineId: 'machine-a',
-                workspaceGroupId: null,
                 orgId: 'org-a',
                 createdAt: 1,
                 updatedAt: 1,
@@ -190,7 +133,6 @@ describe('createSettingsRoutes projects', () => {
                 path: '/home/workspaces/repos/yoho-remote',
                 description: null,
                 machineId: 'machine-a',
-                workspaceGroupId: null,
                 orgId: 'org-a',
                 createdAt: 1,
                 updatedAt: 2,

@@ -10,33 +10,8 @@ import { useAppContext } from '@/lib/app-context'
 import { getMachineTitle, getMobileSessionAgentSummary } from '@/lib/machines'
 import { queryKeys } from '@/lib/query-keys'
 import { formatSessionModelLabel } from '@/lib/sessionModelLabel'
+import { matchSessionToProject } from '@/lib/projectMatching'
 import { useMachines } from '@/hooks/queries/useMachines'
-
-function getSessionPath(session: Session): string | null {
-    return session.metadata?.worktree?.basePath ?? session.metadata?.path ?? null
-}
-
-function matchSessionToProject(session: Session, projects: Project[]): Project | null {
-    const sessionPath = getSessionPath(session)
-    if (!sessionPath) return null
-    if (!Array.isArray(projects)) return null
-
-    // Exact match first
-    for (const project of projects) {
-        if (project.path === sessionPath) {
-            return project
-        }
-    }
-
-    // Check if session path starts with project path (for worktrees)
-    for (const project of projects) {
-        if (sessionPath.startsWith(project.path + '/') || sessionPath.startsWith(project.path + '-')) {
-            return project
-        }
-    }
-
-    return null
-}
 
 function getSessionTitle(session: Session): string {
     if (session.metadata?.name) {
@@ -308,8 +283,9 @@ export function SessionHeader(props: {
 
     // 查询项目列表
     const { data: projectsData } = useQuery({
-        queryKey: ['projects', currentOrgId],
-        queryFn: async () => api.getProjects(currentOrgId)
+        queryKey: ['projects', currentOrgId, props.session.metadata?.machineId ?? null],
+        queryFn: async () => api.getProjects(currentOrgId, props.session.metadata?.machineId ?? null),
+        enabled: Boolean(props.session.metadata?.machineId)
     })
     const projects = Array.isArray(projectsData?.projects) ? projectsData.projects : []
     const project = useMemo(() => matchSessionToProject(props.session, projects), [props.session, projects])

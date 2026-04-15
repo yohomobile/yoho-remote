@@ -5,34 +5,9 @@ import { LoadingState } from './LoadingState'
 import { useVibingMessage } from '@/hooks/useVibingMessage'
 import { getMachineTitle } from '@/lib/machines'
 import { formatSessionModelLabel } from '@/lib/sessionModelLabel'
+import { matchSessionToProject } from '@/lib/projectMatching'
 import { normalizeOwnerFilter, type ArchiveFilter, type OwnerFilter } from '@/lib/session-filters'
 import { isLicenseTermination, getLicenseTerminationLabel } from '@/lib/license'
-
-function getSessionPath(session: SessionSummary): string | null {
-    return session.metadata?.worktree?.basePath ?? session.metadata?.path ?? null
-}
-
-function matchSessionToProject(session: SessionSummary, projects: Project[]): Project | null {
-    const sessionPath = getSessionPath(session)
-    if (!sessionPath) return null
-    if (!Array.isArray(projects)) return null
-
-    // Exact match first
-    for (const project of projects) {
-        if (project.path === sessionPath) {
-            return project
-        }
-    }
-
-    // Check if session path starts with project path (for worktrees)
-    for (const project of projects) {
-        if (sessionPath.startsWith(project.path + '/') || sessionPath.startsWith(project.path + '-')) {
-            return project
-        }
-    }
-
-    return null
-}
 
 // Sort sessions flat
 function sortSessions(sessions: SessionSummary[]): SessionSummary[] {

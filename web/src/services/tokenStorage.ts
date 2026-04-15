@@ -316,6 +316,11 @@ export async function saveTokens(data: {
 
     await saveTokenData(tokenData)
 
+    // Sync to Flutter native secure storage
+    if ((window as any).__YOHO_FLUTTER__ && (window as any).flutter_inappwebview) {
+        (window as any).flutter_inappwebview.callHandler('saveTokens', tokenData).catch(() => {})
+    }
+
     // Update sync cache
     syncCache.accessToken = data.accessToken
     syncCache.refreshToken = data.refreshToken
@@ -328,6 +333,11 @@ export async function saveTokens(data: {
  */
 export async function clearTokens(): Promise<void> {
     await clearTokenData()
+
+    // Clear from Flutter native secure storage
+    if ((window as any).__YOHO_FLUTTER__ && (window as any).flutter_inappwebview) {
+        (window as any).flutter_inappwebview.callHandler('clearTokens').catch(() => {})
+    }
 
     // Clear sync cache
     syncCache.accessToken = null

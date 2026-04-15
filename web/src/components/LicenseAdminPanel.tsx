@@ -9,7 +9,6 @@ type LicenseFormState = {
     expiresAt: string
     maxMembers: string
     maxConcurrentSessions: string
-    status: LicenseStatus
     note: string
 }
 
@@ -28,7 +27,6 @@ function createDefaultForm(): LicenseFormState {
         expiresAt: formatDateInput(expires.getTime()),
         maxMembers: '5',
         maxConcurrentSessions: '',
-        status: 'active',
         note: '',
     }
 }
@@ -39,7 +37,6 @@ function createFormFromLicense(license: AdminLicense): LicenseFormState {
         expiresAt: formatDateInput(license.expiresAt),
         maxMembers: String(license.maxMembers),
         maxConcurrentSessions: license.maxConcurrentSessions === null ? '' : String(license.maxConcurrentSessions),
-        status: license.status,
         note: license.note ?? '',
     }
 }
@@ -52,16 +49,26 @@ function parseDateEnd(value: string): number {
     return new Date(`${value}T23:59:59.999Z`).getTime()
 }
 
-function formatDateDisplay(timestamp: number): string {
+function formatDateShort(timestamp: number): string {
     return new Date(timestamp).toLocaleDateString('en-US', {
-        year: 'numeric',
         month: 'short',
         day: 'numeric',
+        year: 'numeric',
     })
+}
+
+function daysUntil(timestamp: number): number {
+    return Math.ceil((timestamp - Date.now()) / DAY_MS)
 }
 
 function findOrgName(orgs: Organization[], orgId: string): string {
     return orgs.find(org => org.id === orgId)?.name ?? orgId
+}
+
+const statusColors: Record<LicenseStatus, string> = {
+    active: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+    suspended: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+    expired: 'bg-red-500/15 text-red-600 dark:text-red-400',
 }
 
 export function LicenseAdminPanel({
@@ -74,6 +81,7 @@ export function LicenseAdminPanel({
     const queryClient = useQueryClient()
     const [selectedOrgId, setSelectedOrgId] = useState<string>(currentOrgId ?? '')
     const [form, setForm] = useState<LicenseFormState>(() => createDefaultForm())
+    const [editing, setEditing] = useState(false)
     const [message, setMessage] = useState<string | null>(null)
 
     const { data: orgOptionsData, isLoading: orgOptionsLoading } = useQuery({
@@ -115,6 +123,7 @@ export function LicenseAdminPanel({
         if (!selectedOrgId) return
         const existing = licensesByOrgId.get(selectedOrgId)
         setForm(existing ? createFormFromLicense(existing) : createDefaultForm())
+        setEditing(!existing)
         setMessage(null)
     }, [licensesByOrgId, selectedOrgId])
 
@@ -132,7 +141,6 @@ export function LicenseAdminPanel({
         mutationFn: async () => {
             if (!api) throw new Error('API unavailable')
             if (!selectedOrgId) throw new Error('Select an organization first')
-
             return await api.upsertLicense({
                 orgId: selectedOrgId,
                 startsAt: parseDateStart(form.startsAt),
@@ -141,12 +149,13 @@ export function LicenseAdminPanel({
                 maxConcurrentSessions: form.maxConcurrentSessions.trim()
                     ? Number(form.maxConcurrentSessions)
                     : null,
-                status: form.status,
+                status: selectedLicense?.status ?? 'active',
                 note: form.note.trim() ? form.note.trim() : null,
             })
         },
         onSuccess: async () => {
             await invalidateData(selectedOrgId)
+            setEditing(false)
             setMessage(`Saved license for ${findOrgName(orgOptions, selectedOrgId)}`)
         },
     })
@@ -184,194 +193,234 @@ export function LicenseAdminPanel({
 
     return (
         <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
-            <div className="px-3 py-2 border-b border-[var(--app-divider)]">
-                <h3 className="text-sm font-medium">License Admin</h3>
-                <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
-                    Manage organization licenses from the admin org.
-                </p>
+            {/* Header with org selector */}
+            <div className="flex items-center gap-3 px-3 py-2 border-b border-[var(--app-divider)]">
+                <h3 className="text-sm font-medium shrink-0">Licenses</h3>
+                <select
+                    value={selectedOrgId}
+                    onChange={(event) => setSelectedOrgId(event.target.value)}
+                    className="ml-auto min-w-0 max-w-[200px] rounded-md border border-[var(--app-divider)] bg-[var(--app-bg)] px-2 py-1 text-xs"
+                    disabled={orgOptionsLoading || isBusy}
+                >
+                    {orgOptions.length === 0 && <option value="">No organizations</option>}
+                    {orgOptions.map((org) => (
+                        <option key={org.id} value={org.id}>
+                            {org.name}
+                        </option>
+                    ))}
+                </select>
             </div>
 
             <div className="p-3 space-y-3">
-                <div className="grid gap-3 md:grid-cols-2">
-                    <label className="space-y-1">
-                        <span className="text-xs text-[var(--app-hint)]">Target organization</span>
-                        <select
-                            value={selectedOrgId}
-                            onChange={(event) => setSelectedOrgId(event.target.value)}
-                            className="w-full rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-sm"
-                            disabled={orgOptionsLoading || isBusy}
-                        >
-                            {orgOptions.length === 0 && <option value="">No organizations</option>}
-                            {orgOptions.map((org) => (
-                                <option key={org.id} value={org.id}>
-                                    {org.name} ({org.slug})
-                                </option>
-                            ))}
-                        </select>
-                    </label>
+                {/* Selected license detail or create form */}
+                {selectedLicense && !editing ? (
+                    <div className="rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] p-3">
+                        <div className="flex items-start justify-between gap-2">
+                            <div>
+                                <div className="text-sm font-medium">{selectedLicense.orgName}</div>
+                                <div className="text-[11px] text-[var(--app-hint)]">{selectedLicense.orgSlug}</div>
+                            </div>
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${statusColors[selectedLicense.status]}`}>
+                                {selectedLicense.status}
+                            </span>
+                        </div>
 
-                    <div className="rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-xs">
-                        {selectedLicense ? (
-                            <div className="space-y-1">
-                                <div className="font-medium">
-                                    Current license: {selectedLicense.orgName} ({selectedLicense.orgSlug})
-                                </div>
-                                <div className="text-[var(--app-hint)]">
-                                    {selectedLicense.status} · {formatDateDisplay(selectedLicense.startsAt)} - {formatDateDisplay(selectedLicense.expiresAt)}
+                        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                            <div>
+                                <span className="text-[var(--app-hint)]">Period</span>
+                                <div>{formatDateShort(selectedLicense.startsAt)} — {formatDateShort(selectedLicense.expiresAt)}</div>
+                                {selectedLicense.status === 'active' && (
+                                    <div className={`text-[11px] ${daysUntil(selectedLicense.expiresAt) <= 7 ? 'text-amber-500' : 'text-[var(--app-hint)]'}`}>
+                                        {daysUntil(selectedLicense.expiresAt) > 0
+                                            ? `${daysUntil(selectedLicense.expiresAt)}d remaining`
+                                            : 'Expired'}
+                                    </div>
+                                )}
+                            </div>
+                            <div>
+                                <span className="text-[var(--app-hint)]">Limits</span>
+                                <div>{selectedLicense.maxMembers} members</div>
+                                <div className="text-[11px] text-[var(--app-hint)]">
+                                    {selectedLicense.maxConcurrentSessions === null ? 'Unlimited' : selectedLicense.maxConcurrentSessions} sessions
                                 </div>
                             </div>
-                        ) : (
-                            <div className="text-[var(--app-hint)]">
-                                No license exists for the selected organization yet.
-                            </div>
+                        </div>
+
+                        {selectedLicense.note && (
+                            <div className="mt-2 text-xs text-[var(--app-hint)] italic">{selectedLicense.note}</div>
                         )}
-                    </div>
-                </div>
 
-                <div className="grid gap-3 md:grid-cols-2">
-                    <label className="space-y-1">
-                        <span className="text-xs text-[var(--app-hint)]">Starts on</span>
-                        <input
-                            type="date"
-                            value={form.startsAt}
-                            onChange={(event) => setForm(current => ({ ...current, startsAt: event.target.value }))}
-                            className="w-full rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-sm"
-                            disabled={isBusy}
-                        />
-                    </label>
-                    <label className="space-y-1">
-                        <span className="text-xs text-[var(--app-hint)]">Expires on</span>
-                        <input
-                            type="date"
-                            value={form.expiresAt}
-                            onChange={(event) => setForm(current => ({ ...current, expiresAt: event.target.value }))}
-                            className="w-full rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-sm"
-                            disabled={isBusy}
-                        />
-                    </label>
-                    <label className="space-y-1">
-                        <span className="text-xs text-[var(--app-hint)]">Max members</span>
-                        <input
-                            type="number"
-                            min="1"
-                            value={form.maxMembers}
-                            onChange={(event) => setForm(current => ({ ...current, maxMembers: event.target.value }))}
-                            className="w-full rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-sm"
-                            disabled={isBusy}
-                        />
-                    </label>
-                    <label className="space-y-1">
-                        <span className="text-xs text-[var(--app-hint)]">Max concurrent sessions</span>
-                        <input
-                            type="number"
-                            min="1"
-                            value={form.maxConcurrentSessions}
-                            onChange={(event) => setForm(current => ({ ...current, maxConcurrentSessions: event.target.value }))}
-                            placeholder="Leave blank for unlimited"
-                            className="w-full rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-sm"
-                            disabled={isBusy}
-                        />
-                    </label>
-                    <label className="space-y-1 md:col-span-2">
-                        <span className="text-xs text-[var(--app-hint)]">Status</span>
-                        <select
-                            value={form.status}
-                            onChange={(event) => setForm(current => ({ ...current, status: event.target.value as LicenseStatus }))}
-                            className="w-full rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-sm"
-                            disabled={isBusy}
-                        >
-                            <option value="active">active</option>
-                            <option value="suspended">suspended</option>
-                            <option value="expired">expired</option>
-                        </select>
-                    </label>
-                    <label className="space-y-1 md:col-span-2">
-                        <span className="text-xs text-[var(--app-hint)]">Note</span>
-                        <textarea
-                            value={form.note}
-                            onChange={(event) => setForm(current => ({ ...current, note: event.target.value }))}
-                            rows={3}
-                            className="w-full rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] px-3 py-2 text-sm"
-                            disabled={isBusy}
-                        />
-                    </label>
-                </div>
-
-                {message && <div className="text-xs text-emerald-600 dark:text-emerald-400">{message}</div>}
-                {errorMessage && <div className="text-xs text-red-500">{errorMessage}</div>}
-
-                <div className="flex flex-wrap gap-2">
-                    <button
-                        type="button"
-                        onClick={() => void saveMutation.mutateAsync()}
-                        disabled={isBusy || !selectedOrgId}
-                        className="rounded-lg bg-gradient-to-r from-indigo-500 to-purple-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
-                    >
-                        {saveMutation.isPending ? 'Saving...' : selectedLicense ? 'Update License' : 'Create License'}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => void statusMutation.mutateAsync('active')}
-                        disabled={isBusy || !selectedLicense || selectedLicense.status === 'active'}
-                        className="rounded-lg border border-[var(--app-divider)] px-3 py-2 text-sm disabled:opacity-50"
-                    >
-                        Activate
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => void statusMutation.mutateAsync('suspended')}
-                        disabled={isBusy || !selectedLicense || selectedLicense.status === 'suspended'}
-                        className="rounded-lg border border-[var(--app-divider)] px-3 py-2 text-sm disabled:opacity-50"
-                    >
-                        Suspend
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            if (!selectedLicense) return
-                            if (!confirm(`Delete license for ${selectedLicense.orgName}?`)) return
-                            void deleteMutation.mutateAsync()
-                        }}
-                        disabled={isBusy || !selectedLicense}
-                        className="rounded-lg border border-red-500/30 px-3 py-2 text-sm text-red-600 disabled:opacity-50"
-                    >
-                        Delete
-                    </button>
-                </div>
-
-                <div className="rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] overflow-hidden">
-                    <div className="px-3 py-2 border-b border-[var(--app-divider)] text-xs font-semibold uppercase tracking-wide text-[var(--app-hint)]">
-                        Existing licenses
-                    </div>
-                    <div className="divide-y divide-[var(--app-divider)]">
-                        {licensesLoading && (
-                            <div className="px-3 py-3 text-sm text-[var(--app-hint)]">Loading licenses...</div>
-                        )}
-                        {!licensesLoading && licenses.length === 0 && (
-                            <div className="px-3 py-3 text-sm text-[var(--app-hint)]">No licenses issued yet.</div>
-                        )}
-                        {licenses.map((license) => (
+                        {/* Actions */}
+                        <div className="mt-3 flex items-center gap-2 pt-2 border-t border-[var(--app-divider)]">
                             <button
-                                key={license.id}
                                 type="button"
-                                onClick={() => setSelectedOrgId(license.orgId)}
-                                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-[var(--app-subtle-bg)]"
+                                onClick={() => setEditing(true)}
+                                className="rounded-md border border-[var(--app-divider)] px-2.5 py-1 text-xs hover:bg-[var(--app-subtle-bg)] transition-colors"
+                                disabled={isBusy}
                             >
-                                <div className="min-w-0">
-                                    <div className="truncate text-sm font-medium">
-                                        {license.orgName}
-                                    </div>
-                                    <div className="truncate text-[11px] text-[var(--app-hint)]">
-                                        {license.orgSlug} · {formatDateDisplay(license.expiresAt)}
-                                    </div>
-                                </div>
-                                <div className="shrink-0 rounded-full border border-[var(--app-divider)] px-2 py-0.5 text-[10px] font-semibold uppercase">
-                                    {license.status}
-                                </div>
+                                Edit
                             </button>
-                        ))}
+                            {selectedLicense.status !== 'active' && (
+                                <button
+                                    type="button"
+                                    onClick={() => void statusMutation.mutateAsync('active')}
+                                    className="rounded-md bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                                    disabled={isBusy}
+                                >
+                                    Activate
+                                </button>
+                            )}
+                            {selectedLicense.status === 'active' && (
+                                <button
+                                    type="button"
+                                    onClick={() => void statusMutation.mutateAsync('suspended')}
+                                    className="rounded-md bg-amber-500/10 px-2.5 py-1 text-xs text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-colors"
+                                    disabled={isBusy}
+                                >
+                                    Suspend
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (!confirm(`Delete license for ${selectedLicense.orgName}?`)) return
+                                    void deleteMutation.mutateAsync()
+                                }}
+                                className="ml-auto rounded-md px-2.5 py-1 text-xs text-red-500 hover:bg-red-500/10 transition-colors"
+                                disabled={isBusy}
+                            >
+                                Delete
+                            </button>
+                        </div>
                     </div>
-                </div>
+                ) : selectedOrgId ? (
+                    <div className="rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] p-3 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                            <div className="text-xs font-medium">
+                                {selectedLicense ? `Edit — ${selectedLicense.orgName}` : `New license — ${findOrgName(orgOptions, selectedOrgId)}`}
+                            </div>
+                            {selectedLicense && (
+                                <button
+                                    type="button"
+                                    onClick={() => setEditing(false)}
+                                    className="text-[11px] text-[var(--app-hint)] hover:text-[var(--app-text)] transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                            <label className="space-y-0.5">
+                                <span className="text-[11px] text-[var(--app-hint)]">Start</span>
+                                <input
+                                    type="date"
+                                    value={form.startsAt}
+                                    onChange={(e) => setForm(c => ({ ...c, startsAt: e.target.value }))}
+                                    className="w-full rounded-md border border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-2 py-1.5 text-xs"
+                                    disabled={isBusy}
+                                />
+                            </label>
+                            <label className="space-y-0.5">
+                                <span className="text-[11px] text-[var(--app-hint)]">Expiry</span>
+                                <input
+                                    type="date"
+                                    value={form.expiresAt}
+                                    onChange={(e) => setForm(c => ({ ...c, expiresAt: e.target.value }))}
+                                    className="w-full rounded-md border border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-2 py-1.5 text-xs"
+                                    disabled={isBusy}
+                                />
+                            </label>
+                            <label className="space-y-0.5">
+                                <span className="text-[11px] text-[var(--app-hint)]">Max members</span>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    value={form.maxMembers}
+                                    onChange={(e) => setForm(c => ({ ...c, maxMembers: e.target.value }))}
+                                    className="w-full rounded-md border border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-2 py-1.5 text-xs"
+                                    disabled={isBusy}
+                                />
+                            </label>
+                            <label className="space-y-0.5">
+                                <span className="text-[11px] text-[var(--app-hint)]">Concurrent sessions</span>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    value={form.maxConcurrentSessions}
+                                    onChange={(e) => setForm(c => ({ ...c, maxConcurrentSessions: e.target.value }))}
+                                    placeholder="Unlimited"
+                                    className="w-full rounded-md border border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-2 py-1.5 text-xs"
+                                    disabled={isBusy}
+                                />
+                            </label>
+                        </div>
+                        <label className="block space-y-0.5">
+                            <span className="text-[11px] text-[var(--app-hint)]">Note</span>
+                            <input
+                                type="text"
+                                value={form.note}
+                                onChange={(e) => setForm(c => ({ ...c, note: e.target.value }))}
+                                placeholder="Optional"
+                                className="w-full rounded-md border border-[var(--app-divider)] bg-[var(--app-subtle-bg)] px-2 py-1.5 text-xs"
+                                disabled={isBusy}
+                            />
+                        </label>
+                        <button
+                            type="button"
+                            onClick={() => void saveMutation.mutateAsync()}
+                            disabled={isBusy || !selectedOrgId}
+                            className="w-full rounded-md bg-gradient-to-r from-indigo-500 to-purple-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                        >
+                            {saveMutation.isPending ? 'Saving...' : selectedLicense ? 'Update' : 'Create'}
+                        </button>
+                    </div>
+                ) : null}
+
+                {message && <div className="text-[11px] text-emerald-600 dark:text-emerald-400">{message}</div>}
+                {errorMessage && <div className="text-[11px] text-red-500">{errorMessage}</div>}
+
+                {/* License list */}
+                {licenses.length > 0 && (
+                    <div className="space-y-1">
+                        <div className="text-[11px] font-medium text-[var(--app-hint)] uppercase tracking-wider px-0.5">
+                            All licenses ({licenses.length})
+                        </div>
+                        <div className="rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] divide-y divide-[var(--app-divider)] overflow-hidden">
+                            {licenses.map((license) => {
+                                const isSelected = license.orgId === selectedOrgId
+                                const days = daysUntil(license.expiresAt)
+                                return (
+                                    <button
+                                        key={license.id}
+                                        type="button"
+                                        onClick={() => { setSelectedOrgId(license.orgId); setEditing(false) }}
+                                        className={`flex w-full items-center gap-3 px-3 py-2 text-left transition-colors ${isSelected ? 'bg-[var(--app-subtle-bg)]' : 'hover:bg-[var(--app-subtle-bg)]/50'}`}
+                                    >
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-1.5">
+                                                <span className={`truncate text-xs ${isSelected ? 'font-semibold' : 'font-medium'}`}>
+                                                    {license.orgName}
+                                                </span>
+                                                <span className={`shrink-0 rounded-full px-1.5 py-px text-[9px] font-semibold uppercase leading-tight ${statusColors[license.status]}`}>
+                                                    {license.status}
+                                                </span>
+                                            </div>
+                                            <div className="text-[11px] text-[var(--app-hint)]">
+                                                {license.maxMembers} members
+                                                {' · '}
+                                                {days > 0 ? `${days}d left` : 'expired'}
+                                            </div>
+                                        </div>
+                                    </button>
+                                )
+                            })}
+                        </div>
+                    </div>
+                )}
+                {licensesLoading && (
+                    <div className="text-xs text-[var(--app-hint)]">Loading...</div>
+                )}
             </div>
         </div>
     )

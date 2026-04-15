@@ -415,6 +415,82 @@ function mergeAgentReasoningBlocks(blocks: ChatBlock[]): ChatBlock[] {
     return merged
 }
 
+function mergeAgentBrowserBlocks(blocks: ChatBlock[]): ChatBlock[] {
+    const merged: ChatBlock[] = []
+    let runStart = -1
+
+    function isAgentBrowserBlock(block: ChatBlock): boolean {
+        if (block.kind !== 'tool-call') return false
+        if (block.tool.name !== 'Bash') return false
+        const command =
+            typeof block.tool.input === 'object' && block.tool.input !== null
+                ? (block.tool.input as Record<string, unknown>).command
+                : undefined
+        return typeof command === 'string' && command.trim().startsWith('agent-browser')
+    }
+
+    function flushRun() {
+        if (runStart === -1) return
+        const run = merged.slice(runStart) as ToolCallBlock[]
+        merged.length = runStart
+        const first = run[0]
+        const last = run[run.length - 1]
+
+        let state: ChatToolCall['state'] = 'completed'
+        let completedAt: number | null = null
+        for (const b of run) {
+            if (b.tool.state === 'error') {
+                state = 'error'
+                break
+            }
+            if (b.tool.state === 'running' || b.tool.state === 'pending') {
+                state = 'running'
+            }
+        }
+        if (state === 'completed') {
+            for (const b of run) {
+                if (b.tool.completedAt && (!completedAt || b.tool.completedAt > completedAt)) {
+                    completedAt = b.tool.completedAt
+                }
+            }
+        }
+
+        merged.push({
+            kind: 'tool-call',
+            id: `browser-agent:${first.id}`,
+            localId: first.localId,
+            createdAt: first.createdAt,
+            tool: {
+                id: `browser-agent:${first.tool.id}`,
+                name: 'BrowserAgent',
+                state,
+                input: { command: 'agent-browser' },
+                createdAt: first.tool.createdAt,
+                startedAt: first.tool.startedAt,
+                completedAt,
+                description: null
+            },
+            children: run,
+            meta: first.meta
+        })
+        runStart = -1
+    }
+
+    for (const block of blocks) {
+        if (isAgentBrowserBlock(block)) {
+            if (runStart === -1) {
+                runStart = merged.length
+            }
+            merged.push(block)
+        } else {
+            flushRun()
+            merged.push(block)
+        }
+    }
+    flushRun()
+    return merged
+}
+
 function ensureToolBlock(
     blocks: ChatBlock[],
     toolBlocksById: Map<string, ToolCallBlock>,
@@ -740,7 +816,7 @@ function reduceTimeline(
     }
 
     return {
-        blocks: mergeAgentReasoningBlocks(mergeAgentTextBlocks(dedupeResultTextBlocks(mergeCliOutputBlocks(blocks)))),
+        blocks: mergeAgentReasoningBlocks(mergeAgentTextBlocks(dedupeResultTextBlocks(mergeAgentBrowserBlocks(mergeCliOutputBlocks(blocks))))),
         toolBlocksById,
         hasReadyEvent
     }

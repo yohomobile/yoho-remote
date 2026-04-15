@@ -20,9 +20,9 @@ export type FeishuBrainInitPromptOptions = InitPromptOptions & {
 
 /** Workspace rules shared between child and brain prompts */
 function workspaceBlock(projectRoot?: string | null): string {
-    return `Yoho Remote 维护 Project 列表，每个 Project 对应一个共享代码目录（path），默认按组织共享。
+    return `Yoho Remote 维护 Project 列表，每个 Project 对应机器上的一个代码目录（path），绑定到具体机器。
 ${projectRoot ? `\n- 当前会话工作目录：${projectRoot}` : ''}
-- \`mcp__yoho_remote__project_list\` 查看所有 Project（名称、路径、所属机器）
+- \`mcp__yoho_remote__project_list\` 查看当前机器的所有 Project（名称、路径）
 - 可切换到其他 Project 目录工作
 - \`project_create\` / \`project_update\` / \`project_delete\` 管理 Project 列表`
 }

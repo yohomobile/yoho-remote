@@ -140,14 +140,13 @@ export interface IStore {
     // === Project 操作 ===
     getProjects(machineId?: string | null, orgId?: string | null): Promise<StoredProject[]>
     getProject(id: string): Promise<StoredProject | null>
-    addProject(name: string, path: string, description?: string, machineId?: string | null, orgId?: string | null, workspaceGroupId?: string | null): Promise<StoredProject | null>
+    addProject(name: string, path: string, description?: string, machineId?: string | null, orgId?: string | null): Promise<StoredProject | null>
     updateProject(id: string, fields: {
         name?: string
         path?: string
         description?: string | null
         machineId?: string | null
         orgId?: string | null
-        workspaceGroupId?: string | null
     }): Promise<StoredProject | null>
     removeProject(id: string): Promise<boolean>
 

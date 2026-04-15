@@ -18,7 +18,6 @@ const addProjectSchema = z.object({
     path: z.string().min(1).max(500),
     description: z.string().max(500).optional(),
     machineId: z.string().nullable().optional(),
-    workspaceGroupId: z.string().nullable().optional()
 })
 
 const updateProjectSchema = z.object({
@@ -26,7 +25,6 @@ const updateProjectSchema = z.object({
     path: z.string().min(1).max(500).optional(),
     description: z.string().max(500).nullable().optional(),
     machineId: z.string().nullable().optional(),
-    workspaceGroupId: z.string().nullable().optional()
 })
 
 const setRolePromptSchema = z.object({
@@ -82,9 +80,8 @@ export function createSettingsRoutes(
         }
 
         const machineId = normalizeOptionalId(parsed.data.machineId)
-        const workspaceGroupId = machineId ? null : normalizeOptionalId(parsed.data.workspaceGroupId)
-        if (!machineId && !workspaceGroupId) {
-            return c.json({ error: 'Shared projects require a workspaceGroupId. Configure a workspace group or create the project as machine-local.' }, 400)
+        if (!machineId) {
+            return c.json({ error: 'machineId is required' }, 400)
         }
 
         const orgId = c.req.query('orgId')
@@ -94,7 +91,6 @@ export function createSettingsRoutes(
             parsed.data.description,
             machineId,
             orgId,
-            workspaceGroupId
         )
         if (!project) {
             return c.json({ error: 'Failed to add project. Path may already exist.' }, 400)
@@ -124,14 +120,6 @@ export function createSettingsRoutes(
         const effectiveMachineId = parsed.data.machineId !== undefined
             ? normalizeOptionalId(parsed.data.machineId)
             : existing.machineId
-        const effectiveWorkspaceGroupId = effectiveMachineId
-            ? null
-            : parsed.data.workspaceGroupId !== undefined
-                ? normalizeOptionalId(parsed.data.workspaceGroupId)
-                : existing.workspaceGroupId
-        if (!effectiveMachineId && !effectiveWorkspaceGroupId) {
-            return c.json({ error: 'Shared projects require a workspaceGroupId. Configure a workspace group before saving.' }, 400)
-        }
 
         const project = await store.updateProject(id, {
             name: parsed.data.name,
@@ -139,7 +127,6 @@ export function createSettingsRoutes(
             description: parsed.data.description,
             machineId: parsed.data.machineId === undefined ? undefined : effectiveMachineId,
             orgId,
-            workspaceGroupId: parsed.data.workspaceGroupId === undefined ? undefined : effectiveWorkspaceGroupId,
         })
         if (!project) {
             return c.json({ error: 'Project not found or path already exists' }, 404)

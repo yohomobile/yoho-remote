@@ -19,13 +19,13 @@ describe('buildInitPrompt', () => {
         expect(prompt).toContain('mcp__skill__search')
     })
 
-    it('renders shared-directory guidance without worktree instructions', async () => {
+    it('renders machine-local project guidance without worktree instructions', async () => {
         const prompt = await buildInitPrompt('developer', {
             projectRoot: '/vm/shared/yoho-remote'
         })
 
         expect(prompt).toContain('当前会话工作目录：/vm/shared/yoho-remote')
-        expect(prompt).toContain('共享代码目录（path），默认按组织共享')
+        expect(prompt).toContain('绑定到具体机器')
         expect(prompt).not.toContain('所有查看、编辑、测试、提交都必须在当前会话目录进行')
         expect(prompt).not.toContain('Git worktree')
         expect(prompt).toContain('mcp__yoho-vault__recall')

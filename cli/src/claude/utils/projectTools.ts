@@ -26,7 +26,7 @@ export function registerProjectTools(
 
     mcp.registerTool<any, any>('project_list', {
         title: 'List Projects',
-        description: 'List all shared projects for the current organization.',
+        description: 'List all projects for the current machine.',
         inputSchema: listSchema,
     }, async (_args: Record<string, never>) => {
         try {
@@ -48,7 +48,7 @@ export function registerProjectTools(
     const createSchema: z.ZodTypeAny = z.object({
         name: z.string().optional().describe('Project name in PascalCase derived from directory basename (e.g. "yoho-remote" → "YohoRemote"). If omitted, auto-derived from path.'),
         path: z.string().describe('Absolute path to the project directory'),
-        description: z.string().optional().describe('Human-readable project description (max 500 chars). Use this for any non-ASCII or verbose info. Shared projects inherit the current session machine\'s workspace group.'),
+        description: z.string().optional().describe('Human-readable project description (max 500 chars). Use this for any non-ASCII or verbose info.'),
     })
 
     mcp.registerTool<any, any>('project_create', {
@@ -87,7 +87,6 @@ Rules:
         name: z.string().optional().describe('New project name in PascalCase (e.g. "YohoRemote"). If omitted, unchanged.'),
         path: z.string().optional().describe('New absolute path. If omitted, unchanged.'),
         description: z.string().optional().describe('New human-readable description (max 500 chars). If omitted, unchanged.'),
-        workspaceGroupId: z.string().optional().describe('Workspace group ID for shared projects (e.g. "ncu-shared"). If omitted, unchanged.'),
     })
 
     mcp.registerTool<any, any>('project_update', {
@@ -98,13 +97,12 @@ Rules:
 - "name" must follow PascalCase convention derived from directory basename. No Chinese characters, no spaces.
 - Use "description" for human-readable context (Chinese is fine here).`,
         inputSchema: updateSchema,
-    }, async (args: { id: string; name?: string; path?: string; description?: string; workspaceGroupId?: string }) => {
+    }, async (args: { id: string; name?: string; path?: string; description?: string }) => {
         try {
             const project = await api.updateProject(sessionId, args.id, {
                 name: args.name,
                 path: args.path,
                 description: args.description,
-                workspaceGroupId: args.workspaceGroupId,
             })
             return {
                 content: [{ type: 'text' as const, text: JSON.stringify(project, null, 2) }],

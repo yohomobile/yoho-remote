@@ -535,6 +535,11 @@ export const knownTools: Record<string, {
         icon: () => <EyeIcon className={DEFAULT_ICON_CLASS} />,
         title: (opts) => getInputStringAny(opts.input, ['description']) ?? 'Monitor',
         minimal: true
+    },
+    BrowserAgent: {
+        icon: () => <GlobeIcon className={DEFAULT_ICON_CLASS} />,
+        title: () => 'Browser Agent',
+        minimal: false
     }
 }
 

@@ -57,15 +57,6 @@ function saveSpawnPrefs(userEmail: string | null, prefs: SpawnPrefs): void {
     }
 }
 
-function normalizeWorkspaceGroupId(value: string | null | undefined): string | null {
-    const trimmed = value?.trim()
-    return trimmed ? trimmed : null
-}
-
-function getMachineWorkspaceGroupId(machine: Machine | null | undefined): string | null {
-    return normalizeWorkspaceGroupId(machine?.metadata?.workspaceGroupId)
-}
-
 function getCompatibleTokenSources(tokenSources: TokenSource[], agent: AgentType): TokenSource[] {
     return tokenSources.filter((tokenSource) => tokenSource.supportedAgents.includes(agent))
 }
@@ -165,7 +156,7 @@ export function NewSession(props: {
         [agent, tokenSources]
     )
 
-    // Fetch projects for selected machine (shared + machine-specific).
+    // Fetch projects for selected machine.
     const { data: projectsData, isLoading: projectsLoading } = useQuery({
         queryKey: ['projects', currentOrgId, machineId],
         queryFn: async () => {
@@ -179,31 +170,9 @@ export function NewSession(props: {
         () => props.machines.find(m => m.id === machineId) ?? null,
         [props.machines, machineId]
     )
-    const currentMachineWorkspaceGroupId = useMemo(
-        () => getMachineWorkspaceGroupId(currentMachine),
-        [currentMachine]
-    )
-    // If any machine in the org has a workspaceGroupId, enable categorized project display
-    const hasWorkspaceGroups = useMemo(
-        () => props.machines.some((m) => getMachineWorkspaceGroupId(m) !== null),
-        [props.machines]
-    )
-
     const projects = useMemo(() => {
         return Array.isArray(projectsData?.projects) ? projectsData.projects : []
     }, [projectsData])
-    const machineLocalProjects = useMemo(
-        () => projects.filter((project) => project.machineId === machineId),
-        [machineId, projects]
-    )
-    const workspaceSharedProjects = useMemo(
-        () => projects.filter((project) => project.machineId === null && Boolean(project.workspaceGroupId)),
-        [projects]
-    )
-    const legacySharedProjects = useMemo(
-        () => projects.filter((project) => project.machineId === null && !project.workspaceGroupId),
-        [projects]
-    )
 
     const selectedProject = useMemo(
         () => projects.find((p) => p.path === projectPath.trim()) ?? null,
@@ -212,15 +181,9 @@ export function NewSession(props: {
 
     const selectedProjectScopeText = useMemo(() => {
         if (!selectedProject) return null
-        if (selectedProject.machineId) {
-            return currentMachine
-                ? `Machine local to ${getMachineTitle(currentMachine)}`
-                : 'Machine local project'
-        }
-        if (selectedProject.workspaceGroupId) {
-            return `Org shared · ${selectedProject.workspaceGroupId}`
-        }
-        return 'Legacy shared project'
+        return currentMachine
+            ? `${getMachineTitle(currentMachine)}`
+            : 'Machine local project'
     }, [currentMachine, selectedProject])
 
     // Initialize with saved machine or first available
@@ -415,43 +378,11 @@ export function NewSession(props: {
                             {!projectsLoading && projects.length === 0 && (
                                 <option value="">No projects available</option>
                             )}
-                            {hasWorkspaceGroups ? (
-                                <>
-                                    {machineLocalProjects.length > 0 ? (
-                                        <optgroup label={currentMachine ? `Machine Local · ${getMachineTitle(currentMachine)}` : 'Machine Local'}>
-                                            {machineLocalProjects.map((project) => (
-                                                <option key={project.id} value={project.path}>
-                                                    {project.name}
-                                                </option>
-                                            ))}
-                                        </optgroup>
-                                    ) : null}
-                                    {workspaceSharedProjects.length > 0 ? (
-                                        <optgroup label={currentMachineWorkspaceGroupId ? `Org Shared · ${currentMachineWorkspaceGroupId}` : 'Org Shared'}>
-                                            {workspaceSharedProjects.map((project) => (
-                                                <option key={project.id} value={project.path}>
-                                                    {project.name}
-                                                </option>
-                                            ))}
-                                        </optgroup>
-                                    ) : null}
-                                    {legacySharedProjects.length > 0 ? (
-                                        <optgroup label="Legacy Shared">
-                                            {legacySharedProjects.map((project) => (
-                                                <option key={project.id} value={project.path}>
-                                                    {project.name}
-                                                </option>
-                                            ))}
-                                        </optgroup>
-                                    ) : null}
-                                </>
-                            ) : (
-                                projects.map((project) => (
-                                    <option key={project.id} value={project.path}>
-                                        {project.name}
-                                    </option>
-                                ))
-                            )}
+                            {projects.map((project) => (
+                                <option key={project.id} value={project.path}>
+                                    {project.name}
+                                </option>
+                            ))}
                         </select>
                         {selectedProject ? (
                             <div className="space-y-1 text-xs text-[var(--app-hint)]">
@@ -462,9 +393,7 @@ export function NewSession(props: {
                             </div>
                         ) : !projectsLoading && currentMachine ? (
                             <div className="text-xs text-[var(--app-hint)]">
-                                {hasWorkspaceGroups
-                                    ? `No saved projects visible on ${getMachineTitle(currentMachine)} yet. Add projects in Settings.`
-                                    : `No saved projects for ${getMachineTitle(currentMachine)}. Add projects in Settings.`}
+                                {`No saved projects for ${getMachineTitle(currentMachine)}. Add projects in Settings.`}
                             </div>
                         ) : null}
                     </>

@@ -203,8 +203,7 @@ export type Project = {
     name: string
     path: string
     description: string | null
-    machineId: string | null  // 非 null = machine-local
-    workspaceGroupId: string | null  // 共享项目必须有 workspaceGroupId；machine-local 项目为 null
+    machineId: string | null
     createdAt: number
     updatedAt: number
 }
@@ -280,7 +279,6 @@ export type Machine = {
         platform: string
         yohoRemoteCliVersion: string
         displayName?: string
-        workspaceGroupId?: string | null
         arch?: string | null
         ip?: string | null
         publicIp?: string | null

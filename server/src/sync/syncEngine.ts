@@ -74,7 +74,6 @@ const machineMetadataSchema = z.object({
     platform: z.string().optional(),
     yohoRemoteCliVersion: z.string().optional(),
     displayName: z.string().optional(),
-    workspaceGroupId: z.string().nullable().optional()
 }).passthrough()
 
 export interface Session {
@@ -119,7 +118,6 @@ export interface Machine {
         platform: string
         yohoRemoteCliVersion: string
         displayName?: string
-        workspaceGroupId?: string | null
         [key: string]: unknown
     } | null
     metadataVersion: number
@@ -1847,10 +1845,7 @@ export class SyncEngine {
             const platform = typeof data.platform === 'string' ? data.platform : 'unknown'
             const yohoRemoteCliVersion = typeof data.yohoRemoteCliVersion === 'string' ? data.yohoRemoteCliVersion : 'unknown'
             const displayName = typeof data.displayName === 'string' ? data.displayName : undefined
-            const workspaceGroupId = typeof data.workspaceGroupId === 'string' || data.workspaceGroupId === null
-                ? data.workspaceGroupId
-                : undefined
-            return { host, platform, yohoRemoteCliVersion, displayName, workspaceGroupId, ...data }
+            return { host, platform, yohoRemoteCliVersion, displayName, ...data }
         })()
 
         const storedActiveAt = stored.activeAt ?? stored.createdAt
