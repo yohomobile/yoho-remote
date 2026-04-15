@@ -12,6 +12,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { formatSessionModelLabel } from '@/lib/sessionModelLabel'
 import { matchSessionToProject } from '@/lib/projectMatching'
 import { useMachines } from '@/hooks/queries/useMachines'
+import { isFlutterApp } from '@/hooks/useFlutterApp'
 
 function getSessionTitle(session: Session): string {
     if (session.metadata?.name) {
@@ -363,8 +364,8 @@ export function SessionHeader(props: {
         setShowAgentDetails(false)
     }, [props.session.id])
 
-    // In Telegram, don't render header (Telegram provides its own)
-    if (isTelegramApp()) {
+    // In Telegram or Flutter, don't render header (native app provides its own)
+    if (isTelegramApp() || isFlutterApp()) {
         return null
     }
 

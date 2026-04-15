@@ -192,15 +192,8 @@ export async function runCodex(opts: {
                 sessionWrapper.stopKeepAlive();
             }
 
-            session.updateMetadata((currentMetadata) => ({
-                ...currentMetadata,
-                lifecycleState: 'archived',
-                lifecycleStateSince: Date.now(),
-                archivedBy: 'cli',
-                archiveReason
-            }));
-
-            session.sendSessionDeath();
+            // On signal (SIGTERM/SIGINT), do NOT archive or send session-end.
+            // Just disconnect cleanly so auto-resume can work after daemon restart.
             await session.flush();
             await session.close();
 

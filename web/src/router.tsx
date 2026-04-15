@@ -20,6 +20,8 @@ import { useAppContext } from '@/lib/app-context'
 import { useMyOrgs, useOrg } from '@/hooks/queries/useOrgs'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { isTelegramApp } from '@/hooks/useTelegram'
+import { isFlutterApp } from '@/hooks/useFlutterApp'
+import { pushSessionsHeader, getOnlineUsersForBadge } from '@/hooks/useFlutterBridge'
 import { useMessages } from '@/hooks/queries/useMessages'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { useSession } from '@/hooks/queries/useSession'
@@ -207,14 +209,24 @@ function SessionsPage() {
     const gitCommitHash = typeof __GIT_COMMIT_HASH__ !== 'undefined' ? __GIT_COMMIT_HASH__ : 'dev'
     const gitCommitMessage = typeof __GIT_COMMIT_MESSAGE__ !== 'undefined' ? __GIT_COMMIT_MESSAGE__ : ''
 
+    useEffect(() => {
+        if (!isFlutterApp()) return
+        pushSessionsHeader({
+            onlineUsers: getOnlineUsersForBadge(onlineUsers),
+            activeCount: sessions.filter(s => s.active).length,
+            gitHash: gitCommitHash,
+        })
+    }, [onlineUsers, sessions, gitCommitHash])
+
     return (
         <div className="flex h-full flex-col">
-            <div className="bg-[var(--app-bg)] border-b border-[var(--app-divider)] pt-[env(safe-area-inset-top)]">
-                <div className="mx-auto w-full max-w-content px-3 py-2 flex items-center justify-between gap-2 sm:py-1.5">
-                    <div className="flex min-w-0 flex-1 items-center gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                            <div className="flex h-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-sm text-white text-xs font-bold px-2">
-                                {currentOrg?.name ?? 'Yoho'}
+            {!isFlutterApp() && (
+                <div className="bg-[var(--app-bg)] border-b border-[var(--app-divider)] pt-[env(safe-area-inset-top)]">
+                    <div className="mx-auto w-full max-w-content px-3 py-2 flex items-center justify-between gap-2 sm:py-1.5">
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                                <div className="flex h-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-sm text-white text-xs font-bold px-2">
+                                    {currentOrg?.name ?? 'Yoho'}
                             </div>
                             <div className="flex flex-col items-start justify-center min-w-0">
                                 <div className="flex items-center gap-1.5">
@@ -270,6 +282,7 @@ function SessionsPage() {
                     </div>
                 </div>
             </div>
+            )}
             <div className="flex-1 overflow-y-auto pb-[env(safe-area-inset-bottom)]">
                 {error ? (
                     <div className="mx-auto w-full max-w-content px-3 py-2">

@@ -23,6 +23,7 @@ import { useMyOrgs } from '@/hooks/queries/useOrgs'
 import { OrgSetup } from '@/components/OrgSetup'
 import { shouldBypassOrgGate } from '@/lib/org-gate'
 import { isLicenseTermination, getLicenseTerminationLabel } from '@/lib/license'
+import { useFlutterBridge } from '@/hooks/useFlutterBridge'
 
 export function App() {
     const { baseUrl } = useServerUrl()
@@ -427,6 +428,7 @@ export function App() {
 
     return (
         <AppContextProvider value={{ api, token: token ?? '', userEmail: user?.email ?? null, currentOrgId, setCurrentOrgId }}>
+            <FlutterBridgeBootstrap />
             {hasUpdate && <UpdateBanner onDismiss={handleDismiss} />}
             <SyncingBanner isSyncing={isSyncing} />
             <OfflineBanner />
@@ -439,6 +441,11 @@ export function App() {
             <Toaster />
         </AppContextProvider>
     )
+}
+
+function FlutterBridgeBootstrap() {
+    useFlutterBridge()
+    return null
 }
 
 /**

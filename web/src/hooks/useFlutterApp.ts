@@ -2,14 +2,6 @@ declare global {
   interface Window {
     __YOHO_FLUTTER__?: boolean
     __YOHO_APP_VERSION__?: string
-    YohoApp?: {
-      on(event: string, cb: (data?: unknown) => void): void
-      off(event: string): void
-      _dispatch(event: string, data?: unknown): void
-      onPushNotificationTapped(data: unknown): void
-      onTokensRestored(tokens: unknown): void
-      onAppResumed(): void
-    }
     flutter_inappwebview?: {
       callHandler(name: string, ...args: unknown[]): Promise<unknown>
     }

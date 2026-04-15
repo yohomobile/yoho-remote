@@ -1577,7 +1577,9 @@ export class SyncEngine {
     private _autoResumePending = new Map<string, string>()
 
     private async autoResumeSessions(machineId: string, namespace: string): Promise<void> {
+        console.log(`[auto-resume] Triggered for machine ${machineId.slice(0, 8)}, namespace=${namespace}`)
         if (this._autoResumeInProgress.has(machineId)) {
+            console.log(`[auto-resume] Already in progress for ${machineId.slice(0, 8)}, queuing`)
             this._autoResumePending.set(machineId, namespace)
             return
         }
@@ -1592,23 +1594,65 @@ export class SyncEngine {
                 await new Promise(r => setTimeout(r, 500))
             }
 
+            const rpcReady = Boolean(this.rpcRegistry.getSocketIdForMethod(rpcMethod))
+            console.log(`[auto-resume] RPC ready=${rpcReady} after ${Date.now() - start}ms`)
+
             const machine = this.machines.get(machineId)
-            if (!machine?.active) return
+            if (!machine?.active) {
+                console.log(`[auto-resume] Machine ${machineId.slice(0, 8)} no longer active, aborting`)
+                return
+            }
 
             await this.waitForAutoResumeGrace(machineId, namespace, 10_000)
 
-            if (!this.machines.get(machineId)?.active) return
+            if (!this.machines.get(machineId)?.active) {
+                console.log(`[auto-resume] Machine ${machineId.slice(0, 8)} went inactive during grace, aborting`)
+                return
+            }
 
             const machineSupportedAgents = machine.supportedAgents
             const RESUME_WINDOW_MS = 24 * 60 * 60 * 1000
             const RESUME_TIMEOUT_MS = 60_000
-            const candidates = Array.from(this.sessions.values()).filter(s => {
+
+            const allSessions = Array.from(this.sessions.values())
+            const dbActiveCount = Array.from(this._dbActiveSessionIds).length
+            const inactiveForMachine = allSessions.filter(s =>
+                !s.active && s.metadata?.machineId === machineId && s.namespace === namespace
+            )
+            console.log(`[auto-resume] Stats: total=${allSessions.length}, dbActiveIds=${dbActiveCount}, inactiveForMachine=${inactiveForMachine.length}`)
+
+            if (inactiveForMachine.length > 0 && inactiveForMachine.length <= 20) {
+                for (const s of inactiveForMachine) {
+                    const reasons: string[] = []
+                    const isCli = s.metadata?.archivedBy === 'cli'
+                    if (!this._dbActiveSessionIds.has(s.id) && !isCli) reasons.push('not-in-dbActive')
+                    if (s.terminationReason) reasons.push(`terminated:${s.terminationReason}`)
+                    if (s.metadata?.archivedBy && !isCli) reasons.push(`archived:${s.metadata.archivedBy}`)
+                    if (isCli) reasons.push('cli-archived(ok)')
+                    if (s.metadata?.startedFromDaemon !== true && s.metadata?.startedBy !== 'daemon') reasons.push('not-daemon-started')
+                    if (Date.now() - s.activeAt > RESUME_WINDOW_MS) reasons.push('too-old')
+                    if (!s.metadata?.path) reasons.push('no-path')
+                    const flavor = s.metadata?.flavor
+                    if (flavor !== 'claude' && flavor !== 'codex') reasons.push(`bad-flavor:${flavor}`)
+                    if (typeof s.metadata?.claudeSessionId !== 'string' && typeof s.metadata?.codexSessionId !== 'string') reasons.push('no-native-session-id')
+                    if (reasons.length > 0) {
+                        console.log(`[auto-resume] Skip ${s.id.slice(0, 8)}: ${reasons.join(', ')}`)
+                    }
+                }
+            }
+
+            const CLI_ARCHIVE_RESUME_WINDOW_MS = 2 * 60 * 60 * 1000 // 2 hours for cli-archived sessions
+            const candidates = allSessions.filter(s => {
                 if (s.active) return false
-                if (!this._dbActiveSessionIds.has(s.id)) return false
+                // archivedBy='cli' means CLI cleanup on signal (e.g. deploy kill) — still eligible for auto-resume,
+                // but use a tighter time window (2h) to avoid resuming old sessions from previous deploys.
+                const cliArchived = s.metadata?.archivedBy === 'cli'
+                if (!this._dbActiveSessionIds.has(s.id) && !cliArchived) return false
                 if (s.terminationReason) return false
-                if (s.metadata?.archivedBy) return false
+                if (s.metadata?.archivedBy && !cliArchived) return false
                 if (s.metadata?.startedFromDaemon !== true && s.metadata?.startedBy !== 'daemon') return false
-                if (Date.now() - s.activeAt > RESUME_WINDOW_MS) return false
+                const maxAge = cliArchived ? CLI_ARCHIVE_RESUME_WINDOW_MS : RESUME_WINDOW_MS
+                if (Date.now() - s.activeAt > maxAge) return false
                 if (s.metadata?.machineId !== machineId) return false
                 if (s.namespace !== namespace) return false
                 if (!s.metadata?.path) return false
@@ -1619,7 +1663,10 @@ export class SyncEngine {
                 return true
             })
 
-            if (candidates.length === 0) return
+            if (candidates.length === 0) {
+                console.log(`[auto-resume] No candidates found for machine ${machineId.slice(0, 8)}`)
+                return
+            }
             console.log(`[auto-resume] Machine ${machineId.slice(0, 8)} online, resuming ${candidates.length} session(s)`)
 
             const resumeOne = async (session: typeof candidates[0]) => {
@@ -1657,6 +1704,22 @@ export class SyncEngine {
                             session.resumingUntil = undefined
                             console.warn(`[auto-resume] Session ${session.id.slice(0, 8)} spawn succeeded but no reconnect heartbeat arrived within ${RESUME_TIMEOUT_MS}ms`)
                             return
+                        }
+                        // Clear stale archive metadata from old CLI cleanup
+                        if (session.metadata?.archivedBy === 'cli') {
+                            const cleaned = { ...session.metadata }
+                            delete cleaned.archivedBy
+                            delete (cleaned as any).archiveReason
+                            if (cleaned.lifecycleState === 'archived') {
+                                cleaned.lifecycleState = 'active'
+                                cleaned.lifecycleStateSince = Date.now()
+                            }
+                            session.metadata = cleaned
+                            this.store.updateSessionMetadata(session.id, cleaned, session.metadataVersion, session.namespace).then(r => {
+                                if (r.result === 'success') session.metadataVersion = r.version
+                            }).catch(err => {
+                                console.error(`[auto-resume] Failed to clear archive metadata for ${session.id.slice(0, 8)}:`, err)
+                            })
                         }
                         console.log(`[auto-resume] Resumed session ${session.id.slice(0, 8)}`)
                     } else {
@@ -1736,11 +1799,11 @@ export class SyncEngine {
         while (Date.now() - start < timeoutMs) {
             const hasInactive = Array.from(this.sessions.values()).some(s =>
                 !s.active
-                && this._dbActiveSessionIds.has(s.id)
+                && (this._dbActiveSessionIds.has(s.id) || s.metadata?.archivedBy === 'cli')
                 && s.metadata?.machineId === machineId
                 && s.namespace === namespace
                 && !s.terminationReason
-                && !s.metadata?.archivedBy
+                && (!s.metadata?.archivedBy || s.metadata.archivedBy === 'cli')
             )
             if (!hasInactive) return
             await new Promise(r => setTimeout(r, CHECK_INTERVAL))

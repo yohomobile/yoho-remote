@@ -30,6 +30,7 @@ import { StatusBar } from '@/components/AssistantChat/StatusBar'
 import { ComposerButtons } from '@/components/AssistantChat/ComposerButtons'
 import { FileIcon } from '@/components/FileIcon'
 import type { ApiClient } from '@/api/client'
+import { isFlutterApp } from '@/hooks/useFlutterApp'
 
 export interface TextInputState {
     text: string
@@ -37,14 +38,14 @@ export interface TextInputState {
 }
 
 
-const MODEL_MODES = ['default', 'sonnet', 'opus'] as const
-const MODEL_MODE_LABELS: Record<string, string> = {
+export const MODEL_MODES = ['default', 'sonnet', 'opus'] as const
+export const MODEL_MODE_LABELS: Record<string, string> = {
     default: 'Default',
     sonnet: 'Sonnet',
     opus: 'Opus'
 }
 
-const CODEX_MODELS = [
+export const CODEX_MODELS = [
     {
         id: 'gpt-5.4',
         label: 'gpt-5.4',
@@ -89,7 +90,7 @@ const CODEX_MODELS = [
 
 const CODEX_MODEL_IDS = new Set(CODEX_MODELS.map((model) => model.id))
 
-const GROK_MODELS = [
+export const GROK_MODELS = [
     {
         id: 'grok-4-1-fast-reasoning',
         label: 'grok-4-1-fast-reasoning',
@@ -132,7 +133,7 @@ const GROK_MODELS = [
     }
 ] as const
 
-const OPENROUTER_MODELS = [
+export const OPENROUTER_MODELS = [
     // === Anthropic Claude ===
     { id: 'anthropic/claude-opus-4.5', label: 'Claude Opus 4.5', description: 'Anthropic\'s most capable model.' },
     { id: 'anthropic/claude-sonnet-4.5', label: 'Claude Sonnet 4.5', description: 'Anthropic\'s latest efficient model.' },
@@ -230,7 +231,7 @@ const OPENROUTER_MODELS = [
     { id: 'mistralai/devstral-2512:free', label: 'Devstral (free)', description: 'Free dev model.' }
 ] as const
 
-function isCodexModel(mode: ModelMode | undefined): mode is typeof CODEX_MODELS[number]['id'] {
+export function isCodexModel(mode: ModelMode | undefined): mode is typeof CODEX_MODELS[number]['id'] {
     return Boolean(mode && CODEX_MODEL_IDS.has(mode as typeof CODEX_MODELS[number]['id']))
 }
 
@@ -326,6 +327,8 @@ export function YohoRemoteComposer(props: {
         autocompleteSuggestions = defaultSuggestionHandler,
         otherUserTyping = null
     } = props
+
+    if (isFlutterApp()) return null
 
     // Use ?? so missing values fall back to default (destructuring defaults only handle undefined)
     const modelMode = rawModelMode ?? 'default'

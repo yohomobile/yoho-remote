@@ -406,19 +406,9 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
 
         try {
             daemonSessionReporter.stop();
-            // Update lifecycle state to archived before closing
+            // On signal (SIGTERM/SIGINT), do NOT archive or send session-end.
+            // Just disconnect cleanly so auto-resume can work after daemon restart.
             if (session) {
-                const reason = archiveReason ?? 'User terminated';
-                session.updateMetadata((currentMetadata) => ({
-                    ...currentMetadata,
-                    lifecycleState: 'archived',
-                    lifecycleStateSince: Date.now(),
-                    archivedBy: 'cli',
-                    archiveReason: reason
-                }));
-                
-                // Send session death message
-                session.sendSessionDeath();
                 await session.flush();
                 await session.close();
             }

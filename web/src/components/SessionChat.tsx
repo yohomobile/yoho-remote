@@ -18,6 +18,25 @@ import { usePlatform } from '@/hooks/usePlatform'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
 import { queryKeys } from '@/lib/query-keys'
 import { isLicenseTermination, getLicenseTerminationLabel } from '@/lib/license'
+import { isFlutterApp } from '@/hooks/useFlutterApp'
+import {
+    useFlutterBridgeSessionActions,
+    pushSessionHeader,
+    pushComposerState,
+    pushComposerReset,
+    pushAutocompleteSuggestions,
+    getSessionTitle,
+    formatSessionModelLabelCompact,
+    viewersToBadgeUsers,
+} from '@/hooks/useFlutterBridge'
+import {
+    MODEL_MODES,
+    MODEL_MODE_LABELS,
+    CODEX_MODELS,
+    GROK_MODELS,
+    OPENROUTER_MODELS,
+    isCodexModel,
+} from '@/components/AssistantChat/YohoRemoteComposer'
 
 const MODEL_MODE_VALUES = new Set([
     'default',
@@ -49,6 +68,20 @@ function coerceModelMode(value: string | null | undefined): ModelMode | undefine
         return 'opus'
     }
     return undefined
+}
+
+function getAvailableModels(session: Session): { id: string; label: string }[] {
+    const flavor = session.metadata?.flavor ?? 'claude'
+    if (flavor === 'claude') {
+        return MODEL_MODES.map(m => ({ id: m, label: MODEL_MODE_LABELS[m] ?? m }))
+    }
+    if (flavor === 'codex') {
+        return CODEX_MODELS.map(m => ({ id: m.id, label: m.label }))
+    }
+    if (flavor === 'grok') {
+        return GROK_MODELS.map(m => ({ id: m.id, label: m.label }))
+    }
+    return OPENROUTER_MODELS.map(m => ({ id: m.id, label: m.label }))
 }
 
 export function SessionChat(props: {
@@ -306,6 +339,135 @@ export function SessionChat(props: {
     }, [props.session.modelMode, props.session.metadata?.runtimeModel])
     const resolvedReasoningEffort = props.session.modelReasoningEffort
         ?? props.session.metadata?.runtimeModelReasoningEffort
+
+    const availableModels = useMemo(() => getAvailableModels(props.session), [props.session])
+
+    const handleBridgeSendMessage = useCallback((text: string) => {
+        handleSendMessage(text)
+        pushComposerReset(props.session.id)
+    }, [handleSendMessage, props.session.id])
+
+    const handleBridgeSetModel = useCallback((model: string) => {
+        const coerced = coerceModelMode(model) ?? 'default'
+        void handleModelModeChange({ model: coerced, reasoningEffort: resolvedReasoningEffort ?? null })
+    }, [handleModelModeChange, resolvedReasoningEffort])
+
+    const handleBridgeSetReasoningLevel = useCallback((level: string) => {
+        const effort = ['low', 'medium', 'high', 'xhigh'].includes(level) ? level as ModelReasoningEffort : undefined
+        void handleModelModeChange({ model: resolvedModelMode ?? 'default', reasoningEffort: effort ?? null })
+    }, [handleModelModeChange, resolvedModelMode])
+
+    const handleBridgeShare = useCallback(() => {
+        const url = `${window.location.origin}/sessions/${props.session.id}`
+        void navigator.clipboard.writeText(url)
+    }, [props.session.id])
+
+    const handleBridgeUploadImages = useCallback(async (images: string[]) => {
+        for (const image of images) {
+            try {
+                const mimeType = image.startsWith('data:image/png') ? 'image/png' : 'image/jpeg'
+                const base64Content = image.split(',')[1] ?? image
+                const filename = `upload-${Date.now()}.jpg`
+                await props.api.uploadImage(props.session.id, filename, base64Content, mimeType)
+            } catch (e) {
+                console.error('Failed to upload image:', e)
+            }
+        }
+    }, [props.api, props.session.id])
+
+    const handleBridgeUploadFiles = useCallback(async (files: { name: string; data: string }[]) => {
+        for (const file of files) {
+            try {
+                const mimeType = 'application/octet-stream'
+                const base64Content = file.data.split(',')[1] ?? file.data
+                await props.api.uploadFile(props.session.id, file.name, base64Content, mimeType)
+            } catch (e) {
+                console.error('Failed to upload file:', e)
+            }
+        }
+    }, [props.api, props.session.id])
+
+    const handleBridgeRequestAutocomplete = useCallback(async (prefix: string) => {
+        if (!props.autocompleteSuggestions) return
+        const suggestions = await props.autocompleteSuggestions(prefix)
+        pushAutocompleteSuggestions(suggestions.map(s => ({
+            type: s.text.startsWith('@') ? 'file' : 'command',
+            label: s.label,
+            value: s.text,
+            description: s.description,
+        })))
+    }, [props.autocompleteSuggestions])
+
+    useFlutterBridgeSessionActions({
+        sessionId: props.session.id,
+        onSend: handleBridgeSendMessage,
+        onAbort: handleAbort,
+        onShare: handleBridgeShare,
+        onRefreshAccount: handleRefreshAccount,
+        onDelete: handleDeleteConfirm,
+        onSetModel: handleBridgeSetModel,
+        onSetFastMode: handleFastModeChange,
+        onSetReasoningLevel: handleBridgeSetReasoningLevel,
+        onRequestAutocomplete: handleBridgeRequestAutocomplete,
+        onUploadImages: handleBridgeUploadImages,
+        onUploadFiles: handleBridgeUploadFiles,
+    })
+
+    // Push session header to Flutter
+    useEffect(() => {
+        if (!isFlutterApp()) return
+        pushSessionHeader({
+            id: props.session.id,
+            title: getSessionTitle(props.session),
+            agentMeta: {
+                label: formatSessionModelLabelCompact(props.session),
+                model: props.session.metadata?.runtimeModel ?? undefined,
+                agent: props.session.metadata?.runtimeAgent ?? undefined,
+                machine: props.session.metadata?.machineId ?? undefined,
+                project: props.session.metadata?.path ?? undefined,
+                branch: props.session.metadata?.worktree?.branch ?? undefined,
+            },
+            viewers: viewersToBadgeUsers(props.viewers),
+            isPrivate: false,
+            isGenerating: props.session.thinking ?? false,
+        })
+    }, [props.session, props.viewers])
+
+    // Push composer state to Flutter
+    useEffect(() => {
+        if (!isFlutterApp()) return
+        const contextSizeNum = reduced.latestUsage?.contextSize ?? 0
+        const modelContextWindowNum = reduced.latestUsage?.modelContextWindow ?? 0
+        pushComposerState({
+            isConnected: true,
+            contextUsage: {
+                used: contextSizeNum,
+                total: modelContextWindowNum,
+            },
+            rateLimit: {
+                remaining: Math.max(0, 100 - Math.round(reduced.latestUsage?.rateLimitUsedPercent ?? 0)),
+            },
+            isTyping: Boolean(props.otherUserTyping),
+            selectedModel: resolvedModelMode ?? 'default',
+            fastMode: props.session.fastMode ?? false,
+            reasoningLevel: resolvedReasoningEffort ?? 'medium',
+            canSend: !props.isSending && !isResuming && props.session.active,
+            isGenerating: props.session.thinking ?? false,
+            availableModels,
+        })
+    }, [
+        props.session,
+        props.isSending,
+        props.otherUserTyping,
+        isResuming,
+        resolvedModelMode,
+        resolvedReasoningEffort,
+        availableModels,
+        reduced.latestUsage?.contextSize,
+        reduced.latestUsage?.modelContextWindow,
+        reduced.latestUsage?.rateLimitUsedPercent,
+    ])
+
     return (
         <div className="flex h-full">
             {/* 主聊天区域 */}
