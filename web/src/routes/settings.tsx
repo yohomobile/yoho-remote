@@ -16,6 +16,7 @@ import { useMyOrgs, useOrg } from '@/hooks/queries/useOrgs'
 import { useCreateOrg, useInviteMember, useUpdateMemberRole, useRemoveMember } from '@/hooks/mutations/useOrgMutations'
 import { formatMachineTimestamp, getMachineIp, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
 import { LicenseAdminPanel } from '@/components/LicenseAdminPanel'
+import { isFlutterApp } from '@/hooks/useFlutterApp'
 
 const ROLE_LABELS: Record<OrgRole, string> = {
     owner: 'Owner',
@@ -1190,8 +1191,19 @@ export default function SettingsPage() {
         }
     }, [notificationPermission, notificationEnabled, requestPermission, setNotificationEnabled, subscribePush, unsubscribePush])
 
+    // Listen for Flutter bridge logout event
+    useEffect(() => {
+        if (!isFlutterApp()) return
+        const onLogout = () => { handleLogout() }
+        window.addEventListener('yoho-bridge-logout', onLogout)
+        return () => {
+            window.removeEventListener('yoho-bridge-logout', onLogout)
+        }
+    }, [handleLogout])
+
     return (
         <div className="flex h-full flex-col">
+            {!isFlutterApp() && (
             <div className="bg-[var(--app-bg)] border-b border-[var(--app-divider)] pt-[env(safe-area-inset-top)]">
                 <div className="mx-auto w-full max-w-content flex items-center gap-2 px-3 py-1.5">
                     <button
@@ -1204,11 +1216,13 @@ export default function SettingsPage() {
                     <div className="flex-1 font-medium text-sm">Settings</div>
                 </div>
             </div>
+            )}
 
             <div className="flex-1 overflow-y-auto pb-[env(safe-area-inset-bottom)]">
                 <div className="mx-auto w-full max-w-content p-3 space-y-4">
                     {/* ========== GENERAL SETTINGS ========== */}
                     <div className="space-y-4">
+                        {!isFlutterApp() && (<>
                         <h2 className="text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide px-1">General Settings</h2>
 
                         {/* Current Session Section */}
@@ -1326,6 +1340,7 @@ export default function SettingsPage() {
                                 </div>
                             </div>
                         </div>
+                        </>)}
 
                         {/* Notifications Section */}
                         {isNotificationSupported && (

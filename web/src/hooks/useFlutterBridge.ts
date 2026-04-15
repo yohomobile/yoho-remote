@@ -32,6 +32,8 @@ declare global {
       typing?(): void
       createSession?(): void
       createBrainSession?(): void
+      refreshSessions?(): void
+      logout?(): void
     }
   }
 }
@@ -207,6 +209,14 @@ export function useFlutterBridge() {
 
     yoho.createBrainSession = () => {
       navigate({ to: '/sessions/new', search: { kind: 'brain' } as never })
+    }
+
+    yoho.refreshSessions = () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+    }
+
+    yoho.logout = () => {
+      window.dispatchEvent(new CustomEvent('yoho-bridge-logout'))
     }
   }, [navigate])
 }
