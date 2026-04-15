@@ -139,8 +139,7 @@ function SessionsPage() {
     const archiveFilter: ArchiveFilter = search.archive === 'archive'
         ? 'archive'
         : DEFAULT_SESSION_LIST_SEARCH.archive
-    const ownerFilter: OwnerFilter = search.owner === 'openclaw'
-        || search.owner === 'brain'
+    const ownerFilter: OwnerFilter = search.owner === 'brain'
         || search.owner === 'others'
         ? search.owner
         : DEFAULT_SESSION_LIST_SEARCH.owner

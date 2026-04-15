@@ -610,7 +610,7 @@ export function useSpeechToText(options: SpeechToTextOptions) {
                 console.log('[stt] sending end-of-stream signal')
                 wsRef.current.send(JSON.stringify({ uid: clientUidRef.current, message: 'END_STREAM' }))
             }
-        }, 300) // Wait 300ms to capture remaining audio
+        }, 150) // Wait 150ms to capture remaining audio
 
         // Wait for server to process remaining audio and send final results
         setTimeout(() => {
@@ -628,7 +628,7 @@ export function useSpeechToText(options: SpeechToTextOptions) {
 
             stoppingRef.current = false
             setStatus('idle')
-        }, 2000) // Increased from 1500 to 2000 to account for the 300ms delay
+        }, 1000) // Reduced: 150ms audio flush + 850ms server processing
     }, [cleanupWebSocket, status])
 
     const toggle = useCallback(async () => {

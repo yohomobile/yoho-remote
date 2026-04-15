@@ -9,6 +9,7 @@
  */
 export class PushableAsyncIterable<T> implements AsyncIterableIterator<T> {
     private queue: T[] = []
+    private readonly maxQueueSize: number
     private waiters: Array<{
         resolve: (value: IteratorResult<T>) => void
         reject: (error: Error) => void
@@ -17,7 +18,9 @@ export class PushableAsyncIterable<T> implements AsyncIterableIterator<T> {
     private error: Error | null = null
     private started = false
 
-    constructor() {}
+    constructor(maxQueueSize = 1000) {
+        this.maxQueueSize = maxQueueSize
+    }
 
     /**
      * Push a value to the iterable
@@ -31,12 +34,13 @@ export class PushableAsyncIterable<T> implements AsyncIterableIterator<T> {
             throw this.error
         }
 
-        // If there's a waiting consumer, deliver directly
         const waiter = this.waiters.shift()
         if (waiter) {
             waiter.resolve({ done: false, value })
         } else {
-            // Otherwise queue the value
+            if (this.queue.length >= this.maxQueueSize) {
+                this.queue.shift()
+            }
             this.queue.push(value)
         }
     }

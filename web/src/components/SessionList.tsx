@@ -4,7 +4,9 @@ import { ViewersBadge } from './ViewersBadge'
 import { LoadingState } from './LoadingState'
 import { useVibingMessage } from '@/hooks/useVibingMessage'
 import { getMachineTitle } from '@/lib/machines'
+import { formatSessionModelLabel } from '@/lib/sessionModelLabel'
 import { normalizeOwnerFilter, type ArchiveFilter, type OwnerFilter } from '@/lib/session-filters'
+import { isLicenseTermination, getLicenseTerminationLabel } from '@/lib/license'
 
 function getSessionPath(session: SessionSummary): string | null {
     return session.metadata?.worktree?.basePath ?? session.metadata?.path ?? null
@@ -55,14 +57,10 @@ function filterSessions(
         if (archiveFilter === 'active' && !session.active) return false
 
         // Owner filter
-        const isOpenClawSession = session.metadata?.source === 'openclaw'
         const isBrainSession = session.metadata?.source === 'brain' || session.metadata?.source === 'brain-child'
         if (ownerFilter === 'mine') {
             if (session.ownerEmail) return false
-            if (isOpenClawSession) return false
             if (isBrainSession) return false
-        } else if (ownerFilter === 'openclaw') {
-            if (!isOpenClawSession) return false
         } else if (ownerFilter === 'brain') {
             if (!isBrainSession) return false
         } else if (ownerFilter === 'others') {
@@ -134,27 +132,23 @@ function getSourceTag(session: SessionSummary): { label: string; color: string }
     if (source === 'brain-child') {
         return { label: '🧠 子任务', color: 'bg-amber-500/15 text-amber-500' }
     }
-    if (source === 'openclaw') {
-        return { label: '🦀 OpenClaw', color: 'bg-teal-500/15 text-teal-600' }
-    }
     if (source === 'external-api') {
         return { label: '🔌 API', color: 'bg-blue-500/15 text-blue-600' }
     }
     if (source.startsWith('automation:') || source.startsWith('bot:') || source.startsWith('script:')) {
         return { label: '⚙️ Automation', color: 'bg-orange-500/15 text-orange-600' }
     }
-    // Other custom sources
-    if (source.length > 0 && source !== 'manual' && source !== 'webapp') {
-        return { label: source.slice(0, 20), color: 'bg-gray-500/15 text-gray-600' }
-    }
     return null
 }
 
 function getSessionModelLabel(session: SessionSummary): string | null {
-    const runtimeModel = session.metadata?.runtimeModel?.trim()
-    if (!runtimeModel) return null
-    const effort = session.metadata?.runtimeModelReasoningEffort
-    return effort ? `${runtimeModel} (${effort})` : runtimeModel
+    return formatSessionModelLabel({
+        modelMode: session.modelMode,
+        modelReasoningEffort: session.modelReasoningEffort,
+        fastMode: session.fastMode,
+        runtimeModel: session.metadata?.runtimeModel,
+        runtimeModelReasoningEffort: session.metadata?.runtimeModelReasoningEffort
+    })
 }
 
 function getSessionMachineLabel(session: SessionSummary, machineMap: Map<string, Machine>): string | null {
@@ -262,9 +256,9 @@ function SessionItem(props: {
                             {s.pendingRequestsCount} pending
                         </span>
                     )}
-                    {s.terminationReason?.startsWith('LICENSE_') && (
+                    {isLicenseTermination(s.terminationReason) && (
                         <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-500">
-                            {s.terminationReason === 'LICENSE_SUSPENDED' ? 'License suspended' : 'License expired'}
+                            {getLicenseTerminationLabel(s.terminationReason!)}
                         </span>
                     )}
                     {s.viewers && s.viewers.length > 0 && (
@@ -391,12 +385,6 @@ export function SessionList(props: {
         return map
     }, [machines])
 
-    // Check if there are any openclaw sessions
-    const hasOpenClawSessions = useMemo(() =>
-        props.sessions.some(s => s.metadata?.source === 'openclaw'),
-        [props.sessions]
-    )
-
     // Check if there are any brain or brain-child sessions
     const hasBrainSessions = useMemo(() =>
         props.sessions.some(s => s.metadata?.source === 'brain' || s.metadata?.source === 'brain-child'),
@@ -405,9 +393,8 @@ export function SessionList(props: {
 
     const effectiveOwnerFilter = useMemo(() => normalizeOwnerFilter(props.ownerFilter, {
         viewOthersSessions,
-        hasOpenClawSessions,
         hasBrainSessions,
-    }), [hasBrainSessions, hasOpenClawSessions, props.ownerFilter, viewOthersSessions])
+    }), [hasBrainSessions, props.ownerFilter, viewOthersSessions])
 
     // Filter and sort sessions (flat display)
     const filteredSessions = useMemo(() => {
@@ -460,10 +447,10 @@ export function SessionList(props: {
                         {archiveFilterLabel}
                     </button>
                 </div>
-                {(viewOthersSessions || hasOpenClawSessions || hasBrainSessions) && (
+                {(viewOthersSessions || hasBrainSessions) && (
                     <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                         <div className="flex flex-wrap items-center gap-1">
-                            {(viewOthersSessions || hasOpenClawSessions || hasBrainSessions) && (
+                            {(viewOthersSessions || hasBrainSessions) && (
                                 <button
                                     type="button"
                                     onClick={() => props.onOwnerFilterChange('mine')}
@@ -476,21 +463,6 @@ export function SessionList(props: {
                                     `}
                                 >
                                     Mine
-                                </button>
-                            )}
-                            {hasOpenClawSessions && (
-                                <button
-                                    type="button"
-                                    onClick={() => props.onOwnerFilterChange('openclaw')}
-                                    className={`
-                                        px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
-                                        ${effectiveOwnerFilter === 'openclaw'
-                                            ? 'bg-gradient-to-r from-teal-500 to-emerald-600 text-white shadow-sm'
-                                            : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
-                                        }
-                                    `}
-                                >
-                                    OpenClaw
                                 </button>
                             )}
                             {hasBrainSessions && (

@@ -17,6 +17,7 @@ import {
     type CodexReasoningEffort,
 } from '@/components/SessionAgentFields'
 import { usePlatform } from '@/hooks/usePlatform'
+import { isLicenseTermination, getLicenseTerminationLabel } from '@/lib/license'
 import { useAppContext } from '@/lib/app-context'
 import { getMachineStatusLabel, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
 import { queryKeys } from '@/lib/query-keys'
@@ -206,9 +207,9 @@ export function NewBrainSession(props: {
             }
 
             haptic.notification('error')
-            const isLicenseError = typeof result.code === 'string' && (result.code.startsWith('LICENSE_') || result.code === 'NO_LICENSE')
+            const isLicenseError = isLicenseTermination(result.code)
             setError(isLicenseError
-                ? 'Your organization\'s license has expired or is not active. Please contact your administrator.'
+                ? `${getLicenseTerminationLabel(result.code!)} — please contact your administrator.`
                 : result.message
             )
         } catch (err) {

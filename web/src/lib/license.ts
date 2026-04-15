@@ -52,6 +52,31 @@ export function deriveLicenseState(license: OrgLicense): DerivedLicenseState {
     }
 }
 
+const LICENSE_TERMINATION_REASONS = new Set([
+    'NO_LICENSE',
+    'LICENSE_EXPIRED',
+    'LICENSE_SUSPENDED',
+    'LICENSE_NOT_STARTED',
+    'MEMBER_LIMIT',
+    'SESSION_LIMIT',
+])
+
+export function isLicenseTermination(reason: string | null | undefined): boolean {
+    return typeof reason === 'string' && LICENSE_TERMINATION_REASONS.has(reason)
+}
+
+export function getLicenseTerminationLabel(reason: string): string {
+    switch (reason) {
+        case 'LICENSE_SUSPENDED': return 'License suspended'
+        case 'LICENSE_NOT_STARTED': return 'License not active yet'
+        case 'MEMBER_LIMIT': return 'Member limit reached'
+        case 'SESSION_LIMIT': return 'Session limit reached'
+        case 'NO_LICENSE':
+        case 'LICENSE_EXPIRED':
+        default: return 'License expired'
+    }
+}
+
 export function deriveEffectiveLicenseState(
     license: OrgLicense,
     options?: { licenseExempt?: boolean }

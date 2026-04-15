@@ -9,6 +9,7 @@ import { ShareDialog } from './ShareDialog'
 import { useAppContext } from '@/lib/app-context'
 import { getMachineTitle, getMobileSessionAgentSummary } from '@/lib/machines'
 import { queryKeys } from '@/lib/query-keys'
+import { formatSessionModelLabel } from '@/lib/sessionModelLabel'
 import { useMachines } from '@/hooks/queries/useMachines'
 
 function getSessionPath(session: Session): string | null {
@@ -229,23 +230,6 @@ function getAgentLabel(session: Session): string {
     return 'Agent'
 }
 
-function formatRuntimeModel(session: Session, modelMode?: ModelMode, modelReasoningEffort?: ModelReasoningEffort): string | null {
-    // 优先使用用户设置的 modelMode 和 modelReasoningEffort
-    const displayModel = modelMode && modelMode !== 'default' ? modelMode : session.metadata?.runtimeModel?.trim()
-    if (!displayModel) {
-        return session.fastMode ? '\u21af Fast' : null
-    }
-    const parts: string[] = [displayModel]
-    const displayEffort = modelReasoningEffort ?? session.metadata?.runtimeModelReasoningEffort
-    if (displayEffort) {
-        parts.push(`(${displayEffort})`)
-    }
-    if (session.fastMode) {
-        parts.push('\u21af')
-    }
-    return parts.join(' ')
-}
-
 export function SessionHeader(props: {
     session: Session
     viewers?: SessionViewer[]
@@ -266,7 +250,13 @@ export function SessionHeader(props: {
     const agentLabel = useMemo(() => getAgentLabel(props.session), [props.session])
     const runtimeAgent = props.session.metadata?.runtimeAgent?.trim() || null
     const runtimeModel = useMemo(
-        () => formatRuntimeModel(props.session, props.modelMode, props.modelReasoningEffort),
+        () => formatSessionModelLabel({
+            modelMode: props.modelMode,
+            modelReasoningEffort: props.modelReasoningEffort,
+            fastMode: props.session.fastMode,
+            runtimeModel: props.session.metadata?.runtimeModel,
+            runtimeModelReasoningEffort: props.session.metadata?.runtimeModelReasoningEffort
+        }),
         [props.session, props.modelMode, props.modelReasoningEffort]
     )
     const machineName = useMemo(() => {

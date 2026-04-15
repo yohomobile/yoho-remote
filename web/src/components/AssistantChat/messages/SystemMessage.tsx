@@ -6,7 +6,10 @@ export function YohoRemoteSystemMessage() {
     const role = useAssistantState(({ message }) => message.role)
     const text = useAssistantState(({ message }) => {
         if (message.role !== 'system') return ''
-        return message.content[0]?.type === 'text' ? message.content[0].text : ''
+        return message.content
+            .filter((part): part is { type: 'text'; text: string } => part.type === 'text' && typeof part.text === 'string')
+            .map((part) => part.text)
+            .join('\n')
     })
     const icon = useAssistantState(({ message }) => {
         if (message.role !== 'system') return null

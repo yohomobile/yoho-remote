@@ -68,7 +68,8 @@ export class PostgresStore implements IStore {
             ssl: config.ssl,
             max: 20,
             idleTimeoutMillis: 30000,
-            connectionTimeoutMillis: 5000
+            connectionTimeoutMillis: 5000,
+            statement_timeout: 30000
         })
 
         const store = new PostgresStore(pool)
@@ -679,7 +680,7 @@ export class PostgresStore implements IStore {
                 value: current.rows[0].metadata
             }
         } catch {
-            await client.query('ROLLBACK')
+            try { await client.query('ROLLBACK') } catch {}
             return { result: 'error' }
         } finally {
             client.release()
@@ -722,7 +723,7 @@ export class PostgresStore implements IStore {
                 value: current.rows[0].agent_state
             }
         } catch {
-            await client.query('ROLLBACK')
+            try { await client.query('ROLLBACK') } catch {}
             return { result: 'error' }
         } finally {
             client.release()
@@ -1065,7 +1066,7 @@ export class PostgresStore implements IStore {
             const result = await this.pool.query('SELECT * FROM messages WHERE id = $1', [id])
             return this.toStoredMessage(result.rows[0])
         } catch (err) {
-            await client.query('ROLLBACK')
+            try { await client.query('ROLLBACK') } catch {}
             throw err
         } finally {
             client.release()
@@ -3877,7 +3878,7 @@ export class PostgresStore implements IStore {
                 [id, email, now]
             )
             if (invResult.rows.length === 0) {
-                await client.query('ROLLBACK')
+                try { await client.query('ROLLBACK') } catch {}
                 return false
             }
 
@@ -3900,7 +3901,7 @@ export class PostgresStore implements IStore {
             await client.query('COMMIT')
             return true
         } catch (e) {
-            await client.query('ROLLBACK')
+            try { await client.query('ROLLBACK') } catch {}
             throw e
         } finally {
             client.release()

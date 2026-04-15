@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { stripAnsiAndControls } from '@/components/assistant-ui/markdown-utils'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
+import { CodeBlock } from '@/components/CodeBlock'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 
 const CLI_TAG_PATTERN = '(?:local-command-[a-z-]+|command-(?:name|message|args))'
@@ -132,11 +133,7 @@ export function CliOutputBlock(props: { text: string }) {
                             <DialogTitle>CLI output</DialogTitle>
                         </DialogHeader>
                         <div className="mt-3 max-h-[75vh] overflow-auto">
-                            <div className="min-w-0 max-w-full overflow-x-auto overflow-y-hidden">
-                                <pre className="m-0 w-max min-w-full bg-[var(--app-code-bg)] p-2 text-xs font-mono">
-                                    {content}
-                                </pre>
-                            </div>
+                            <CodeBlock code={content} language="text" />
                         </div>
                     </DialogContent>
                 </Dialog>

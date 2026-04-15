@@ -13,6 +13,7 @@ import {
     type ClaudeModelMode,
 } from '@/components/SessionAgentFields'
 import { usePlatform } from '@/hooks/usePlatform'
+import { isLicenseTermination, getLicenseTerminationLabel } from '@/lib/license'
 import { useSpawnSession } from '@/hooks/mutations/useSpawnSession'
 import { useAppContext } from '@/lib/app-context'
 import { queryKeys } from '@/lib/query-keys'
@@ -325,9 +326,9 @@ export function NewSession(props: {
             }
 
             haptic.notification('error')
-            const isLicenseError = typeof result.code === 'string' && (result.code.startsWith('LICENSE_') || result.code === 'NO_LICENSE')
+            const isLicenseError = isLicenseTermination(result.code)
             setError(isLicenseError
-                ? 'Your organization\'s license has expired or is not active. Please contact your administrator.'
+                ? `${getLicenseTerminationLabel(result.code!)} — please contact your administrator.`
                 : result.message
             )
         } catch (e) {

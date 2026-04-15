@@ -10,6 +10,11 @@ import type { SSEManager } from '../../sse/sseManager'
 import { serializeMachine, sortMachinesForDisplay } from './machinePayload'
 import { getLicenseService } from '../../license/licenseService'
 import { buildInitPrompt } from '../prompts/initPrompt'
+import {
+    getUnsupportedSessionSourceError,
+    getSessionSourceFromMetadata,
+    isSupportedSessionSource,
+} from '../../sessionSourcePolicy'
 
 /** Derive a PascalCase project name from an absolute path's basename. e.g. "yoho-remote" → "YohoRemote" */
 function toPascalCase(path: string): string {
@@ -131,6 +136,11 @@ export function createCliRoutes(
         const parsed = createOrLoadSessionSchema.safeParse(json)
         if (!parsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        const source = getSessionSourceFromMetadata(parsed.data.metadata)
+        if (!isSupportedSessionSource(source)) {
+            return c.json({ error: getUnsupportedSessionSourceError(source) }, 400)
         }
 
         const namespace = c.get('namespace')
@@ -361,6 +371,9 @@ export function createCliRoutes(
         let effectiveModelMode: string | undefined = parsed.data.modelMode
         if (!effectiveModelMode && parsed.data.codexModel) {
             effectiveModelMode = parsed.data.codexModel
+        }
+        if (!isSupportedSessionSource(parsed.data.source)) {
+            return c.json({ error: getUnsupportedSessionSourceError(parsed.data.source) }, 400)
         }
 
         const result = await engine.spawnSession(

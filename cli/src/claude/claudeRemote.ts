@@ -252,6 +252,27 @@ export async function claudeRemote(opts: {
                 updateThinking(true);
 
                 const systemInit = message as SDKSystemMessage;
+                // DEBUG: Write full init tools to temp file for MCP debugging
+                const initTools = (systemInit as any).tools ?? [];
+                const mcpTools = initTools.filter((t: string) => t.startsWith('mcp__'));
+                const debugInfo = {
+                    timestamp: new Date().toISOString(),
+                    pid: process.pid,
+                    cwd: opts.path,
+                    totalTools: initTools.length,
+                    mcpToolCount: mcpTools.length,
+                    mcpTools,
+                    allTools: initTools,
+                    mcpServers: (systemInit as any).mcp_servers,
+                };
+                if (process.env.NODE_ENV === 'development' || process.env.YR_DEBUG) {
+                    try {
+                        const { writeFile } = await import('node:fs/promises');
+                        writeFile(`/tmp/yoho-mcp-debug-${process.pid}.json`, JSON.stringify(debugInfo, null, 2)).catch(() => {});
+                    } catch {}
+                }
+                logger.debug(`[claudeRemote:init] Total tools: ${initTools.length}, MCP tools: ${mcpTools.length}`);
+                logger.debug(`[claudeRemote:init] MCP tools: ${JSON.stringify(mcpTools)}`);
 
                 // Session id is still in memory, wait until session file is written to disk
                 // Start a watcher for to detect the session id

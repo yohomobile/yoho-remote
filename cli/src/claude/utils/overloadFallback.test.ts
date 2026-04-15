@@ -22,13 +22,9 @@ describe('overloadFallback', () => {
             expect(shouldUseOpenAiOverloadFallback('brain-child')).toBe(true);
         });
 
-        it('returns true for openclaw sources', () => {
-            expect(shouldUseOpenAiOverloadFallback('openclaw')).toBe(true);
-            expect(shouldUseOpenAiOverloadFallback('openclaw-bot')).toBe(true);
-        });
-
         it('returns false for unrelated sources', () => {
             expect(shouldUseOpenAiOverloadFallback('external-api')).toBe(false);
+            expect(shouldUseOpenAiOverloadFallback('legacy-source')).toBe(false);
             expect(shouldUseOpenAiOverloadFallback('')).toBe(false);
             expect(shouldUseOpenAiOverloadFallback(undefined)).toBe(false);
         });

@@ -25,7 +25,7 @@ export function startDaemonControlServer({
   requestShutdown: () => void;
   onYohoRemoteSessionWebhook: (sessionId: string, metadata: Metadata) => void;
 }): Promise<{ port: number; stop: () => Promise<void> }> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const app = fastify({
       logger: false // We use our own logger
     });
@@ -229,7 +229,8 @@ export function startDaemonControlServer({
     app.listen({ port: 0, host: '127.0.0.1' }, (err, address) => {
       if (err) {
         logger.debug('[CONTROL SERVER] Failed to start:', err);
-        throw err;
+        reject(err);
+        return;
       }
 
       const port = parseInt(address.split(':').pop()!);

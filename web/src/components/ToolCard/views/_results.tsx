@@ -48,6 +48,8 @@ function extractTextFromContentBlock(block: unknown): string | null {
     if (typeof block === 'string') return block
     if (!isObject(block)) return null
     if (block.type === 'text' && typeof block.text === 'string') return block.text
+    if (block.type === 'tool_reference' && typeof block.tool_name === 'string') return null
+    if (block.type === 'image') return null
     if (typeof block.text === 'string') return block.text
     return null
 }
@@ -74,6 +76,12 @@ function extractTextFromArray(result: unknown[]): string | null {
 
 function extractTextCandidate(value: unknown, depth: number): string | null {
     if (typeof value === 'string') {
+        if (value.length > MAX_RESULT_TEXT_LENGTH) {
+            const head = value.slice(0, 2000)
+            const toolUseError = parseToolUseError(head)
+            if (toolUseError.isToolUseError) return toolUseError.errorMessage ?? ''
+            return value.slice(0, MAX_RESULT_TEXT_LENGTH) + '\n\n… [truncated]'
+        }
         const toolUseError = parseToolUseError(value)
         return toolUseError.isToolUseError ? (toolUseError.errorMessage ?? '') : value
     }
@@ -89,10 +97,18 @@ function extractTextCandidate(value: unknown, depth: number): string | null {
     return null
 }
 
+const MAX_RESULT_TEXT_LENGTH = 500_000
+
 export function extractTextFromResult(result: unknown, depth: number = 0): string | null {
     if (depth > 3) return null
     if (result === null || result === undefined) return null
-    if (typeof result === 'string') return extractTextCandidate(result, depth)
+    if (typeof result === 'string') {
+        const text = extractTextCandidate(result, depth)
+        if (text && text.length > MAX_RESULT_TEXT_LENGTH) {
+            return text.slice(0, MAX_RESULT_TEXT_LENGTH) + '\n\n… [truncated]'
+        }
+        return text
+    }
 
     if (Array.isArray(result)) {
         return extractTextFromArray(result)
@@ -194,6 +210,45 @@ function RawJsonDevOnly(props: { value: unknown }) {
     )
 }
 
+function isContentBlockArray(value: unknown): value is Record<string, unknown>[] {
+    if (!Array.isArray(value) || value.length === 0) return false
+    return value.every(item => isObject(item) && typeof item.type === 'string')
+}
+
+function ContentBlockArrayRenderer({ blocks }: { blocks: Record<string, unknown>[] }) {
+    const elements: React.ReactElement[] = []
+    let hasContent = false
+
+    for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i]
+        if (block.type === 'text' && typeof block.text === 'string') {
+            elements.push(<div key={i}>{renderText(block.text, { mode: 'auto' })}</div>)
+            hasContent = true
+        } else if (block.type === 'image' && isObject(block.source)) {
+            const source = block.source as Record<string, unknown>
+            if (source.type === 'base64' && typeof source.data === 'string' && typeof source.media_type === 'string') {
+                elements.push(
+                    <img
+                        key={i}
+                        src={`data:${source.media_type};base64,${source.data}`}
+                        alt="Tool result image"
+                        className="max-w-full rounded border border-[var(--app-border)]"
+                    />
+                )
+                hasContent = true
+            }
+        } else if (block.type === 'tool_reference') {
+            // tool_reference blocks are metadata — silently skip
+        }
+    }
+
+    if (!hasContent) {
+        return <div className="text-sm text-[var(--app-hint)]">Completed</div>
+    }
+
+    return <div className="flex flex-col gap-2">{elements}</div>
+}
+
 function extractStdoutStderr(result: unknown): { stdout: string | null; stderr: string | null } | null {
     if (!isObject(result)) return null
 
@@ -262,12 +317,21 @@ function extractReadFileContent(result: unknown): { filePath: string | null; con
 }
 
 function isYohoMemoryToolName(toolName: string): boolean {
-    return toolName === 'yoho_memory__recall'
+    if (toolName === 'yoho_memory__recall'
         || toolName === 'yoho_memory__remember'
         || toolName === 'yoho_memory__get_playbook'
         || toolName === 'mcp__yoho_memory__recall'
         || toolName === 'mcp__yoho_memory__remember'
-        || toolName === 'mcp__yoho_memory__get_playbook'
+        || toolName === 'mcp__yoho_memory__get_playbook') {
+        return true
+    }
+    const prefixes = [
+        'mcp__yoho-memory__',
+        'mcp__yoho-vault__',
+        'mcp__yoho-credentials__',
+        'mcp__yoho_remote__',
+    ]
+    return prefixes.some((prefix) => toolName.startsWith(prefix))
 }
 
 function cloneJsonValue(value: unknown): unknown {
@@ -590,6 +654,10 @@ const ReadResultView: ToolViewComponent = (props: ToolViewProps) => {
         )
     }
 
+    if (isContentBlockArray(result)) {
+        return <ContentBlockArrayRenderer blocks={result} />
+    }
+
     return (
         <>
             <div className="text-sm text-[var(--app-hint)]">(no output)</div>
@@ -870,6 +938,10 @@ const GenericResultView: ToolViewComponent = (props: ToolViewProps) => {
         )
     }
 
+    if (isContentBlockArray(result)) {
+        return <ContentBlockArrayRenderer blocks={result} />
+    }
+
     if (typeof result === 'string') {
         return renderText(result, { mode: 'auto' })
     }
@@ -910,5 +982,7 @@ export function getToolResultViewComponent(toolName: string): ToolViewComponent 
     if (toolName.startsWith('mcp__')) {
         return GenericResultView
     }
-    return toolResultViewRegistry[toolName] ?? GenericResultView
+    return toolResultViewRegistry[toolName]
+        ?? toolResultViewRegistry[toolName.charAt(0).toUpperCase() + toolName.slice(1)]
+        ?? GenericResultView
 }

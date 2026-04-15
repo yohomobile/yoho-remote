@@ -285,10 +285,10 @@ export async function readDaemonState(): Promise<DaemonLocallyPersistedState | n
 }
 
 /**
- * Write daemon state to local file (synchronously for atomic operation)
+ * Write daemon state to local file
  */
-export function writeDaemonState(state: DaemonLocallyPersistedState): void {
-  writeFileSync(configuration.daemonStateFile, JSON.stringify(state, null, 2), 'utf-8');
+export async function writeDaemonState(state: DaemonLocallyPersistedState): Promise<void> {
+  await writeFile(configuration.daemonStateFile, JSON.stringify(state, null, 2), 'utf-8');
 }
 
 /**

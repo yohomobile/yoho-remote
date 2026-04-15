@@ -483,7 +483,7 @@ export class ApiSessionClient extends EventEmitter {
                 const current = this.metadata ?? ({} as Metadata)
                 const updated = handler(current)
 
-                const answer = await this.socket.emitWithAck('update-metadata', {
+                const answer = await this.socket.timeout(30_000).emitWithAck('update-metadata', {
                     sid: this.sessionId,
                     expectedVersion: this.metadataVersion,
                     metadata: updated
@@ -542,7 +542,7 @@ export class ApiSessionClient extends EventEmitter {
                 const current = this.agentState ?? ({} as AgentState)
                 const updated = handler(current)
 
-                const answer = await this.socket.emitWithAck('update-state', {
+                const answer = await this.socket.timeout(30_000).emitWithAck('update-state', {
                     sid: this.sessionId,
                     expectedVersion: this.agentStateVersion,
                     agentState: updated

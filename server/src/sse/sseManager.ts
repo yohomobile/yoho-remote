@@ -91,9 +91,13 @@ export class SSEManager {
                 continue
             }
 
-            void Promise.resolve(connection.send(event)).catch(() => {
+            try {
+                void Promise.resolve(connection.send(event)).catch(() => {
+                    this.unsubscribe(connection.id)
+                })
+            } catch {
                 this.unsubscribe(connection.id)
-            })
+            }
         }
     }
 
@@ -247,11 +251,15 @@ export class SSEManager {
 
         for (const connection of this.connections.values()) {
             if (connection.namespace !== namespace) continue
-            if (!connection.all) continue  // 只给订阅 all 的连接发送
+            if (!connection.all) continue
 
-            void Promise.resolve(connection.send(event)).catch(() => {
+            try {
+                void Promise.resolve(connection.send(event)).catch(() => {
+                    this.unsubscribe(connection.id)
+                })
+            } catch {
                 this.unsubscribe(connection.id)
-            })
+            }
         }
     }
 
@@ -262,9 +270,13 @@ export class SSEManager {
         for (const connection of this.connections.values()) {
             if (connection.groupId !== groupId) continue
 
-            void Promise.resolve(connection.send(event)).catch(() => {
+            try {
+                void Promise.resolve(connection.send(event)).catch(() => {
+                    this.unsubscribe(connection.id)
+                })
+            } catch {
                 this.unsubscribe(connection.id)
-            })
+            }
         }
     }
 

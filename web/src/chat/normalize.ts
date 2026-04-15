@@ -179,6 +179,30 @@ function normalizeAssistantOutput(
                 const input = 'input' in block ? (block as Record<string, unknown>).input : undefined
                 const description = isObject(input) && typeof input.description === 'string' ? input.description : null
                 blocks.push({ type: 'tool-call', id: block.id, name, input, description, uuid, parentUUID })
+                continue
+            }
+            if (block.type === 'server_tool_use' && typeof block.id === 'string') {
+                const name = asString(block.name) ?? 'ServerTool'
+                let input: unknown = 'input' in block ? (block as Record<string, unknown>).input : undefined
+                if (typeof input === 'string') {
+                    try { input = JSON.parse(input) } catch { /* keep as string */ }
+                }
+                const description = isObject(input) && typeof (input as Record<string, unknown>).description === 'string'
+                    ? ((input as Record<string, unknown>).description as string)
+                    : null
+                blocks.push({ type: 'tool-call', id: block.id, name, input, description, uuid, parentUUID })
+                continue
+            }
+            if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+                const rawContent = 'content' in block ? (block as Record<string, unknown>).content : undefined
+                blocks.push({
+                    type: 'tool-result',
+                    tool_use_id: block.tool_use_id,
+                    content: rawContent,
+                    is_error: Boolean(block.is_error),
+                    uuid,
+                    parentUUID
+                })
             }
         }
     }
@@ -308,6 +332,18 @@ function normalizeUserOutput(
                     parentUUID,
                     permissions
                 })
+                continue
+            }
+            if (block.type === 'image') {
+                const source = isObject(block.source) ? block.source : null
+                const mediaType = source ? asString(source.media_type) : null
+                blocks.push({ type: 'text', text: `[Image: ${mediaType ?? 'image'}]`, uuid, parentUUID })
+                continue
+            }
+            if (block.type === 'document') {
+                const source = isObject(block.source) ? block.source : null
+                const mediaType = source ? asString(source.media_type) : null
+                blocks.push({ type: 'text', text: `[Document: ${mediaType ?? 'file'}]`, uuid, parentUUID })
             }
         }
     }
@@ -330,6 +366,12 @@ function normalizeAgentRecord(
     content: unknown,
     meta?: unknown
 ): NormalizedMessage | NormalizedMessage[] | null {
+    if (typeof content === 'string') {
+        try {
+            const parsed: unknown = JSON.parse(content)
+            if (isObject(parsed)) content = parsed
+        } catch { /* not JSON, fall through */ }
+    }
     if (!isObject(content) || typeof content.type !== 'string') return null
 
     if (content.type === 'output') {
@@ -368,7 +410,7 @@ function normalizeAgentRecord(
             // redundant when sidechain messages are present — the Agent/Task tool card
             // already shows the sub-agent's tool calls inline.  Suppress them to avoid
             // cluttering the main timeline with dozens of progress events.
-            if (subtype === 'task_notification' || subtype === 'task_started' || subtype === 'task_progress') {
+            if (subtype === 'task_notification' || subtype === 'task_started' || subtype === 'task_progress' || subtype === 'task_updated') {
                 return null
             }
 
@@ -490,6 +532,9 @@ function normalizeAgentRecord(
             const cacheCreationTokens = usage ? asNumber(usage.cache_creation_input_tokens) : null
             const cacheReadTokens = usage ? asNumber(usage.cache_read_input_tokens) : null
 
+            const stopReason = asString(data.stop_reason) ?? undefined
+            const terminalReason = asString(data.terminal_reason) ?? undefined
+
             const resultEvent: NormalizedMessage | null = (cost === null && duration === null && turns === null) ? null : {
                 id: messageId,
                 localId,
@@ -500,7 +545,9 @@ function normalizeAgentRecord(
                     cost,
                     durationMs: duration,
                     numTurns: turns,
-                    isError: Boolean(data.is_error)
+                    isError: Boolean(data.is_error),
+                    stopReason,
+                    terminalReason
                 } as AgentEvent,
                 isSidechain: false,
                 meta,
@@ -538,6 +585,8 @@ function normalizeAgentRecord(
 
         if (data.type === 'rate_limit_event') {
             const info = isObject(data.rate_limit_info) ? data.rate_limit_info : null
+            const status = asString(info?.status)
+            if (status === 'allowed') return null
             return {
                 id: messageId,
                 localId,
@@ -545,7 +594,7 @@ function normalizeAgentRecord(
                 role: 'event',
                 content: {
                     type: 'rate-limit',
-                    status: asString(info?.status) ?? 'unknown',
+                    status: status ?? 'unknown',
                     resetsAt: asNumber(info?.resetsAt) ?? undefined
                 } as AgentEvent,
                 isSidechain: false,
@@ -711,6 +760,7 @@ function normalizeAgentRecord(
     if (content.type === 'event') {
         const event = normalizeAgentEvent(content.data)
         if (!event) return null
+        if (event.type === 'ready') return null
         return {
             id: messageId,
             localId,
@@ -952,13 +1002,23 @@ function normalizeUserRecord(
 export function normalizeDecryptedMessage(message: DecryptedMessage): NormalizedMessage | NormalizedMessage[] | null {
     const record = unwrapRoleWrappedRecordEnvelope(message.content)
     if (!record) {
+        if (message.content === null || message.content === undefined) {
+            return null
+        }
+        if (typeof message.content === 'string' && message.content.trim().length === 0) {
+            return null
+        }
+        const raw = safeStringify(message.content)
+        if (raw === '{}' || raw === '[]') {
+            return null
+        }
         return {
             id: message.id,
             localId: message.localId,
             createdAt: message.createdAt,
-            role: 'agent',
+            role: 'event',
             isSidechain: false,
-            content: [{ type: 'text', text: safeStringify(message.content), uuid: message.id, parentUUID: null }],
+            content: { type: 'message', message: `Unrecognized message format` } as AgentEvent,
             status: message.status,
             originalText: message.originalText
         }

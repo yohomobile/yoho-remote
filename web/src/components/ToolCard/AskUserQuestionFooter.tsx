@@ -95,6 +95,17 @@ export function AskUserQuestionFooter(props: {
     const [error, setError] = useState<string | null>(null)
 
     useEffect(() => {
+        console.log('[AskUserQuestion] render', {
+            toolId: props.tool.id,
+            toolName: props.tool.name,
+            hasPermission: !!permission,
+            permissionStatus: permission?.status ?? 'N/A',
+            permissionId: permission?.id ?? 'N/A',
+            questionsCount: questions.length,
+        })
+    }, [props.tool.id, permission?.status, permission?.id, questions.length])
+
+    useEffect(() => {
         setStep(0)
         setSelectedByQuestion(questions.map(() => []))
         setOtherSelectedByQuestion(questions.map(() => false))
@@ -110,6 +121,12 @@ export function AskUserQuestionFooter(props: {
     // Permission data hasn't arrived yet (message came before agentState update).
     // Show a loading indicator instead of nothing, so the user knows the question is coming.
     if (!permission) {
+        console.warn('[AskUserQuestion] permission is NULL - stuck in loading state', {
+            toolId: props.tool.id,
+            toolName: props.tool.name,
+            toolState: props.tool.state,
+            sessionId: props.sessionId,
+        })
         return (
             <div className="mt-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
                 <div className="flex items-center gap-2 text-sm text-[var(--app-hint)]">

@@ -57,7 +57,7 @@ export function useSSE(options: {
     const eventSourceRef = useRef<EventSource | null>(null)
     // 防止快速重连时的重复 onConnect 调用
     const lastConnectTimeRef = useRef(0)
-    const connectDebounceMs = 3000  // 3 秒内的重连不触发 onConnect
+    const connectDebounceMs = 1500  // 1.5 秒内的重连不触发 onConnect
 
     useEffect(() => {
         onEventRef.current = options.onEvent
@@ -230,11 +230,12 @@ export function useSSE(options: {
                                 }
                             )
                         } else if (isMetadataOnlyUpdate) {
-                            // metadata/todos/agentState 更新不需要刷新 session 列表
-                            // 这些更新会通过 socket.io 直接推送给正在查看该 session 的用户
+                            // metadata/todos/agentState 更新：不刷新 session 列表，但必须刷新单个 session 详情
+                            // 否则 agentState.requests 不会更新，AskUserQuestion 等权限组件会卡在 loading
                             if (import.meta.env.DEV) {
-                                console.log('[sse] ignoring metadata-only session update', event.sessionId)
+                                console.log('[sse] metadata-only update, invalidating session detail', event.sessionId)
                             }
+                            void queryClient.invalidateQueries({ queryKey: queryKeys.session(event.sessionId) })
                         } else {
                             // No status fields and no sid in event, fallback to invalidation
                             if (import.meta.env.DEV) {

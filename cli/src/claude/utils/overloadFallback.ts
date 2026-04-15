@@ -15,9 +15,6 @@ export function shouldUseOpenAiOverloadFallback(sessionSource: string | null | u
     if (source === 'brain' || source.startsWith('brain-')) {
         return true;
     }
-    if (source === 'openclaw' || source.startsWith('openclaw-')) {
-        return true;
-    }
     return false;
 }
 

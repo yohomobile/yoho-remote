@@ -14,6 +14,7 @@ import {
     extractBrainChildModelDefaults,
     extractBrainSessionPreferencesFromMetadata,
 } from '../../brain/brainSessionPreferences'
+import { getUnsupportedSessionSourceError, isSupportedSessionSource } from '../../sessionSourcePolicy'
 
 /**
  * License 检查：如果指定了 orgId，校验是否可创建会话
@@ -134,6 +135,10 @@ function storedSessionToSummary(stored: StoredSession): SessionSummary {
         todoProgress,
         pendingRequestsCount: 0,  // Offline sessions have no pending requests
         thinking: false,
+        modelMode: stored.modelMode as Session['modelMode'] | undefined,
+        modelReasoningEffort: stored.modelReasoningEffort as Session['modelReasoningEffort'] | undefined,
+        fastMode: stored.fastMode ?? undefined,
+        terminationReason: stored.terminationReason ?? undefined,
     }
 }
 
@@ -599,6 +604,9 @@ export function createSessionsRoutes(
         if (licenseError) return licenseError
 
         const rawSource = parsed.data.source?.trim()
+        if (!isSupportedSessionSource(rawSource)) {
+            return c.json({ error: getUnsupportedSessionSourceError(rawSource) }, 400)
+        }
         const source = rawSource ? rawSource : 'external-api'
         const email = c.get('email')
         const requestedAgent = parsed.data.agent ?? 'claude'
@@ -972,6 +980,10 @@ export function createSessionsRoutes(
                 summary.pendingRequestsCount = memorySession.agentState?.requests
                     ? Object.keys(memorySession.agentState.requests).length
                     : 0
+                summary.modelMode = memorySession.modelMode ?? summary.modelMode
+                summary.modelReasoningEffort = memorySession.modelReasoningEffort ?? summary.modelReasoningEffort
+                summary.fastMode = memorySession.fastMode ?? summary.fastMode
+                summary.terminationReason = memorySession.terminationReason ?? summary.terminationReason
 
                 // Add viewers info
                 if (sseManager) {
@@ -1017,7 +1029,20 @@ export function createSessionsRoutes(
             return sessionResult
         }
 
-        return c.json({ session: sessionResult.session })
+        const session = sessionResult.session
+        const askRequests = session.agentState?.requests
+            ? Object.entries(session.agentState.requests).filter(([, r]) => r.tool === 'AskUserQuestion' || r.tool === 'ask_user_question')
+            : []
+        if (askRequests.length > 0) {
+            console.log(`[AskUserQuestion] GET /sessions/:id returning session with AskUserQuestion requests`, {
+                sessionId: sessionResult.sessionId,
+                askRequestIds: askRequests.map(([id]) => id),
+                totalRequests: session.agentState?.requests ? Object.keys(session.agentState.requests).length : 0,
+                completedRequests: session.agentState?.completedRequests ? Object.keys(session.agentState.completedRequests).length : 0,
+            })
+        }
+
+        return c.json({ session })
     })
 
     app.delete('/sessions/:id', async (c) => {

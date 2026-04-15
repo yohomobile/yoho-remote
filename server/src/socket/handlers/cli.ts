@@ -6,6 +6,11 @@ import type { SyncEvent } from '../../sync/syncEngine'
 import { extractTodoWriteTodosFromMessageContent } from '../../sync/todos'
 import type { SocketServer, SocketWithData } from '../socketTypes'
 import { getLicenseService } from '../../license/licenseService'
+import {
+    getUnsupportedSessionSourceError,
+    getSessionSourceFromMetadata,
+    isSupportedSessionSource,
+} from '../../sessionSourcePolicy'
 
 type SessionAlivePayload = {
     sid: string
@@ -230,353 +235,411 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
     })
 
     socket.on('message', async (data: unknown) => {
-        const parsed = messageSchema.safeParse(data)
-        if (!parsed.success) {
-            return
-        }
-
-        const { sid, localId } = parsed.data
-        const raw = parsed.data.message
-
-        const content = typeof raw === 'string'
-            ? (() => {
-                try {
-                    return JSON.parse(raw) as unknown
-                } catch {
-                    return raw
-                }
-            })()
-            : raw
-
-        const sessionAccess = await resolveSessionAccess(sid)
-        if (!sessionAccess.ok) {
-            emitAccessError('session', sid, sessionAccess.reason)
-            return
-        }
-        const session = sessionAccess.value
-
-        const msg = await store.addMessage(sid, content, localId)
-
-        const todos = extractTodoWriteTodosFromMessageContent(content)
-        if (todos) {
-            const updated = await store.setSessionTodos(sid, todos, msg.createdAt, session.namespace)
-            if (updated) {
-                onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
+        try {
+            const parsed = messageSchema.safeParse(data)
+            if (!parsed.success) {
+                return
             }
-        }
 
-        // Broadcast to other CLI sockets interested in this session (skip sender).
-        const update = {
-            id: randomUUID(),
-            seq: Date.now(),
-            createdAt: Date.now(),
-            body: {
-                t: 'new-message' as const,
-                sid,
-                message: {
-                    id: msg.id,
-                    seq: msg.seq,
-                    createdAt: msg.createdAt,
-                    localId: msg.localId,
-                    content: msg.content
+            const { sid, localId } = parsed.data
+            const raw = parsed.data.message
+
+            const content = typeof raw === 'string'
+                ? (() => {
+                    try {
+                        return JSON.parse(raw) as unknown
+                    } catch {
+                        return raw
+                    }
+                })()
+                : raw
+
+            const sessionAccess = await resolveSessionAccess(sid)
+            if (!sessionAccess.ok) {
+                emitAccessError('session', sid, sessionAccess.reason)
+                return
+            }
+            const session = sessionAccess.value
+
+            const msg = await store.addMessage(sid, content, localId)
+
+            const todos = extractTodoWriteTodosFromMessageContent(content)
+            if (todos) {
+                const updated = await store.setSessionTodos(sid, todos, msg.createdAt, session.namespace)
+                if (updated) {
+                    onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
                 }
             }
-        }
-        socket.to(`session:${sid}`).emit('update', update)
 
-        onWebappEvent?.({
-            type: 'message-received',
-            sessionId: sid,
-            message: {
-                id: msg.id,
-                seq: msg.seq,
-                localId: msg.localId,
-                content: msg.content,
-                createdAt: msg.createdAt
-            }
-        })
-    })
-
-    socket.on('update-metadata', async (data: unknown, cb: (answer: unknown) => void) => {
-        const parsed = updateMetadataSchema.safeParse(data)
-        if (!parsed.success) {
-            cb({ result: 'error' })
-            return
-        }
-
-        const { sid, metadata, expectedVersion } = parsed.data
-        const sessionAccess = await resolveSessionAccess(sid)
-        if (!sessionAccess.ok) {
-            cb({ result: 'error', reason: sessionAccess.reason })
-            return
-        }
-
-        const result = await store.updateSessionMetadata(sid, metadata, expectedVersion, sessionAccess.value.namespace)
-        if (result.result === 'success') {
-            cb({ result: 'success', version: result.version, metadata: result.value })
-        } else if (result.result === 'version-mismatch') {
-            cb({ result: 'version-mismatch', version: result.version, metadata: result.value })
-        } else {
-            cb({ result: 'error' })
-        }
-
-        if (result.result === 'success') {
             const update = {
                 id: randomUUID(),
                 seq: Date.now(),
                 createdAt: Date.now(),
                 body: {
-                    t: 'update-session' as const,
+                    t: 'new-message' as const,
                     sid,
-                    metadata: { version: result.version, value: metadata },
-                    agentState: null
+                    message: {
+                        id: msg.id,
+                        seq: msg.seq,
+                        createdAt: msg.createdAt,
+                        localId: msg.localId,
+                        content: msg.content
+                    }
                 }
             }
             socket.to(`session:${sid}`).emit('update', update)
-            onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
+
+            onWebappEvent?.({
+                type: 'message-received',
+                sessionId: sid,
+                message: {
+                    id: msg.id,
+                    seq: msg.seq,
+                    localId: msg.localId,
+                    content: msg.content,
+                    createdAt: msg.createdAt
+                }
+            })
+        } catch (err) {
+            console.error('[cli-socket] Error in message handler:', err)
+        }
+    })
+
+    socket.on('update-metadata', async (data: unknown, cb: (answer: unknown) => void) => {
+        try {
+            const parsed = updateMetadataSchema.safeParse(data)
+            if (!parsed.success) {
+                cb({ result: 'error' })
+                return
+            }
+
+            const { sid, metadata, expectedVersion } = parsed.data
+            const sessionAccess = await resolveSessionAccess(sid)
+            if (!sessionAccess.ok) {
+                cb({ result: 'error', reason: sessionAccess.reason })
+                return
+            }
+
+            const source = getSessionSourceFromMetadata(metadata)
+            if (!isSupportedSessionSource(source)) {
+                cb({ result: 'error', reason: getUnsupportedSessionSourceError(source) })
+                return
+            }
+
+            const result = await store.updateSessionMetadata(sid, metadata, expectedVersion, sessionAccess.value.namespace)
+            if (result.result === 'success') {
+                cb({ result: 'success', version: result.version, metadata: result.value })
+            } else if (result.result === 'version-mismatch') {
+                cb({ result: 'version-mismatch', version: result.version, metadata: result.value })
+            } else {
+                cb({ result: 'error' })
+            }
+
+            if (result.result === 'success') {
+                const update = {
+                    id: randomUUID(),
+                    seq: Date.now(),
+                    createdAt: Date.now(),
+                    body: {
+                        t: 'update-session' as const,
+                        sid,
+                        metadata: { version: result.version, value: metadata },
+                        agentState: null
+                    }
+                }
+                socket.to(`session:${sid}`).emit('update', update)
+                onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
+            }
+        } catch (err) {
+            console.error('[cli-socket] Error in update-metadata handler:', err)
+            try { cb({ result: 'error' }) } catch {}
         }
     })
 
     socket.on('update-state', async (data: unknown, cb: (answer: unknown) => void) => {
-        const parsed = updateStateSchema.safeParse(data)
-        if (!parsed.success) {
-            cb({ result: 'error' })
-            return
-        }
+        try {
+            const parsed = updateStateSchema.safeParse(data)
+            if (!parsed.success) {
+                cb({ result: 'error' })
+                return
+            }
 
-        const { sid, agentState, expectedVersion } = parsed.data
-        const sessionAccess = await resolveSessionAccess(sid)
-        if (!sessionAccess.ok) {
-            cb({ result: 'error', reason: sessionAccess.reason })
-            return
-        }
+            const { sid, agentState, expectedVersion } = parsed.data
 
-        const result = await store.updateSessionAgentState(sid, agentState, expectedVersion, sessionAccess.value.namespace)
-        if (result.result === 'success') {
-            cb({ result: 'success', version: result.version, agentState: result.value })
-        } else if (result.result === 'version-mismatch') {
-            cb({ result: 'version-mismatch', version: result.version, agentState: result.value })
-        } else {
-            cb({ result: 'error' })
-        }
-
-        if (result.result === 'success') {
-            const update = {
-                id: randomUUID(),
-                seq: Date.now(),
-                createdAt: Date.now(),
-                body: {
-                    t: 'update-session' as const,
+            const stateObj = (agentState && typeof agentState === 'object' ? agentState : {}) as Record<string, unknown>
+            const stateRequests = (stateObj.requests && typeof stateObj.requests === 'object' ? stateObj.requests : {}) as Record<string, { tool?: string }>
+            const askRequests = Object.entries(stateRequests).filter(([, r]) => r.tool === 'AskUserQuestion' || r.tool === 'ask_user_question')
+            if (askRequests.length > 0) {
+                console.log(`[AskUserQuestion] update-state received`, {
                     sid,
-                    metadata: null,
-                    agentState: { version: result.version, value: agentState }
+                    expectedVersion,
+                    askRequestIds: askRequests.map(([id, r]) => ({ id, tool: r.tool })),
+                    totalRequests: Object.keys(stateRequests).length,
+                })
+            }
+
+            const sessionAccess = await resolveSessionAccess(sid)
+            if (!sessionAccess.ok) {
+                cb({ result: 'error', reason: sessionAccess.reason })
+                return
+            }
+
+            const result = await store.updateSessionAgentState(sid, agentState, expectedVersion, sessionAccess.value.namespace)
+            if (result.result === 'success') {
+                cb({ result: 'success', version: result.version, agentState: result.value })
+            } else if (result.result === 'version-mismatch') {
+                cb({ result: 'version-mismatch', version: result.version, agentState: result.value })
+            } else {
+                cb({ result: 'error' })
+            }
+
+            if (askRequests.length > 0) {
+                console.log(`[AskUserQuestion] update-state result: ${result.result}`, {
+                    sid,
+                    version: 'version' in result ? result.version : undefined,
+                })
+            }
+
+            if (result.result === 'success') {
+                const update = {
+                    id: randomUUID(),
+                    seq: Date.now(),
+                    createdAt: Date.now(),
+                    body: {
+                        t: 'update-session' as const,
+                        sid,
+                        metadata: null,
+                        agentState: { version: result.version, value: agentState }
+                    }
+                }
+                socket.to(`session:${sid}`).emit('update', update)
+                onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
+
+                if (askRequests.length > 0) {
+                    console.log(`[AskUserQuestion] broadcast update to session room and webapp SSE`, {
+                        sid,
+                        sseEventData: { sid },
+                        note: 'SSE only sends { sid } - webapp treats this as metadata-only update',
+                    })
                 }
             }
-            socket.to(`session:${sid}`).emit('update', update)
-            onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
+        } catch (err) {
+            console.error('[cli-socket] Error in update-state handler:', err)
+            try { cb({ result: 'error' }) } catch {}
         }
     })
 
     socket.on('session-alive', async (data: SessionAlivePayload) => {
-        if (!data || typeof data.sid !== 'string' || typeof data.time !== 'number') {
-            return
-        }
-        // Wait for socket.join() to complete before processing session-alive
-        // This ensures the socket can receive messages when session becomes "online"
-        // Only proceed if the socket successfully joined the session room
-        if (sessionJoinPromise && data.sid === sessionId) {
-            console.log(`[cli-socket] session-alive received for ${data.sid}, waiting for socket.join()...`)
-            const joined = await sessionJoinPromise
-            console.log(`[cli-socket] session-alive for ${data.sid}: socket.join() completed, joined=${joined}`)
-            if (!joined) {
-                // Socket failed to join the room during connection, skip processing
+        try {
+            if (!data || typeof data.sid !== 'string' || typeof data.time !== 'number') {
                 return
             }
-        }
-        const sessionAccess = await resolveSessionAccess(data.sid)
-        if (!sessionAccess.ok) {
-            emitAccessError('session', data.sid, sessionAccess.reason)
-            return
-        }
-
-        // License check: validate org license for this session
-        // 优先用 session 的 orgId，如果没有则 fallback 到 machine 的 orgId（防止绕过）
-        let licenseOrgId = sessionAccess.value.orgId
-        if (!licenseOrgId && sessionAccess.value.machineId) {
-            licenseOrgId = await getMachineOrgId(sessionAccess.value.machineId)
-        }
-        if (licenseOrgId) {
-            try {
-                const licenseService = getLicenseService()
-                const licenseCheck = await licenseService.validateLicense(licenseOrgId)
-                if (!licenseCheck.valid) {
-                    socket.emit('error', {
-                        message: licenseCheck.message,
-                        code: `license-${licenseCheck.code.toLowerCase().replace(/_/g, '-')}`,
-                        scope: 'session',
-                        id: data.sid,
-                    })
-                    // 尝试终止 daemon 上的 CLI 进程，并把原因传给 index.ts
-                    onLicenseBlock?.(data.sid, licenseCheck.code)
+            if (sessionJoinPromise && data.sid === sessionId) {
+                console.log(`[cli-socket] session-alive received for ${data.sid}, waiting for socket.join()...`)
+                const joined = await sessionJoinPromise
+                console.log(`[cli-socket] session-alive for ${data.sid}: socket.join() completed, joined=${joined}`)
+                if (!joined) {
                     return
                 }
-                // 7 天内到期预警
-                if (licenseCheck.valid && licenseCheck.warning) {
-                    socket.emit('license-warning', {
-                        message: licenseCheck.warning,
-                        scope: 'session',
-                        id: data.sid,
-                    })
+            }
+            const sessionAccess = await resolveSessionAccess(data.sid)
+            if (!sessionAccess.ok) {
+                emitAccessError('session', data.sid, sessionAccess.reason)
+                return
+            }
+
+            let licenseOrgId = sessionAccess.value.orgId
+            if (!licenseOrgId && sessionAccess.value.machineId) {
+                licenseOrgId = await getMachineOrgId(sessionAccess.value.machineId)
+            }
+            if (licenseOrgId) {
+                try {
+                    const licenseService = getLicenseService()
+                    const licenseCheck = await licenseService.validateLicense(licenseOrgId)
+                    if (!licenseCheck.valid) {
+                        socket.emit('error', {
+                            message: licenseCheck.message,
+                            code: `license-${licenseCheck.code.toLowerCase().replace(/_/g, '-')}`,
+                            scope: 'session',
+                            id: data.sid,
+                        })
+                        onLicenseBlock?.(data.sid, licenseCheck.code)
+                        return
+                    }
+                    if (licenseCheck.valid && licenseCheck.warning) {
+                        socket.emit('license-warning', {
+                            message: licenseCheck.warning,
+                            scope: 'session',
+                            id: data.sid,
+                        })
+                    }
+                } catch {
+                    // LicenseService not initialized — skip check (dev mode)
                 }
-            } catch {
-                // LicenseService not initialized — skip check (dev mode)
             }
-        }
 
-        // Dedup: detect and resolve conflicting sockets for the same session.
-        // If a different socket already owns this session, evict the old one.
-        const existingOwner = sessionOwnerSocketId.get(data.sid)
-        if (existingOwner && existingOwner !== socket.id) {
-            const cliNamespace = io.of('/cli')
-            const oldSocket = cliNamespace.sockets.get(existingOwner)
-            if (oldSocket) {
-                console.warn(
-                    `[cli-socket] Session ${data.sid} conflict: new socket ${socket.id} replacing old socket ${existingOwner}. ` +
-                    `Disconnecting old socket to prevent dual-process heartbeats.`
-                )
-                rpcRegistry.unregisterAll(oldSocket)
-                oldSocket.disconnect(true)
+            const existingOwner = sessionOwnerSocketId.get(data.sid)
+            if (existingOwner && existingOwner !== socket.id) {
+                const cliNamespace = io.of('/cli')
+                const oldSocket = cliNamespace.sockets.get(existingOwner)
+                if (oldSocket) {
+                    console.warn(
+                        `[cli-socket] Session ${data.sid} conflict: new socket ${socket.id} replacing old socket ${existingOwner}. ` +
+                        `Disconnecting old socket to prevent dual-process heartbeats.`
+                    )
+                    rpcRegistry.unregisterAll(oldSocket)
+                    oldSocket.disconnect(true)
+                }
+                sessionOwnerSocketId.delete(data.sid)
             }
-            sessionOwnerSocketId.delete(data.sid)
-        }
-        sessionOwnerSocketId.set(data.sid, socket.id)
+            sessionOwnerSocketId.set(data.sid, socket.id)
 
-        onSessionAlive?.(data)
+            onSessionAlive?.(data)
+        } catch (err) {
+            console.error('[cli-socket] Error in session-alive handler:', err)
+        }
     })
 
     socket.on('session-end', async (data: SessionEndPayload) => {
-        if (!data || typeof data.sid !== 'string' || typeof data.time !== 'number') {
-            return
+        try {
+            if (!data || typeof data.sid !== 'string' || typeof data.time !== 'number') {
+                return
+            }
+            const sessionAccess = await resolveSessionAccess(data.sid)
+            if (!sessionAccess.ok) {
+                emitAccessError('session', data.sid, sessionAccess.reason)
+                return
+            }
+            const endOwner = sessionOwnerSocketId.get(data.sid)
+            if (endOwner === socket.id) {
+                sessionOwnerSocketId.delete(data.sid)
+            }
+            onSessionEnd?.(data)
+        } catch (err) {
+            console.error('[cli-socket] Error in session-end handler:', err)
         }
-        const sessionAccess = await resolveSessionAccess(data.sid)
-        if (!sessionAccess.ok) {
-            emitAccessError('session', data.sid, sessionAccess.reason)
-            return
-        }
-        // Clean up session ownership on session end
-        const endOwner = sessionOwnerSocketId.get(data.sid)
-        if (endOwner === socket.id) {
-            sessionOwnerSocketId.delete(data.sid)
-        }
-        onSessionEnd?.(data)
     })
 
     socket.on('machine-alive', async (data: MachineAlivePayload) => {
-        if (!data || typeof data.machineId !== 'string' || typeof data.time !== 'number') {
-            return
-        }
-        const machineAccess = await resolveMachineAccess(data.machineId)
-        if (!machineAccess.ok) {
-            emitAccessError('machine', data.machineId, machineAccess.reason)
-            return
-        }
-
-        const existingOwner = machineOwnerSocketId.get(data.machineId)
-        if (existingOwner && existingOwner !== socket.id) {
-            const cliNamespace = io.of('/cli')
-            const oldSocket = cliNamespace.sockets.get(existingOwner)
-            if (oldSocket) {
-                console.warn(
-                    `[cli-socket] Machine ${data.machineId} conflict: new socket ${socket.id} replacing old socket ${existingOwner}. ` +
-                    `Disconnecting old socket to keep daemon ownership consistent.`
-                )
-                rpcRegistry.unregisterAll(oldSocket)
-                oldSocket.disconnect(true)
+        try {
+            if (!data || typeof data.machineId !== 'string' || typeof data.time !== 'number') {
+                return
             }
-            machineOwnerSocketId.delete(data.machineId)
-        }
-        machineOwnerSocketId.set(data.machineId, socket.id)
+            const machineAccess = await resolveMachineAccess(data.machineId)
+            if (!machineAccess.ok) {
+                emitAccessError('machine', data.machineId, machineAccess.reason)
+                return
+            }
 
-        onMachineAlive?.(data)
+            const existingOwner = machineOwnerSocketId.get(data.machineId)
+            if (existingOwner && existingOwner !== socket.id) {
+                const cliNamespace = io.of('/cli')
+                const oldSocket = cliNamespace.sockets.get(existingOwner)
+                if (oldSocket) {
+                    console.warn(
+                        `[cli-socket] Machine ${data.machineId} conflict: new socket ${socket.id} replacing old socket ${existingOwner}. ` +
+                        `Disconnecting old socket to keep daemon ownership consistent.`
+                    )
+                    rpcRegistry.unregisterAll(oldSocket)
+                    oldSocket.disconnect(true)
+                }
+                machineOwnerSocketId.delete(data.machineId)
+            }
+            machineOwnerSocketId.set(data.machineId, socket.id)
+
+            onMachineAlive?.(data)
+        } catch (err) {
+            console.error('[cli-socket] Error in machine-alive handler:', err)
+        }
     })
 
     const handleMachineMetadataUpdate = async (data: unknown, cb: (answer: unknown) => void) => {
-        const parsed = machineUpdateMetadataSchema.safeParse(data)
-        if (!parsed.success) {
-            cb({ result: 'error' })
-            return
-        }
-
-        const { machineId: id, metadata, expectedVersion } = parsed.data
-        const machineAccess = await resolveMachineAccess(id)
-        if (!machineAccess.ok) {
-            cb({ result: 'error', reason: machineAccess.reason })
-            return
-        }
-
-        const result = await store.updateMachineMetadata(id, metadata, expectedVersion, machineAccess.value.namespace)
-        if (result.result === 'success') {
-            cb({ result: 'success', version: result.version, metadata: result.value })
-        } else if (result.result === 'version-mismatch') {
-            cb({ result: 'version-mismatch', version: result.version, metadata: result.value })
-        } else {
-            cb({ result: 'error' })
-        }
-
-        if (result.result === 'success') {
-            const update = {
-                id: randomUUID(),
-                seq: Date.now(),
-                createdAt: Date.now(),
-                body: {
-                    t: 'update-machine' as const,
-                    machineId: id,
-                    metadata: { version: result.version, value: metadata },
-                    daemonState: null
-                }
+        try {
+            const parsed = machineUpdateMetadataSchema.safeParse(data)
+            if (!parsed.success) {
+                cb({ result: 'error' })
+                return
             }
-            socket.to(`machine:${id}`).emit('update', update)
-            onWebappEvent?.({ type: 'machine-updated', machineId: id, data: { id } })
+
+            const { machineId: id, metadata, expectedVersion } = parsed.data
+            const machineAccess = await resolveMachineAccess(id)
+            if (!machineAccess.ok) {
+                cb({ result: 'error', reason: machineAccess.reason })
+                return
+            }
+
+            const result = await store.updateMachineMetadata(id, metadata, expectedVersion, machineAccess.value.namespace)
+            if (result.result === 'success') {
+                cb({ result: 'success', version: result.version, metadata: result.value })
+            } else if (result.result === 'version-mismatch') {
+                cb({ result: 'version-mismatch', version: result.version, metadata: result.value })
+            } else {
+                cb({ result: 'error' })
+            }
+
+            if (result.result === 'success') {
+                const update = {
+                    id: randomUUID(),
+                    seq: Date.now(),
+                    createdAt: Date.now(),
+                    body: {
+                        t: 'update-machine' as const,
+                        machineId: id,
+                        metadata: { version: result.version, value: metadata },
+                        daemonState: null
+                    }
+                }
+                socket.to(`machine:${id}`).emit('update', update)
+                onWebappEvent?.({ type: 'machine-updated', machineId: id, data: { id } })
+            }
+        } catch (err) {
+            console.error('[cli-socket] Error in machine-update-metadata handler:', err)
+            try { cb({ result: 'error' }) } catch {}
         }
     }
 
     const handleMachineStateUpdate = async (data: unknown, cb: (answer: unknown) => void) => {
-        const parsed = machineUpdateStateSchema.safeParse(data)
-        if (!parsed.success) {
-            cb({ result: 'error' })
-            return
-        }
-
-        const { machineId: id, daemonState, expectedVersion } = parsed.data
-        const machineAccess = await resolveMachineAccess(id)
-        if (!machineAccess.ok) {
-            cb({ result: 'error', reason: machineAccess.reason })
-            return
-        }
-
-        const result = await store.updateMachineDaemonState(id, daemonState, expectedVersion, machineAccess.value.namespace)
-        if (result.result === 'success') {
-            cb({ result: 'success', version: result.version, daemonState: result.value })
-        } else if (result.result === 'version-mismatch') {
-            cb({ result: 'version-mismatch', version: result.version, daemonState: result.value })
-        } else {
-            cb({ result: 'error' })
-        }
-
-        if (result.result === 'success') {
-            const update = {
-                id: randomUUID(),
-                seq: Date.now(),
-                createdAt: Date.now(),
-                body: {
-                    t: 'update-machine' as const,
-                    machineId: id,
-                    metadata: null,
-                    daemonState: { version: result.version, value: daemonState }
-                }
+        try {
+            const parsed = machineUpdateStateSchema.safeParse(data)
+            if (!parsed.success) {
+                cb({ result: 'error' })
+                return
             }
-            socket.to(`machine:${id}`).emit('update', update)
-            onWebappEvent?.({ type: 'machine-updated', machineId: id, data: { id } })
+
+            const { machineId: id, daemonState, expectedVersion } = parsed.data
+            const machineAccess = await resolveMachineAccess(id)
+            if (!machineAccess.ok) {
+                cb({ result: 'error', reason: machineAccess.reason })
+                return
+            }
+
+            const result = await store.updateMachineDaemonState(id, daemonState, expectedVersion, machineAccess.value.namespace)
+            if (result.result === 'success') {
+                cb({ result: 'success', version: result.version, daemonState: result.value })
+            } else if (result.result === 'version-mismatch') {
+                cb({ result: 'version-mismatch', version: result.version, daemonState: result.value })
+            } else {
+                cb({ result: 'error' })
+            }
+
+            if (result.result === 'success') {
+                const update = {
+                    id: randomUUID(),
+                    seq: Date.now(),
+                    createdAt: Date.now(),
+                    body: {
+                        t: 'update-machine' as const,
+                        machineId: id,
+                        metadata: null,
+                        daemonState: { version: result.version, value: daemonState }
+                    }
+                }
+                socket.to(`machine:${id}`).emit('update', update)
+                onWebappEvent?.({ type: 'machine-updated', machineId: id, data: { id } })
+            }
+        } catch (err) {
+            console.error('[cli-socket] Error in machine-update-state handler:', err)
+            try { cb({ result: 'error' }) } catch {}
         }
     }
 

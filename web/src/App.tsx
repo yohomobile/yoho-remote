@@ -22,6 +22,7 @@ import { getAccessTokenSync } from '@/services/keycloak'
 import { useMyOrgs } from '@/hooks/queries/useOrgs'
 import { OrgSetup } from '@/components/OrgSetup'
 import { shouldBypassOrgGate } from '@/lib/org-gate'
+import { isLicenseTermination, getLicenseTerminationLabel } from '@/lib/license'
 
 export function App() {
     const { baseUrl } = useServerUrl()
@@ -212,7 +213,7 @@ export function App() {
     const isFirstConnectRef = useRef(true)
     const baseUrlRef = useRef(baseUrl)
     const lastSseConnectRef = useRef(0)
-    const sseConnectDebounceMs = 5000
+    const sseConnectDebounceMs = 2000
 
     useEffect(() => {
         if (baseUrlRef.current === baseUrl) {
@@ -284,11 +285,11 @@ export function App() {
             const data = ('data' in event ? event.data : null) as { active?: boolean; thinking?: boolean; wasThinking?: boolean; terminationReason?: string } | null
 
             // License kill notification
-            if (data?.active === false && typeof data.terminationReason === 'string' && data.terminationReason.startsWith('LICENSE_')) {
+            if (data?.active === false && isLicenseTermination(data.terminationReason)) {
                 const sessionsData = queryClient.getQueryData<{ sessions: SessionSummary[] }>([...queryKeys.sessions, currentOrgId ?? 'all'])
                 const killedSession = sessionsData?.sessions.find(s => s.id === event.sessionId)
                 const label = killedSession?.metadata?.summary?.text || killedSession?.metadata?.name || 'A session'
-                const reasonLabel = data.terminationReason === 'LICENSE_SUSPENDED' ? 'License suspended' : 'License expired'
+                const reasonLabel = getLicenseTerminationLabel(data.terminationReason!)
                 notifyTaskComplete({
                     sessionId: event.sessionId,
                     title: `${reasonLabel} — ${label}`,

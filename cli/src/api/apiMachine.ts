@@ -182,7 +182,7 @@ export class ApiMachineClient {
 
             const updated = handler(this.machine.metadata)
 
-            const answer = await this.socket.emitWithAck('machine-update-metadata', {
+            const answer = await this.socket.timeout(30_000).emitWithAck('machine-update-metadata', {
                 machineId: this.machine.id,
                 metadata: updated,
                 expectedVersion: this.machine.metadataVersion
@@ -243,7 +243,7 @@ export class ApiMachineClient {
 
             const updated = handler(this.machine.daemonState)
 
-            const answer = await this.socket.emitWithAck('machine-update-state', {
+            const answer = await this.socket.timeout(30_000).emitWithAck('machine-update-state', {
                 machineId: this.machine.id,
                 daemonState: updated,
                 expectedVersion: this.machine.daemonStateVersion

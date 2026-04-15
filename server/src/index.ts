@@ -244,18 +244,32 @@ async function main() {
     console.log('\nYR Server is ready!')
 
     // Handle shutdown
+    let shuttingDown = false
     const shutdown = async () => {
+        if (shuttingDown) return
+        shuttingDown = true
         console.log('\nShutting down...')
         await brainBridge?.stop()
         await bot?.stop()
         syncEngine?.stop()
         sseManager?.stop()
+        socketServer?.io?.close()
         webServer?.stop()
+        await store.close()
         process.exit(0)
     }
 
     process.on('SIGINT', shutdown)
     process.on('SIGTERM', shutdown)
+
+    process.on('uncaughtException', (error) => {
+        console.error('[Server] Uncaught exception:', error)
+        shutdown()
+    })
+
+    process.on('unhandledRejection', (reason) => {
+        console.error('[Server] Unhandled rejection:', reason)
+    })
 
     // Keep process running
     await new Promise(() => {})

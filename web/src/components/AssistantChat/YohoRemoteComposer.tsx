@@ -502,7 +502,7 @@ export function YohoRemoteComposer(props: {
             apiClient.sendTyping(sessionId, composerText).catch(() => {
                 // Ignore errors
             })
-        }, 500)  // 增加到 500ms 减少请求频率
+        }, 300)  // 300ms debounce 平衡实时感和请求频率
 
         return () => {
             if (typingTimeoutRef.current) {

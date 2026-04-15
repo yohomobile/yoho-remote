@@ -338,6 +338,18 @@ export function query(config: {
     // Spawn Claude Code process
     const spawnEnv = withBunRuntimeEnv(process.env, { allowBunBeBun: false })
     logDebug(`Spawning Claude Code process: ${spawnCommand} ${spawnArgs.join(' ')}`)
+    // DEBUG: Log spawn args for MCP debugging
+    logger.debug(`[query:spawn] Command: ${spawnCommand}`)
+    logger.debug(`[query:spawn] Args count: ${spawnArgs.length}`)
+    const mcpConfigIdx = spawnArgs.indexOf('--mcp-config')
+    if (mcpConfigIdx >= 0) {
+        const mcpConfigValue = spawnArgs[mcpConfigIdx + 1]
+        logger.debug(`[query:spawn] --mcp-config present, value length: ${mcpConfigValue?.length ?? 'undefined'}`)
+        logger.debug(`[query:spawn] --mcp-config value: ${mcpConfigValue}`)
+    } else {
+        logger.debug(`[query:spawn] WARNING: --mcp-config NOT present in args!`)
+    }
+    logger.debug(`[query:spawn] Full args: ${JSON.stringify(spawnArgs)}`)
 
     const child = spawn(spawnCommand, spawnArgs, {
         cwd,

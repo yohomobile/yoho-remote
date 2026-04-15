@@ -321,7 +321,9 @@ export class SyncEngine {
         private readonly rpcRegistry: RpcRegistry,
         private readonly sseManager: SSEManager
     ) {
-        this.reloadAllAsync()
+        this.reloadAllAsync().catch(err => {
+            console.error('[SyncEngine] Failed to load initial state from database:', err)
+        })
         this.inactivityTimer = setInterval(() => this.expireInactive(), 5_000)
     }
 
@@ -1574,14 +1576,16 @@ export class SyncEngine {
      * Called when a machine transitions from offline to online (e.g. daemon restart).
      */
     private _autoResumeInProgress = new Set<string>()
+    private _autoResumePending = new Map<string, string>()
 
     private async autoResumeSessions(machineId: string, namespace: string): Promise<void> {
-        // Prevent concurrent auto-resume for the same machine
-        if (this._autoResumeInProgress.has(machineId)) return
+        if (this._autoResumeInProgress.has(machineId)) {
+            this._autoResumePending.set(machineId, namespace)
+            return
+        }
         this._autoResumeInProgress.add(machineId)
 
         try {
-            // Wait for daemon RPC handlers to be registered (poll instead of fixed delay)
             const rpcMethod = `${machineId}:spawn-yoho-remote-session`
             const maxWait = 10_000
             const start = Date.now()
@@ -1590,31 +1594,22 @@ export class SyncEngine {
                 await new Promise(r => setTimeout(r, 500))
             }
 
-            // Verify machine is still online after waiting
             const machine = this.machines.get(machineId)
             if (!machine?.active) return
 
-            // Give already-running session sockets a chance to reconnect on their own
-            // before we spawn replacements via the daemon.
-            const SESSION_RECONNECT_GRACE_MS = 10_000
-            await this.waitForAutoResumeGrace(SESSION_RECONNECT_GRACE_MS)
+            await this.waitForAutoResumeGrace(machineId, namespace, 10_000)
 
             if (!this.machines.get(machineId)?.active) return
 
             const machineSupportedAgents = machine.supportedAgents
-            const RESUME_WINDOW_MS = 24 * 60 * 60 * 1000 // only resume sessions active within last 24h
+            const RESUME_WINDOW_MS = 24 * 60 * 60 * 1000
             const RESUME_TIMEOUT_MS = 60_000
             const candidates = Array.from(this.sessions.values()).filter(s => {
                 if (s.active) return false
-                // Only auto-resume sessions that were last known active in DB.
                 if (!this._dbActiveSessionIds.has(s.id)) return false
-                // Skip sessions explicitly terminated (license block, etc.)
                 if (s.terminationReason) return false
-                // Skip sessions explicitly archived by user/CLI
                 if (s.metadata?.archivedBy) return false
-                // Only daemon-owned sessions may be auto-resumed via daemon spawn.
                 if (s.metadata?.startedFromDaemon !== true && s.metadata?.startedBy !== 'daemon') return false
-                // Skip sessions inactive for more than 24 hours (stale)
                 if (Date.now() - s.activeAt > RESUME_WINDOW_MS) return false
                 if (s.metadata?.machineId !== machineId) return false
                 if (s.namespace !== namespace) return false
@@ -1622,7 +1617,6 @@ export class SyncEngine {
                 const flavor = s.metadata?.flavor
                 if (flavor !== 'claude' && flavor !== 'codex') return false
                 if (typeof s.metadata?.claudeSessionId !== 'string' && typeof s.metadata?.codexSessionId !== 'string') return false
-                // Skip sessions whose agent is not supported by this machine
                 if (machineSupportedAgents && machineSupportedAgents.length > 0 && !machineSupportedAgents.includes(flavor as SpawnAgentType)) return false
                 return true
             })
@@ -1630,16 +1624,14 @@ export class SyncEngine {
             if (candidates.length === 0) return
             console.log(`[auto-resume] Machine ${machineId.slice(0, 8)} online, resuming ${candidates.length} session(s)`)
 
-            for (const session of candidates) {
+            const resumeOne = async (session: typeof candidates[0]) => {
                 try {
                     const flavor = session.metadata!.flavor as string
                     const rawId = flavor === 'claude' ? session.metadata?.claudeSessionId : session.metadata?.codexSessionId
-                    if (typeof rawId !== 'string' || !rawId) continue
+                    if (typeof rawId !== 'string' || !rawId) return
 
                     const directory = session.metadata!.path
                     const previousActiveAt = session.activeAt
-                    // Pre-activate so heartbeats are accepted, but keep the previous activeAt
-                    // so we can distinguish a real reconnect heartbeat from this optimistic state.
                     await this.store.setSessionActive(session.id, true, previousActiveAt, namespace)
                     session.active = true
                     session.thinking = false
@@ -1666,7 +1658,7 @@ export class SyncEngine {
                             session.thinking = false
                             session.resumingUntil = undefined
                             console.warn(`[auto-resume] Session ${session.id.slice(0, 8)} spawn succeeded but no reconnect heartbeat arrived within ${RESUME_TIMEOUT_MS}ms`)
-                            continue
+                            return
                         }
                         console.log(`[auto-resume] Resumed session ${session.id.slice(0, 8)}`)
                     } else {
@@ -1681,10 +1673,21 @@ export class SyncEngine {
                     console.error(`[auto-resume] Error resuming session ${session.id.slice(0, 8)}:`, err)
                 }
             }
+
+            const BATCH_SIZE = 5
+            for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+                const batch = candidates.slice(i, i + BATCH_SIZE)
+                await Promise.allSettled(batch.map(resumeOne))
+            }
         } catch (err) {
             console.error('[auto-resume] Unexpected error:', err)
         } finally {
             this._autoResumeInProgress.delete(machineId)
+            const pendingNamespace = this._autoResumePending.get(machineId)
+            if (pendingNamespace !== undefined) {
+                this._autoResumePending.delete(machineId)
+                void this.autoResumeSessions(machineId, pendingNamespace)
+            }
         }
     }
 
@@ -1728,11 +1731,22 @@ export class SyncEngine {
         })
     }
 
-    private async waitForAutoResumeGrace(timeoutMs: number): Promise<void> {
-        if (timeoutMs <= 0) {
-            return
+    private async waitForAutoResumeGrace(machineId: string, namespace: string, timeoutMs: number): Promise<void> {
+        if (timeoutMs <= 0) return
+        const CHECK_INTERVAL = 1_000
+        const start = Date.now()
+        while (Date.now() - start < timeoutMs) {
+            const hasInactive = Array.from(this.sessions.values()).some(s =>
+                !s.active
+                && this._dbActiveSessionIds.has(s.id)
+                && s.metadata?.machineId === machineId
+                && s.namespace === namespace
+                && !s.terminationReason
+                && !s.metadata?.archivedBy
+            )
+            if (!hasInactive) return
+            await new Promise(r => setTimeout(r, CHECK_INTERVAL))
         }
-        await new Promise(resolve => setTimeout(resolve, timeoutMs))
     }
 
     /** Public alias for refreshSession - used by guards.ts and events.ts */
@@ -2049,6 +2063,13 @@ export class SyncEngine {
         decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort',
         answers?: Record<string, string[]>
     ): Promise<void> {
+        console.log(`[AskUserQuestion] approvePermission`, {
+            sessionId,
+            requestId,
+            hasAnswers: !!answers,
+            answersKeys: answers ? Object.keys(answers) : [],
+            decision,
+        })
         await this.sessionRpc(sessionId, 'permission', {
             id: requestId,
             approved: true,

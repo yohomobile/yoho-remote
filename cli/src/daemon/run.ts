@@ -80,15 +80,15 @@ export async function startDaemon(): Promise<void> {
     requestShutdown = (source, errorMessage) => {
       logger.debug(`[DAEMON RUN] Requesting shutdown (source: ${source}, errorMessage: ${errorMessage})`);
 
-      // Fallback - in case startup malfunctions - we will force exit the process with code 1
+      // Fallback - in case cleanup hangs - force exit after 10 seconds
       setTimeout(async () => {
-        logger.debug('[DAEMON RUN] Startup malfunctioned, forcing exit with code 1');
+        logger.debug('[DAEMON RUN] Graceful shutdown timed out, forcing exit with code 1');
 
         // Give time for logs to be flushed
         await new Promise(resolve => setTimeout(resolve, 100))
 
         process.exit(1);
-      }, 1_000);
+      }, 10_000);
 
       // Start graceful shutdown
       resolve({ source, errorMessage });
@@ -109,6 +109,11 @@ export async function startDaemon(): Promise<void> {
   if (isWindows()) {
     process.on('SIGBREAK', () => {
       logger.debug('[DAEMON RUN] Received SIGBREAK');
+      requestShutdown('os-signal');
+    });
+  } else {
+    process.on('SIGHUP', () => {
+      logger.debug('[DAEMON RUN] Received SIGHUP');
       requestShutdown('os-signal');
     });
   }
@@ -275,10 +280,12 @@ export async function startDaemon(): Promise<void> {
             addLog('dedup', `Killing existing process PID ${pid} for session ${sessionId}`, 'running');
             try {
               if (tracked.startedBy === 'daemon' && tracked.childProcess) {
-                void killProcessByChildProcess(tracked.childProcess);
+                await killProcessByChildProcess(tracked.childProcess);
               } else {
-                void killProcess(pid);
+                await killProcess(pid);
               }
+              // Wait briefly for process to actually exit before spawning replacement
+              await new Promise(resolve => setTimeout(resolve, 500));
             } catch (error) {
               logger.debug(`[DAEMON RUN] Failed to kill existing process PID ${pid}:`, error);
             }
@@ -416,11 +423,13 @@ export async function startDaemon(): Promise<void> {
 
         // Resolve authentication token if provided
         let extraEnv: Record<string, string> = {};
+        const tempDirs: string[] = [];
         if (options.token) {
           if (options.agent === 'codex') {
             addLog('env', `Setting up Codex authentication`, 'running');
             // Create a temporary directory for Codex
             const codexHomeDir = await fs.mkdtemp(join(os.tmpdir(), 'yr-codex-'));
+            tempDirs.push(codexHomeDir);
 
             // Write the token to the temporary directory
             await fs.writeFile(join(codexHomeDir, 'auth.json'), options.token);
@@ -456,7 +465,9 @@ export async function startDaemon(): Promise<void> {
 
         if (options.tokenSourceType === 'codex' && agent === 'codex' && options.tokenSourceBaseUrl && options.tokenSourceApiKey) {
           addLog('env', `Applying Token Source for Codex: ${options.tokenSourceName ?? options.tokenSourceId ?? 'unnamed'}`, 'running');
-          const codexHomeDir = await fs.mkdtemp(join(os.tmpdir(), 'yr-codex-provider-'));
+          const codexProviderHomeDir = await fs.mkdtemp(join(os.tmpdir(), 'yr-codex-provider-'));
+          tempDirs.push(codexProviderHomeDir);
+          const codexHomeDir = codexProviderHomeDir;
           const defaultCodexHome = process.env.CODEX_HOME || join(os.homedir(), '.codex');
           const existingConfigPath = join(defaultCodexHome, 'config.toml');
           let configContent = '';
@@ -681,7 +692,7 @@ export async function startDaemon(): Promise<void> {
         cliProcess = spawnYohoRemoteCLI(args, {
           cwd: safeSpawnCwd,
           detached: true,  // Sessions stay alive when daemon stops
-          stdio: ['ignore', 'pipe', 'pipe'],  // Capture stdout/stderr for debugging
+          stdio: ['ignore', 'ignore', 'pipe'],  // stdout ignored to prevent pipe buffer blocking
           env: childEnv
         });
 
@@ -709,7 +720,8 @@ export async function startDaemon(): Promise<void> {
           pid,
           childProcess: cliProcess,
           directoryCreated,
-          message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined
+          message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined,
+          tempDirs: tempDirs.length > 0 ? tempDirs : undefined
         };
 
         pidToTrackedSession.set(pid, trackedSession);
@@ -821,7 +833,22 @@ export async function startDaemon(): Promise<void> {
     // Handle child process exit
     const onChildExited = (pid: number) => {
       logger.debug(`[DAEMON RUN] Removing exited process PID ${pid} from tracking`);
+      const tracked = pidToTrackedSession.get(pid);
       pidToTrackedSession.delete(pid);
+
+      // Clean up temporary directories (codex auth, etc.)
+      if (tracked?.tempDirs) {
+        for (const dir of tracked.tempDirs) {
+          fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+        }
+      }
+
+      // Resolve pending awaiter so spawnSession doesn't wait for the full 15s timeout
+      const awaiter = pidToAwaiter.get(pid);
+      if (awaiter && tracked) {
+        pidToAwaiter.delete(pid);
+        awaiter(tracked);
+      }
     };
 
     // Start control server
@@ -844,7 +871,7 @@ export async function startDaemon(): Promise<void> {
       startedWithCliMtimeMs,
       daemonLogPath: logger.logFilePath
     };
-    writeDaemonState(fileState);
+    await writeDaemonState(fileState);
     logger.debug('[DAEMON RUN] Daemon state written');
 
     // Prepare initial daemon state
@@ -960,13 +987,17 @@ export async function startDaemon(): Promise<void> {
             });
           }
         } catch (error) {
-          logger.debug('[DAEMON RUN] Failed to spawn new daemon, this is quite likely to happen during integration tests as we are cleaning out dist/ directory', error);
+          logger.debug('[DAEMON RUN] Failed to spawn new daemon, resuming current daemon', error);
+          heartbeatRunning = false;
+          return;
         }
 
-        // So we can just hang forever
-        logger.debug('[DAEMON RUN] Hanging for a bit - waiting for CLI to kill us because we are running outdated version of the code');
+        // Wait for new daemon to kill us; if it doesn't within 10s, resume operation
+        logger.debug('[DAEMON RUN] Waiting for new daemon to take over (10s timeout)');
         await new Promise(resolve => setTimeout(resolve, 10_000));
-        process.exit(0);
+        logger.debug('[DAEMON RUN] New daemon did not kill us — it may have failed to start. Resuming.');
+        heartbeatRunning = false;
+        return;
       }
 
       // Before wrecklessly overriting the daemon state file, we should check if we are the ones who own it
@@ -988,7 +1019,7 @@ export async function startDaemon(): Promise<void> {
           lastHeartbeat: new Date().toLocaleString(),
           daemonLogPath: fileState.daemonLogPath
         };
-        writeDaemonState(updatedState);
+        await writeDaemonState(updatedState);
         if (process.env.DEBUG) {
           logger.debug(`[DAEMON RUN] Health check completed at ${updatedState.lastHeartbeat}`);
         }

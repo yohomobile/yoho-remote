@@ -11,6 +11,7 @@ import { requireMachine } from './guards'
 import { isMachineBlocked } from './blocklist'
 import { serializeMachine, sortMachinesForDisplay } from './machinePayload'
 import { getLicenseService } from '../../license/licenseService'
+import { getUnsupportedSessionSourceError, isSupportedSessionSource } from '../../sessionSourcePolicy'
 
 const spawnBodySchema = z.object({
     directory: z.string().min(1),
@@ -157,6 +158,9 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
         }
 
         const rawSource = parsed.data.source?.trim()
+        if (!isSupportedSessionSource(rawSource)) {
+            return c.json({ error: getUnsupportedSessionSourceError(rawSource) }, 400)
+        }
         const source = rawSource ? rawSource : 'external-api'
         const email = c.get('email')
         const spawnTarget = resolvePersonalWorktreeSpawnOptions({

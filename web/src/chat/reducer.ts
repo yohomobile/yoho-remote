@@ -146,12 +146,19 @@ function dedupeAgentEvents(blocks: ChatBlock[]): ChatBlock[] {
                 const prevEvent = prev.event as { type: string; [key: string]: unknown }
                 if (prevEvent.type === 'turn-duration') {
                     const numTurns = typeof event.numTurns === 'number' ? event.numTurns : null
-                    // Replace the previous turn-duration with a combined event
+                    const cost = typeof event.cost === 'number' ? event.cost : null
+                    const isError = typeof event.isError === 'boolean' ? event.isError : false
+                    const stopReason = typeof event.stopReason === 'string' ? event.stopReason : undefined
+                    const terminalReason = typeof event.terminalReason === 'string' ? event.terminalReason : undefined
                     result[result.length - 1] = {
                         ...prev,
                         event: {
                             ...prevEvent,
-                            numTurns
+                            numTurns,
+                            ...(cost !== null ? { cost } : {}),
+                            ...(isError ? { isError } : {}),
+                            ...(stopReason ? { stopReason } : {}),
+                            ...(terminalReason ? { terminalReason } : {})
                         }
                     }
                     continue
@@ -914,5 +921,5 @@ export function reduceChatBlocks(
     })
     const sortedBlocks = indexedBlocks.map(({ block }) => block)
 
-    return { blocks: dedupeResultTextBlocks(dedupeAgentEvents(sortedBlocks)), hasReadyEvent, latestUsage }
+    return { blocks: dedupeAgentEvents(sortedBlocks), hasReadyEvent, latestUsage }
 }

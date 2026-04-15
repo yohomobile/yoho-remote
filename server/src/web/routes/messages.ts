@@ -13,7 +13,7 @@ const querySchema = z.object({
 const sendMessageBodySchema = z.object({
     text: z.string().min(1),
     localId: z.string().min(1).optional(),
-    sentFrom: z.string().optional()
+    sentFrom: z.string().min(1).max(50).optional()
 })
 
 const clearMessagesBodySchema = z.object({
@@ -78,7 +78,7 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null, sto
             return sessionResult
         }
 
-        const count = engine.getMessageCount(sessionResult.sessionId)
+        const count = await engine.getMessageCount(sessionResult.sessionId)
         return c.json({ count })
     })
 

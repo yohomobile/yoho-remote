@@ -398,9 +398,38 @@ export const knownTools: Record<string, {
         },
         minimal: (opts) => !getCodexDiffUnified(opts.input)
     },
+    search: {
+        icon: () => <SearchIcon className={DEFAULT_ICON_CLASS} />,
+        title: (opts) => getInputStringAny(opts.input, ['query', 'pattern']) ?? 'Search',
+        minimal: true
+    },
     CodexPlan: {
         icon: () => <ClipboardIcon className={DEFAULT_ICON_CLASS} />,
         title: () => 'Plan',
+        minimal: false
+    },
+    webReader: {
+        icon: () => <GlobeIcon className={DEFAULT_ICON_CLASS} />,
+        title: (opts) => {
+            const url = getInputStringAny(opts.input, ['url'])
+            if (url) {
+                try { return new URL(url).hostname } catch { /* ignore */ }
+            }
+            return 'Web Reader'
+        },
+        subtitle: (opts) => {
+            const url = getInputStringAny(opts.input, ['url'])
+            return url ? truncate(url, 120) : null
+        },
+        minimal: false
+    },
+    analyze_image: {
+        icon: () => <EyeIcon className={DEFAULT_ICON_CLASS} />,
+        title: () => 'Analyze Image',
+        subtitle: (opts) => {
+            const prompt = getInputStringAny(opts.input, ['prompt'])
+            return prompt ? truncate(prompt, 120) : null
+        },
         minimal: false
     },
     ExitPlanMode: {
@@ -472,6 +501,40 @@ export const knownTools: Record<string, {
             return question.length > 0 ? truncate(question, 120) : null
         },
         minimal: false
+    },
+    ToolSearch: {
+        icon: () => <SearchIcon className={DEFAULT_ICON_CLASS} />,
+        title: () => 'Tool Search',
+        subtitle: (opts) => getInputStringAny(opts.input, ['query', 'name']),
+        minimal: true
+    },
+    TaskOutput: {
+        icon: () => <TerminalIcon className={DEFAULT_ICON_CLASS} />,
+        title: () => 'Task Output',
+        minimal: true
+    },
+    TaskStop: {
+        icon: () => <TerminalIcon className={DEFAULT_ICON_CLASS} />,
+        title: () => 'Task Stop',
+        minimal: true
+    },
+    EnterPlanMode: {
+        icon: () => <ClipboardIcon className={DEFAULT_ICON_CLASS} />,
+        title: () => 'Enter Plan Mode',
+        minimal: true
+    },
+    Skill: {
+        icon: () => <BulbIcon className={DEFAULT_ICON_CLASS} />,
+        title: (opts) => {
+            const skill = getInputStringAny(opts.input, ['skill'])
+            return skill ? `/${skill}` : 'Skill'
+        },
+        minimal: true
+    },
+    Monitor: {
+        icon: () => <EyeIcon className={DEFAULT_ICON_CLASS} />,
+        title: (opts) => getInputStringAny(opts.input, ['description']) ?? 'Monitor',
+        minimal: true
     }
 }
 
@@ -480,7 +543,7 @@ export function getToolPresentation(opts: Omit<ToolOpts, 'metadata'> & { metadat
         return {
             icon: <PuzzleIcon className={DEFAULT_ICON_CLASS} />,
             title: formatMCPTitle(opts.toolName),
-            subtitle: null,
+            subtitle: getGenericToolSubtitle(opts.input),
             minimal: true
         }
     }
@@ -494,7 +557,7 @@ export function getToolPresentation(opts: Omit<ToolOpts, 'metadata'> & { metadat
         }
     }
 
-    const known = knownTools[opts.toolName]
+    const known = knownTools[opts.toolName] ?? knownTools[opts.toolName.charAt(0).toUpperCase() + opts.toolName.slice(1)]
     if (known) {
         const minimal = typeof known.minimal === 'function' ? known.minimal(opts) : (known.minimal ?? false)
         return {
@@ -507,9 +570,14 @@ export function getToolPresentation(opts: Omit<ToolOpts, 'metadata'> & { metadat
 
     const subtitle = getGenericToolSubtitle(opts.input)
 
+    let title = opts.toolName
+    if (title.includes('/') && !title.includes(' ')) {
+        title = title.split('/').pop() ?? title
+    }
+
     return {
         icon: <WrenchIcon className={DEFAULT_ICON_CLASS} />,
-        title: opts.toolName,
+        title,
         subtitle: subtitle ? truncate(subtitle, 80) : null,
         minimal: true
     }

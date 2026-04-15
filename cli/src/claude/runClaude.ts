@@ -288,7 +288,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
             'mcp__skill__import',
         ]
         : undefined; // Track current allowed tools
-    let currentDisallowedTools: string[] | undefined = (sessionSource === 'openclaw' || sessionSource === 'brain') ? ['AskUserQuestion'] : undefined;
+    let currentDisallowedTools: string[] | undefined = sessionSource === 'brain' ? ['AskUserQuestion'] : undefined;
 
     const syncSessionModes = () => {
         const sessionInstance = currentSessionRef.current;
@@ -397,7 +397,10 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     });
 
     // Setup signal handlers for graceful shutdown
+    let cleanupStarted = false;
     const cleanup = async () => {
+        if (cleanupStarted) return;
+        cleanupStarted = true;
         logger.debug('[START] Received termination signal, cleaning up...');
         restoreTerminalState();
 

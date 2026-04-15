@@ -37,8 +37,15 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
         return { icon: null, text: typeof event.message === 'string' ? event.message : 'Message' }
     }
     if (event.type === 'turn-duration') {
-        const ms = typeof event.durationMs === 'number' ? event.durationMs : 0
-        return { icon: '⏱️', text: `Turn: ${formatDuration(ms)}` }
+        const e = event as Record<string, unknown>
+        const ms = typeof e.durationMs === 'number' ? e.durationMs : 0
+        const parts = [`Turn: ${formatDuration(ms)}`]
+        if (typeof e.numTurns === 'number') parts.push(`${e.numTurns} turns`)
+        if (typeof e.cost === 'number') parts.push(`$${(e.cost as number).toFixed(4)}`)
+        const isError = e.isError === true
+        const terminalReason = typeof e.terminalReason === 'string' ? e.terminalReason : null
+        if (isError && terminalReason) parts.push(terminalReason)
+        return { icon: isError ? '❌' : '⏱️', text: parts.join(' · ') }
     }
 
     // --- New SDK event types ---
@@ -116,11 +123,18 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
     }
 
     if (event.type === 'session-result') {
-        const numTurns = (event as Record<string, unknown>).numTurns
-        if (typeof numTurns === 'number') {
-            return { icon: '📊', text: `Session: ${numTurns} turns` }
+        const e = event as Record<string, unknown>
+        const parts: string[] = []
+        if (typeof e.numTurns === 'number') parts.push(`${e.numTurns} turns`)
+        if (typeof e.cost === 'number') parts.push(`$${(e.cost as number).toFixed(4)}`)
+        if (typeof e.durationMs === 'number') parts.push(formatDuration(e.durationMs as number))
+        const isError = e.isError === true
+        const terminalReason = typeof e.terminalReason === 'string' ? e.terminalReason : null
+        if (isError && terminalReason) {
+            parts.push(terminalReason)
         }
-        return { icon: '📊', text: 'Session completed' }
+        const icon = isError ? '❌' : '📊'
+        return { icon, text: parts.length > 0 ? `Session: ${parts.join(' · ')}` : 'Session completed' }
     }
 
     try {

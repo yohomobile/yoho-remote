@@ -106,12 +106,12 @@ export async function spawnWithAbort(options: SpawnWithAbortOptions): Promise<vo
             options.signal.addEventListener('abort', abortHandler);
         }
 
-        // Handle parent process exit - ensure child is killed
+        // Handle parent process exit - ensure child is killed (must be synchronous)
         const processExitHandler = () => {
             if (child.exitCode === null && !child.killed) {
                 logDebug('Parent process exiting, killing child process');
                 try {
-                    void killProcessByChildProcess(child, true); // Force kill on parent exit
+                    child.kill('SIGKILL');
                 } catch (error) {
                     logDebug('Failed to kill child on parent exit', error);
                 }
