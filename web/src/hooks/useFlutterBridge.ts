@@ -218,7 +218,7 @@ export function useFlutterBridge() {
     yoho.logout = () => {
       window.dispatchEvent(new CustomEvent('yoho-bridge-logout'))
     }
-  }, [navigate])
+  }, [navigate, queryClient])
 }
 
 // Hook for SessionChat to listen to bridge actions
