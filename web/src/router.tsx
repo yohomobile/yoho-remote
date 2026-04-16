@@ -20,7 +20,7 @@ import { useAppContext } from '@/lib/app-context'
 import { useMyOrgs, useOrg } from '@/hooks/queries/useOrgs'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { isTelegramApp } from '@/hooks/useTelegram'
-import { isFlutterApp } from '@/hooks/useFlutterApp'
+import { isFlutterApp, callNativeHandler } from '@/hooks/useFlutterApp'
 import { pushSessionsHeader, getOnlineUsersForBadge } from '@/hooks/useFlutterBridge'
 import { useMessages } from '@/hooks/queries/useMessages'
 import { useMachines } from '@/hooks/queries/useMachines'
@@ -312,13 +312,25 @@ function SessionsPage() {
                         search: (prev) => ({ ...prev, owner }),
                         replace: true,
                     })}
-                    onSelect={(sessionId) => navigate({
-                        to: '/sessions/$sessionId',
-                        params: { sessionId },
-                        search,
-                    })}
+                    onSelect={(sessionId) => {
+                        if (isFlutterApp()) {
+                            void callNativeHandler('openDetail', { path: `/sessions/${sessionId}` })
+                        } else {
+                            navigate({
+                                to: '/sessions/$sessionId',
+                                params: { sessionId },
+                                search,
+                            })
+                        }
+                    }}
                     onDelete={handleDeleteSession}
-                    onNewSession={() => navigate({ to: '/sessions/new', search })}
+                    onNewSession={() => {
+                        if (isFlutterApp()) {
+                            void callNativeHandler('openDetail', { path: '/sessions/new' })
+                        } else {
+                            navigate({ to: '/sessions/new', search })
+                        }
+                    }}
                     onRefresh={handleRefresh}
                     isLoading={isLoading}
                     machines={machines}
@@ -459,16 +471,23 @@ function NewSessionPage() {
 
     const handleSuccess = useCallback((sessionId: string) => {
         void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
-        // Replace current page with /sessions to clear spawn flow from history
-        navigate({ to: '/sessions', search: sessionListSearch, replace: true })
-        // Then navigate to new session
-        requestAnimationFrame(() => {
+        if (isFlutterApp()) {
+            void callNativeHandler('refreshSessions')
             navigate({
                 to: '/sessions/$sessionId',
                 params: { sessionId },
-                search: sessionListSearch,
+                replace: true,
             })
-        })
+        } else {
+            navigate({ to: '/sessions', search: sessionListSearch, replace: true })
+            requestAnimationFrame(() => {
+                navigate({
+                    to: '/sessions/$sessionId',
+                    params: { sessionId },
+                    search: sessionListSearch,
+                })
+            })
+        }
     }, [navigate, queryClient, sessionListSearch])
 
     return (
