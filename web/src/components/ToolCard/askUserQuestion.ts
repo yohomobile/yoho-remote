@@ -1,3 +1,5 @@
+import type { ChatToolCall } from '@/chat/types'
+
 export type AskUserQuestionOption = {
     label: string
     description: string | null
@@ -21,6 +23,17 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 export function isAskUserQuestionToolName(toolName: string): boolean {
     return toolName === 'AskUserQuestion' || toolName === 'ask_user_question'
+}
+
+type AskUserQuestionRenderState = Pick<ChatToolCall, 'state' | 'permission'>
+
+export function shouldRenderAskUserQuestionInteractively(tool: AskUserQuestionRenderState): boolean {
+    if (tool.permission?.status === 'pending') return true
+    return !tool.permission && (tool.state === 'pending' || tool.state === 'running')
+}
+
+export function shouldRenderAskUserQuestionAsRegularTool(tool: AskUserQuestionRenderState): boolean {
+    return !tool.permission && (tool.state === 'completed' || tool.state === 'error')
 }
 
 export function parseAskUserQuestionInput(input: unknown): { questions: AskUserQuestionQuestion[] } {
@@ -77,4 +90,3 @@ export function extractAskUserQuestionQuestionsInfo(input: unknown): AskUserQues
     }
     return questions
 }
-

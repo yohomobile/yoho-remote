@@ -502,6 +502,7 @@ export interface IStore {
     addDownloadFile(file: { sessionId: string; orgId: string | null; filename: string; mimeType: string; content: Buffer }): Promise<StoredDownloadFile>
     getDownloadFile(id: string): Promise<{ meta: StoredDownloadFile; content: Buffer } | null>
     listDownloadFiles(sessionId: string): Promise<StoredDownloadFile[]>
+    clearDownloadFiles(sessionId: string): Promise<number>
 
     // === 关闭连接 ===
     close(): Promise<void>

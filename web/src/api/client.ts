@@ -1086,6 +1086,13 @@ export class ApiClient {
         )
     }
 
+    async clearSessionDownloads(sessionId: string): Promise<{ cleared: number }> {
+        return await this.request<{ cleared: number }>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/downloads`,
+            { method: 'DELETE' }
+        )
+    }
+
     async downloadFile(id: string, filename: string): Promise<void> {
         const liveToken = this.getToken ? this.getToken() : null
         const authToken = liveToken ?? this.token

@@ -127,6 +127,23 @@ export function AskUserQuestionFooter(props: {
             toolState: props.tool.state,
             sessionId: props.sessionId,
         })
+
+        // Defensive: if the tool is already in a terminal state but we have no permission,
+        // the agentState request/completedRequest is missing (likely a backend/CLI sync bug).
+        // Show a fallback instead of an infinite spinner.
+        if (props.tool.state === 'error' || props.tool.state === 'completed') {
+            return (
+                <div className="mt-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
+                    <div className="text-sm text-[var(--app-hint)]">
+                        无法加载此问题（请求可能已过期或丢失）。
+                    </div>
+                    <div className="mt-2 text-xs text-[var(--app-hint)]">
+                        如果此问题持续出现，请尝试刷新页面或重新开启会话。
+                    </div>
+                </div>
+            )
+        }
+
         return (
             <div className="mt-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3">
                 <div className="flex items-center gap-2 text-sm text-[var(--app-hint)]">

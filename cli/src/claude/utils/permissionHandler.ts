@@ -119,6 +119,44 @@ function buildAskUserQuestionUpdatedInput(input: unknown, answers: Record<string
     };
 }
 
+const TOOL_USE_ERROR_REGEX = /<tool_use_error>(.*?)<\/tool_use_error>/s;
+const TOOL_RESULT_REASON_KEYS = ['text', 'content', 'message', 'error', 'output', 'result'] as const;
+
+function stripToolUseErrorWrapper(text: string): string {
+    const match = text.match(TOOL_USE_ERROR_REGEX);
+    return typeof match?.[1] === 'string' ? match[1].trim() : text.trim();
+}
+
+function extractToolResultReason(value: unknown, depth: number = 0): string | null {
+    if (depth > 3 || value === null || value === undefined) return null;
+
+    if (typeof value === 'string') {
+        const trimmed = stripToolUseErrorWrapper(value);
+        return trimmed.length > 0 ? trimmed : null;
+    }
+
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const reason = extractToolResultReason(item, depth + 1);
+            if (reason) return reason;
+        }
+        return null;
+    }
+
+    if (!isObject(value)) return null;
+
+    if (value.type === 'text' && typeof value.text === 'string') {
+        return extractToolResultReason(value.text, depth + 1);
+    }
+
+    for (const key of TOOL_RESULT_REASON_KEYS) {
+        const reason = extractToolResultReason(value[key], depth + 1);
+        if (reason) return reason;
+    }
+
+    return null;
+}
+
 interface PendingRequest {
     resolve: (value: PermissionResult) => void;
     reject: (error: Error) => void;
@@ -132,6 +170,7 @@ interface ToolCallRecord {
     input: unknown;
     used: boolean;
     parentToolUseId: string | null;
+    createdAt: number;
 }
 
 function buildSubagentPromptInput(input: unknown): Record<string, unknown> | null {
@@ -495,7 +534,8 @@ export class PermissionHandler {
                             name: block.name!,
                             input: block.input,
                             used: false,
-                            parentToolUseId: assistantMsg.parent_tool_use_id ?? null
+                            parentToolUseId: assistantMsg.parent_tool_use_id ?? null,
+                            createdAt: Date.now()
                         });
                     }
                 }
@@ -509,6 +549,12 @@ export class PermissionHandler {
                         const toolCall = this.toolCalls.find(tc => tc.id === block.tool_use_id);
                         if (toolCall && !toolCall.used) {
                             toolCall.used = true;
+                            if (requiresUserApproval(toolCall.name) && block.is_error === true && !block.permissions) {
+                                const reason = extractToolResultReason(block.content)
+                                    ?? 'Tool call failed before a permission request was created.';
+                                logger.debug(`[permissionHandler] Synthesizing completed request for orphan ${toolCall.name} error: ${toolCall.id}`);
+                                this.completeOrphanRequestState(toolCall.id, toolCall, reason);
+                            }
                         }
                     }
                 }
@@ -594,6 +640,29 @@ export class PermissionHandler {
                         mode: message.mode,
                         allowTools: message.allowTools,
                         answers: message.answers
+                    }
+                }
+            };
+        });
+    }
+
+    private completeOrphanRequestState(id: string, toolCall: ToolCallRecord, reason: string): void {
+        this.session.client.updateAgentState((currentState) => {
+            if (currentState.requests?.[id] || currentState.completedRequests?.[id]) {
+                return currentState;
+            }
+
+            return {
+                ...currentState,
+                completedRequests: {
+                    ...currentState.completedRequests,
+                    [id]: {
+                        tool: toolCall.name,
+                        arguments: toolCall.input,
+                        createdAt: toolCall.createdAt,
+                        completedAt: Date.now(),
+                        status: 'canceled',
+                        reason
                     }
                 }
             };

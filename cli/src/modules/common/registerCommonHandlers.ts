@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import { readFile, writeFile, readdir, stat, mkdir } from 'fs/promises';
 import { createHash } from 'crypto';
 import { basename, join, resolve, extname } from 'path';
+import { homedir } from 'os';
 import { run as runRipgrep } from '@/modules/ripgrep/index';
 import { run as runDifftastic } from '@/modules/difftastic/index';
 import { RpcHandlerManager } from '../../api/rpc/RpcHandlerManager';
@@ -649,8 +650,7 @@ type UploadSaveOptions = {
 };
 
 async function saveUploadedFile(options: UploadSaveOptions): Promise<UploadFileResponse> {
-    // Create uploads directory under .yoho-remote
-    const uploadsDir = join(options.workingDirectory, '.yoho-remote', 'uploads');
+    const uploadsDir = join(homedir(), '.yoho-remote', 'uploads');
     await mkdir(uploadsDir, { recursive: true });
 
     const safeName = basename(options.filename);
@@ -679,10 +679,8 @@ async function saveUploadedFile(options: UploadSaveOptions): Promise<UploadFileR
 
     await writeFile(filePath, buffer);
 
-    // Return relative path from working directory
-    const relativePath = join('.yoho-remote', 'uploads', uniqueFilename);
-    logger.debug('[upload] saved', { path: relativePath, bytes: sizeBytes });
-    return { success: true, path: relativePath };
+    logger.debug('[upload] saved', { path: filePath, bytes: sizeBytes });
+    return { success: true, path: filePath };
 }
 
 function getExtensionFromMimeType(mimeType: string, fallbackExtension: string): string {

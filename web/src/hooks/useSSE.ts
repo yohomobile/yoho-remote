@@ -179,6 +179,7 @@ export function useSSE(options: {
                                             ...prev.session,
                                             ...(statusData.active !== undefined && { active: statusData.active }),
                                             ...(statusData.thinking !== undefined && { thinking: statusData.thinking }),
+                                            ...(statusData.lastMessageAt !== undefined && { lastMessageAt: statusData.lastMessageAt ?? null }),
                                             ...(statusData.permissionMode !== undefined && { permissionMode: statusData.permissionMode as Session['permissionMode'] }),
                                             ...(statusData.modelMode !== undefined && { modelMode: statusData.modelMode as Session['modelMode'] }),
                                             ...(statusData.modelReasoningEffort !== undefined && { modelReasoningEffort: statusData.modelReasoningEffort as Session['modelReasoningEffort'] }),

@@ -5,13 +5,15 @@ import { PermissionHandler } from './permissionHandler'
 
 function createSessionStub() {
     const rpcHandlers = new Map<string, (message: unknown) => unknown>()
+    let agentState: Record<string, unknown> = { requests: {}, completedRequests: {} }
     const session = {
         queue: {
             unshift: vi.fn()
         },
         client: {
             updateAgentState: vi.fn((updater: (state: Record<string, unknown>) => Record<string, unknown>) => {
-                updater({ requests: {}, completedRequests: {} })
+                agentState = updater(agentState)
+                return agentState
             }),
             rpcHandlerManager: {
                 registerHandler: vi.fn((method: string, handler: (message: unknown) => unknown) => {
@@ -24,7 +26,8 @@ function createSessionStub() {
 
     return {
         session,
-        rpcHandlers
+        rpcHandlers,
+        getAgentState: () => agentState
     }
 }
 
@@ -44,6 +47,25 @@ function createAssistantToolUseMessage(options: {
                 id: options.id,
                 name: options.name,
                 input: options.input
+            }]
+        }
+    }
+}
+
+function createUserToolResultMessage(options: {
+    toolUseId: string
+    content: unknown
+    isError?: boolean
+}) {
+    return {
+        type: 'user',
+        message: {
+            role: 'user',
+            content: [{
+                type: 'tool_result',
+                tool_use_id: options.toolUseId,
+                content: options.content,
+                is_error: options.isError ?? false
             }]
         }
     }
@@ -167,6 +189,38 @@ describe('PermissionHandler', () => {
         await expect(promise).resolves.toEqual({
             behavior: 'deny',
             message: 'Plan rejected'
+        })
+    })
+
+    it('synthesizes a completed request for orphan AskUserQuestion validation errors', () => {
+        const { session, getAgentState } = createSessionStub()
+        const handler = new PermissionHandler(session as any)
+        const input = {
+            questions: '[{"question":"Pick one"}]'
+        }
+
+        handler.onMessage(createAssistantToolUseMessage({
+            id: 'tool-ask-invalid',
+            name: 'AskUserQuestion',
+            input
+        }) as any)
+
+        handler.onMessage(createUserToolResultMessage({
+            toolUseId: 'tool-ask-invalid',
+            isError: true,
+            content: '<tool_use_error>InputValidationError: AskUserQuestion failed because `questions` must be an array.</tool_use_error>'
+        }) as any)
+
+        expect(getAgentState()).toMatchObject({
+            requests: {},
+            completedRequests: {
+                'tool-ask-invalid': {
+                    tool: 'AskUserQuestion',
+                    arguments: input,
+                    status: 'canceled',
+                    reason: 'InputValidationError: AskUserQuestion failed because `questions` must be an array.'
+                }
+            }
         })
     })
 })

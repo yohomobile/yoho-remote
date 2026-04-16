@@ -11,6 +11,7 @@ import { z } from 'zod'
 import type { Server } from 'socket.io'
 import type { IStore } from '../store/interface'
 import type { SpawnAgentType } from '../store/types'
+import { isRealActivityMessage } from '../store/messageUtils'
 import type { RpcRegistry } from '../socket/rpcRegistry'
 import type { SSEManager } from '../sse/sseManager'
 import { extractTodoWriteTodosFromMessageContent, TodosSchema, type TodoItem } from './todos'
@@ -82,6 +83,7 @@ export interface Session {
     seq: number
     createdAt: number
     updatedAt: number
+    lastMessageAt: number | null
     active: boolean
     activeAt: number
     createdBy?: string  // 创建者 email
@@ -1865,6 +1867,7 @@ export class SyncEngine {
             seq: stored.seq,
             createdAt: stored.createdAt,
             updatedAt: stored.updatedAt,
+            lastMessageAt: existing?.lastMessageAt ?? stored.lastMessageAt,
             active: existing?.active ?? stored.active,
             activeAt: existing?.activeAt ?? (stored.activeAt ?? stored.createdAt),
             createdBy: stored.createdBy ?? undefined,
@@ -2053,6 +2056,11 @@ export class SyncEngine {
 
         const msg = await this.store.addMessage(sessionId, content, payload.localId ?? undefined)
 
+        if (session) {
+            session.lastMessageAt = msg.createdAt
+            this.emit({ type: 'session-updated', sessionId, data: session })
+        }
+
         const update = {
             id: msg.id,
             seq: Date.now(),
@@ -2094,6 +2102,14 @@ export class SyncEngine {
      */
     async addMessage(sessionId: string, content: unknown): Promise<void> {
         const msg = await this.store.addMessage(sessionId, content)
+
+        if (isRealActivityMessage(content)) {
+            const session = this.sessions.get(sessionId)
+            if (session) {
+                session.lastMessageAt = msg.createdAt
+                this.emit({ type: 'session-updated', sessionId, data: session })
+            }
+        }
 
         // Keep a small in-memory cache
         const cached = this.sessionMessages.get(sessionId) ?? []

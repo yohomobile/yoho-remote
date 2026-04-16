@@ -63,6 +63,7 @@ type SessionSummary = {
     active: boolean
     activeAt: number
     updatedAt: number
+    lastMessageAt: number | null
     createdBy?: string
     ownerEmail?: string  // 当 session 来自其他用户时，显示来源用户
     metadata: SessionSummaryMetadata | null
@@ -103,6 +104,7 @@ function toSessionSummary(session: Session): SessionSummary {
         active: session.active,
         activeAt: session.activeAt,
         updatedAt: session.updatedAt,
+        lastMessageAt: session.lastMessageAt,
         createdBy: session.createdBy,
         metadata,
         todoProgress,
@@ -130,6 +132,7 @@ function storedSessionToSummary(stored: StoredSession): SessionSummary {
         active: stored.active,
         activeAt: stored.activeAt ?? stored.updatedAt,
         updatedAt: stored.updatedAt,
+        lastMessageAt: stored.lastMessageAt,
         createdBy: stored.createdBy ?? undefined,
         metadata: meta,
         todoProgress,
@@ -1001,7 +1004,7 @@ export function createSessionsRoutes(
             return summary
         })
 
-        // Sort: active first, then by pending requests, then by updatedAt
+        // Sort: active first, then by pending requests, then by lastMessageAt (fallback updatedAt)
         const allSessions = sessionSummaries.sort((a, b) => {
             // Active sessions first
             if (a.active !== b.active) {
@@ -1011,8 +1014,8 @@ export function createSessionsRoutes(
             if (a.active && a.pendingRequestsCount !== b.pendingRequestsCount) {
                 return b.pendingRequestsCount - a.pendingRequestsCount
             }
-            // Then by updatedAt
-            return b.updatedAt - a.updatedAt
+            // Then by lastMessageAt (fallback updatedAt for sessions with no real messages yet)
+            return (b.lastMessageAt ?? b.updatedAt) - (a.lastMessageAt ?? a.updatedAt)
         })
 
         return c.json({ sessions: allSessions })

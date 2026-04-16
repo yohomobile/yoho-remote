@@ -8,6 +8,7 @@ function createSession(id: string, metadata: Record<string, unknown>): Session {
         seq: 0,
         createdAt: 0,
         updatedAt: 0,
+        lastMessageAt: null,
         active: true,
         activeAt: 0,
         metadata: metadata as Session['metadata'],
@@ -310,6 +311,77 @@ describe('SyncEngine', () => {
             activeAt: session.activeAt,
             namespace: session.namespace,
         })
+    })
+
+    test('advances lastMessageAt only for real activity messages', async () => {
+        let seq = 0
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            addMessage: async (sessionId: string, content: unknown) => {
+                seq += 1
+                return {
+                    id: `m-${seq}`,
+                    sessionId,
+                    content,
+                    createdAt: 1_700_000_000_000 + seq,
+                    seq,
+                    localId: null,
+                }
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const session = createSession('session-1', {
+            machineId: 'machine-1',
+            path: '/tmp/project',
+        })
+        ;(engine as any).sessions.set(session.id, session)
+
+        const sessionUpdatedEvents: Array<{ sessionId?: string }> = []
+        const unsubscribe = engine.subscribe((event) => {
+            if (event.type === 'session-updated') {
+                sessionUpdatedEvents.push(event)
+            }
+        })
+
+        await engine.addMessage(session.id, {
+            role: 'system',
+            content: {
+                type: 'status',
+                text: 'still thinking',
+            },
+        })
+
+        expect(session.lastMessageAt).toBeNull()
+        expect(sessionUpdatedEvents).toHaveLength(0)
+
+        await engine.addMessage(session.id, {
+            role: 'assistant',
+            content: {
+                type: 'text',
+                text: 'done',
+            },
+        })
+
+        expect(session.lastMessageAt).toBe(1_700_000_000_002)
+        expect(sessionUpdatedEvents).toHaveLength(1)
+        expect(sessionUpdatedEvents[0]?.sessionId).toBe(session.id)
+
+        unsubscribe()
     })
 
     test('machine disconnect creates an offline-to-online edge for auto-resume', async () => {

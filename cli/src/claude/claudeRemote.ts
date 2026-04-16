@@ -11,6 +11,7 @@ import { systemPrompt } from "./utils/systemPrompt";
 import { PermissionResult } from "./sdk/types";
 import { buildMessageContent } from "./utils/imageMessage";
 import { resolveFileReferences } from "./utils/fileMessage";
+import { isFatalAuthResultError, toClaudeLimitError } from "./utils/resultErrorClassifier";
 
 // Timeout for waiting on Claude API response (10 minutes)
 const THINKING_TIMEOUT_MS = 10 * 60 * 1000;
@@ -310,10 +311,13 @@ export async function claudeRemote(opts: {
 
                 // Detect hit limit or auth errors
                 const resultText = typeof resultMsg.result === 'string' ? resultMsg.result : '';
-                if (resultMsg.is_error && /hit your limit|hit.your.limit/i.test(resultText)) {
-                    throw new Error(resultText);
+                if (resultMsg.is_error) {
+                    const limitError = toClaudeLimitError(resultText);
+                    if (limitError) {
+                        throw limitError;
+                    }
                 }
-                if (resultMsg.is_error && /does not have access|authentication.*(?:failed|error|invalid)|Failed to authenticate|\b401\b|Invalid.*credentials/i.test(resultText)) {
+                if (resultMsg.is_error && isFatalAuthResultError(resultText)) {
                     throw new Error(resultText);
                 }
 

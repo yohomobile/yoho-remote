@@ -28,6 +28,7 @@ export type StoredSession = {
     modelReasoningEffort: string | null
     fastMode: boolean | null
     terminationReason: string | null
+    lastMessageAt: number | null
 }
 
 export type SpawnAgentType = 'claude' | 'codex'

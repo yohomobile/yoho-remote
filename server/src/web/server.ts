@@ -17,6 +17,7 @@ import { createGitRoutes } from './routes/git'
 import { createCliRoutes } from './routes/cli'
 import { createSpeechRoutes } from './routes/speech'
 import { createOptimizeRoutes } from './routes/optimize'
+import { createSummarizeRoutes } from './routes/summarize'
 import { createVersionRoutes } from './routes/version'
 import { createSettingsRoutes } from './routes/settings'
 import { createPushRoutes } from './routes/push'
@@ -113,6 +114,7 @@ function createWebApp(options: {
     app.route('/api', createGitRoutes(options.getSyncEngine))
     app.route('/api', createSpeechRoutes())
     app.route('/api', createOptimizeRoutes())
+    app.route('/api', createSummarizeRoutes(options.getSyncEngine, options.store))
     app.route('/api', createSettingsRoutes(options.store))
     app.route('/api', createPushRoutes())
     app.route('/api', createYohoCredentialsRoutes())

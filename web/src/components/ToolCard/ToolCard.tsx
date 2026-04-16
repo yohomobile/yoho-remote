@@ -9,7 +9,11 @@ import { DiffView } from '@/components/DiffView'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { PermissionFooter } from '@/components/ToolCard/PermissionFooter'
 import { AskUserQuestionFooter } from '@/components/ToolCard/AskUserQuestionFooter'
-import { isAskUserQuestionToolName } from '@/components/ToolCard/askUserQuestion'
+import {
+    isAskUserQuestionToolName,
+    shouldRenderAskUserQuestionAsRegularTool,
+    shouldRenderAskUserQuestionInteractively,
+} from '@/components/ToolCard/askUserQuestion'
 import { getToolPresentation } from '@/components/ToolCard/knownTools'
 import { getToolFullViewComponent, getToolViewComponent } from '@/components/ToolCard/views/_all'
 import { getToolResultViewComponent } from '@/components/ToolCard/views/_results'
@@ -331,17 +335,22 @@ function ToolCardInner(props: ToolCardProps) {
     const subtitle = presentation.subtitle ?? props.block.tool.description
     const taskSummary = renderTaskSummary(props.block, props.metadata)
     const runningFrom = props.block.tool.startedAt ?? props.block.tool.createdAt
-    const showInline = !presentation.minimal && toolName !== 'Task' && toolName !== 'Agent'
-    const CompactToolView = showInline ? getToolViewComponent(toolName) : null
-    const FullToolView = getToolFullViewComponent(toolName)
-    const ResultToolView = getToolResultViewComponent(toolName)
     const permission = props.block.tool.permission
     const isAskUserQuestion = isAskUserQuestionToolName(toolName)
+    const rendersAskUserQuestionInteractively = isAskUserQuestion && shouldRenderAskUserQuestionInteractively(props.block.tool)
+    const rendersAskUserQuestionAsRegularTool = isAskUserQuestion && shouldRenderAskUserQuestionAsRegularTool(props.block.tool)
+    const showInline = !presentation.minimal
+        && toolName !== 'Task'
+        && toolName !== 'Agent'
+        && (!isAskUserQuestion || rendersAskUserQuestionAsRegularTool)
+    const CompactToolView = showInline && !rendersAskUserQuestionAsRegularTool ? getToolViewComponent(toolName) : null
+    const FullToolView = rendersAskUserQuestionAsRegularTool ? null : getToolFullViewComponent(toolName)
+    const ResultToolView = getToolResultViewComponent(toolName)
     const showsPermissionFooter = Boolean(permission && (
         permission.status === 'pending'
         || ((permission.status === 'denied' || permission.status === 'canceled') && Boolean(permission.reason))
     ))
-    const hasBody = showInline || taskSummary !== null || showsPermissionFooter || isAskUserQuestion
+    const hasBody = showInline || taskSummary !== null || showsPermissionFooter || rendersAskUserQuestionInteractively
     const stateColor = statusColorClass(props.block.tool.state)
     const { suppressFocusRing, onTriggerPointerDown, onTriggerKeyDown, onTriggerBlur } = usePointerFocusRing()
 
@@ -436,7 +445,7 @@ function ToolCardInner(props: ToolCardProps) {
                         </div>
                     ) : null}
 
-                    {showInline && !isAskUserQuestion ? (
+                    {showInline ? (
                         CompactToolView ? (
                             <div className="mt-3">
                                 <CompactToolView block={props.block} metadata={props.metadata} />
@@ -455,7 +464,7 @@ function ToolCardInner(props: ToolCardProps) {
                         )
                     ) : null}
 
-                    {isAskUserQuestion ? (
+                    {rendersAskUserQuestionInteractively ? (
                         <AskUserQuestionFooter
                             api={props.api}
                             sessionId={props.sessionId}
@@ -463,7 +472,7 @@ function ToolCardInner(props: ToolCardProps) {
                             disabled={props.disabled}
                             onDone={props.onDone}
                         />
-                    ) : (
+                    ) : showsPermissionFooter ? (
                         <PermissionFooter
                             api={props.api}
                             sessionId={props.sessionId}
@@ -472,7 +481,7 @@ function ToolCardInner(props: ToolCardProps) {
                             disabled={props.disabled}
                             onDone={props.onDone}
                         />
-                    )}
+                    ) : null}
                 </CardContent>
             ) : null}
         </Card>

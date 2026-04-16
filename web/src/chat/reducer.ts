@@ -721,6 +721,14 @@ function reduceTimeline(
 
                     const permission = context.permissionsById.get(c.id)?.permission
 
+                    if (import.meta.env.DEV && (c.name === 'AskUserQuestion' || c.name === 'ask_user_question') && !permission) {
+                        console.warn('[reducer] AskUserQuestion tool-call without matching permission', {
+                            toolId: c.id,
+                            toolName: c.name,
+                            availablePermissionIds: Array.from(context.permissionsById.keys()),
+                        })
+                    }
+
                     const block = ensureToolBlock(blocks, toolBlocksById, c.id, {
                         createdAt: msg.createdAt,
                         localId: msg.localId,
@@ -845,6 +853,28 @@ export function reduceChatBlocks(
     const permissionsById = getPermissions(agentState)
     const toolIdsInMessages = collectToolIdsFromMessages(normalized)
     const titleChangesByToolUseId = collectTitleChanges(normalized)
+
+    if (import.meta.env.DEV) {
+        const askToolIdsInMessages = Array.from(toolIdsInMessages).filter((id) => {
+            for (const msg of normalized) {
+                if (msg.role !== 'agent') continue
+                for (const c of msg.content) {
+                    if (c.type === 'tool-call' && c.id === id && (c.name === 'AskUserQuestion' || c.name === 'ask_user_question')) {
+                        return true
+                    }
+                }
+            }
+            return false
+        })
+        if (askToolIdsInMessages.length > 0) {
+            console.log('[reducer] reduceChatBlocks', {
+                askToolIdsInMessages,
+                permissionIds: Array.from(permissionsById.keys()),
+                agentStateRequests: agentState?.requests ? Object.keys(agentState.requests) : [],
+                agentStateCompleted: agentState?.completedRequests ? Object.keys(agentState.completedRequests) : [],
+            })
+        }
+    }
 
     const traced = traceMessages(normalized)
     const groups = new Map<string, TracedMessage[]>()

@@ -51,6 +51,7 @@ import type {
     PostgresConfig,
     SpawnAgentType,
 } from './types'
+import { isRealActivityMessage } from './messageUtils'
 
 export class PostgresStore implements IStore {
     private pool: Pool
@@ -117,6 +118,16 @@ export class PostgresStore implements IStore {
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS model_reasoning_effort TEXT;
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS fast_mode BOOLEAN;
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS termination_reason TEXT;
+            ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_message_at BIGINT;
+            UPDATE sessions SET last_message_at = sub.max_created
+            FROM (
+                SELECT session_id, MAX(created_at) AS max_created
+                FROM messages
+                WHERE content->>'role' IN ('user', 'agent', 'assistant')
+                GROUP BY session_id
+            ) sub
+            WHERE sessions.id = sub.session_id AND sessions.last_message_at IS NULL;
+            CREATE INDEX IF NOT EXISTS idx_sessions_last_message_at ON sessions(last_message_at DESC);
             CREATE INDEX IF NOT EXISTS idx_sessions_tag ON sessions(tag);
             CREATE INDEX IF NOT EXISTS idx_sessions_tag_namespace ON sessions(tag, namespace);
             -- OpenCode session 查询优化索引
@@ -864,17 +875,17 @@ export class PostgresStore implements IStore {
         if (orgId) {
             // Include brain/brain-child sessions regardless of org_id (they may have org_id=NULL)
             const result = await this.pool.query(
-                `SELECT * FROM sessions WHERE org_id = $1 OR (metadata->>'source' IN ('brain', 'brain-child') AND org_id IS NULL) ORDER BY updated_at DESC`,
+                `SELECT * FROM sessions WHERE org_id = $1 OR (metadata->>'source' IN ('brain', 'brain-child') AND org_id IS NULL) ORDER BY COALESCE(last_message_at, updated_at) DESC`,
                 [orgId]
             )
             return result.rows.map(row => this.toStoredSession(row))
         }
-        const result = await this.pool.query('SELECT * FROM sessions ORDER BY updated_at DESC')
+        const result = await this.pool.query('SELECT * FROM sessions ORDER BY COALESCE(last_message_at, updated_at) DESC')
         return result.rows.map(row => this.toStoredSession(row))
     }
 
     async getSessionsByNamespace(namespace: string): Promise<StoredSession[]> {
-        const result = await this.pool.query('SELECT * FROM sessions WHERE namespace = $1 ORDER BY updated_at DESC', [namespace])
+        const result = await this.pool.query('SELECT * FROM sessions WHERE namespace = $1 ORDER BY COALESCE(last_message_at, updated_at) DESC', [namespace])
         return result.rows.map(row => this.toStoredSession(row))
     }
 
@@ -1058,7 +1069,17 @@ export class PostgresStore implements IStore {
                 VALUES ($1, $2, $3, $4, $5, $6)
             `, [id, sessionId, JSON.stringify(content), now, nextSeq, localId || null])
 
-            await client.query('UPDATE sessions SET seq = seq + 1, updated_at = $1 WHERE id = $2', [now, sessionId])
+            if (isRealActivityMessage(content)) {
+                await client.query(
+                    'UPDATE sessions SET seq = seq + 1, updated_at = $1, last_message_at = $1 WHERE id = $2',
+                    [now, sessionId]
+                )
+            } else {
+                await client.query(
+                    'UPDATE sessions SET seq = seq + 1, updated_at = $1 WHERE id = $2',
+                    [now, sessionId]
+                )
+            }
 
             await client.query('COMMIT')
 
@@ -2980,6 +3001,14 @@ export class PostgresStore implements IStore {
         }))
     }
 
+    async clearDownloadFiles(sessionId: string): Promise<number> {
+        const result = await this.pool.query(
+            'DELETE FROM session_downloads WHERE session_id = $1',
+            [sessionId]
+        )
+        return Number(result.rowCount ?? 0)
+    }
+
     async close(): Promise<void> {
         await this.pool.end()
     }
@@ -3106,7 +3135,8 @@ export class PostgresStore implements IStore {
             modelMode: row.model_mode ?? null,
             modelReasoningEffort: row.model_reasoning_effort ?? null,
             fastMode: row.fast_mode ?? null,
-            terminationReason: row.termination_reason ?? null
+            terminationReason: row.termination_reason ?? null,
+            lastMessageAt: row.last_message_at != null ? Number(row.last_message_at) : null
         }
     }
 

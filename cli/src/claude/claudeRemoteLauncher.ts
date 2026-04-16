@@ -22,6 +22,7 @@ import {
     resolveOpenAiOverloadFallbackMode,
     shouldUseOpenAiOverloadFallback
 } from "./utils/overloadFallback";
+import { buildClaudeLimitUserMessage, ClaudeLimitError } from "./utils/resultErrorClassifier";
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
 const TITLE_INSTRUCTION = 'If tool mcp__yoho_remote__change_title is available in this session, call it to set a chat title that represents the current task. If the chat idea changes dramatically, call it again to update the title. If the tool is unavailable in this session, skip title updates.';
 
@@ -625,6 +626,14 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     session.client.sendSessionEvent({
                         type: 'message',
                         message: 'Previous session not found. Starting a new session...'
+                    });
+                    continue;
+                }
+
+                if (!exitReason && e instanceof ClaudeLimitError) {
+                    session.client.sendSessionEvent({
+                        type: 'message',
+                        message: buildClaudeLimitUserMessage(e)
                     });
                     continue;
                 }

@@ -3,6 +3,7 @@
  *
  * CLI: POST /cli/files - upload a file (CLI token auth)
  * API: GET /api/sessions/:sessionId/downloads - list download files for a session
+ * API: DELETE /api/sessions/:sessionId/downloads - clear download files for a session
  * API: GET /api/downloads/:id - download file content
  */
 import { Hono } from 'hono'
@@ -99,6 +100,13 @@ export function createDownloadApiRoutes(
         const sessionId = c.req.param('sessionId')
         const files = await store.listDownloadFiles(sessionId)
         return c.json({ files })
+    })
+
+    // DELETE /api/sessions/:sessionId/downloads - clear download files for a session
+    app.delete('/sessions/:sessionId/downloads', async (c) => {
+        const sessionId = c.req.param('sessionId')
+        const cleared = await store.clearDownloadFiles(sessionId)
+        return c.json({ cleared })
     })
 
     // GET /api/downloads/:id - download file content

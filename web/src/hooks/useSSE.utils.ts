@@ -7,6 +7,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 export type SessionStatusUpdateData = {
     active?: boolean
     activeAt?: number
+    lastMessageAt?: number | null
     thinking?: boolean
     wasThinking?: boolean
     permissionMode?: string
@@ -23,6 +24,7 @@ export function hasSessionStatusFields(data: SessionStatusUpdateData | null): bo
     return (
         data.active !== undefined ||
         data.activeAt !== undefined ||
+        data.lastMessageAt !== undefined ||
         data.thinking !== undefined ||
         data.wasThinking !== undefined ||
         data.permissionMode !== undefined ||
@@ -57,6 +59,7 @@ export function toSessionFromSsePayload(data: Record<string, unknown>): Session 
         id: data.id as string,
         createdAt: data.createdAt as number,
         updatedAt: data.updatedAt as number,
+        ...((typeof data.lastMessageAt === 'number' || data.lastMessageAt === null) && { lastMessageAt: data.lastMessageAt as number | null }),
         active: data.active as boolean,
         thinking: data.thinking as boolean,
         metadata: (isObject(data.metadata) || data.metadata === null)

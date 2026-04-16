@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/query-keys'
 import { useKeycloakAuth } from '@/hooks/useKeycloakAuth'
 import { useConfig } from '@/hooks/useConfig'
 import type { SessionDownloadFile } from '@/types/api'
+
+const DOWNLOAD_PREVIEW_LIMIT = 8
 
 function DownloadIcon({ size = 16 }: { size?: number }) {
     return (
@@ -78,11 +80,14 @@ function formatBytes(bytes: number): string {
 export function DownloadButton({ sessionId }: { sessionId: string }) {
     const { baseUrl } = useConfig()
     const { api: apiClient } = useKeycloakAuth(baseUrl)
+    const queryClient = useQueryClient()
     const [open, setOpen] = useState(false)
     const [downloading, setDownloading] = useState<string | null>(null)
+    const [clearing, setClearing] = useState(false)
+    const [showAll, setShowAll] = useState(false)
     const popoverRef = useRef<HTMLDivElement>(null)
     const buttonRef = useRef<HTMLButtonElement>(null)
-    const [popoverPos, setPopoverPos] = useState<{ bottom: number; left: number } | null>(null)
+    const [popoverPos, setPopoverPos] = useState<{ bottom: number; left: number; maxHeight: number } | null>(null)
 
     const { data } = useQuery({
         queryKey: queryKeys.sessionDownloads(sessionId),
@@ -96,13 +101,16 @@ export function DownloadButton({ sessionId }: { sessionId: string }) {
     })
 
     const files = data?.files ?? []
+    const visibleFiles = showAll ? files : files.slice(0, DOWNLOAD_PREVIEW_LIMIT)
 
     const updatePosition = useCallback(() => {
         if (!buttonRef.current) return
         const rect = buttonRef.current.getBoundingClientRect()
+        const popoverWidth = Math.min(360, window.innerWidth - 24)
         setPopoverPos({
             bottom: window.innerHeight - rect.top + 6,
-            left: rect.left,
+            left: Math.max(12, Math.min(rect.left, window.innerWidth - popoverWidth - 12)),
+            maxHeight: Math.max(180, rect.top - 16),
         })
     }, [])
 
@@ -142,6 +150,12 @@ export function DownloadButton({ sessionId }: { sessionId: string }) {
         }
     }, [open, updatePosition])
 
+    useEffect(() => {
+        if (files.length <= DOWNLOAD_PREVIEW_LIMIT && showAll) {
+            setShowAll(false)
+        }
+    }, [files.length, showAll])
+
     if (files.length === 0) return null
 
     const handleToggle = () => {
@@ -150,13 +164,28 @@ export function DownloadButton({ sessionId }: { sessionId: string }) {
     }
 
     const handleDownload = async (file: SessionDownloadFile) => {
-        if (!apiClient || downloading) return
+        if (!apiClient || downloading || clearing) return
         setDownloading(file.id)
         try {
             await apiClient.downloadFile(file.id, file.filename)
         } finally {
             setDownloading(null)
             setOpen(false)
+        }
+    }
+
+    const handleClear = async () => {
+        if (!apiClient || clearing || files.length === 0) return
+        if (!confirm(`Clear ${files.length} download${files.length === 1 ? '' : 's'} from this session?`)) return
+
+        setClearing(true)
+        try {
+            await apiClient.clearSessionDownloads(sessionId)
+            await queryClient.invalidateQueries({ queryKey: queryKeys.sessionDownloads(sessionId) })
+            setShowAll(false)
+            setOpen(false)
+        } finally {
+            setClearing(false)
         }
     }
 
@@ -183,9 +212,11 @@ export function DownloadButton({ sessionId }: { sessionId: string }) {
                         position: 'fixed',
                         bottom: popoverPos.bottom,
                         left: popoverPos.left,
+                        width: Math.min(360, window.innerWidth - 24),
+                        maxHeight: popoverPos.maxHeight,
                         zIndex: 9999,
                     }}
-                    className="min-w-[280px] max-w-[360px] rounded-2xl border border-[var(--app-border)] bg-[var(--app-secondary-bg)] shadow-2xl"
+                    className="flex min-w-[280px] flex-col overflow-hidden rounded-2xl border border-[var(--app-border)] bg-[var(--app-secondary-bg)] shadow-2xl"
                 >
                     <div className="flex items-center gap-2 px-4 pt-3 pb-2">
                         <DownloadIcon size={14} />
@@ -196,13 +227,40 @@ export function DownloadButton({ sessionId }: { sessionId: string }) {
                             {files.length}
                         </span>
                     </div>
-                    <div className="px-2 pb-2">
+                    <div className="flex items-center gap-2 px-4 pb-2">
+                        <span className="text-[11px] text-[var(--app-hint)]">
+                            {showAll || files.length <= DOWNLOAD_PREVIEW_LIMIT
+                                ? `${files.length} item${files.length === 1 ? '' : 's'}`
+                                : `Recent ${visibleFiles.length} of ${files.length}`}
+                        </span>
+                        {files.length > DOWNLOAD_PREVIEW_LIMIT ? (
+                            <button
+                                type="button"
+                                className="rounded-md px-2 py-1 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-500/10"
+                                onClick={() => setShowAll(v => !v)}
+                            >
+                                {showAll ? 'Show less' : 'Show all'}
+                            </button>
+                        ) : null}
+                        <button
+                            type="button"
+                            disabled={clearing}
+                            className="ml-auto rounded-md px-2 py-1 text-[11px] font-medium text-rose-500 transition-colors hover:bg-rose-500/10 disabled:opacity-50"
+                            onClick={() => void handleClear()}
+                        >
+                            {clearing ? 'Clearing…' : 'Clear'}
+                        </button>
+                    </div>
+                    <div
+                        className="min-h-0 overflow-y-auto px-2 pb-2 overscroll-contain [touch-action:pan-y]"
+                        style={{ WebkitOverflowScrolling: 'touch' }}
+                    >
                         <div className="flex flex-col gap-0.5">
-                            {files.map(file => (
+                            {visibleFiles.map(file => (
                                 <button
                                     key={file.id}
                                     type="button"
-                                    disabled={downloading === file.id}
+                                    disabled={downloading === file.id || clearing}
                                     className="group flex items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-all hover:bg-[var(--app-bg)] disabled:opacity-50"
                                     onClick={() => handleDownload(file)}
                                 >

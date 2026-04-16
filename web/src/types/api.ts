@@ -68,6 +68,7 @@ export type Session = {
     id: string
     createdAt: number
     updatedAt: number
+    lastMessageAt?: number | null
     active: boolean
     thinking: boolean
     createdBy?: string
@@ -243,6 +244,7 @@ export type SessionSummary = {
     active: boolean
     activeAt: number
     updatedAt: number
+    lastMessageAt: number | null
     createdBy?: string
     ownerEmail?: string  // 当 session 来自其他用户（开启了 shareAllSessions）时显示
     metadata: SessionSummaryMetadata | null

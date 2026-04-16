@@ -305,7 +305,7 @@ function SessionItem(props: {
                     </span>
                 )}
                 <span className="text-[11px] text-[var(--app-hint)]">
-                    {formatRelativeTime(s.updatedAt)}
+                    {formatRelativeTime(s.lastMessageAt ?? s.updatedAt)}
                 </span>
                 {isBrainSession && onDelete && (
                     <button

@@ -8,6 +8,7 @@ function createSession(id: string, metadata: Record<string, unknown>): Session {
         seq: 0,
         createdAt: 0,
         updatedAt: 0,
+        lastMessageAt: null,
         active: false,
         activeAt: Date.now() - 1_000,
         metadata: metadata as Session['metadata'],

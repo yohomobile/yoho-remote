@@ -39,6 +39,7 @@ describe('matchSessionToProject', () => {
             active: true,
             activeAt: 1,
             updatedAt: 1,
+            lastMessageAt: null,
             metadata: {
                 path,
                 machineId,
