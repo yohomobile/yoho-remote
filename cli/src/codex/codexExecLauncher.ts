@@ -444,6 +444,11 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
         let resolved = false;
         let eventCount = 0;
         const eventTypes: string[] = [];
+        // Captured from JSONL `error` / `turn.failed` events — the authoritative
+        // failure reason (e.g. "You've hit your usage limit"), as opposed to
+        // stderr which often contains only benign chatter like "Reading
+        // additional input from stdin...".
+        let lastEventError: string | null = null;
 
         const turnTimer = turnTimeoutMs > 0
             ? setTimeout(() => {
@@ -496,6 +501,16 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
             eventCount++;
             eventTypes.push(event.type);
 
+            if (event.type === 'error' || event.type === 'turn.failed') {
+                const raw = event as { message?: unknown; error?: { message?: unknown } };
+                const msg = typeof raw.message === 'string'
+                    ? raw.message
+                    : typeof raw.error?.message === 'string'
+                        ? raw.error.message
+                        : null;
+                if (msg) lastEventError = msg;
+            }
+
             handleExecEvent(event, {
                 session,
                 messageBuffer,
@@ -537,10 +552,12 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
             }
 
             if (code !== 0 && code !== null) {
-                const msg = stderr
-                    ? `codex exec exited with code ${code}: ${stderr.slice(0, 500)}`
-                    : `codex exec exited with code ${code}`;
-                logger.warn('[codex-exec] Non-zero exit', summary);
+                const msg = lastEventError
+                    ? `codex exec exited with code ${code}: ${lastEventError.slice(0, 500)}`
+                    : stderr
+                        ? `codex exec exited with code ${code}: ${stderr.slice(0, 500)}`
+                        : `codex exec exited with code ${code}`;
+                logger.warn('[codex-exec] Non-zero exit', { ...summary, lastEventError });
                 finish(new Error(msg));
                 return;
             }
