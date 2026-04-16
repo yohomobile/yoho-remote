@@ -519,6 +519,7 @@ export type OrgInvitation = {
     expiresAt: number
     acceptedAt: number | null
     orgName?: string
+    acceptUrl?: string
 }
 
 export type LicenseStatus = 'active' | 'expired' | 'suspended'
@@ -540,6 +541,7 @@ export type OrgLicense = {
 export type AdminLicense = OrgLicense & {
     orgName: string
     orgSlug: string
+    memberCount: number
 }
 
 export type OrgsResponse = { orgs: Organization[] }
@@ -556,7 +558,14 @@ export type OrgMembersResponse = { members: OrgMember[] }
 export type OrgInvitationsResponse = { invitations: OrgInvitation[] }
 export type PendingInvitationsResponse = { invitations: OrgInvitation[] }
 export type OrgActionResponse = { ok: true }
-export type CreateInvitationResponse = { ok: true; invitation: OrgInvitation }
+export type CreateInvitationResponse = {
+    ok: true
+    invitation: OrgInvitation
+    acceptUrl: string
+    emailSent: boolean
+    emailError: string | null
+}
+export type AcceptInvitationResponse = { ok: true; orgId: string }
 export type AdminLicensesResponse = { licenses: AdminLicense[] }
 export type LicenseOrganizationsResponse = { orgs: Organization[] }
 export type UpsertLicenseResponse = { ok: true; license: OrgLicense }

@@ -8,15 +8,17 @@ import { getCurrentUserSync, getExpiresAtSync } from '@/services/tokenStorage'
 import { useNotificationPermission, useWebPushSubscription } from '@/hooks/useNotification'
 import { useServerUrl } from '@/hooks/useServerUrl'
 import { getLogoutUrl, clearTokens } from '@/services/keycloak'
-import type { Project, Machine, OrgRole, OrgLicense, TokenSource, TokenSourceAgent } from '@/types/api'
+import type { Project, Machine, OrgRole, OrgLicense, TokenSource, TokenSourceAgent, CreateInvitationResponse, OrgInvitation } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 import { deriveLicenseState, type LicenseDisplayStatus } from '@/lib/license'
 import { LOCAL_TOKEN_SOURCE } from '@/lib/tokenSources'
-import { useMyOrgs, useOrg } from '@/hooks/queries/useOrgs'
-import { useCreateOrg, useInviteMember, useUpdateMemberRole, useRemoveMember } from '@/hooks/mutations/useOrgMutations'
+import { useMyOrgs, useOrg, usePendingInvitations, useOrgInvitations } from '@/hooks/queries/useOrgs'
+import { useCreateOrg, useInviteMember, useUpdateMemberRole, useRemoveMember, useAcceptInvitation, useRevokeOrgInvitation } from '@/hooks/mutations/useOrgMutations'
 import { formatMachineTimestamp, getMachineIp, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
 import { LicenseAdminPanel } from '@/components/LicenseAdminPanel'
 import { isFlutterApp } from '@/hooks/useFlutterApp'
+import { safeCopyToClipboard } from '@/lib/clipboard'
+import toast from 'react-hot-toast'
 
 const ROLE_LABELS: Record<OrgRole, string> = {
     owner: 'Owner',
@@ -49,6 +51,24 @@ function getProjectScopeBadge(project: Project, machinesById: Map<string, Machin
 
 function formatDate(ts: number): string {
     return new Date(ts).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+function formatDateTime(ts: number): string {
+    return new Date(ts).toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+    })
+}
+
+function getInvitationLink(invitation: Pick<OrgInvitation, 'id' | 'acceptUrl'>): string {
+    if (invitation.acceptUrl) return invitation.acceptUrl
+    if (typeof window !== 'undefined') {
+        return `${window.location.origin}/invitations/accept/${invitation.id}`
+    }
+    return `/invitations/accept/${invitation.id}`
 }
 
 const LICENSE_STATUS_STYLE: Record<LicenseDisplayStatus, { badge: string; label: string }> = {
@@ -749,7 +769,7 @@ export default function SettingsPage() {
     // 当前会话信息
     const currentSession = useMemo(() => ({
         name: getCurrentUserSync()?.name || '-',
-        email: getCurrentUserSync()?.email || '-',
+        email: getCurrentUserSync()?.email?.toLowerCase() || '-',
         clientId: getClientId(),
         deviceType: getDeviceType(),
         expiresAt: getExpiresAtSync()
@@ -798,13 +818,18 @@ export default function SettingsPage() {
 
     // Members management
     const { members, myRole: orgRole, license: orgLicense, licenseExempt } = useOrg(api, currentOrgId ?? '')
+    const { invitations: pendingInvitations } = usePendingInvitations(api)
     const { inviteMember, isPending: isInviting, error: inviteError } = useInviteMember(api, currentOrgId ?? '')
     const { updateRole } = useUpdateMemberRole(api, currentOrgId ?? '')
     const { removeMember } = useRemoveMember(api, currentOrgId ?? '')
+    const { acceptInvitation, isPending: isAcceptingInvitation, error: acceptInvitationError } = useAcceptInvitation(api)
     const [inviteEmail, setInviteEmail] = useState('')
     const [inviteRole, setInviteRole] = useState<'admin' | 'member'>('member')
     const [showInviteForm, setShowInviteForm] = useState(false)
+    const [lastInviteResult, setLastInviteResult] = useState<CreateInvitationResponse | null>(null)
     const canManageMembers = orgRole === 'owner' || orgRole === 'admin'
+    const { invitations: orgInvitations } = useOrgInvitations(api, currentOrgId ?? '', canManageMembers)
+    const { revokeInvitation, isPending: isRevokingInvitation, error: revokeInvitationError } = useRevokeOrgInvitation(api, currentOrgId ?? '')
     const canManageTokenSources = canManageMembers
 
     const { data: tokenSourcesData, isLoading: tokenSourcesLoading } = useQuery({
@@ -834,13 +859,27 @@ export default function SettingsPage() {
     const handleInvite = useCallback(async () => {
         if (!inviteEmail.trim()) return
         try {
-            await inviteMember({ email: inviteEmail.trim(), role: inviteRole })
+            const result = await inviteMember({ email: inviteEmail.trim(), role: inviteRole })
+            setLastInviteResult(result)
             setInviteEmail('')
-            setShowInviteForm(false)
+            if (result.emailSent) {
+                toast.success(`Invitation email sent to ${result.invitation.email}`)
+            } else {
+                toast.error('Invitation created, but email delivery failed. Share the link manually.')
+            }
         } catch {
             // error is handled by hook
         }
     }, [inviteMember, inviteEmail, inviteRole])
+
+    const handleCopyInviteLink = useCallback(async (acceptUrl: string) => {
+        try {
+            await safeCopyToClipboard(acceptUrl)
+            toast.success('Invitation link copied')
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Failed to copy invitation link')
+        }
+    }, [])
 
     const handleRoleChange = useCallback(async (email: string, newRole: string) => {
         try {
@@ -858,6 +897,25 @@ export default function SettingsPage() {
             console.error('Failed to remove member:', e)
         }
     }, [removeMember])
+
+    const handleAcceptPendingInvitation = useCallback(async (invitationId: string) => {
+        try {
+            const response = await acceptInvitation(invitationId)
+            setCurrentOrgId(response.orgId)
+        } catch (e) {
+            console.error('Failed to accept invitation:', e)
+        }
+    }, [acceptInvitation, setCurrentOrgId])
+
+    const handleRevokeInvitation = useCallback(async (invitationId: string) => {
+        if (!currentOrgId) return
+        if (!confirm('Revoke this invitation?')) return
+        try {
+            await revokeInvitation(invitationId)
+        } catch (e) {
+            console.error('Failed to revoke invitation:', e)
+        }
+    }, [currentOrgId, revokeInvitation])
 
     // Machines
     const { data: machinesData } = useQuery({
@@ -911,6 +969,10 @@ export default function SettingsPage() {
         setShowAddTokenSource(false)
         setEditingTokenSource(null)
         setTokenSourceError(null)
+    }, [currentOrgId])
+
+    useEffect(() => {
+        setLastInviteResult(null)
     }, [currentOrgId])
 
     // Projects
@@ -1564,6 +1626,42 @@ export default function SettingsPage() {
                                 Organization Settings
                             </h2>
 
+                            {pendingInvitations.length > 0 && (
+                                <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
+                                    <div className="px-3 py-2 border-b border-[var(--app-divider)]">
+                                        <h3 className="text-sm font-medium">Pending Invitations</h3>
+                                        <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
+                                            Invitations sent to your account
+                                        </p>
+                                    </div>
+                                    <div className="divide-y divide-[var(--app-divider)]">
+                                        {pendingInvitations.map((invitation) => (
+                                            <div key={invitation.id} className="px-3 py-2.5 flex items-center justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <div className="text-sm font-medium truncate">
+                                                        {invitation.orgName ?? invitation.orgId}
+                                                    </div>
+                                                    <div className="text-[11px] text-[var(--app-hint)] mt-0.5">
+                                                        Invited by {invitation.invitedBy} as {invitation.role} · Expires {formatDateTime(invitation.expiresAt)}
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleAcceptPendingInvitation(invitation.id)}
+                                                    disabled={isAcceptingInvitation}
+                                                    className="shrink-0 rounded-md bg-gradient-to-r from-emerald-500 to-green-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                                                >
+                                                    {isAcceptingInvitation ? 'Joining...' : 'Join'}
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {acceptInvitationError && (
+                                            <div className="px-3 py-2 text-xs text-red-500">{acceptInvitationError}</div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
                             {/* License Section */}
                             <LicenseCard license={orgLicense} licenseExempt={licenseExempt} memberCount={members.length} />
                             {licenseExempt && canManageMembers && (
@@ -1619,6 +1717,84 @@ export default function SettingsPage() {
                                         </div>
                                         {inviteError && (
                                             <div className="text-xs text-red-500">{inviteError}</div>
+                                        )}
+                                        {lastInviteResult && (
+                                            <div className={`rounded-lg border px-3 py-2.5 ${
+                                                lastInviteResult.emailSent
+                                                    ? 'border-emerald-500/30 bg-emerald-500/10'
+                                                    : 'border-amber-500/30 bg-amber-500/10'
+                                            }`}>
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                        <div className="text-sm font-medium">
+                                                            {lastInviteResult.emailSent ? 'Invitation ready and emailed' : 'Invitation ready, share link manually'}
+                                                        </div>
+                                                        <div className="mt-0.5 text-[11px] text-[var(--app-hint)]">
+                                                            {lastInviteResult.emailSent
+                                                                ? `Email sent to ${lastInviteResult.invitation.email}. You can also share the link directly.`
+                                                                : `Email delivery failed for ${lastInviteResult.invitation.email}. Use the link below instead.`}
+                                                        </div>
+                                                        {lastInviteResult.emailError && (
+                                                            <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+                                                                {lastInviteResult.emailError}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleCopyInviteLink(lastInviteResult.acceptUrl)}
+                                                        className="shrink-0 rounded-md border border-[var(--app-divider)] px-2.5 py-1 text-xs hover:bg-[var(--app-secondary-bg)]"
+                                                    >
+                                                        Copy Link
+                                                    </button>
+                                                </div>
+                                                <div className="mt-2 rounded-md bg-[var(--app-bg)] px-2 py-1.5 text-[11px] break-all font-mono text-[var(--app-hint)]">
+                                                    {lastInviteResult.acceptUrl}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                                {canManageMembers && orgInvitations.length > 0 && (
+                                    <div className="px-3 py-2.5 border-b border-[var(--app-divider)] space-y-2">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <div className="text-[11px] font-medium uppercase tracking-wide text-[var(--app-hint)]">
+                                                Pending invites ({orgInvitations.length})
+                                            </div>
+                                        </div>
+                                        <div className="space-y-2">
+                                            {orgInvitations.map((invitation) => (
+                                                <div key={invitation.id} className="flex items-center gap-3 rounded-lg bg-[var(--app-bg)] border border-[var(--app-divider)] px-2.5 py-2">
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="text-sm truncate text-[var(--app-fg)]">
+                                                            {invitation.email}
+                                                        </div>
+                                                        <div className="text-[11px] text-[var(--app-hint)] mt-0.5">
+                                                            Invited by {invitation.invitedBy} as {invitation.role} · Expires {formatDateTime(invitation.expiresAt)}
+                                                        </div>
+                                                    </div>
+                                                    <div className="shrink-0 flex items-center gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleCopyInviteLink(getInvitationLink(invitation))}
+                                                            className="rounded-md border border-[var(--app-divider)] px-2.5 py-1 text-xs hover:bg-[var(--app-secondary-bg)]"
+                                                        >
+                                                            Copy Link
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleRevokeInvitation(invitation.id)}
+                                                            disabled={isRevokingInvitation}
+                                                            className="rounded-md border border-red-500/30 px-2.5 py-1 text-xs text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+                                                        >
+                                                            Revoke
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        {revokeInvitationError && (
+                                            <div className="text-xs text-red-500">{revokeInvitationError}</div>
                                         )}
                                     </div>
                                 )}

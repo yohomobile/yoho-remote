@@ -27,6 +27,7 @@ function pickOptionId(request: PermissionRequest, preferredKinds: string[]): str
 
 export class PermissionAdapter {
     private readonly pendingRequests = new Map<string, PermissionRequest>();
+    private readonly pendingResponses = new Map<string, PermissionResponseMessage>();
 
     constructor(
         private readonly session: ApiSessionClient,
@@ -64,16 +65,23 @@ export class PermissionAdapter {
         }));
 
         logger.debug(`[ACP] Permission request queued: ${toolName} (${request.id})`);
+
+        const existingResponse = this.pendingResponses.get(request.id);
+        if (existingResponse) {
+            void this.handlePermissionResponse(existingResponse);
+        }
     }
 
     private async handlePermissionResponse(response: PermissionResponseMessage): Promise<void> {
+        this.pendingResponses.set(response.id, response);
         const pending = this.pendingRequests.get(response.id);
         if (!pending) {
-            logger.debug('[ACP] Permission response received for unknown request', response.id);
+            logger.debug('[ACP] Permission response received before request was registered', response.id);
             return;
         }
 
         this.pendingRequests.delete(response.id);
+        this.pendingResponses.delete(response.id);
 
         const decision = response.decision ?? (response.approved ? 'approved' : 'denied');
         const toolName = deriveToolName({
@@ -143,6 +151,7 @@ export class PermissionAdapter {
     async cancelAll(reason: string): Promise<void> {
         const pending = Array.from(this.pendingRequests.values());
         this.pendingRequests.clear();
+        this.pendingResponses.clear();
 
         for (const request of pending) {
             await this.backend.respondToPermission(request.sessionId, request, { outcome: 'cancelled' });

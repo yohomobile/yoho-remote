@@ -30,6 +30,7 @@ interface PermissionResult {
 
 export class CodexPermissionHandler {
     private pendingRequests = new Map<string, PendingRequest>();
+    private responses = new Map<string, PermissionResponse>();
     private session: ApiSessionClient;
     private readonly getPermissionMode?: () => SessionPermissionMode | undefined;
 
@@ -63,13 +64,15 @@ export class CodexPermissionHandler {
         }
 
         return new Promise<PermissionResult>((resolve, reject) => {
-            // Store the pending request
-            this.pendingRequests.set(toolCallId, {
+            const pendingRequest: PendingRequest = {
                 resolve,
                 reject,
                 toolName,
                 input
-            });
+            };
+
+            // Store the pending request
+            this.pendingRequests.set(toolCallId, pendingRequest);
 
             // Send push notification
             // this.session.api.push().sendToAllDevices(
@@ -96,7 +99,53 @@ export class CodexPermissionHandler {
                 }
             }));
 
+            const existingResponse = this.responses.get(toolCallId);
+            if (existingResponse) {
+                this.pendingRequests.delete(toolCallId);
+                const result = this.buildPermissionResult(existingResponse);
+                pendingRequest.resolve(result);
+                this.completeRequestState(toolCallId, existingResponse, result);
+                return;
+            }
+
             logger.debug(`[Codex] Permission request sent for tool: ${toolName} (${toolCallId})`);
+        });
+    }
+
+    private buildPermissionResult(response: PermissionResponse): PermissionResult {
+        const reason = typeof response.reason === 'string' ? response.reason : undefined;
+        return response.approved
+            ? {
+                decision: response.decision === 'approved_for_session' ? 'approved_for_session' : 'approved',
+                reason
+            }
+            : {
+                decision: response.decision === 'denied' ? 'denied' : 'abort',
+                reason
+            };
+    }
+
+    private completeRequestState(id: string, response: PermissionResponse, result: PermissionResult): void {
+        this.session.updateAgentState((currentState) => {
+            const request = currentState.requests?.[id];
+            if (!request) return currentState;
+
+            const { [id]: _, ...remainingRequests } = currentState.requests || {};
+
+            return {
+                ...currentState,
+                requests: remainingRequests,
+                completedRequests: {
+                    ...currentState.completedRequests,
+                    [id]: {
+                        ...request,
+                        completedAt: Date.now(),
+                        status: response.approved ? 'approved' : 'denied',
+                        decision: result.decision,
+                        reason: result.reason
+                    }
+                }
+            } satisfies AgentState;
         });
     }
 
@@ -108,10 +157,11 @@ export class CodexPermissionHandler {
             'permission',
             async (response) => {
                 // console.log(`[Codex] Permission response received:`, response);
+                this.responses.set(response.id, response);
 
                 const pending = this.pendingRequests.get(response.id);
                 if (!pending) {
-                    logger.debug('[Codex] Permission request not found or already resolved');
+                    logger.debug('[Codex] Permission request not found yet, stored response for later replay');
                     return;
                 }
 
@@ -119,46 +169,12 @@ export class CodexPermissionHandler {
                 this.pendingRequests.delete(response.id);
 
                 // Resolve the permission request
-                const reason = typeof response.reason === 'string' ? response.reason : undefined;
-                const result: PermissionResult = response.approved
-                    ? {
-                        decision: response.decision === 'approved_for_session' ? 'approved_for_session' : 'approved',
-                        reason
-                    }
-                    : {
-                        decision: response.decision === 'denied' ? 'denied' : 'abort',
-                        reason
-                    };
+                const result = this.buildPermissionResult(response);
 
                 pending.resolve(result);
                 logger.debug(`[Codex] Permission RPC resolved: id=${response.id} tool=${pending.toolName} decision=${result.decision}`);
 
-                // Move request to completed in agent state
-                this.session.updateAgentState((currentState) => {
-                    const request = currentState.requests?.[response.id];
-                    if (!request) return currentState;
-
-                    // console.log(`[Codex] Permission ${response.approved ? 'approved' : 'denied'} for ${pending.toolName}`);
-
-                    const { [response.id]: _, ...remainingRequests } = currentState.requests || {};
-
-                    let res = {
-                        ...currentState,
-                        requests: remainingRequests,
-                        completedRequests: {
-                            ...currentState.completedRequests,
-                            [response.id]: {
-                                ...request,
-                                completedAt: Date.now(),
-                                status: response.approved ? 'approved' : 'denied',
-                                decision: result.decision,
-                                reason: result.reason
-                            }
-                        }
-                    } satisfies AgentState;
-                    // console.log(`[Codex] Updated agent state:`, res);
-                    return res;
-                });
+                this.completeRequestState(response.id, response, result);
 
                 logger.debug(`[Codex] Permission ${response.approved ? 'approved' : 'denied'} for ${pending.toolName}`);
             }
@@ -174,6 +190,7 @@ export class CodexPermissionHandler {
             pending.reject(new Error('Session reset'));
         }
         this.pendingRequests.clear();
+        this.responses.clear();
 
         // Clear requests in agent state
         this.session.updateAgentState((currentState) => {

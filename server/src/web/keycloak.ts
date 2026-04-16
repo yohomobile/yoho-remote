@@ -223,7 +223,7 @@ export function extractUserFromToken(payload: KeycloakTokenPayload): {
     role: 'developer' | 'operator';
 } {
     return {
-        email: payload.email,
+        email: payload.email.trim().toLowerCase(),
         name: payload.name || payload.preferred_username || null,
         sub: payload.sub,
         role: extractUserRole(payload),

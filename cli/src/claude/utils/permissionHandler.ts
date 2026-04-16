@@ -38,6 +38,27 @@ function isExitPlanModeToolName(toolName: string): boolean {
     return toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode';
 }
 
+function isAgentToolName(toolName: string): boolean {
+    return toolName === 'Agent' || toolName === 'Task';
+}
+
+function isRootOnlySubagentToolName(toolName: string): boolean {
+    return isAgentToolName(toolName) || isExitPlanModeToolName(toolName);
+}
+
+function buildSubagentRootOnlyDenyMessage(toolName: string): string {
+    return `Tool "${toolName}" is only available in the top-level session. Complete the task with the tools provided and return findings to the orchestrator.`;
+}
+
+const ROOT_ONLY_TOOL_CALL_TIMEOUT_MS = 5_000;
+
+const SUBAGENT_PROMPT_GUARD_MARKER = '<yoho-remote-subagent-constraints>';
+const SUBAGENT_PROMPT_GUARD = `${SUBAGENT_PROMPT_GUARD_MARKER}
+You are a subagent running inside another Claude session.
+- Do NOT use Agent, Task, or ExitPlanMode in this context.
+- Only use tools that are actually available in this session.
+- Complete the task and return findings to the orchestrator instead of trying to exit plan mode or spawning more agents.`;
+
 /** Tools that must always go through user approval, regardless of permission mode */
 function requiresUserApproval(toolName: string): boolean {
     return isAskUserQuestionToolName(toolName) || isExitPlanModeToolName(toolName);
@@ -105,8 +126,32 @@ interface PendingRequest {
     input: unknown;
 }
 
+interface ToolCallRecord {
+    id: string;
+    name: string;
+    input: unknown;
+    used: boolean;
+    parentToolUseId: string | null;
+}
+
+function buildSubagentPromptInput(input: unknown): Record<string, unknown> | null {
+    if (!isObject(input) || typeof input.prompt !== 'string') {
+        return null;
+    }
+
+    const prompt = input.prompt;
+    if (prompt.includes(SUBAGENT_PROMPT_GUARD_MARKER)) {
+        return input;
+    }
+
+    return {
+        ...input,
+        prompt: `${SUBAGENT_PROMPT_GUARD}\n\n${prompt}`
+    };
+}
+
 export class PermissionHandler {
-    private toolCalls: { id: string, name: string, input: any, used: boolean }[] = [];
+    private toolCalls: ToolCallRecord[] = [];
     private responses = new Map<string, PermissionResponse>();
     private pendingRequests = new Map<string, PendingRequest>();
     private session: Session;
@@ -140,6 +185,8 @@ export class PermissionHandler {
         response: PermissionResponse,
         pending: PendingRequest
     ): void {
+        const toolCall = this.toolCalls.find(tc => tc.id === response.id);
+        const isSidechain = Boolean(toolCall?.parentToolUseId);
 
         // Update allowed tools
         if (response.allowTools && response.allowTools.length > 0) {
@@ -177,6 +224,13 @@ export class PermissionHandler {
         }
 
         if (pending.toolName === 'exit_plan_mode' || pending.toolName === 'ExitPlanMode') {
+            if (isSidechain) {
+                pending.resolve({
+                    behavior: 'deny',
+                    message: buildSubagentRootOnlyDenyMessage(pending.toolName)
+                });
+                return;
+            }
             // Handle exit_plan_mode specially
             logger.debug('Plan mode result received', response);
             if (response.approved) {
@@ -200,13 +254,33 @@ export class PermissionHandler {
      * Creates the canCallTool callback for the SDK
      */
     handleToolCall = async (toolName: string, input: unknown, mode: EnhancedMode, options: { signal: AbortSignal }): Promise<PermissionResult> => {
-        const isAskUserQuestion = isAskUserQuestionToolName(toolName);
-
         // Enforce tool whitelist (e.g. Brain mode only allows MCP tools)
         // If allowedTools is set in the mode, reject any tool not in the list
         if (mode.allowedTools && mode.allowedTools.length > 0 && !mode.allowedTools.includes(toolName)) {
             logger.debug(`[permissionHandler] Tool "${toolName}" not in allowedTools whitelist, denying`);
             return { behavior: 'deny', message: `Tool "${toolName}" is not available in this session.` };
+        }
+
+        if (isAgentToolName(toolName)) {
+            const matchedAgentToolCall = await this.awaitToolCall(toolName, input, options.signal, ROOT_ONLY_TOOL_CALL_TIMEOUT_MS);
+            if (matchedAgentToolCall?.parentToolUseId) {
+                logger.debug(`[permissionHandler] Blocking root-only tool "${toolName}" inside sidechain`);
+                return { behavior: 'deny', message: buildSubagentRootOnlyDenyMessage(toolName) };
+            }
+            const updatedInput = buildSubagentPromptInput(input);
+            if (updatedInput) {
+                return { behavior: 'allow', updatedInput };
+            }
+        }
+
+        const matchedToolCall = isExitPlanModeToolName(toolName)
+            ? await this.awaitToolCall(toolName, input, options.signal, ROOT_ONLY_TOOL_CALL_TIMEOUT_MS)
+            : null;
+        const isSidechainTool = Boolean(matchedToolCall?.parentToolUseId);
+
+        if (isSidechainTool && isRootOnlySubagentToolName(toolName)) {
+            logger.debug(`[permissionHandler] Blocking root-only tool "${toolName}" inside sidechain`);
+            return { behavior: 'deny', message: buildSubagentRootOnlyDenyMessage(toolName) };
         }
 
         // Check if tool is explicitly allowed
@@ -241,13 +315,9 @@ export class PermissionHandler {
         // Approval flow
         //
 
-        let toolCallId = this.resolveToolCallId(toolName, input);
-        if (!toolCallId) { // What if we got permission before tool call
-            await delay(1000);
-            toolCallId = this.resolveToolCallId(toolName, input);
-            if (!toolCallId) {
-                throw new Error(`Could not resolve tool call ID for ${toolName}`);
-            }
+        const toolCallId = matchedToolCall?.id ?? await this.awaitToolCallId(toolName, input, options.signal);
+        if (!toolCallId) {
+            throw new Error(`Could not resolve tool call ID for ${toolName}`);
         }
         return this.handlePermissionRequest(toolCallId, toolName, input, options.signal);
     }
@@ -269,8 +339,7 @@ export class PermissionHandler {
             };
             signal.addEventListener('abort', abortHandler, { once: true });
 
-            // Store the pending request
-            this.pendingRequests.set(id, {
+            const pendingRequest: PendingRequest = {
                 resolve: (result: PermissionResult) => {
                     signal.removeEventListener('abort', abortHandler);
                     resolve(result);
@@ -281,7 +350,10 @@ export class PermissionHandler {
                 },
                 toolName,
                 input
-            });
+            };
+
+            // Store the pending request
+            this.pendingRequests.set(id, pendingRequest);
 
             // Trigger callback to send delayed messages immediately
             if (this.onPermissionRequestCallback) {
@@ -300,6 +372,14 @@ export class PermissionHandler {
                     }
                 }
             }));
+
+            const existingResponse = this.responses.get(id);
+            if (existingResponse) {
+                this.pendingRequests.delete(id);
+                this.handlePermissionResponse(existingResponse, pendingRequest);
+                this.completeRequestState(id, existingResponse);
+                return;
+            }
 
             logger.debug(`Permission request sent for tool call ${id}: ${toolName}`);
         });
@@ -338,7 +418,7 @@ export class PermissionHandler {
     /**
      * Resolves tool call ID based on tool name and input
      */
-    private resolveToolCallId(name: string, args: any): string | null {
+    private resolveToolCallId(name: string, args: unknown): string | null {
         // Search in reverse (most recent first)
         for (let i = this.toolCalls.length - 1; i >= 0; i--) {
             const call = this.toolCalls[i];
@@ -350,6 +430,52 @@ export class PermissionHandler {
                 call.used = true;
                 return call.id;
             }
+        }
+
+        return null;
+    }
+
+    private findUnusedToolCall(name: string, args: unknown): ToolCallRecord | null {
+        for (let i = this.toolCalls.length - 1; i >= 0; i--) {
+            const call = this.toolCalls[i];
+            if (call.used) {
+                continue;
+            }
+            if (call.name === name && deepEqual(call.input, args)) {
+                return call;
+            }
+        }
+
+        return null;
+    }
+
+    private async awaitToolCall(name: string, args: unknown, signal: AbortSignal, timeoutMs = 5_000): Promise<ToolCallRecord | null> {
+        const deadline = Date.now() + timeoutMs;
+        while (!signal.aborted) {
+            const call = this.findUnusedToolCall(name, args);
+            if (call) {
+                return call;
+            }
+            if (Date.now() >= deadline) {
+                return null;
+            }
+            await delay(50);
+        }
+
+        return null;
+    }
+
+    private async awaitToolCallId(name: string, args: unknown, signal: AbortSignal, timeoutMs = 5_000): Promise<string | null> {
+        const deadline = Date.now() + timeoutMs;
+        while (!signal.aborted) {
+            const id = this.resolveToolCallId(name, args);
+            if (id) {
+                return id;
+            }
+            if (Date.now() >= deadline) {
+                return null;
+            }
+            await delay(50);
         }
 
         return null;
@@ -368,7 +494,8 @@ export class PermissionHandler {
                             id: block.id!,
                             name: block.name!,
                             input: block.input,
-                            used: false
+                            used: false,
+                            parentToolUseId: assistantMsg.parent_tool_use_id ?? null
                         });
                     }
                 }
@@ -448,6 +575,31 @@ export class PermissionHandler {
         });
     }
 
+    private completeRequestState(id: string, message: PermissionResponse): void {
+        this.session.client.updateAgentState((currentState) => {
+            const request = currentState.requests?.[id];
+            if (!request) return currentState;
+            const requests = { ...currentState.requests };
+            delete requests[id];
+            return {
+                ...currentState,
+                requests,
+                completedRequests: {
+                    ...currentState.completedRequests,
+                    [id]: {
+                        ...request,
+                        completedAt: Date.now(),
+                        status: message.approved ? 'approved' : 'denied',
+                        reason: message.reason,
+                        mode: message.mode,
+                        allowTools: message.allowTools,
+                        answers: message.answers
+                    }
+                }
+            };
+        });
+    }
+
     /**
      * Sets up the client handler for permission responses
      */
@@ -456,43 +608,20 @@ export class PermissionHandler {
             logger.debug(`Permission response: ${JSON.stringify(message)}`);
 
             const id = message.id;
+            this.responses.set(id, { ...message, receivedAt: Date.now() });
             const pending = this.pendingRequests.get(id);
 
             if (!pending) {
-                logger.debug('Permission request not found or already resolved');
+                logger.debug('Permission request not found yet, stored response for later replay');
                 return;
             }
 
-            // Store the response with timestamp
-            this.responses.set(id, { ...message, receivedAt: Date.now() });
             this.pendingRequests.delete(id);
 
             // Handle the permission response based on tool type
             this.handlePermissionResponse(message, pending);
 
-            // Move processed request to completedRequests
-            this.session.client.updateAgentState((currentState) => {
-                const request = currentState.requests?.[id];
-                if (!request) return currentState;
-                let r = { ...currentState.requests };
-                delete r[id];
-                return {
-                    ...currentState,
-                    requests: r,
-                    completedRequests: {
-                        ...currentState.completedRequests,
-                        [id]: {
-                            ...request,
-                            completedAt: Date.now(),
-                            status: message.approved ? 'approved' : 'denied',
-                            reason: message.reason,
-                            mode: message.mode,
-                            allowTools: message.allowTools,
-                            answers: message.answers
-                        }
-                    }
-                };
-            });
+            this.completeRequestState(id, message);
         });
     }
 

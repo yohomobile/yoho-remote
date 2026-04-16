@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/query-keys'
 import type { ApiClient } from '@/api/client'
+import type { AcceptInvitationResponse } from '@/types/api'
 
 export function useUpdateOrg(api: ApiClient | null, orgId: string) {
     const queryClient = useQueryClient()
@@ -105,22 +106,48 @@ export function useRemoveMember(api: ApiClient | null, orgId: string) {
     }
 }
 
-export function useAcceptInvitation(api: ApiClient | null) {
+export function useAcceptInvitation(api: ApiClient | null): {
+    acceptInvitation: (invitationId: string) => Promise<AcceptInvitationResponse>
+    isPending: boolean
+    error: string | null
+} {
+    const queryClient = useQueryClient()
+
+    const mutation = useMutation<AcceptInvitationResponse, Error, string>({
+        mutationFn: async (invitationId: string) => {
+            if (!api) throw new Error('API unavailable')
+            return await api.acceptInvitation(invitationId)
+        },
+        onSuccess: async (result) => {
+            void queryClient.invalidateQueries({ queryKey: queryKeys.orgs })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.pendingInvitations })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.org(result.orgId) })
+        },
+    })
+
+    return {
+        acceptInvitation: (invitationId: string) => mutation.mutateAsync(invitationId),
+        isPending: mutation.isPending,
+        error: mutation.error instanceof Error ? mutation.error.message : null,
+    }
+}
+
+export function useRevokeOrgInvitation(api: ApiClient | null, orgId: string) {
     const queryClient = useQueryClient()
 
     const mutation = useMutation({
         mutationFn: async (invitationId: string) => {
             if (!api) throw new Error('API unavailable')
-            return await api.acceptInvitation(invitationId)
+            return await api.deleteOrgInvitation(orgId, invitationId)
         },
         onSuccess: () => {
-            void queryClient.invalidateQueries({ queryKey: queryKeys.orgs })
-            void queryClient.invalidateQueries({ queryKey: queryKeys.pendingInvitations })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.orgInvitations(orgId) })
+            void queryClient.invalidateQueries({ queryKey: queryKeys.org(orgId) })
         },
     })
 
     return {
-        acceptInvitation: mutation.mutateAsync,
+        revokeInvitation: mutation.mutateAsync,
         isPending: mutation.isPending,
         error: mutation.error instanceof Error ? mutation.error.message : null,
     }

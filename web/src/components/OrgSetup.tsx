@@ -9,7 +9,7 @@ import { LoadingState } from '@/components/LoadingState'
  * 用户登录后如果没有 org，展示创建组织或接受邀请的界面
  */
 export function OrgSetup({ onComplete }: { onComplete: () => void }) {
-    const { api } = useAppContext()
+    const { api, setCurrentOrgId } = useAppContext()
     const { invitations, isLoading: invitationsLoading } = usePendingInvitations(api)
     const { createOrg, isPending: isCreating, error: createError } = useCreateOrg(api)
     const { acceptInvitation, isPending: isAccepting } = useAcceptInvitation(api)
@@ -29,21 +29,23 @@ export function OrgSetup({ onComplete }: { onComplete: () => void }) {
     const handleCreate = useCallback(async () => {
         if (!orgName.trim() || !orgSlug.trim()) return
         try {
-            await createOrg({ name: orgName.trim(), slug: orgSlug.trim() })
+            const response = await createOrg({ name: orgName.trim(), slug: orgSlug.trim() })
+            setCurrentOrgId(response.org.id)
             onComplete()
         } catch {
             // error handled by hook
         }
-    }, [createOrg, orgName, orgSlug, onComplete])
+    }, [createOrg, onComplete, orgName, orgSlug, setCurrentOrgId])
 
     const handleAccept = useCallback(async (invitationId: string) => {
         try {
-            await acceptInvitation(invitationId)
+            const response = await acceptInvitation(invitationId)
+            setCurrentOrgId(response.orgId)
             onComplete()
         } catch (e) {
             console.error('Failed to accept invitation:', e)
         }
-    }, [acceptInvitation, onComplete])
+    }, [acceptInvitation, onComplete, setCurrentOrgId])
 
     if (invitationsLoading) {
         return (

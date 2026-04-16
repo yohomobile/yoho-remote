@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import type { WebAppEnv } from '../middleware/auth'
 import type { IStore, OrgRole } from '../../store'
-import { emailService } from '../../services/emailService'
+import { emailService, getOrgInvitationAcceptUrl } from '../../services/emailService'
 import { getLicenseService } from '../../license/licenseService'
 
 const createOrgSchema = z.object({
@@ -25,6 +25,13 @@ const updateMemberRoleSchema = z.object({
 })
 
 const validOrgRoles: OrgRole[] = ['owner', 'admin', 'member']
+
+function withAcceptUrl<T extends { id: string }>(invitation: T): T & { acceptUrl: string } {
+    return {
+        ...invitation,
+        acceptUrl: getOrgInvitationAcceptUrl(invitation.id),
+    }
+}
 
 /**
  * 权限守卫：检查当前用户在指定 org 中的角色
@@ -220,6 +227,10 @@ export function createOrgsRoutes(store: IStore): Hono<WebAppEnv> {
             return c.json({ error: 'Organization not found' }, 404)
         }
 
+        const acceptUrl = getOrgInvitationAcceptUrl(invitation.id)
+        let emailSent = false
+        let emailError: string | null = null
+
         // 发送邀请邮件
         try {
             await emailService.sendOrgInvitation({
@@ -231,6 +242,7 @@ export function createOrgsRoutes(store: IStore): Hono<WebAppEnv> {
                 role: parsed.data.role,
                 expiresAt,
             })
+            emailSent = true
             console.log('[Email] Invitation email sent successfully:', {
                 to: parsed.data.email,
                 orgName: org.name,
@@ -248,10 +260,17 @@ export function createOrgsRoutes(store: IStore): Hono<WebAppEnv> {
                     stack: error.stack,
                 } : error,
             })
+            emailError = error instanceof Error ? error.message : 'Unknown email delivery error'
             // 邮件发送失败不影响邀请创建，继续返回成功
         }
 
-        return c.json({ ok: true, invitation })
+        return c.json({
+            ok: true,
+            invitation: withAcceptUrl(invitation),
+            acceptUrl,
+            emailSent,
+            emailError,
+        })
     })
 
     // 修改成员角色
@@ -344,7 +363,7 @@ export function createOrgsRoutes(store: IStore): Hono<WebAppEnv> {
         if ('error' in roleCheck) return c.json({ error: roleCheck.error }, roleCheck.status)
 
         const invitations = await store.getOrgInvitations(orgId)
-        return c.json({ invitations })
+        return c.json({ invitations: invitations.map(withAcceptUrl) })
     })
 
     // 撤销邀请
@@ -369,7 +388,7 @@ export function createOrgsRoutes(store: IStore): Hono<WebAppEnv> {
         if (!email) return c.json({ error: 'Unauthorized' }, 401)
 
         const invitations = await store.getPendingInvitationsForUser(email)
-        return c.json({ invitations })
+        return c.json({ invitations: invitations.map(withAcceptUrl) })
     })
 
     // 接受邀请
@@ -393,12 +412,12 @@ export function createOrgsRoutes(store: IStore): Hono<WebAppEnv> {
             }
         } catch { /* LicenseService not initialized */ }
 
-        const success = await store.acceptOrgInvitation(invitationId, userId, email)
-        if (!success) {
+        const orgId = await store.acceptOrgInvitation(invitationId, userId, email)
+        if (!orgId) {
             return c.json({ error: 'Invitation not found, expired, or already accepted' }, 404)
         }
 
-        return c.json({ ok: true })
+        return c.json({ ok: true, orgId })
     })
 
     return app

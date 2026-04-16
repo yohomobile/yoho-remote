@@ -119,6 +119,12 @@ export type StoredOrgLicense = {
     updatedAt: number
 }
 
+export type StoredAdminOrgLicense = StoredOrgLicense & {
+    orgName: string
+    orgSlug: string
+    memberCount: number
+}
+
 export type StoredPushSubscription = {
     id: number
     namespace: string

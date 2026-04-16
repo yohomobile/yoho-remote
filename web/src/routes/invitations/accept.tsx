@@ -3,23 +3,25 @@ import { useNavigate, useParams } from '@tanstack/react-router'
 import { useAppContext } from '@/lib/app-context'
 import { LoadingState } from '@/components/LoadingState'
 import { setPostLoginRedirect } from '@/services/postLoginRedirect'
+import { useAcceptInvitation } from '@/hooks/mutations/useOrgMutations'
 
 /**
  * AcceptInvitationPage - 接受组织邀请页面
  * 通过邮件链接进入，自动接受邀请并跳转到组织
  */
 export function AcceptInvitationPage() {
-    const { api, userEmail } = useAppContext()
+    const { api, userEmail, setCurrentOrgId } = useAppContext()
     const navigate = useNavigate()
     const { invitationId } = useParams({ from: '/invitations/accept/$invitationId' })
     const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading')
     const [error, setError] = useState<string>('')
+    const { acceptInvitation } = useAcceptInvitation(api)
 
     useEffect(() => {
         let mounted = true
         let timeoutId: ReturnType<typeof setTimeout> | null = null
 
-        const acceptInvitation = async () => {
+        const runAcceptInvitation = async () => {
             if (!userEmail) {
                 setPostLoginRedirect(`/invitations/accept/${invitationId}`)
                 navigate({ to: '/login', replace: true })
@@ -28,11 +30,12 @@ export function AcceptInvitationPage() {
 
             try {
                 setStatus('loading')
-                const response = await api.acceptInvitation(invitationId)
+                const response = await acceptInvitation(invitationId)
 
                 if (!mounted) return
 
                 if (response.ok) {
+                    setCurrentOrgId(response.orgId)
                     setStatus('success')
                     // 等待 1 秒后跳转到组织列表
                     timeoutId = setTimeout(() => {
@@ -51,13 +54,13 @@ export function AcceptInvitationPage() {
             }
         }
 
-        acceptInvitation()
+        runAcceptInvitation()
 
         return () => {
             mounted = false
             if (timeoutId) clearTimeout(timeoutId)
         }
-    }, [invitationId, userEmail]) // 移除 api 和 navigate，它们是稳定的引用
+    }, [acceptInvitation, invitationId, navigate, setCurrentOrgId, userEmail])
 
     return (
         <div className="flex h-full items-center justify-center p-4">

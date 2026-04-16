@@ -17,6 +17,10 @@ describe('buildInitPrompt', () => {
         expect(prompt).toContain('mcp__yoho_remote__environment_info')
         expect(prompt).toContain('不要通过 `claude mcp list`')
         expect(prompt).toContain('mcp__skill__search')
+        expect(prompt).toContain('方法/能力类 skill')
+        expect(prompt).toContain('suggestedNextAction / suggestDiscover / hasLocalMatch')
+        expect(prompt).toContain('低置信度或明显不相关，视为 no-match')
+        expect(prompt).toContain('skill_discover')
     })
 
     it('renders machine-local project guidance without worktree instructions', async () => {
@@ -30,6 +34,7 @@ describe('buildInitPrompt', () => {
         expect(prompt).not.toContain('Git worktree')
         expect(prompt).toContain('mcp__yoho-vault__recall')
         expect(prompt).toContain('mcp__yoho-memory__remember')
+        expect(prompt).toContain('不要硬套 skill')
     })
 
     it('uses the same shared-directory rules in brain init prompts', async () => {
@@ -43,6 +48,9 @@ describe('buildInitPrompt', () => {
         expect(prompt).not.toContain('部署线上必须先合入 main')
         expect(prompt).toContain('不要通过 `claude mcp list`')
         expect(prompt).toContain('mcp__skill__search')
+        expect(prompt).toContain('不要直接拿具体报错、ticket 标题')
+        expect(prompt).toContain('suggestedNextAction / suggestDiscover / hasLocalMatch')
+        expect(prompt).toContain('不要把噪声 skill 传给子 session')
     })
 
     it('renders brain child-session capability boundaries from session preferences', async () => {

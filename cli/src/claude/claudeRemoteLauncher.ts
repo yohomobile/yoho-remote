@@ -150,6 +150,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     // Handle messages
     let planModeToolCalls = new Set<string>();
     let ongoingToolCalls = new Map<string, { parentToolCallId: string | null }>();
+    let pendingSidechainStarts = new Map<string, string>();
     let titleInstructionPending = true;
 
     // Throttle tool_progress messages to avoid flooding the server
@@ -188,6 +189,17 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         }
     }
 
+    function canBufferAssistantMessage(message: SDKAssistantMessage): boolean {
+        const content = Array.isArray(message.message.content) ? message.message.content : [];
+        if (content.length === 0) {
+            return false;
+        }
+
+        // Only buffer pure reasoning chunks. Tool calls such as AskUserQuestion
+        // must reach PermissionHandler immediately so their tool IDs can be resolved.
+        return content.every((block) => block.type === 'thinking');
+    }
+
     function onMessage(message: SDKMessage) {
         // Merge split assistant messages from OpenAI-style reasoning models.
         // Some backends emit two assistant messages with the same message.id:
@@ -213,7 +225,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             }
             // Different response or first assistant — flush any previous pending
             flushPendingAssistant();
-            if (responseId) {
+            if (responseId && canBufferAssistantMessage(aMsg)) {
                 // Buffer this assistant message in case a continuation follows
                 pendingAssistantMsg = aMsg;
                 pendingAssistantResponseId = responseId;
@@ -256,7 +268,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         // Detect plan mode tool call
         if (message.type === 'assistant') {
             let umessage = message as SDKAssistantMessage;
-            if (umessage.message.content && Array.isArray(umessage.message.content)) {
+            const isSidechain = umessage.parent_tool_use_id !== undefined;
+            if (!isSidechain && umessage.message.content && Array.isArray(umessage.message.content)) {
                 for (let c of umessage.message.content) {
                     if (c.type === 'tool_use' && (c.name === 'exit_plan_mode' || c.name === 'ExitPlanMode')) {
                         logger.debug('[remote]: detected plan mode tool call ' + c.id!);
@@ -284,6 +297,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 for (let c of umessage.message.content) {
                     if (c.type === 'tool_result' && c.tool_use_id) {
                         ongoingToolCalls.delete(c.tool_use_id);
+                        pendingSidechainStarts.delete(c.tool_use_id);
+                        toolProgressLastSent.delete(c.tool_use_id);
 
                         // When tool result received, release any delayed messages for this tool call
                         messageQueue.releaseToolCall(c.tool_use_id);
@@ -305,6 +320,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         ...umessage.message,
                         content: umessage.message.content.map((c) => {
                             if (c.type === 'tool_result' && c.tool_use_id && planModeToolCalls.has(c.tool_use_id!)) {
+                                planModeToolCalls.delete(c.tool_use_id);
                                 if (c.content === PLAN_FAKE_REJECT) {
                                     logger.debug('[remote]: hack plan mode exit');
                                     logger.debugLargeJson('[remote]: hack plan mode exit', c);
@@ -325,7 +341,34 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             }
         }
 
+        const parentToolUseId = (message.type === 'assistant' || message.type === 'user')
+            ? (message as SDKAssistantMessage | SDKUserMessage).parent_tool_use_id
+            : undefined;
+        if (parentToolUseId) {
+            const pendingSidechainPrompt = pendingSidechainStarts.get(parentToolUseId);
+            if (pendingSidechainPrompt) {
+                const pendingSidechainMessage = sdkToLogConverter.convertSidechainUserMessage(
+                    parentToolUseId,
+                    pendingSidechainPrompt
+                );
+                messageQueue.enqueue(pendingSidechainMessage);
+                pendingSidechainStarts.delete(parentToolUseId);
+            }
+        }
+
         const logMessage = sdkToLogConverter.convert(msg);
+
+        if (message.type === 'assistant') {
+            const assistantMsg = message as SDKAssistantMessage;
+            if (assistantMsg.parent_tool_use_id === undefined && assistantMsg.message.content && Array.isArray(assistantMsg.message.content)) {
+                for (const block of assistantMsg.message.content) {
+                    if (block.type === 'tool_use' && (block.name === 'Task' || block.name === 'Agent') && block.input && typeof (block.input as any).prompt === 'string') {
+                        pendingSidechainStarts.set(block.id!, (block.input as any).prompt);
+                    }
+                }
+            }
+        }
+
         if (logMessage) {
             // Add permissions field to tool result content
             if (logMessage.type === 'user' && logMessage.message?.content) {
@@ -405,21 +448,6 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             // Queue all other messages immediately (no delay)
             messageQueue.enqueue(logMessage);
         }
-
-        // Insert a fake message to start the sidechain
-        if (message.type === 'assistant') {
-            let umessage = message as SDKAssistantMessage;
-            if (umessage.message.content && Array.isArray(umessage.message.content)) {
-                for (let c of umessage.message.content) {
-                    if (c.type === 'tool_use' && (c.name === 'Task' || c.name === 'Agent') && c.input && typeof (c.input as any).prompt === 'string') {
-                        const logMessage2 = sdkToLogConverter.convertSidechainUserMessage(c.id!, (c.input as any).prompt);
-                        if (logMessage2) {
-                            messageQueue.enqueue(logMessage2);
-                        }
-                    }
-                }
-            }
-        }
     }
 
     try {
@@ -452,6 +480,10 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             if (isNewSession) {
                 messageBuffer.addMessage('Starting new Claude session...', 'status');
                 permissionHandler.reset(); // Reset permissions before starting new session
+                planModeToolCalls.clear();
+                ongoingToolCalls.clear();
+                pendingSidechainStarts.clear();
+                toolProgressLastSent.clear();
                 sdkToLogConverter.resetParentChain(); // Reset parent chain for new conversation
                 logger.debug(`[remote]: New session detected (previous: ${previousSessionId}, current: ${session.sessionId})`);
                 titleInstructionPending = true;
@@ -653,6 +685,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     }
                 }
                 ongoingToolCalls.clear();
+                pendingSidechainStarts.clear();
+                toolProgressLastSent.clear();
 
                 // Flush any remaining messages in the queue
                 logger.debug('[remote]: flushing message queue');

@@ -31,6 +31,7 @@ import type {
     StoredOrgMember,
     StoredOrgInvitation,
     StoredOrgLicense,
+    StoredAdminOrgLicense,
     StoredDownloadFile,
     StoredBrainConfig,
     BrainAgent,
@@ -3630,6 +3631,10 @@ export class PostgresStore implements IStore {
         }
     }
 
+    private normalizeEmail(email: string): string {
+        return email.trim().toLowerCase()
+    }
+
     async createOrganization(data: { name: string; slug: string; createdBy: string }): Promise<StoredOrganization | null> {
         const now = Date.now()
         const id = randomUUID()
@@ -3664,12 +3669,13 @@ export class PostgresStore implements IStore {
     }
 
     async getOrganizationsForUser(email: string): Promise<(StoredOrganization & { myRole: OrgRole })[]> {
+        const normalizedEmail = this.normalizeEmail(email)
         const result = await this.pool.query(
             `SELECT o.*, m.role as my_role FROM organizations o
              INNER JOIN org_members m ON o.id = m.org_id
-             WHERE m.user_email = $1
+             WHERE LOWER(m.user_email) = $1
              ORDER BY o.created_at ASC`,
-            [email]
+            [normalizedEmail]
         )
         return result.rows.map((r: any) => ({
             ...this.toStoredOrganization(r),
@@ -3709,13 +3715,14 @@ export class PostgresStore implements IStore {
 
     async addOrgMember(data: { orgId: string; userEmail: string; userId: string; role: OrgRole; invitedBy?: string }): Promise<StoredOrgMember | null> {
         const now = Date.now()
+        const normalizedEmail = this.normalizeEmail(data.userEmail)
         try {
             await this.pool.query(
                 `INSERT INTO org_members (org_id, user_email, user_id, role, joined_at, invited_by)
                  VALUES ($1, $2, $3, $4, $5, $6)`,
-                [data.orgId, data.userEmail, data.userId, data.role, now, data.invitedBy ?? null]
+                [data.orgId, normalizedEmail, data.userId, data.role, now, data.invitedBy ?? null]
             )
-            return { orgId: data.orgId, userEmail: data.userEmail, userId: data.userId, role: data.role, joinedAt: now, invitedBy: data.invitedBy ?? null }
+            return { orgId: data.orgId, userEmail: normalizedEmail, userId: data.userId, role: data.role, joinedAt: now, invitedBy: data.invitedBy ?? null }
         } catch (e: any) {
             if (e.code === '23505') return null // already a member
             throw e
@@ -3731,33 +3738,37 @@ export class PostgresStore implements IStore {
     }
 
     async getOrgMember(orgId: string, email: string): Promise<StoredOrgMember | null> {
+        const normalizedEmail = this.normalizeEmail(email)
         const result = await this.pool.query(
-            'SELECT * FROM org_members WHERE org_id = $1 AND user_email = $2',
-            [orgId, email]
+            'SELECT * FROM org_members WHERE org_id = $1 AND LOWER(user_email) = $2',
+            [orgId, normalizedEmail]
         )
         return result.rows.length > 0 ? this.toStoredOrgMember(result.rows[0]) : null
     }
 
     async updateOrgMemberRole(orgId: string, email: string, role: OrgRole): Promise<boolean> {
+        const normalizedEmail = this.normalizeEmail(email)
         const result = await this.pool.query(
-            'UPDATE org_members SET role = $3 WHERE org_id = $1 AND user_email = $2',
-            [orgId, email, role]
+            'UPDATE org_members SET role = $3, user_email = $4 WHERE org_id = $1 AND LOWER(user_email) = $2',
+            [orgId, normalizedEmail, role, normalizedEmail]
         )
         return (result.rowCount ?? 0) > 0
     }
 
     async removeOrgMember(orgId: string, email: string): Promise<boolean> {
+        const normalizedEmail = this.normalizeEmail(email)
         const result = await this.pool.query(
-            'DELETE FROM org_members WHERE org_id = $1 AND user_email = $2',
-            [orgId, email]
+            'DELETE FROM org_members WHERE org_id = $1 AND LOWER(user_email) = $2',
+            [orgId, normalizedEmail]
         )
         return (result.rowCount ?? 0) > 0
     }
 
     async getUserOrgRole(orgId: string, email: string): Promise<OrgRole | null> {
+        const normalizedEmail = this.normalizeEmail(email)
         const result = await this.pool.query(
-            'SELECT role FROM org_members WHERE org_id = $1 AND user_email = $2',
-            [orgId, email]
+            'SELECT role FROM org_members WHERE org_id = $1 AND LOWER(user_email) = $2',
+            [orgId, normalizedEmail]
         )
         return result.rows.length > 0 ? result.rows[0].role as OrgRole : null
     }
@@ -3767,12 +3778,24 @@ export class PostgresStore implements IStore {
     async createOrgInvitation(data: { orgId: string; email: string; role: OrgRole; invitedBy: string; expiresAt: number }): Promise<StoredOrgInvitation | null> {
         const now = Date.now()
         const id = randomUUID()
+        const normalizedEmail = this.normalizeEmail(data.email)
+
+        const existing = await this.pool.query(
+            `UPDATE org_invitations
+             SET email = $3, role = $4, invited_by = $5, created_at = $6, expires_at = $7, accepted_at = NULL
+             WHERE org_id = $1 AND LOWER(email) = $2
+             RETURNING *`,
+            [data.orgId, normalizedEmail, normalizedEmail, data.role, data.invitedBy, now, data.expiresAt]
+        )
+        if (existing.rows.length > 0) {
+            return this.toStoredOrgInvitation(existing.rows[0])
+        }
+
         const result = await this.pool.query(
             `INSERT INTO org_invitations (id, org_id, email, role, invited_by, created_at, expires_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
-             ON CONFLICT (org_id, email) DO UPDATE SET role = $4, invited_by = $5, created_at = $6, expires_at = $7, accepted_at = NULL
              RETURNING *`,
-            [id, data.orgId, data.email, data.role, data.invitedBy, now, data.expiresAt]
+            [id, data.orgId, normalizedEmail, data.role, data.invitedBy, now, data.expiresAt]
         )
         return result.rows.length > 0 ? this.toStoredOrgInvitation(result.rows[0]) : null
     }
@@ -3787,12 +3810,13 @@ export class PostgresStore implements IStore {
 
     async getPendingInvitationsForUser(email: string): Promise<(StoredOrgInvitation & { orgName: string })[]> {
         const now = Date.now()
+        const normalizedEmail = this.normalizeEmail(email)
         const result = await this.pool.query(
             `SELECT i.*, o.name as org_name FROM org_invitations i
              INNER JOIN organizations o ON i.org_id = o.id
-             WHERE i.email = $1 AND i.accepted_at IS NULL AND i.expires_at > $2
+             WHERE LOWER(i.email) = $1 AND i.accepted_at IS NULL AND i.expires_at > $2
              ORDER BY i.created_at DESC`,
-            [email, now]
+            [normalizedEmail, now]
         )
         return result.rows.map((r: any) => ({
             ...this.toStoredOrgInvitation(r),
@@ -3800,20 +3824,21 @@ export class PostgresStore implements IStore {
         }))
     }
 
-    async acceptOrgInvitation(id: string, userId: string, email: string): Promise<boolean> {
+    async acceptOrgInvitation(id: string, userId: string, email: string): Promise<string | null> {
         const client = await this.pool.connect()
         try {
             await client.query('BEGIN')
             const now = Date.now()
+            const normalizedEmail = this.normalizeEmail(email)
 
             // Get invitation and verify it belongs to this user
             const invResult = await client.query(
-                'SELECT * FROM org_invitations WHERE id = $1 AND email = $2 AND accepted_at IS NULL AND expires_at > $3',
-                [id, email, now]
+                'SELECT * FROM org_invitations WHERE id = $1 AND LOWER(email) = $2 AND accepted_at IS NULL AND expires_at > $3',
+                [id, normalizedEmail, now]
             )
             if (invResult.rows.length === 0) {
                 try { await client.query('ROLLBACK') } catch {}
-                return false
+                return null
             }
 
             const inv = invResult.rows[0]
@@ -3824,16 +3849,24 @@ export class PostgresStore implements IStore {
                 [id, now]
             )
 
-            // Add as member
-            await client.query(
-                `INSERT INTO org_members (org_id, user_email, user_id, role, joined_at, invited_by)
-                 VALUES ($1, $2, $3, $4, $5, $6)
-                 ON CONFLICT (org_id, user_email) DO NOTHING`,
-                [inv.org_id, inv.email, userId, inv.role, now, inv.invited_by]
+            // Add as member, while repairing case-only email drift in existing rows.
+            const updateResult = await client.query(
+                `UPDATE org_members
+                 SET user_email = $3, user_id = $4, role = $5, invited_by = $6
+                 WHERE org_id = $1 AND LOWER(user_email) = $2
+                 RETURNING org_id`,
+                [inv.org_id, normalizedEmail, normalizedEmail, userId, inv.role, inv.invited_by]
             )
+            if (updateResult.rows.length === 0) {
+                await client.query(
+                    `INSERT INTO org_members (org_id, user_email, user_id, role, joined_at, invited_by)
+                     VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [inv.org_id, normalizedEmail, userId, inv.role, now, inv.invited_by]
+                )
+            }
 
             await client.query('COMMIT')
-            return true
+            return inv.org_id as string
         } catch (e) {
             try { await client.query('ROLLBACK') } catch {}
             throw e
@@ -3874,17 +3907,24 @@ export class PostgresStore implements IStore {
         return result.rows.length > 0 ? this.toStoredOrgLicense(result.rows[0]) : null
     }
 
-    async getAllOrgLicenses(): Promise<(StoredOrgLicense & { orgName: string; orgSlug: string })[]> {
+    async getAllOrgLicenses(): Promise<StoredAdminOrgLicense[]> {
         const result = await this.pool.query(
-            `SELECT l.*, o.name as org_name, o.slug as org_slug
+            `SELECT
+                l.*,
+                o.name as org_name,
+                o.slug as org_slug,
+                COUNT(m.user_email)::int as member_count
              FROM org_licenses l
              INNER JOIN organizations o ON l.org_id = o.id
+             LEFT JOIN org_members m ON m.org_id = l.org_id
+             GROUP BY l.id, o.name, o.slug
              ORDER BY l.created_at DESC`
         )
         return result.rows.map((r: any) => ({
             ...this.toStoredOrgLicense(r),
             orgName: r.org_name,
             orgSlug: r.org_slug,
+            memberCount: Number(r.member_count),
         }))
     }
 

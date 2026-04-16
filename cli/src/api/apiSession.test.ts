@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { logger } from '@/ui/logger'
 import { ApiSessionClient } from './apiSession'
 
 describe('ApiSessionClient.keepAlive', () => {
@@ -53,5 +54,37 @@ describe('ApiSessionClient.keepAlive', () => {
         expect(emitted).toHaveLength(0)
         expect(volatileEmitted).toHaveLength(1)
         expect(volatileEmitted[0]?.event).toBe('session-alive')
+    })
+})
+
+describe('ApiSessionClient state update failures', () => {
+    it('logs and swallows rejected agent state updates', async () => {
+        const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+        const client = Object.create(ApiSessionClient.prototype) as any
+
+        client.agentStateLock = {
+            inLock: vi.fn(() => Promise.reject(new Error('boom')))
+        }
+
+        client.updateAgentState((state: Record<string, unknown>) => state as any)
+        await Promise.resolve()
+
+        expect(debugSpy).toHaveBeenCalledWith('[API] Failed to update agent state', expect.any(Error))
+        debugSpy.mockRestore()
+    })
+
+    it('logs and swallows rejected metadata updates', async () => {
+        const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+        const client = Object.create(ApiSessionClient.prototype) as any
+
+        client.metadataLock = {
+            inLock: vi.fn(() => Promise.reject(new Error('boom')))
+        }
+
+        client.updateMetadata((metadata: Record<string, unknown>) => metadata as any)
+        await Promise.resolve()
+
+        expect(debugSpy).toHaveBeenCalledWith('[API] Failed to update metadata', expect.any(Error))
+        debugSpy.mockRestore()
     })
 })

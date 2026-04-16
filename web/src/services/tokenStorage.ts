@@ -307,10 +307,15 @@ export async function saveTokens(data: {
     // Calculate expiration time (subtract 60 seconds for buffer)
     const expiresAt = Date.now() + (data.expiresIn - 60) * 1000
 
+    const normalizedUser = {
+        ...data.user,
+        email: data.user.email.trim().toLowerCase(),
+    }
+
     const tokenData: TokenData = {
         accessToken: data.accessToken,
         refreshToken: data.refreshToken,
-        user: data.user,
+        user: normalizedUser,
         expiresAt,
     }
 
@@ -324,7 +329,7 @@ export async function saveTokens(data: {
     // Update sync cache
     syncCache.accessToken = data.accessToken
     syncCache.refreshToken = data.refreshToken
-    syncCache.user = data.user
+    syncCache.user = normalizedUser
     syncCache.expiresAt = expiresAt
 }
 

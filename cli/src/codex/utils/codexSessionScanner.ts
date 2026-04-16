@@ -168,12 +168,30 @@ export async function createCodexSessionScanner(opts: CodexSessionScannerOptions
 
     async function initializeProcessedMessages(): Promise<void> {
         const files = await listSessionFiles(sessionsRoot);
+        pruneMissingFiles(files);
         for (const filePath of files) {
             const { totalLines } = await readSessionFile(filePath, 0);
             processedLineCounts.set(filePath, totalLines);
             if (!isClosing && !watchers.has(filePath)) {
                 watchers.set(filePath, startFileWatcher(filePath, () => sync.invalidate()));
             }
+        }
+    }
+
+    function pruneMissingFiles(files: string[]): void {
+        const existingFiles = new Set(files);
+        for (const [filePath, stop] of watchers.entries()) {
+            if (existingFiles.has(filePath)) {
+                continue;
+            }
+            stop();
+            watchers.delete(filePath);
+            processedLineCounts.delete(filePath);
+            sessionIdByFile.delete(filePath);
+            sessionCwdByFile.delete(filePath);
+            sessionTimestampByFile.delete(filePath);
+            pendingEventsByFile.delete(filePath);
+            sessionMetaParsed.delete(filePath);
         }
     }
 
@@ -263,6 +281,7 @@ export async function createCodexSessionScanner(opts: CodexSessionScannerOptions
             return;
         }
         const files = await listSessionFiles(sessionsRoot);
+        pruneMissingFiles(files);
         const sortedFiles = await sortFilesByMtime(files);
         let bestWithinWindow: Candidate | null = null;
 

@@ -478,7 +478,7 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     updateMetadata(handler: (metadata: Metadata) => Metadata): void {
-        this.metadataLock.inLock(async () => {
+        void this.metadataLock.inLock(async () => {
             await backoff(async () => {
                 const current = this.metadata ?? ({} as Metadata)
                 const updated = handler(current)
@@ -533,11 +533,13 @@ export class ApiSessionClient extends EventEmitter {
                     throw new Error(`Metadata update failed (${reason})`)
                 }
             })
+        }).catch((error) => {
+            logger.debug('[API] Failed to update metadata', error)
         })
     }
 
     updateAgentState(handler: (state: AgentState) => AgentState): void {
-        this.agentStateLock.inLock(async () => {
+        void this.agentStateLock.inLock(async () => {
             await backoff(async () => {
                 const current = this.agentState ?? ({} as AgentState)
                 const updated = handler(current)
@@ -592,6 +594,8 @@ export class ApiSessionClient extends EventEmitter {
                     throw new Error(`Agent state update failed (${reason})`)
                 }
             })
+        }).catch((error) => {
+            logger.debug('[API] Failed to update agent state', error)
         })
     }
 

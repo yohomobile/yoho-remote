@@ -319,10 +319,8 @@ function extractReadFileContent(result: unknown): { filePath: string | null; con
 function isYohoMemoryToolName(toolName: string): boolean {
     if (toolName === 'yoho_memory__recall'
         || toolName === 'yoho_memory__remember'
-        || toolName === 'yoho_memory__get_playbook'
         || toolName === 'mcp__yoho_memory__recall'
-        || toolName === 'mcp__yoho_memory__remember'
-        || toolName === 'mcp__yoho_memory__get_playbook') {
+        || toolName === 'mcp__yoho_memory__remember') {
         return true
     }
     const prefixes = [

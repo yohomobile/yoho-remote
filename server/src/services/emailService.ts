@@ -34,6 +34,10 @@ export interface SendEmailOptions {
     text?: string
 }
 
+export function getOrgInvitationAcceptUrl(invitationId: string): string {
+    return `${process.env.WEB_URL || 'https://remote.yohomobile.dev'}/invitations/accept/${invitationId}`
+}
+
 class EmailService {
     private transporter: Transporter | null = null
     private config: EmailConfig | null = null
@@ -89,7 +93,7 @@ class EmailService {
         const safeInviterEmail = escapeHtml(params.inviterEmail)
         const safeRole = escapeHtml(params.role)
 
-        const acceptUrl = `${process.env.WEB_URL || 'https://remote.yohomobile.dev'}/invitations/accept/${params.invitationId}`
+        const acceptUrl = getOrgInvitationAcceptUrl(params.invitationId)
 
         const expiresDate = new Date(params.expiresAt).toLocaleDateString('en-US', {
             year: 'numeric',

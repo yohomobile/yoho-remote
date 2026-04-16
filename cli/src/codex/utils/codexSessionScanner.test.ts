@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, writeFile, appendFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
+import * as watcherModule from '@/modules/watcher/startFileWatcher';
 import { createCodexSessionScanner } from './codexSessionScanner';
 import type { CodexSessionEvent } from './codexEventConverter';
 
@@ -32,6 +33,7 @@ describe('codexSessionScanner', () => {
             await scanner.cleanup();
             scanner = null;
         }
+        vi.restoreAllMocks();
 
         if (originalCodexHome === undefined) {
             delete process.env.CODEX_HOME;
@@ -147,5 +149,35 @@ describe('codexSessionScanner', () => {
 
         await wait(200);
         expect(events).toHaveLength(0);
+    });
+
+    it('prunes watchers and cached state for session files that disappear', async () => {
+        const sessionId = 'session-prune';
+        sessionFile = join(sessionsDir, `codex-${sessionId}.jsonl`);
+        const watcherStops = new Map<string, ReturnType<typeof vi.fn>>();
+        vi.spyOn(watcherModule, 'startFileWatcher').mockImplementation((filePath: string) => {
+            const stop = vi.fn();
+            watcherStops.set(filePath, stop);
+            return stop;
+        });
+
+        await writeFile(
+            sessionFile,
+            JSON.stringify({ type: 'session_meta', payload: { id: sessionId } }) + '\n'
+        );
+
+        scanner = await createCodexSessionScanner({
+            sessionId,
+            onEvent: (event) => events.push(event)
+        });
+
+        const stopWatcher = watcherStops.get(sessionFile);
+        expect(stopWatcher).toBeDefined();
+
+        await rm(sessionFile, { force: true });
+        scanner.onNewSession('session-other');
+
+        await wait(200);
+        expect(stopWatcher).toHaveBeenCalledTimes(1);
     });
 });

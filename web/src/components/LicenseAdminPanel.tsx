@@ -239,7 +239,7 @@ export function LicenseAdminPanel({
                             </div>
                             <div>
                                 <span className="text-[var(--app-hint)]">Limits</span>
-                                <div>{selectedLicense.maxMembers} members</div>
+                                <div>{selectedLicense.memberCount} / {selectedLicense.maxMembers} members</div>
                                 <div className="text-[11px] text-[var(--app-hint)]">
                                     {selectedLicense.maxConcurrentSessions === null ? 'Unlimited' : selectedLicense.maxConcurrentSessions} sessions
                                 </div>
@@ -407,7 +407,7 @@ export function LicenseAdminPanel({
                                                 </span>
                                             </div>
                                             <div className="text-[11px] text-[var(--app-hint)]">
-                                                {license.maxMembers} members
+                                                {license.memberCount} / {license.maxMembers} members
                                                 {' · '}
                                                 {days > 0 ? `${days}d left` : 'expired'}
                                             </div>

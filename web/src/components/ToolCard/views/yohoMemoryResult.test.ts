@@ -51,7 +51,7 @@ describe('extractYohoMemoryDisplayData', () => {
         })
     })
 
-    test('supports nested playbook markdown fields for yoho memory results', () => {
+    test('supports nested markdown fields for yoho memory results', () => {
         const result = {
             content: [{
                 type: 'text',

@@ -74,3 +74,20 @@ export function usePendingInvitations(api: ApiClient | null) {
         refetch: query.refetch,
     }
 }
+
+export function useOrgInvitations(api: ApiClient | null, orgId: string | null, enabled: boolean = true) {
+    const query = useQuery({
+        queryKey: queryKeys.orgInvitations(orgId ?? ''),
+        queryFn: async () => {
+            if (!api || !orgId) throw new Error('API unavailable')
+            return await api.getOrgInvitations(orgId)
+        },
+        enabled: Boolean(api && orgId && enabled),
+    })
+
+    return {
+        invitations: query.data?.invitations ?? [],
+        isLoading: query.isLoading,
+        refetch: query.refetch,
+    }
+}

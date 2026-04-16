@@ -122,9 +122,6 @@ export class BrainBridge implements IMBridgeCallbacks {
     // Brain sessions must run on ncu — it has yoho-memory, yoho-credentials MCP deps
     private static readonly NCU_MACHINE_ID = 'e16b3653-ad9f-46a7-89fd-48a3d576cccb'
 
-    // TODO: temporary — force brain sessions to guang-instance until ncu is stable
-    private static readonly FORCED_BRAIN_MACHINE_HOST = 'guang-instance'
-
     private readonly YOHO_MEMORY_URL = process.env.YOHO_MEMORY_URL || 'http://localhost:3100/api'
 
     private get logPrefix(): string {
@@ -735,18 +732,10 @@ export class BrainBridge implements IMBridgeCallbacks {
                 return null
             }
 
-            // TODO: temporary — force brain sessions to guang-instance
-            const forcedHost = BrainBridge.FORCED_BRAIN_MACHINE_HOST
-            const orderedMachines = forcedHost
-                ? compatibleMachines.filter(m => m.metadata?.host === forcedHost)
-                : [
-                    ...compatibleMachines.filter(m => m.id === BrainBridge.NCU_MACHINE_ID),
-                    ...compatibleMachines.filter(m => m.id !== BrainBridge.NCU_MACHINE_ID),
-                ]
-            if (orderedMachines.length === 0) {
-                console.error(`${this.logPrefix} Forced machine "${forcedHost}" is not online`)
-                return null
-            }
+            const orderedMachines = [
+                ...compatibleMachines.filter(m => m.id === BrainBridge.NCU_MACHINE_ID),
+                ...compatibleMachines.filter(m => m.id !== BrainBridge.NCU_MACHINE_ID),
+            ]
 
             // Try each compatible machine in order; skip on license failure or AGENT_NOT_AVAILABLE
             let spawnResult: Awaited<ReturnType<typeof this.syncEngine.spawnSession>> | null = null
@@ -1013,18 +1002,10 @@ export class BrainBridge implements IMBridgeCallbacks {
                 return false
             }
 
-            // TODO: temporary — force brain sessions to guang-instance
-            const forcedHost = BrainBridge.FORCED_BRAIN_MACHINE_HOST
-            const orderedMachines = forcedHost
-                ? compatibleMachines.filter(m => m.metadata?.host === forcedHost)
-                : [
-                    ...compatibleMachines.filter(m => m.id === BrainBridge.NCU_MACHINE_ID),
-                    ...compatibleMachines.filter(m => m.id !== BrainBridge.NCU_MACHINE_ID),
-                ]
-            if (orderedMachines.length === 0) {
-                console.error(`${this.logPrefix} Forced machine "${forcedHost}" is not online for resume`)
-                return false
-            }
+            const orderedMachines = [
+                ...compatibleMachines.filter(m => m.id === BrainBridge.NCU_MACHINE_ID),
+                ...compatibleMachines.filter(m => m.id !== BrainBridge.NCU_MACHINE_ID),
+            ]
 
             // Try each compatible machine in order
             for (const m of orderedMachines) {

@@ -29,6 +29,7 @@ import type {
     StoredOrgMember,
     StoredOrgInvitation,
     StoredOrgLicense,
+    StoredAdminOrgLicense,
     StoredBrainConfig,
     BrainAgent,
     LicenseStatus,
@@ -459,7 +460,7 @@ export interface IStore {
 
     // === Org License 操作 ===
     getOrgLicense(orgId: string): Promise<StoredOrgLicense | null>
-    getAllOrgLicenses(): Promise<(StoredOrgLicense & { orgName: string; orgSlug: string })[]>
+    getAllOrgLicenses(): Promise<StoredAdminOrgLicense[]>
     upsertOrgLicense(data: {
         orgId: string
         startsAt: number
@@ -494,7 +495,7 @@ export interface IStore {
     createOrgInvitation(data: { orgId: string; email: string; role: OrgRole; invitedBy: string; expiresAt: number }): Promise<StoredOrgInvitation | null>
     getOrgInvitations(orgId: string): Promise<StoredOrgInvitation[]>
     getPendingInvitationsForUser(email: string): Promise<(StoredOrgInvitation & { orgName: string })[]>
-    acceptOrgInvitation(id: string, userId: string, email: string): Promise<boolean>
+    acceptOrgInvitation(id: string, userId: string, email: string): Promise<string | null>
     deleteOrgInvitation(id: string, orgId?: string): Promise<boolean>
 
     // === Download Files 操作 ===
@@ -535,6 +536,7 @@ export type {
     StoredOrgMember,
     StoredOrgInvitation,
     StoredOrgLicense,
+    StoredAdminOrgLicense,
     StoredDownloadFile,
     LicenseStatus,
     OrgRole,

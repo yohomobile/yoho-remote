@@ -4,6 +4,13 @@ import type { MessagesResponse, Session, SessionResponse, SessionsResponse, Sess
 import { queryKeys } from '@/lib/query-keys'
 import { upsertMessagesInCache } from '@/lib/messages'
 import { getClientId, getDeviceType } from '@/lib/client-identity'
+import {
+    hasSessionStatusFields,
+    isFullSessionPayload,
+    isSidOnlySessionRefreshHint,
+    type SessionStatusUpdateData,
+    toSessionFromSsePayload,
+} from './useSSE.utils'
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object'
@@ -125,52 +132,41 @@ export function useSSE(options: {
                         void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
                         void queryClient.invalidateQueries({ queryKey: queryKeys.session(event.sessionId) })
                     } else if (event.type === 'session-updated') {
-                        // Session updated - update cache directly instead of invalidating
-                        // Only for heartbeat events that contain active/thinking status
-                        const data = ('data' in event ? event.data : null) as {
-                            active?: boolean
-                            activeAt?: number
-                            thinking?: boolean
-                            wasThinking?: boolean
-                            permissionMode?: string
-                            modelMode?: string
-                            modelReasoningEffort?: string
-                            fastMode?: boolean
-                            terminationReason?: string
-                            sid?: string  // 仅包含 sid 表示是 metadata/todos/agentState 更新
-                        } | null
+                        const rawData = ('data' in event ? event.data : null)
+                        const statusData = (rawData && typeof rawData === 'object'
+                            ? rawData
+                            : null) as SessionStatusUpdateData | null
+                        const isFullSessionUpdate = isFullSessionPayload(rawData, event.sessionId)
+                        const hasStatusUpdate = hasSessionStatusFields(statusData)
+                        const isSidOnlyUpdate = isSidOnlySessionRefreshHint(rawData)
 
                         if (import.meta.env.DEV) {
                             console.log('[sse] session-updated event', {
                                 sessionId: event.sessionId,
-                                hasData: !!data,
-                                modelMode: data?.modelMode,
-                                modelReasoningEffort: data?.modelReasoningEffort,
-                                permissionMode: data?.permissionMode,
-                                active: data?.active,
-                                thinking: data?.thinking
+                                hasData: !!statusData,
+                                isFullSessionUpdate,
+                                isSidOnlyUpdate,
+                                modelMode: statusData?.modelMode,
+                                modelReasoningEffort: statusData?.modelReasoningEffort,
+                                permissionMode: statusData?.permissionMode,
+                                active: statusData?.active,
+                                thinking: statusData?.thinking
                             })
                         }
 
-                        // Check if this is a heartbeat-style event with status fields we can update directly
-                        // If it only has 'sid' or other non-status fields, we should invalidate instead
-                        const hasStatusFields = data && (
-                            data.active !== undefined ||
-                            data.thinking !== undefined ||
-                            data.permissionMode !== undefined ||
-                            data.modelMode !== undefined ||
-                            data.modelReasoningEffort !== undefined ||
-                            data.fastMode !== undefined ||
-                            data.terminationReason !== undefined
-                        )
-
-                        // 检查是否只是 metadata/todos/agentState 更新（只包含 sid）
-                        // 这种情况下不需要刷新 session 列表，可以忽略
-                        const isMetadataOnlyUpdate = data && !hasStatusFields && data.sid !== undefined
-
-                        if (hasStatusFields) {
+                        if (isFullSessionUpdate) {
                             if (import.meta.env.DEV) {
-                                console.log('[sse] update session cache directly', event.sessionId, data)
+                                console.log('[sse] full session update, refreshing detail + list cache', event.sessionId)
+                            }
+                            queryClient.setQueryData<SessionResponse>(
+                                queryKeys.session(event.sessionId),
+                                { session: toSessionFromSsePayload(rawData) }
+                            )
+                            // 列表项里还有 pendingRequestsCount / todoProgress 等派生字段，只能从服务端重新拉。
+                            void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+                        } else if (hasStatusUpdate && statusData) {
+                            if (import.meta.env.DEV) {
+                                console.log('[sse] update session cache directly', event.sessionId, statusData)
                             }
                             // Update individual session cache
                             queryClient.setQueryData<SessionResponse>(
@@ -181,13 +177,13 @@ export function useSSE(options: {
                                         ...prev,
                                         session: {
                                             ...prev.session,
-                                            ...(data.active !== undefined && { active: data.active }),
-                                            ...(data.thinking !== undefined && { thinking: data.thinking }),
-                                            ...(data.permissionMode !== undefined && { permissionMode: data.permissionMode as Session['permissionMode'] }),
-                                            ...(data.modelMode !== undefined && { modelMode: data.modelMode as Session['modelMode'] }),
-                                            ...(data.modelReasoningEffort !== undefined && { modelReasoningEffort: data.modelReasoningEffort as Session['modelReasoningEffort'] }),
-                                            ...(data.fastMode !== undefined && { fastMode: data.fastMode }),
-                                            ...(data.terminationReason !== undefined && { terminationReason: data.terminationReason }),
+                                            ...(statusData.active !== undefined && { active: statusData.active }),
+                                            ...(statusData.thinking !== undefined && { thinking: statusData.thinking }),
+                                            ...(statusData.permissionMode !== undefined && { permissionMode: statusData.permissionMode as Session['permissionMode'] }),
+                                            ...(statusData.modelMode !== undefined && { modelMode: statusData.modelMode as Session['modelMode'] }),
+                                            ...(statusData.modelReasoningEffort !== undefined && { modelReasoningEffort: statusData.modelReasoningEffort as Session['modelReasoningEffort'] }),
+                                            ...(statusData.fastMode !== undefined && { fastMode: statusData.fastMode }),
+                                            ...(statusData.terminationReason !== undefined && { terminationReason: statusData.terminationReason }),
                                         }
                                     }
                                 }
@@ -202,13 +198,13 @@ export function useSSE(options: {
                                     if (!target) return prev
                                     // Check if any value actually changed
                                     const hasChange =
-                                        (data.active !== undefined && data.active !== target.active) ||
-                                        (data.activeAt !== undefined && data.activeAt !== target.activeAt) ||
-                                        (data.thinking !== undefined && data.thinking !== target.thinking) ||
-                                        (data.modelMode !== undefined && data.modelMode !== target.modelMode) ||
-                                        (data.modelReasoningEffort !== undefined && data.modelReasoningEffort !== target.modelReasoningEffort) ||
-                                        (data.fastMode !== undefined && data.fastMode !== target.fastMode) ||
-                                        (data.terminationReason !== undefined && data.terminationReason !== target.terminationReason)
+                                        (statusData.active !== undefined && statusData.active !== target.active) ||
+                                        (statusData.activeAt !== undefined && statusData.activeAt !== target.activeAt) ||
+                                        (statusData.thinking !== undefined && statusData.thinking !== target.thinking) ||
+                                        (statusData.modelMode !== undefined && statusData.modelMode !== target.modelMode) ||
+                                        (statusData.modelReasoningEffort !== undefined && statusData.modelReasoningEffort !== target.modelReasoningEffort) ||
+                                        (statusData.fastMode !== undefined && statusData.fastMode !== target.fastMode) ||
+                                        (statusData.terminationReason !== undefined && statusData.terminationReason !== target.terminationReason)
                                     if (!hasChange) return prev
                                     return {
                                         ...prev,
@@ -216,20 +212,20 @@ export function useSSE(options: {
                                             s.id === event.sessionId
                                                 ? {
                                                     ...s,
-                                                    ...(data.active !== undefined && { active: data.active }),
-                                                    ...(data.activeAt !== undefined && { activeAt: data.activeAt }),
-                                                    ...(data.thinking !== undefined && { thinking: data.thinking }),
-                                                    ...(data.modelMode !== undefined && { modelMode: data.modelMode as SessionSummary['modelMode'] }),
-                                                    ...(data.modelReasoningEffort !== undefined && { modelReasoningEffort: data.modelReasoningEffort as SessionSummary['modelReasoningEffort'] }),
-                                                    ...(data.fastMode !== undefined && { fastMode: data.fastMode }),
-                                                    ...(data.terminationReason !== undefined && { terminationReason: data.terminationReason }),
+                                                    ...(statusData.active !== undefined && { active: statusData.active }),
+                                                    ...(statusData.activeAt !== undefined && { activeAt: statusData.activeAt }),
+                                                    ...(statusData.thinking !== undefined && { thinking: statusData.thinking }),
+                                                    ...(statusData.modelMode !== undefined && { modelMode: statusData.modelMode as SessionSummary['modelMode'] }),
+                                                    ...(statusData.modelReasoningEffort !== undefined && { modelReasoningEffort: statusData.modelReasoningEffort as SessionSummary['modelReasoningEffort'] }),
+                                                    ...(statusData.fastMode !== undefined && { fastMode: statusData.fastMode }),
+                                                    ...(statusData.terminationReason !== undefined && { terminationReason: statusData.terminationReason }),
                                                 }
                                                 : s
                                         )
                                     }
                                 }
                             )
-                        } else if (isMetadataOnlyUpdate) {
+                        } else if (isSidOnlyUpdate) {
                             // metadata/todos/agentState 更新：不刷新 session 列表，但必须刷新单个 session 详情
                             // 否则 agentState.requests 不会更新，AskUserQuestion 等权限组件会卡在 loading
                             if (import.meta.env.DEV) {
@@ -239,7 +235,7 @@ export function useSSE(options: {
                         } else {
                             // No status fields and no sid in event, fallback to invalidation
                             if (import.meta.env.DEV) {
-                                console.log('[sse] invalidate session (unknown update type)', event.sessionId, data)
+                                console.log('[sse] invalidate session (unknown update type)', event.sessionId, rawData)
                             }
                             void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
                             void queryClient.invalidateQueries({ queryKey: queryKeys.session(event.sessionId) })

@@ -244,6 +244,27 @@ describe('SDKToLogConverter', () => {
 
             expect(log2?.parentUuid).toBeNull()
         })
+
+        it('should clear sidechain parent mappings when resetting the parent chain', () => {
+            const sidechainMsg1: SDKAssistantMessage = {
+                type: 'assistant',
+                parent_tool_use_id: 'tool-parent',
+                message: { role: 'assistant', content: [{ type: 'text', text: 'First sidechain message' }] }
+            }
+            const log1 = converter.convert(sidechainMsg1)
+
+            converter.resetParentChain()
+
+            const sidechainMsg2: SDKAssistantMessage = {
+                type: 'assistant',
+                parent_tool_use_id: 'tool-parent',
+                message: { role: 'assistant', content: [{ type: 'text', text: 'Second sidechain message' }] }
+            }
+            const log2 = converter.convert(sidechainMsg2)
+
+            expect(log1?.parentUuid).toBeNull()
+            expect(log2?.parentUuid).toBeNull()
+        })
     })
 
     describe('Batch conversion', () => {

@@ -110,6 +110,7 @@ export class SDKToLogConverter {
     resetParentChain(): void {
         this.lastUuid = null
         this.context.parentUuid = null
+        this.sidechainLastUUID.clear()
     }
 
     /**

@@ -49,6 +49,7 @@ import type {
     PendingInvitationsResponse,
     OrgActionResponse,
     CreateInvitationResponse,
+    AcceptInvitationResponse,
     BrainConfigResponse,
     UpdateBrainConfigResponse,
     BrainAgent,
@@ -1034,8 +1035,8 @@ export class ApiClient {
         return await this.request<PendingInvitationsResponse>('/api/invitations/pending')
     }
 
-    async acceptInvitation(invitationId: string): Promise<OrgActionResponse> {
-        return await this.request<OrgActionResponse>(`/api/invitations/${encodeURIComponent(invitationId)}/accept`, {
+    async acceptInvitation(invitationId: string): Promise<AcceptInvitationResponse> {
+        return await this.request<AcceptInvitationResponse>(`/api/invitations/${encodeURIComponent(invitationId)}/accept`, {
             method: 'POST'
         })
     }
