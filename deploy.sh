@@ -545,8 +545,10 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
         cat > "$RESTART_SCRIPT" << RESTART_EOF
 #!/bin/bash
 exec > /tmp/yr-restart.log 2>&1
-PROC_PATTERN='[y]oho-remote-daemon|[y]oho-remote( |$)'
 SKIP_PIDS="$SELF_ANCESTORS"
+list_pids() {
+    { pgrep -x yoho-remote-daemon 2>/dev/null || true; pgrep -x yoho-remote 2>/dev/null || true; } | sort -u
+}
 
 echo "\$(date): Stopping daemon..."
 sudo systemctl stop yoho-remote-daemon.service 2>/dev/null || true
@@ -554,7 +556,7 @@ sleep 2
 
 # SIGTERM（排除当前会话的进程链）
 echo "\$(date): Sending SIGTERM..."
-for pid in \$(pgrep -f "\$PROC_PATTERN" 2>/dev/null || true); do
+for pid in \$(list_pids); do
     if echo " \$SKIP_PIDS " | grep -q " \$pid "; then
         echo "\$(date): Skipping PID \$pid (deploy session ancestor)"
         continue
@@ -565,7 +567,7 @@ done
 sleep 3
 
 # 假死 → SIGKILL（同样排除当前进程链）
-for pid in \$(pgrep -f "\$PROC_PATTERN" 2>/dev/null || true); do
+for pid in \$(list_pids); do
     if echo " \$SKIP_PIDS " | grep -q " \$pid "; then continue; fi
     echo "\$(date): WARNING — PID \$pid did not exit, sending SIGKILL..."
     sudo kill -9 "\$pid" 2>/dev/null || true
@@ -574,7 +576,7 @@ sleep 2
 
 # 最终确认（排除后）
 REMAIN=""
-for pid in \$(pgrep -f "\$PROC_PATTERN" 2>/dev/null || true); do
+for pid in \$(list_pids); do
     echo " \$SKIP_PIDS " | grep -q " \$pid " || REMAIN="\$REMAIN \$pid"
 done
 if [ -n "\$REMAIN" ]; then
@@ -611,8 +613,10 @@ RESTART_EOF
 #!/bin/bash
 exec > /tmp/yr-restart.log 2>&1
 SUDO_PASS="guang"
-PROC_PATTERN='[y]oho-remote-daemon|[y]oho-remote( |$)'
 SKIP_PIDS="$SELF_ANCESTORS"
+list_pids() {
+    { pgrep -x yoho-remote-daemon 2>/dev/null || true; pgrep -x yoho-remote 2>/dev/null || true; } | sort -u
+}
 S() { echo "\$SUDO_PASS" | sudo -S "\$@"; }
 
 echo "\$(date): Stopping ncu daemon..."
@@ -621,7 +625,7 @@ sleep 2
 
 # SIGTERM（排除当前会话的进程链）
 echo "\$(date): Sending SIGTERM..."
-for pid in \$(pgrep -f "\$PROC_PATTERN" 2>/dev/null || true); do
+for pid in \$(list_pids); do
     if echo " \$SKIP_PIDS " | grep -q " \$pid "; then
         echo "\$(date): Skipping PID \$pid (deploy session ancestor)"
         continue
@@ -632,7 +636,7 @@ done
 sleep 3
 
 # 假死 → SIGKILL（同样排除）
-for pid in \$(pgrep -f "\$PROC_PATTERN" 2>/dev/null || true); do
+for pid in \$(list_pids); do
     if echo " \$SKIP_PIDS " | grep -q " \$pid "; then continue; fi
     echo "\$(date): WARNING — PID \$pid did not exit, sending SIGKILL..."
     S kill -9 "\$pid" 2>/dev/null || true
@@ -641,7 +645,7 @@ sleep 2
 
 # 最终确认（排除后）
 REMAIN=""
-for pid in \$(pgrep -f "\$PROC_PATTERN" 2>/dev/null || true); do
+for pid in \$(list_pids); do
     echo " \$SKIP_PIDS " | grep -q " \$pid " || REMAIN="\$REMAIN \$pid"
 done
 if [ -n "\$REMAIN" ]; then
