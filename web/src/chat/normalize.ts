@@ -458,19 +458,7 @@ function normalizeAgentRecord(
             }
 
             if (subtype === 'task_progress') {
-                return {
-                    id: messageId,
-                    localId,
-                    createdAt,
-                    role: 'event',
-                    content: {
-                        type: 'task-progress',
-                        description: asString(data.description) ?? undefined,
-                        lastToolName: asString(data.lastToolName) ?? undefined,
-                    } as AgentEvent,
-                    isSidechain: false,
-                    meta
-                }
+                return null
             }
 
             if (subtype === 'compact_boundary') {
