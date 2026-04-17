@@ -885,6 +885,8 @@ export function reduceChatBlocks(
             const existing = groups.get(msg.sidechainId) ?? []
             existing.push(msg)
             groups.set(msg.sidechainId, existing)
+        } else if (msg.isSidechain) {
+            continue
         } else {
             root.push(msg)
         }

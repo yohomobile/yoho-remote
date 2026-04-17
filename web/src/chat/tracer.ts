@@ -85,11 +85,19 @@ export function traceMessages(messages: NormalizedMessage[]): TracedMessage[] {
         let sidechainId: string | undefined
         if (message.role === 'agent') {
             for (const content of message.content) {
-                if (content.type !== 'sidechain') continue
-                const taskId = state.promptToTaskId.get(content.prompt)
-                if (taskId) {
-                    sidechainId = taskId
-                    break
+                if (content.type === 'sidechain') {
+                    const taskId = state.promptToTaskId.get(content.prompt)
+                    if (taskId) {
+                        sidechainId = taskId
+                        break
+                    }
+                }
+                if (content.type === 'text' && !parentUuid) {
+                    const taskId = state.promptToTaskId.get(content.text)
+                    if (taskId) {
+                        sidechainId = taskId
+                        break
+                    }
                 }
             }
         }
