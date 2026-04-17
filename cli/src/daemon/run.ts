@@ -42,6 +42,18 @@ export const initialMachineMetadata: MachineMetadata = {
   ...(process.env.YOHO_MACHINE_NAME ? { displayName: process.env.YOHO_MACHINE_NAME } : {}),
 };
 
+/**
+ * Maps yoho-remote Claude modelMode labels to the `--model` argument Claude CLI accepts.
+ * Short aliases ('sonnet', 'opus', 'glm-5.1') are recognized directly by Claude CLI;
+ * version-pinned labels such as 'opus-4-7' must be expanded to the full model ID.
+ */
+const CLAUDE_MODE_TO_MODEL_ARG: Record<string, string> = {
+  sonnet: 'sonnet',
+  opus: 'opus',
+  'opus-4-7': 'claude-opus-4-7',
+  'glm-5.1': 'glm-5.1',
+};
+
 function toTomlString(value: string): string {
   return JSON.stringify(value);
 }
@@ -596,9 +608,12 @@ export async function startDaemon(): Promise<void> {
         if (agent === 'claude' && claudeAgent) {
           args.push('--agent', claudeAgent);
         }
-        // Pass Claude model mode via --model argument
-        if (agent === 'claude' && options.modelMode && (options.modelMode === 'sonnet' || options.modelMode === 'opus' || options.modelMode === 'glm-5.1')) {
-          args.push('--model', options.modelMode);
+        // Pass Claude model mode via --model argument (mapping short labels to full model IDs where needed)
+        if (agent === 'claude' && options.modelMode) {
+          const claudeModelArg = CLAUDE_MODE_TO_MODEL_ARG[options.modelMode];
+          if (claudeModelArg) {
+            args.push('--model', claudeModelArg);
+          }
         }
         const opencodeModel = typeof options.opencodeModel === 'string' ? options.opencodeModel.trim() : '';
         if (agent === 'opencode' && opencodeModel) {

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const BRAIN_CLAUDE_CHILD_MODELS = ['sonnet', 'opus'] as const
+export const BRAIN_CLAUDE_CHILD_MODELS = ['sonnet', 'opus', 'opus-4-7'] as const
 export const BRAIN_CODEX_CHILD_MODELS = [
     'gpt-5.4',
     'gpt-5.4-mini',

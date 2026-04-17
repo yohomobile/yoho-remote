@@ -13,7 +13,7 @@ type SpawnInput = {
     tokenSourceId?: string
     claudeSettingsType?: 'litellm' | 'claude'
     claudeAgent?: string
-    claudeModel?: 'sonnet' | 'opus'
+    claudeModel?: 'sonnet' | 'opus' | 'opus-4-7'
     codexModel?: string
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     orgId?: string | null

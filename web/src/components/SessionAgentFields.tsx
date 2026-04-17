@@ -1,13 +1,14 @@
 import type { TokenSource } from '@/types/api'
 
 type AgentType = 'claude' | 'codex'
-type ClaudeModelMode = 'sonnet' | 'opus'
+type ClaudeModelMode = 'sonnet' | 'opus' | 'opus-4-7'
 type ClaudeSettingsType = 'default' | 'claude' | 'litellm'
 type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
 
 const CLAUDE_MODES: { value: ClaudeModelMode; label: string; description: string }[] = [
     { value: 'sonnet', label: 'Sonnet', description: 'Claude Sonnet 4.5+' },
     { value: 'opus', label: 'Opus', description: 'Claude Opus 4.6' },
+    { value: 'opus-4-7', label: 'Opus 4.7', description: 'Claude Opus 4.7（最新）' },
 ]
 
 const CODEX_MODELS: { value: string; label: string }[] = [
@@ -56,7 +57,7 @@ function normalizeCodexModelValue(value: string | null | undefined): string {
 }
 
 function sanitizeClaudeModelMode(value: unknown, fallback: ClaudeModelMode = DEFAULT_CLAUDE_MODEL): ClaudeModelMode {
-    return value === 'sonnet' || value === 'opus'
+    return value === 'sonnet' || value === 'opus' || value === 'opus-4-7'
         ? value
         : fallback
 }

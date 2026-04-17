@@ -52,7 +52,7 @@ const brainSpawnSchema = z.object({
     machineId: z.string().min(1),
     directory: z.string().min(1),
     agent: z.enum(['claude', 'codex']).default('claude'),
-    modelMode: z.enum(['default', 'sonnet', 'opus']).optional(),
+    modelMode: z.enum(['default', 'sonnet', 'opus', 'opus-4-7']).optional(),
     codexModel: z.string().min(1).optional(),
     source: z.string().default('brain-child'),
     mainSessionId: z.string().optional(),
@@ -519,7 +519,7 @@ export function createCliRoutes(
 
     // Brain: set session modelMode
     const setModelModeSchema = z.object({
-        modelMode: z.enum(['default', 'sonnet', 'opus']),
+        modelMode: z.enum(['default', 'sonnet', 'opus', 'opus-4-7']),
     })
 
     app.patch('/sessions/:id/model-mode', async (c) => {

@@ -246,7 +246,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     const modeEnv = readModeEnv();
     // Permission mode is always bypassPermissions for Claude sessions
     let currentPermissionMode: PermissionMode = 'bypassPermissions';
-    let currentModelMode: SessionModelMode = modeEnv.modelMode ?? (options.model === 'sonnet' || options.model === 'opus' || options.model === 'glm-5.1' ? options.model : 'sonnet');
+    let currentModelMode: SessionModelMode = modeEnv.modelMode ?? (options.model === 'sonnet' || options.model === 'opus' || options.model === 'opus-4-7' || options.model === 'glm-5.1' ? options.model : 'sonnet');
     // Sync currentModel with modelMode: 'opus'/'sonnet' → pass as --model
     let currentModel = currentModelMode;
     let currentFallbackModel: string | undefined = undefined; // Track current fallback model
@@ -461,7 +461,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         }
 
         if (config.modelMode !== undefined) {
-            const validModels: SessionModelMode[] = ['sonnet', 'opus', 'glm-5.1'];
+            const validModels: SessionModelMode[] = ['sonnet', 'opus', 'opus-4-7', 'glm-5.1'];
             if (!validModels.includes(config.modelMode)) {
                 throw new Error('Invalid model mode');
             }

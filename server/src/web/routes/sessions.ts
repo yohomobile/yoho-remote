@@ -146,9 +146,9 @@ function storedSessionToSummary(stored: StoredSession): SessionSummary {
 }
 
 const permissionModeValues = ['bypassPermissions', 'read-only', 'safe-yolo', 'yolo'] as const
-const modelModeValues = ['default', 'sonnet', 'opus', 'glm-5.1', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2-codex', 'gpt-5.2', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini'] as const
+const modelModeValues = ['default', 'sonnet', 'opus', 'opus-4-7', 'glm-5.1', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2-codex', 'gpt-5.2', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini'] as const
 const reasoningEffortValues = ['low', 'medium', 'high', 'xhigh'] as const
-const claudeModelValues = ['sonnet', 'opus'] as const
+const claudeModelValues = ['sonnet', 'opus', 'opus-4-7'] as const
 
 const permissionModeSchema = z.object({
     mode: z.enum(permissionModeValues)
@@ -1471,7 +1471,7 @@ export function createSessionsRoutes(
             return c.json({ error: 'Model mode is not supported for Gemini sessions' }, 400)
         }
 
-        const claudeModels = new Set(['default', 'sonnet', 'opus'])
+        const claudeModels = new Set(['default', 'sonnet', 'opus', 'opus-4-7'])
         const codexModels = new Set(['gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini', 'gpt-5.2'])
         const grokModels = new Set(['grok-4-1-fast-reasoning', 'grok-4-1-fast-non-reasoning', 'grok-code-fast-1', 'grok-4-fast-reasoning', 'grok-4-fast-non-reasoning', 'grok-4-0709', 'grok-3-mini', 'grok-3'])
         const reasoningLevels = new Set(['low', 'medium', 'high', 'xhigh'])

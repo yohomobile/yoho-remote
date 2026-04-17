@@ -47,7 +47,7 @@ export async function loop(opts: LoopOptions) {
     const logPath = logger.logFilePath;
     const startedBy = opts.startedBy ?? 'terminal';
     const startingMode = opts.startingMode ?? 'local';
-    const modelMode: SessionModelMode = opts.model === 'sonnet' || opts.model === 'opus' || opts.model === 'glm-5.1'
+    const modelMode: SessionModelMode = opts.model === 'sonnet' || opts.model === 'opus' || opts.model === 'opus-4-7' || opts.model === 'glm-5.1'
         ? opts.model
         : 'default';
     let session = new Session({

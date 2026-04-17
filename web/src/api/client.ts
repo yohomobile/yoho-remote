@@ -644,7 +644,7 @@ export class ApiClient {
         tokenSourceId?: string,
         claudeSettingsType?: 'litellm' | 'claude',
         claudeAgent?: string,
-        claudeModel?: 'sonnet' | 'opus',
+        claudeModel?: 'sonnet' | 'opus' | 'opus-4-7',
         codexModel?: string,
         modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh',
         orgId?: string | null
@@ -675,10 +675,10 @@ export class ApiClient {
         tokenSourceId?: string
         claudeSettingsType?: 'litellm' | 'claude'
         claudeAgent?: string
-        claudeModel?: 'sonnet' | 'opus'
+        claudeModel?: 'sonnet' | 'opus' | 'opus-4-7'
         codexModel?: string
         modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
-        childClaudeModels?: ('sonnet' | 'opus')[]
+        childClaudeModels?: ('sonnet' | 'opus' | 'opus-4-7')[]
         childCodexModels?: string[]
         orgId?: string | null
     }): Promise<SpawnResponse> {

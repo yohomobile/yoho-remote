@@ -346,7 +346,7 @@ export class ApiClient {
         )
     }
 
-    async setSessionModelMode(sessionId: string, modelMode: 'default' | 'sonnet' | 'opus'): Promise<void> {
+    async setSessionModelMode(sessionId: string, modelMode: 'default' | 'sonnet' | 'opus' | 'opus-4-7'): Promise<void> {
         await axios.patch(
             `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/model-mode`,
             { modelMode },

@@ -723,7 +723,7 @@ export function registerBrainTools(
     // ===== 8. session_set_model_mode =====
     const setModelModeSchema: z.ZodTypeAny = z.object({
         sessionId: z.string().describe('目标 session ID'),
-        modelMode: z.enum(['default', 'sonnet', 'opus']).describe('要切换到的模型。sonnet 适合日常任务，opus 适合复杂推理任务。'),
+        modelMode: z.enum(['default', 'sonnet', 'opus', 'opus-4-7']).describe('要切换到的模型。sonnet 适合日常任务，opus / opus-4-7 适合复杂推理任务（opus-4-7 为 Claude Opus 4.7 最新版）。'),
     })
 
     mcp.registerTool<any, any>('session_set_model_mode', {

@@ -18,7 +18,7 @@ type SessionAlivePayload = {
     thinking?: boolean
     mode?: 'local' | 'remote'
     permissionMode?: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
-    modelMode?: 'default' | 'sonnet' | 'opus' | 'gpt-5.3-codex' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
+    modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'gpt-5.3-codex' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     fastMode?: boolean
 }

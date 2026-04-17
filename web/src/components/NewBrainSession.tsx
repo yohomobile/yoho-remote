@@ -30,6 +30,7 @@ function sanitizeAgentType(agent: unknown): AgentType {
 const CLAUDE_CHILD_MODELS: { value: ClaudeModelMode; label: string; description: string }[] = [
     { value: 'sonnet', label: 'Sonnet', description: '默认优先的 Claude 子任务模型' },
     { value: 'opus', label: 'Opus', description: '高复杂度 Claude 子任务模型' },
+    { value: 'opus-4-7', label: 'Opus 4.7', description: 'Claude Opus 4.7（最新）' },
 ]
 
 function collectSupportedAgents(machine: Machine | null): AgentType[] {
@@ -48,7 +49,7 @@ function getCompatibleTokenSources(tokenSources: TokenSource[], agent: AgentType
 
 function normalizeChildClaudeModels(extra: Record<string, unknown> | null | undefined): ClaudeModelMode[] {
     const values = Array.isArray(extra?.['childClaudeModels']) ? extra['childClaudeModels'] : null
-    const normalized = values?.filter((value): value is ClaudeModelMode => value === 'sonnet' || value === 'opus') ?? []
+    const normalized = values?.filter((value): value is ClaudeModelMode => value === 'sonnet' || value === 'opus' || value === 'opus-4-7') ?? []
     return normalized.length > 0 ? Array.from(new Set(normalized)) : CLAUDE_CHILD_MODELS.map((model) => model.value)
 }
 
