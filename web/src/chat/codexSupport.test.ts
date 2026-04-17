@@ -80,7 +80,90 @@ describe('Codex frontend support', () => {
         })
     })
 
-    test('uses Codex token_count as latest usage without rendering a timeline event', () => {
+    test('treats declined Codex tool results as error blocks', () => {
+        const normalized = [
+            ...normalize(makeMessage({
+                id: 'tool-call-declined',
+                createdAt: 1,
+                content: {
+                    role: 'agent',
+                    content: {
+                        type: 'codex',
+                        data: {
+                            type: 'tool-call',
+                            callId: 'call-declined',
+                            name: 'CodexBash',
+                            input: { command: 'rm -rf /tmp/demo' },
+                            id: 'tool-call-declined-item'
+                        }
+                    }
+                }
+            })),
+            ...normalize(makeMessage({
+                id: 'tool-result-declined',
+                createdAt: 2,
+                content: {
+                    role: 'agent',
+                    content: {
+                        type: 'codex',
+                        data: {
+                            type: 'tool-call-result',
+                            callId: 'call-declined',
+                            output: {
+                                command: 'rm -rf /tmp/demo',
+                                status: 'declined'
+                            },
+                            id: 'tool-result-declined-item'
+                        }
+                    }
+                }
+            }))
+        ]
+
+        const reduced = reduceChatBlocks(normalized, null)
+        expect(reduced.blocks).toHaveLength(1)
+        const block = reduced.blocks[0]
+        expect(block.kind).toBe('tool-call')
+        if (block.kind !== 'tool-call') {
+            throw new Error('Expected tool-call block')
+        }
+        expect(block.tool.state).toBe('error')
+        expect(block.tool.result).toEqual({
+            command: 'rm -rf /tmp/demo',
+            status: 'declined'
+        })
+    })
+
+    test('normalizes Codex notices into timeline events', () => {
+        const normalized = normalize(makeMessage({
+            id: 'codex-notice',
+            createdAt: 3,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'notice',
+                        level: 'warning',
+                        source: 'item',
+                        message: 'model rerouted: gpt-5 -> gpt-5-mini',
+                        id: 'codex-notice-item'
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(1)
+        expect(normalized[0]).toMatchObject({
+            role: 'event',
+            content: {
+                type: 'message',
+                message: 'Notice: model rerouted: gpt-5 -> gpt-5-mini'
+            }
+        })
+    })
+
+    test('uses Codex token_count context-window usage without rendering a timeline event', () => {
         const normalized = normalize(makeMessage({
             id: 'token-count',
             createdAt: 100,
@@ -91,8 +174,24 @@ describe('Codex frontend support', () => {
                     data: {
                         type: 'token_count',
                         info: {
-                            input_tokens: 123_456,
-                            output_tokens: 789
+                            total_token_usage: {
+                                total_tokens: 456_789,
+                                input_tokens: 400_000,
+                                output_tokens: 56_789,
+                                reasoning_output_tokens: 1_234
+                            },
+                            last_token_usage: {
+                                total_tokens: 123_456,
+                                input_tokens: 120_000,
+                                output_tokens: 3_456,
+                                reasoning_output_tokens: 789
+                            },
+                            model_context_window: 950_000
+                        },
+                        rate_limits: {
+                            primary: {
+                                used_percent: 65
+                            }
                         },
                         id: 'token-count-item'
                     }
@@ -104,8 +203,124 @@ describe('Codex frontend support', () => {
         expect(reduced.blocks).toHaveLength(0)
         expect(reduced.latestUsage).not.toBeNull()
         expect(reduced.latestUsage?.inputTokens).toBe(123_456)
-        expect(reduced.latestUsage?.outputTokens).toBe(789)
+        expect(reduced.latestUsage?.outputTokens).toBe(3_456)
         expect(reduced.latestUsage?.contextSize).toBe(123_456)
+        expect(reduced.latestUsage?.modelContextWindow).toBe(950_000)
+        expect(reduced.latestUsage?.reasoningOutputTokens).toBe(789)
+        expect(reduced.latestUsage?.rateLimitUsedPercent).toBe(65)
+    })
+
+    test('does not treat legacy Codex exec usage totals as current context size', () => {
+        const normalized = normalize(makeMessage({
+            id: 'legacy-token-count',
+            createdAt: 101,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'token_count',
+                        info: {
+                            input_tokens: 10_970_000,
+                            output_tokens: 789
+                        },
+                        id: 'legacy-token-count-item'
+                    }
+                }
+            }
+        }))
+
+        const reduced = reduceChatBlocks(normalized, null)
+        expect(reduced.blocks).toHaveLength(0)
+        expect(reduced.latestUsage).not.toBeNull()
+        expect(reduced.latestUsage?.inputTokens).toBe(10_970_000)
+        expect(reduced.latestUsage?.contextSize).toBeUndefined()
+        expect(reduced.latestUsage?.modelContextWindow).toBeUndefined()
+    })
+
+    test('token_count reset clears older Codex context usage', () => {
+        const normalized = [
+            ...normalize(makeMessage({
+                id: 'token-count-before-reset',
+                createdAt: 100,
+                content: {
+                    role: 'agent',
+                    content: {
+                        type: 'codex',
+                        data: {
+                            type: 'token_count',
+                            info: {
+                                total_token_usage: {
+                                    total_tokens: 456_789,
+                                    input_tokens: 400_000,
+                                    output_tokens: 56_789
+                                },
+                                last_token_usage: {
+                                    total_tokens: 123_456,
+                                    input_tokens: 120_000,
+                                    output_tokens: 3_456
+                                },
+                                model_context_window: 950_000
+                            },
+                            id: 'token-count-before-reset-item'
+                        }
+                    }
+                }
+            })),
+            ...normalize(makeMessage({
+                id: 'token-count-reset',
+                createdAt: 101,
+                content: {
+                    role: 'agent',
+                    content: {
+                        type: 'codex',
+                        data: {
+                            type: 'token_count',
+                            info: null,
+                            id: 'token-count-reset-item'
+                        }
+                    }
+                }
+            }))
+        ]
+
+        const reduced = reduceChatBlocks(normalized, null)
+        expect(reduced.latestUsage).toBeNull()
+    })
+
+    test('preserves zero-value Codex token_count updates for compact turns', () => {
+        const normalized = normalize(makeMessage({
+            id: 'token-count-zero',
+            createdAt: 102,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'token_count',
+                        info: {
+                            total_token_usage: {
+                                total_tokens: 0,
+                                input_tokens: 0,
+                                output_tokens: 0
+                            },
+                            last_token_usage: {
+                                total_tokens: 0,
+                                input_tokens: 0,
+                                output_tokens: 0
+                            },
+                            model_context_window: 950_000
+                        },
+                        id: 'token-count-zero-item'
+                    }
+                }
+            }
+        }))
+
+        const reduced = reduceChatBlocks(normalized, null)
+        expect(reduced.latestUsage).not.toBeNull()
+        expect(reduced.latestUsage?.contextSize).toBe(0)
+        expect(reduced.latestUsage?.modelContextWindow).toBe(950_000)
     })
 
     test('renders Codex plan messages as assistant text instead of dropping them', () => {
@@ -243,6 +458,369 @@ describe('Codex frontend support', () => {
         // session-result usage is cumulative across all turns — using it for
         // context percentage would produce wildly inflated values (e.g. 13162%)
         expect(reduced.latestUsage).toBeNull()
+    })
+
+    test('falls back to raw JSON for unknown Claude output types instead of dropping them', () => {
+        const normalized = normalize(makeMessage({
+            id: 'unknown-claude-output',
+            createdAt: 3,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'future_claude_message',
+                        foo: 'bar'
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(1)
+        expect(normalized[0]?.role).toBe('agent')
+        if (normalized[0]?.role !== 'agent') {
+            throw new Error('Expected agent message')
+        }
+        expect(normalized[0].content[0]).toMatchObject({
+            type: 'text'
+        })
+        expect(normalized[0].content[0]?.type === 'text' ? normalized[0].content[0].text : '').toContain('future_claude_message')
+    })
+
+    test('suppresses Claude last-prompt metadata messages', () => {
+        const normalized = normalize(makeMessage({
+            id: 'claude-last-prompt',
+            createdAt: 3,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'last-prompt',
+                        lastPrompt: 'say lol'
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(0)
+    })
+
+    test('suppresses Claude attachment metadata messages like skill listings', () => {
+        const normalized = normalize(makeMessage({
+            id: 'claude-skill-listing',
+            createdAt: 3,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'attachment',
+                        attachment: {
+                            type: 'skill_listing',
+                            content: '- test-skill'
+                        }
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(0)
+    })
+
+    test('renders Claude plan_mode attachments as visible plan events', () => {
+        const normalized = normalize(makeMessage({
+            id: 'claude-plan-mode',
+            createdAt: 3,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'attachment',
+                        attachment: {
+                            type: 'plan_mode',
+                            planFilePath: '/tmp/demo-plan.md',
+                            planExists: false
+                        }
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(1)
+        expect(normalized[0]).toMatchObject({
+            role: 'event',
+            content: {
+                type: 'plan-mode',
+                planFilePath: '/tmp/demo-plan.md',
+                planExists: false
+            }
+        })
+    })
+
+    test('renders non-empty Claude todo_reminder attachments as structured events', () => {
+        const normalized = normalize(makeMessage({
+            id: 'claude-todo-reminder',
+            createdAt: 3,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'attachment',
+                        attachment: {
+                            type: 'todo_reminder',
+                            itemCount: 2,
+                            content: [
+                                {
+                                    content: 'Inspect the repo',
+                                    status: 'completed'
+                                },
+                                {
+                                    content: 'Patch the UI',
+                                    status: 'in_progress',
+                                    activeForm: 'Patching the UI'
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(1)
+        expect(normalized[0]).toMatchObject({
+            role: 'event',
+            content: {
+                type: 'todo-reminder',
+                itemCount: 2,
+                completedCount: 1,
+                inProgressCount: 1,
+                pendingCount: 0
+            }
+        })
+
+        const reduced = reduceChatBlocks(normalized, null)
+        expect(reduced.blocks).toHaveLength(1)
+        expect(reduced.blocks[0]).toMatchObject({
+            kind: 'agent-event',
+            event: {
+                type: 'todo-reminder'
+            }
+        })
+    })
+
+    test('suppresses empty Claude todo_reminder attachments', () => {
+        const normalized = normalize(makeMessage({
+            id: 'claude-empty-todo-reminder',
+            createdAt: 3,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'attachment',
+                        attachment: {
+                            type: 'todo_reminder',
+                            itemCount: 0,
+                            content: []
+                        }
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(0)
+    })
+
+    test('renders Claude plan_file_reference attachments as visible plan file events', () => {
+        const normalized = normalize(makeMessage({
+            id: 'claude-plan-file',
+            createdAt: 3,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'attachment',
+                        attachment: {
+                            type: 'plan_file_reference',
+                            planFilePath: '/tmp/demo-plan.md',
+                            planContent: '# Demo Plan'
+                        }
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(1)
+        expect(normalized[0]).toMatchObject({
+            role: 'event',
+            content: {
+                type: 'plan-file',
+                planFilePath: '/tmp/demo-plan.md',
+                planContent: '# Demo Plan'
+            }
+        })
+    })
+
+    test('renders Claude queued_command task notifications as task events instead of raw JSON', () => {
+        const normalized = normalize(makeMessage({
+            id: 'claude-queued-command-task',
+            createdAt: 3,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'attachment',
+                        attachment: {
+                            type: 'queued_command',
+                            commandMode: 'task-notification',
+                            prompt: '<task-notification><task-id>task-1</task-id><tool-use-id>tool-1</tool-use-id><status>completed</status><summary>Background command completed</summary></task-notification>'
+                        }
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(1)
+        expect(normalized[0]).toMatchObject({
+            role: 'event',
+            content: {
+                type: 'task-notification',
+                taskId: 'task-1',
+                toolUseId: 'tool-1',
+                status: 'completed',
+                summary: 'Background command completed'
+            }
+        })
+    })
+
+    test('renders Claude microcompact boundary messages as compact events', () => {
+        const normalized = normalize(makeMessage({
+            id: 'claude-microcompact',
+            createdAt: 3,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'system',
+                        subtype: 'microcompact_boundary',
+                        content: 'Context microcompacted'
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(1)
+        expect(normalized[0]).toMatchObject({
+            role: 'event',
+            content: {
+                type: 'compact-boundary'
+            }
+        })
+    })
+
+    test('renders Claude local_command messages as cli output instead of raw JSON', () => {
+        const normalized = normalize(makeMessage({
+            id: 'claude-local-command',
+            createdAt: 3,
+            content: {
+                role: 'agent',
+                meta: {
+                    sentFrom: 'cli'
+                },
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'system',
+                        subtype: 'local_command',
+                        content: '<command-name>/model</command-name><command-message>model</command-message><command-args></command-args>'
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(1)
+        const reduced = reduceChatBlocks(normalized, null)
+        expect(reduced.blocks).toHaveLength(1)
+        expect(reduced.blocks[0]).toMatchObject({
+            kind: 'cli-output',
+            source: 'assistant'
+        })
+    })
+
+    test('renders Claude user content arrays as user messages instead of assistant text', () => {
+        const normalized = normalize(makeMessage({
+            id: 'claude-user-array',
+            createdAt: 4,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'user',
+                        message: {
+                            role: 'user',
+                            content: [
+                                { type: 'text', text: 'say lol' }
+                            ]
+                        }
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(1)
+        expect(normalized[0]).toMatchObject({
+            role: 'user',
+            content: {
+                type: 'text',
+                text: 'say lol'
+            }
+        })
+
+        const reduced = reduceChatBlocks(normalized, null)
+        expect(reduced.blocks).toHaveLength(1)
+        expect(reduced.blocks[0]).toMatchObject({
+            kind: 'user-text',
+            text: 'say lol'
+        })
+    })
+
+    test('falls back to raw text when Claude assistant content blocks are unknown', () => {
+        const normalized = normalize(makeMessage({
+            id: 'claude-assistant-unknown-block',
+            createdAt: 5,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'assistant',
+                        message: {
+                            role: 'assistant',
+                            content: [
+                                { type: 'future_block', foo: 'bar' }
+                            ]
+                        }
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(1)
+        expect(normalized[0]?.role).toBe('agent')
+        if (normalized[0]?.role !== 'agent') {
+            throw new Error('Expected agent message')
+        }
+        expect(normalized[0].content[0]).toMatchObject({
+            type: 'text'
+        })
+        expect(normalized[0].content[0]?.type === 'text' ? normalized[0].content[0].text : '').toContain('future_block')
     })
 
     test('formats yoho namespaced tools with MCP-style titles and useful subtitles', () => {

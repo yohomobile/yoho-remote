@@ -70,6 +70,21 @@ export const AgentStateSchema = z.object({
 
 export type AgentState = z.infer<typeof AgentStateSchema>
 
+export const SessionActiveMonitorSchema = z.object({
+    id: z.string(),
+    description: z.string(),
+    command: z.string(),
+    persistent: z.boolean(),
+    timeoutMs: z.number().nullable(),
+    startedAt: z.number(),
+    taskId: z.string().nullable(),
+    state: z.enum(['running', 'unknown']).default('running')
+}).passthrough()
+
+export const SessionActiveMonitorsSchema = z.array(SessionActiveMonitorSchema)
+
+export type SessionActiveMonitor = z.infer<typeof SessionActiveMonitorSchema>
+
 const machineMetadataSchema = z.object({
     host: z.string().optional(),
     platform: z.string().optional(),
@@ -98,6 +113,7 @@ export interface Session {
     modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'glm-5.1' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     fastMode?: boolean
+    activeMonitors: SessionActiveMonitor[]
     /** Timestamp of the last abort request; heartbeats within the grace window won't override thinking=false */
     abortedAt?: number
     /** Set when the session was forcibly terminated (e.g. 'license-expired', 'license-suspended') */
@@ -277,6 +293,249 @@ function getUserTextMessage(message: DecryptedMessage): string | null {
     return inner.text
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null
+}
+
+function asString(value: unknown): string | null {
+    return typeof value === 'string' ? value : null
+}
+
+function asNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function isMonitorToolName(name: string): boolean {
+    return name === 'Monitor' || name.endsWith('__Monitor')
+}
+
+function parseMonitorToolInput(input: unknown): {
+    description: string
+    command: string
+    persistent: boolean
+    timeoutMs: number | null
+} {
+    let value = input
+    if (typeof value === 'string') {
+        try {
+            value = JSON.parse(value) as unknown
+        } catch {
+            // Keep raw string when parsing fails.
+        }
+    }
+    const record = isRecord(value) ? value : {}
+    return {
+        description: typeof record.description === 'string' ? record.description : '',
+        command: typeof record.command === 'string' ? record.command : '',
+        persistent: record.persistent === true,
+        timeoutMs: asNumber(record.timeout_ms)
+    }
+}
+
+type MonitorChange =
+    | {
+        type: 'remember-tool-call'
+        monitor: {
+            id: string
+            description: string
+            command: string
+            persistent: boolean
+            timeoutMs: number | null
+            startedAt: number
+        }
+    }
+    | {
+        type: 'start'
+        id: string
+        taskId: string | null
+        startedAt: number
+    }
+    | {
+        type: 'discard-pending'
+        id: string
+    }
+    | {
+        type: 'close'
+        id: string
+    }
+
+type PendingMonitorCall = {
+    id: string
+    description: string
+    command: string
+    persistent: boolean
+    timeoutMs: number | null
+    startedAt: number
+}
+
+function isTerminalMonitorStatus(status: string | null): boolean {
+    return status === 'completed' || status === 'failed' || status === 'stopped' || status === 'killed'
+}
+
+function extractMonitorChangesFromMessageContent(content: unknown, createdAt: number): MonitorChange[] {
+    if (!isRecord(content)) {
+        return []
+    }
+
+    const role = content.role
+    if (role !== 'agent' && role !== 'assistant') {
+        return []
+    }
+
+    const output = isRecord(content.content) ? content.content : null
+    if (!output || output.type !== 'output') {
+        return []
+    }
+
+    const data = isRecord(output.data) ? output.data : null
+    if (!data || typeof data.type !== 'string') {
+        return []
+    }
+
+    if (data.type === 'assistant' || data.type === 'user') {
+        const message = isRecord(data.message) ? data.message : null
+        const blocks = Array.isArray(message?.content) ? message.content : []
+        const out: MonitorChange[] = []
+        for (const block of blocks) {
+            if (!isRecord(block)) continue
+            if ((block.type !== 'tool_use' && block.type !== 'server_tool_use') || typeof block.id !== 'string') {
+                continue
+            }
+            const name = asString(block.name)
+            if (!name || !isMonitorToolName(name)) {
+                continue
+            }
+            const info = parseMonitorToolInput('input' in block ? block.input : undefined)
+            out.push({
+                type: 'remember-tool-call',
+                monitor: {
+                    id: block.id,
+                    description: info.description,
+                    command: info.command,
+                    persistent: info.persistent,
+                    timeoutMs: info.timeoutMs,
+                    startedAt: createdAt,
+                }
+            })
+        }
+        for (const block of blocks) {
+            if (!isRecord(block) || block.type !== 'tool_result' || typeof block.tool_use_id !== 'string') {
+                continue
+            }
+            const permissions = isRecord(block.permissions) ? block.permissions : null
+            const deniedByPermission = permissions?.result === 'denied'
+                || permissions?.decision === 'denied'
+                || permissions?.decision === 'abort'
+            if (Boolean(block.is_error) || deniedByPermission) {
+                out.push({ type: 'discard-pending', id: block.tool_use_id })
+            }
+        }
+        return out
+    }
+
+    if (data.type === 'system') {
+        const subtype = asString(data.subtype)
+        if (subtype === 'task_started') {
+            const toolUseId = asString(data.tool_use_id)
+            if (!toolUseId) {
+                return []
+            }
+            return [{
+                type: 'start',
+                id: toolUseId,
+                taskId: asString(data.task_id),
+                startedAt: createdAt
+            }]
+        }
+
+        if (subtype === 'task_notification') {
+            const toolUseId = asString(data.tool_use_id)
+            if (!toolUseId || !isTerminalMonitorStatus(asString(data.status))) {
+                return []
+            }
+            return [
+                { type: 'discard-pending', id: toolUseId },
+                { type: 'close', id: toolUseId }
+            ]
+        }
+    }
+
+    return []
+}
+
+function sortActiveMonitors(monitors: SessionActiveMonitor[]): SessionActiveMonitor[] {
+    return [...monitors].sort((left, right) => {
+        if (left.startedAt !== right.startedAt) {
+            return left.startedAt - right.startedAt
+        }
+        return left.id.localeCompare(right.id)
+    })
+}
+
+function areActiveMonitorsEqual(left: SessionActiveMonitor[], right: SessionActiveMonitor[]): boolean {
+    if (left.length !== right.length) return false
+    return left.every((monitor, index) => {
+        const other = right[index]
+        return monitor.id === other.id
+            && monitor.description === other.description
+            && monitor.command === other.command
+            && monitor.persistent === other.persistent
+            && monitor.timeoutMs === other.timeoutMs
+            && monitor.startedAt === other.startedAt
+            && monitor.taskId === other.taskId
+            && monitor.state === other.state
+    })
+}
+
+function applyMonitorChanges(
+    current: SessionActiveMonitor[],
+    changes: MonitorChange[],
+    pendingCalls: Map<string, PendingMonitorCall>
+): { monitors: SessionActiveMonitor[]; pendingCalls: Map<string, PendingMonitorCall> } {
+    const next = new Map(current.map((monitor) => [monitor.id, monitor]))
+    const pending = new Map(pendingCalls)
+
+    for (const change of changes) {
+        if (change.type === 'close') {
+            next.delete(change.id)
+            continue
+        }
+
+        if (change.type === 'discard-pending') {
+            pending.delete(change.id)
+            continue
+        }
+
+        if (change.type === 'remember-tool-call') {
+            pending.set(change.monitor.id, change.monitor)
+            continue
+        }
+
+        const prev = next.get(change.id)
+        const remembered = pending.get(change.id)
+        if (!prev && !remembered) {
+            continue
+        }
+
+        next.set(change.id, {
+            id: change.id,
+            description: remembered?.description ?? prev?.description ?? '',
+            command: remembered?.command ?? prev?.command ?? '',
+            persistent: remembered?.persistent ?? prev?.persistent ?? false,
+            timeoutMs: remembered?.timeoutMs ?? prev?.timeoutMs ?? null,
+            startedAt: change.startedAt,
+            taskId: change.taskId,
+            state: 'running'
+        })
+        pending.delete(change.id)
+    }
+
+    return {
+        monitors: sortActiveMonitors(Array.from(next.values())),
+        pendingCalls: pending
+    }
+}
+
 /** Context window budget by model mode (matches web/src/chat/modelConfig.ts) */
 function getContextBudget(modelMode?: string): number {
     const HEADROOM = 10_000
@@ -292,6 +551,7 @@ export class SyncEngine {
     private sessions: Map<string, Session> = new Map()
     private machines: Map<string, Machine> = new Map()
     private sessionMessages: Map<string, DecryptedMessage[]> = new Map()
+    private pendingMonitorCallsBySessionId: Map<string, Map<string, PendingMonitorCall>> = new Map()
     private listeners: Set<SyncEventListener> = new Set()
     private connectionStatus: ConnectionStatus = 'connected'
 
@@ -518,6 +778,112 @@ export class SyncEngine {
         return null
     }
 
+    private async persistSessionActiveMonitors(session: Session): Promise<void> {
+        try {
+            await (this.store as Partial<IStore>).setSessionActiveMonitors?.(session.id, session.activeMonitors, session.namespace)
+        } catch (error) {
+            console.error(`[syncEngine] Failed to persist active monitors for session ${session.id}:`, error)
+        }
+    }
+
+    private emitSessionActiveMonitors(session: Session): void {
+        this.emit({
+            type: 'session-updated',
+            sessionId: session.id,
+            data: {
+                activeMonitorCount: session.activeMonitors.length
+            }
+        })
+        this.emit({
+            type: 'session-updated',
+            sessionId: session.id,
+            data: {
+                activeMonitors: session.activeMonitors
+            },
+            notifyRecipientClientIds: []
+        })
+    }
+
+    private buildSessionPayload(session: Session): Record<string, unknown> {
+        return {
+            id: session.id,
+            namespace: session.namespace,
+            seq: session.seq,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+            lastMessageAt: session.lastMessageAt,
+            active: session.active,
+            activeAt: session.activeAt,
+            createdBy: session.createdBy,
+            metadata: session.metadata,
+            metadataVersion: session.metadataVersion,
+            agentState: session.agentState,
+            agentStateVersion: session.agentStateVersion,
+            thinking: session.thinking,
+            todos: session.todos,
+            permissionMode: session.permissionMode,
+            modelMode: session.modelMode,
+            modelReasoningEffort: session.modelReasoningEffort,
+            fastMode: session.fastMode,
+            terminationReason: session.terminationReason
+        }
+    }
+
+    private async updateSessionActiveMonitorsFromMessage(sessionId: string, message: DecryptedMessage): Promise<void> {
+        const changes = extractMonitorChangesFromMessageContent(message.content, message.createdAt)
+        if (changes.length === 0) {
+            return
+        }
+
+        const session = this.sessions.get(sessionId) ?? await this.refreshSession(sessionId)
+        if (!session) {
+            return
+        }
+
+        const pending = this.pendingMonitorCallsBySessionId.get(sessionId) ?? new Map<string, PendingMonitorCall>()
+        const result = applyMonitorChanges(session.activeMonitors, changes, pending)
+        if (result.pendingCalls.size > 0) {
+            this.pendingMonitorCallsBySessionId.set(sessionId, result.pendingCalls)
+        } else {
+            this.pendingMonitorCallsBySessionId.delete(sessionId)
+        }
+
+        if (areActiveMonitorsEqual(session.activeMonitors, result.monitors)) {
+            return
+        }
+
+        session.activeMonitors = result.monitors
+        session.updatedAt = Math.max(session.updatedAt, message.createdAt)
+        await this.persistSessionActiveMonitors(session)
+        this.emitSessionActiveMonitors(session)
+    }
+
+    private async clearSessionActiveMonitors(session: Session): Promise<boolean> {
+        if (session.activeMonitors.length === 0) {
+            return false
+        }
+        session.activeMonitors = []
+        session.updatedAt = Date.now()
+        await this.persistSessionActiveMonitors(session)
+        return true
+    }
+
+    private async markSessionActiveMonitorsUnknown(session: Session): Promise<boolean> {
+        if (session.activeMonitors.length === 0) {
+            return false
+        }
+        const next = session.activeMonitors.map((monitor) => (
+            monitor.state === 'unknown' ? monitor : { ...monitor, state: 'unknown' as const }
+        ))
+        if (areActiveMonitorsEqual(session.activeMonitors, next)) {
+            return false
+        }
+        session.activeMonitors = next
+        session.updatedAt = Date.now()
+        await this.persistSessionActiveMonitors(session)
+        return true
+    }
+
     getConnectionStatus(): ConnectionStatus {
         return this.connectionStatus
     }
@@ -600,6 +966,7 @@ export class SyncEngine {
 
         this.sessions.delete(sessionId)
         this.sessionMessages.delete(sessionId)
+        this.pendingMonitorCallsBySessionId.delete(sessionId)
         this.lastBroadcastAtBySessionId.delete(sessionId)
         this.todoBackfillAttemptedSessionIds.delete(sessionId)
         this.lastPushNotificationAt.delete(sessionId)
@@ -874,6 +1241,7 @@ export class SyncEngine {
                 const cached = this.sessionMessages.get(event.sessionId) ?? []
                 cached.push(event.message)
                 this.sessionMessages.set(event.sessionId, cached.slice(-200))
+                await this.updateSessionActiveMonitorsFromMessage(event.sessionId, event.message)
             }
             if (!this.sessions.has(event.sessionId)) {
                 await this.refreshSession(event.sessionId)
@@ -1067,7 +1435,8 @@ export class SyncEngine {
                     permissionMode: session.permissionMode,
                     modelMode: session.modelMode,
                     modelReasoningEffort: session.modelReasoningEffort,
-                    fastMode: session.fastMode
+                    fastMode: session.fastMode,
+                    activeMonitorCount: session.activeMonitors.length
                 },
                 notifyRecipientClientIds: recipientClientIds
             })
@@ -1092,7 +1461,8 @@ export class SyncEngine {
                     permissionMode: session.permissionMode,
                     modelMode: session.modelMode,
                     modelReasoningEffort: session.modelReasoningEffort,
-                    fastMode: session.fastMode
+                    fastMode: session.fastMode,
+                    activeMonitorCount: session.activeMonitors.length
                 },
                 notifyRecipientClientIds: []  // 空数组，防止广播
             })
@@ -1457,6 +1827,8 @@ export class SyncEngine {
         session.active = false
         session.thinking = false
         session.thinkingAt = t
+        const clearedActiveMonitors = await this.clearSessionActiveMonitors(session)
+        this.pendingMonitorCallsBySessionId.delete(session.id)
 
         // Persist active=false (and terminationReason if set) to database so it survives server restarts
         await this.store.setSessionActive(session.id, false, t, session.namespace, session.terminationReason ?? null)
@@ -1475,9 +1847,13 @@ export class SyncEngine {
                     active: false,
                     thinking: false,
                     wasThinking: false,
+                    ...(clearedActiveMonitors ? { activeMonitorCount: 0 } : {}),
                     ...(session.terminationReason ? { terminationReason: session.terminationReason } : {})
                 }
             })
+        }
+        if (clearedActiveMonitors) {
+            this.emitSessionActiveMonitors(session)
         }
     }
 
@@ -1494,6 +1870,10 @@ export class SyncEngine {
         session.active = false
         session.thinking = false
         session.thinkingAt = clampAliveTime(payload.time) ?? Date.now()
+        const changedActiveMonitors = session.activeMonitors.length > 0
+            ? this.markSessionActiveMonitorsUnknown(session)
+            : undefined
+        this.pendingMonitorCallsBySessionId.delete(session.id)
 
         this.emit({
             type: 'session-updated',
@@ -1502,8 +1882,16 @@ export class SyncEngine {
                 active: false,
                 thinking: false,
                 wasThinking: false,
+                ...(session.activeMonitors.length > 0 ? { activeMonitorCount: session.activeMonitors.length } : {}),
             }
         })
+        if (changedActiveMonitors !== undefined) {
+            void changedActiveMonitors.then((changed) => {
+                if (changed) {
+                    this.emitSessionActiveMonitors(session)
+                }
+            })
+        }
     }
 
     handleMachineDisconnect(payload: { machineId: string; time: number }): void {
@@ -1558,6 +1946,10 @@ export class SyncEngine {
             session.active = false
             session.thinking = false
             this._dbActiveSessionIds.delete(session.id)
+            const changedActiveMonitors = session.activeMonitors.length > 0
+                ? this.markSessionActiveMonitorsUnknown(session)
+                : undefined
+            this.pendingMonitorCallsBySessionId.delete(session.id)
 
             // Persist active=false to database so it survives server restarts
             this.store.setSessionActive(session.id, false, now, session.namespace).catch(err => {
@@ -1572,7 +1964,21 @@ export class SyncEngine {
                 idleMinutes: Math.floor((now - session.activeAt) / 60000)
             })
 
-            this.emit({ type: 'session-updated', sessionId: session.id, data: { active: false } })
+            this.emit({
+                type: 'session-updated',
+                sessionId: session.id,
+                data: {
+                    active: false,
+                    ...(session.activeMonitors.length > 0 ? { activeMonitorCount: session.activeMonitors.length } : {})
+                }
+            })
+            if (changedActiveMonitors !== undefined) {
+                void changedActiveMonitors.then((changed) => {
+                    if (changed) {
+                        this.emitSessionActiveMonitors(session)
+                    }
+                })
+            }
         }
 
         for (const machine of this.machines.values()) {
@@ -1833,6 +2239,7 @@ export class SyncEngine {
         let stored = await this.store.getSession(sessionId)
         if (!stored) {
             const existed = this.sessions.delete(sessionId)
+            this.pendingMonitorCallsBySessionId.delete(sessionId)
             if (existed) {
                 this.emit({ type: 'session-removed', sessionId })
             }
@@ -1873,6 +2280,11 @@ export class SyncEngine {
             return parsed.success ? parsed.data : undefined
         })()
 
+        const activeMonitors = (() => {
+            const parsed = SessionActiveMonitorsSchema.safeParse(stored.activeMonitors)
+            return parsed.success ? sortActiveMonitors(parsed.data) : []
+        })()
+
         const session: Session = {
             id: stored.id,
             namespace: stored.namespace,
@@ -1894,12 +2306,13 @@ export class SyncEngine {
             modelMode: existing?.modelMode ?? (stored.modelMode as any) ?? undefined,
             modelReasoningEffort: existing?.modelReasoningEffort ?? (stored.modelReasoningEffort as any) ?? undefined,
             fastMode: existing?.fastMode ?? stored.fastMode ?? undefined,
+            activeMonitors: existing?.activeMonitors ?? activeMonitors,
             terminationReason: existing?.terminationReason ?? stored.terminationReason ?? undefined,
             resumingUntil: existing?.resumingUntil
         }
 
         this.sessions.set(sessionId, session)
-        this.emit({ type: existing ? 'session-updated' : 'session-added', sessionId, data: session })
+        this.emit({ type: existing ? 'session-updated' : 'session-added', sessionId, data: this.buildSessionPayload(session) })
         return session
     }
 
@@ -2031,6 +2444,33 @@ export class SyncEngine {
         return false
     }
 
+    private async recoverBrainChildInitFromHistory(sessionId: string, session: Session | undefined): Promise<boolean> {
+        if (!session || session.metadata?.source !== 'brain-child') {
+            return false
+        }
+        if (this.brainChildInitCompleted.has(sessionId) || session.thinking !== false) {
+            return false
+        }
+
+        const messages = await this.store.getMessages(sessionId, 20)
+        const sawInitPrompt = messages.some((message) => {
+            const text = getUserTextMessage(message)
+            return Boolean(text?.trimStart().startsWith(INIT_PROMPT_PREFIX))
+        })
+        const sawAgentReply = messages.some((message) => {
+            const content = message.content as Record<string, unknown> | null
+            return content?.role === 'agent'
+        })
+
+        if (!sawInitPrompt || !sawAgentReply) {
+            return false
+        }
+
+        this.brainChildInitCompleted.add(sessionId)
+        console.warn(`[brain-queue] Recovered init completion state for ${shortId(sessionId)} from persisted history`)
+        return true
+    }
+
     async sendMessage(sessionId: string, payload: { text: string; localId?: string | null; sentFrom?: string; meta?: Record<string, unknown> }): Promise<void> {
         // If this is a brain-sent message and the brain-child hasn't finished its init prompt yet,
         // buffer it and deliver it once the init prompt completes.
@@ -2038,11 +2478,16 @@ export class SyncEngine {
             const session = this.sessions.get(sessionId)
             const isBrainChild = session?.metadata?.source === 'brain-child'
             if (isBrainChild && !this.brainChildInitCompleted.has(sessionId)) {
-                const pending = this.brainChildPendingMessages.get(sessionId) ?? []
-                pending.push(payload.text)
-                this.brainChildPendingMessages.set(sessionId, pending)
-                console.log(`[brain-queue] Buffered brain message for ${sessionId.slice(0, 8)} (init not done yet), queue size=${pending.length}`)
-                return
+                const recovered = await this.recoverBrainChildInitFromHistory(sessionId, session)
+                if (recovered) {
+                    console.log(`[brain-queue] Recovered buffered-send path for ${shortId(sessionId)}`)
+                } else {
+                    const pending = this.brainChildPendingMessages.get(sessionId) ?? []
+                    pending.push(payload.text)
+                    this.brainChildPendingMessages.set(sessionId, pending)
+                    console.log(`[brain-queue] Buffered brain message for ${sessionId.slice(0, 8)} (init not done yet), queue size=${pending.length}`)
+                    return
+                }
             }
         }
 
@@ -2074,7 +2519,7 @@ export class SyncEngine {
 
         if (session) {
             session.lastMessageAt = msg.createdAt
-            this.emit({ type: 'session-updated', sessionId, data: session })
+            this.emit({ type: 'session-updated', sessionId, data: this.buildSessionPayload(session) })
         }
 
         const update = {
@@ -2123,7 +2568,7 @@ export class SyncEngine {
             const session = this.sessions.get(sessionId)
             if (session) {
                 session.lastMessageAt = msg.createdAt
-                this.emit({ type: 'session-updated', sessionId, data: session })
+                this.emit({ type: 'session-updated', sessionId, data: this.buildSessionPayload(session) })
             }
         }
 
@@ -2131,6 +2576,13 @@ export class SyncEngine {
         const cached = this.sessionMessages.get(sessionId) ?? []
         cached.push({ id: msg.id, seq: msg.seq, localId: msg.localId, content: msg.content, createdAt: msg.createdAt })
         this.sessionMessages.set(sessionId, cached.slice(-200))
+        await this.updateSessionActiveMonitorsFromMessage(sessionId, {
+            id: msg.id,
+            seq: msg.seq,
+            localId: msg.localId,
+            content: msg.content,
+            createdAt: msg.createdAt
+        })
 
         this.emit({
             type: 'message-received',
@@ -2231,7 +2683,7 @@ export class SyncEngine {
         const session = this.sessions.get(sessionId)
         if (session) {
             session.permissionMode = mode
-            this.emit({ type: 'session-updated', sessionId, data: session })
+            this.emit({ type: 'session-updated', sessionId, data: this.buildSessionPayload(session) })
         }
     }
 
@@ -2251,7 +2703,7 @@ export class SyncEngine {
                 modelMode: model,
                 modelReasoningEffort: modelReasoningEffort
             }, session.namespace)
-            this.emit({ type: 'session-updated', sessionId, data: session })
+            this.emit({ type: 'session-updated', sessionId, data: this.buildSessionPayload(session) })
         }
     }
 
@@ -2308,7 +2760,7 @@ export class SyncEngine {
                 fastMode: session.fastMode
             }, session.namespace)
 
-            this.emit({ type: 'session-updated', sessionId, data: session })
+            this.emit({ type: 'session-updated', sessionId, data: this.buildSessionPayload(session) })
             return {
                 permissionMode: session.permissionMode,
                 modelMode: session.modelMode,

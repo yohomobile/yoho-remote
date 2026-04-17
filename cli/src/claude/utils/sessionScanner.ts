@@ -17,6 +17,59 @@ const INTERNAL_CLAUDE_EVENT_TYPES = new Set([
     'queue-operation',
 ]);
 
+const INTERNAL_CLAUDE_METADATA_TYPES = new Set([
+    'last-prompt',
+    'permission-mode',
+    'ai-title',
+    'custom-title',
+    'agent-name',
+]);
+
+const INTERNAL_CLAUDE_ATTACHMENT_TYPES = new Set([
+    'skill_listing',
+    'hook_success',
+    'hook_non_blocking_error',
+    'compact_file_reference',
+    'command_permissions',
+    'nested_memory',
+    'deferred_tools_delta',
+    'date_change',
+    'file',
+    'directory',
+    'edited_text_file',
+    'invoked_skills',
+]);
+
+function shouldSkipClaudeLogMessage(message: unknown): boolean {
+    if (!message || typeof message !== 'object') {
+        return false;
+    }
+
+    const record = message as Record<string, unknown>;
+    const type = typeof record.type === 'string' ? record.type : null;
+    if (!type) {
+        return false;
+    }
+
+    if (INTERNAL_CLAUDE_EVENT_TYPES.has(type) || INTERNAL_CLAUDE_METADATA_TYPES.has(type)) {
+        return true;
+    }
+
+    if (type !== 'attachment') {
+        return false;
+    }
+
+    const attachment = record.attachment;
+    if (!attachment || typeof attachment !== 'object') {
+        return false;
+    }
+
+    const attachmentType = typeof (attachment as Record<string, unknown>).type === 'string'
+        ? ((attachment as Record<string, unknown>).type as string)
+        : null;
+    return attachmentType !== null && INTERNAL_CLAUDE_ATTACHMENT_TYPES.has(attachmentType);
+}
+
 export async function createSessionScanner(opts: {
     sessionId: string | null,
     workingDirectory: string
@@ -150,17 +203,19 @@ export type SessionScanner = ReturnType<typeof createSessionScanner>;
 //
 
 function messageKey(message: RawJSONLines): string {
-    if (message.type === 'user') {
-        return message.uuid;
-    } else if (message.type === 'assistant') {
-        return message.uuid;
-    } else if (message.type === 'summary') {
-        return 'summary: ' + message.leafUuid + ': ' + message.summary;
-    } else if (message.type === 'system') {
-        return message.uuid;
-    } else {
-        throw Error() // Impossible
+    if ('uuid' in message && typeof message.uuid === 'string') {
+        return `${message.type}:${message.uuid}`;
     }
+    if (message.type === 'summary' && typeof message.leafUuid === 'string' && typeof message.summary === 'string') {
+        return 'summary: ' + message.leafUuid + ': ' + message.summary;
+    }
+    if ('requestId' in message && typeof message.requestId === 'string') {
+        return `${message.type}:request:${message.requestId}`;
+    }
+    if ('timestamp' in message && typeof message.timestamp === 'string') {
+        return `${message.type}:timestamp:${message.timestamp}`;
+    }
+    return `${message.type}:${JSON.stringify(message)}`;
 }
 
 /**
@@ -188,14 +243,13 @@ async function readSessionLog(projectDir: string, sessionId: string): Promise<Ra
             
             // Silently skip known internal Claude Code events
             // These are state/tracking events, not conversation messages
-            if (message.type && INTERNAL_CLAUDE_EVENT_TYPES.has(message.type)) {
+            if (shouldSkipClaudeLogMessage(message)) {
                 continue;
             }
             
             let parsed = RawJSONLinesSchema.safeParse(message);
             if (!parsed.success) {
                 // Unknown message types are silently skipped
-                // They will be tracked by processedMessageKeys to avoid reprocessing
                 continue;
             }
             messages.push(parsed.data);

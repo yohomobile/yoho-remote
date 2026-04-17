@@ -15,6 +15,7 @@ function createSession(id: string, metadata: Record<string, unknown>): Session {
         metadataVersion: 1,
         agentState: null,
         agentStateVersion: 1,
+        activeMonitors: [],
         thinking: false,
         thinkingAt: 0,
         modelMode: 'default',

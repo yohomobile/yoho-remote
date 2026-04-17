@@ -37,6 +37,32 @@ describe('codexArtifacts', () => {
         }])
     })
 
+    test('reads enriched exec-style CodexPatch change arrays', () => {
+        const entries = getCodexPatchEntries(
+            {
+                changes: {
+                    '/repo/src/app.ts': {
+                        kind: 'update'
+                    }
+                }
+            },
+            {
+                changes: [{
+                    path: '/repo/src/app.ts',
+                    kind: 'update',
+                    unified_diff: '@@ -1 +1 @@\n-old\n+new\n'
+                }],
+                status: 'completed'
+            }
+        )
+
+        expect(entries).toEqual([{
+            filePath: '/repo/src/app.ts',
+            language: 'diff',
+            text: '@@ -1 +1 @@\n-old\n+new\n'
+        }])
+    })
+
     test('extracts unified diff file path', () => {
         const unified = [
             'diff --git a/web/src/app.ts b/web/src/app.ts',

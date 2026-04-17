@@ -417,6 +417,19 @@ export function createCliRoutes(
                         console.warn(`[brain/spawn] Session ${result.sessionId} did not come online within 60s, skipping init prompt`)
                         return
                     }
+                    const metadataPatch: Record<string, unknown> = {}
+                    if (parsed.data.source) {
+                        metadataPatch.source = parsed.data.source
+                    }
+                    if (parsed.data.mainSessionId) {
+                        metadataPatch.mainSessionId = parsed.data.mainSessionId
+                    }
+                    if (Object.keys(metadataPatch).length > 0) {
+                        const patched = await engine.patchSessionMetadata(result.sessionId, metadataPatch)
+                        if (!patched.ok) {
+                            console.warn(`[brain/spawn] Failed to patch child session metadata for ${result.sessionId}: ${patched.error}`)
+                        }
+                    }
                     // Wait for socket to join room
                     await engine.waitForSocketInRoom(result.sessionId, 5000)
                     // Build and send init prompt

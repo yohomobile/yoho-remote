@@ -55,6 +55,26 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
         return { icon: isError ? '❌' : '⏱️', text: parts.join(' · ') }
     }
 
+    if (event.type === 'plan-mode') {
+        const path = typeof event.planFilePath === 'string' ? event.planFilePath : null
+        return { icon: '🧭', text: path ? `Plan mode active · ${path}` : 'Plan mode active' }
+    }
+
+    if (event.type === 'todo-reminder') {
+        const total = typeof event.itemCount === 'number'
+            ? event.itemCount
+            : Array.isArray(event.items)
+                ? event.items.length
+                : 0
+        const completed = typeof event.completedCount === 'number' ? event.completedCount : 0
+        return { icon: '📝', text: total > 0 ? `Plan progress ${completed}/${total}` : 'Plan progress' }
+    }
+
+    if (event.type === 'plan-file') {
+        const path = typeof event.planFilePath === 'string' ? event.planFilePath : null
+        return { icon: '📄', text: path ? `Saved plan · ${path}` : 'Saved plan' }
+    }
+
     // --- New SDK event types ---
 
     if (event.type === 'rate-limit') {
@@ -85,9 +105,12 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
     }
 
     if (event.type === 'task-started') {
-        const desc = (event as Record<string, unknown>).description
+        const e = event as Record<string, unknown>
+        const desc = e.description
+        const status = typeof e.status === 'string' ? e.status : null
         const text = typeof desc === 'string' && desc ? truncateEventText(desc) : 'Background task started'
-        return { icon: '🚀', text }
+        const icon = status === 'completed' ? '✅' : status === 'failed' ? '❌' : '🚀'
+        return { icon, text }
     }
 
     if (event.type === 'task-progress') {

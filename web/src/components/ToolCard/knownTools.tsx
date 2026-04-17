@@ -325,6 +325,42 @@ export const knownTools: Record<string, {
         },
         minimal: true
     },
+    spawn_agent: {
+        icon: () => <RocketIcon className={DEFAULT_ICON_CLASS} />,
+        title: () => 'Spawn agent',
+        subtitle: (opts) => getInputStringAny(opts.input, ['prompt']),
+        minimal: false
+    },
+    send_input: {
+        icon: () => <RocketIcon className={DEFAULT_ICON_CLASS} />,
+        title: () => 'Send input',
+        subtitle: (opts) => getInputStringAny(opts.input, ['prompt', 'message']),
+        minimal: false
+    },
+    wait_agent: {
+        icon: () => <EyeIcon className={DEFAULT_ICON_CLASS} />,
+        title: () => 'Wait agent',
+        subtitle: (opts) => {
+            if (!isObject(opts.input) || !Array.isArray(opts.input.receiver_thread_ids)) {
+                return null
+            }
+            const count = opts.input.receiver_thread_ids.length
+            return count > 0 ? `${count} targets` : null
+        },
+        minimal: true
+    },
+    close_agent: {
+        icon: () => <RocketIcon className={DEFAULT_ICON_CLASS} />,
+        title: () => 'Close agent',
+        subtitle: (opts) => {
+            if (!isObject(opts.input) || !Array.isArray(opts.input.receiver_thread_ids)) {
+                return null
+            }
+            const count = opts.input.receiver_thread_ids.length
+            return count > 0 ? `${count} targets` : null
+        },
+        minimal: true
+    },
     NotebookRead: {
         icon: () => <EyeIcon className={DEFAULT_ICON_CLASS} />,
         title: (opts) => {
@@ -435,11 +471,23 @@ export const knownTools: Record<string, {
     ExitPlanMode: {
         icon: () => <ClipboardIcon className={DEFAULT_ICON_CLASS} />,
         title: () => 'Plan proposal',
+        subtitle: (opts) => {
+            const allowedPrompts = isObject(opts.input) && Array.isArray(opts.input.allowedPrompts)
+                ? opts.input.allowedPrompts
+                : []
+            return allowedPrompts.length > 0 ? `${allowedPrompts.length} prompt request${allowedPrompts.length > 1 ? 's' : ''}` : null
+        },
         minimal: false
     },
     exit_plan_mode: {
         icon: () => <ClipboardIcon className={DEFAULT_ICON_CLASS} />,
         title: () => 'Plan proposal',
+        subtitle: (opts) => {
+            const allowedPrompts = isObject(opts.input) && Array.isArray(opts.input.allowedPrompts)
+                ? opts.input.allowedPrompts
+                : []
+            return allowedPrompts.length > 0 ? `${allowedPrompts.length} prompt request${allowedPrompts.length > 1 ? 's' : ''}` : null
+        },
         minimal: false
     },
     AskUserQuestion: {
@@ -521,7 +569,12 @@ export const knownTools: Record<string, {
     EnterPlanMode: {
         icon: () => <ClipboardIcon className={DEFAULT_ICON_CLASS} />,
         title: () => 'Enter Plan Mode',
-        minimal: true
+        minimal: false
+    },
+    enter_plan_mode: {
+        icon: () => <ClipboardIcon className={DEFAULT_ICON_CLASS} />,
+        title: () => 'Enter Plan Mode',
+        minimal: false
     },
     Skill: {
         icon: () => <BulbIcon className={DEFAULT_ICON_CLASS} />,

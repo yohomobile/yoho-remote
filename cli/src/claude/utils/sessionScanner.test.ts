@@ -6,6 +6,13 @@ import { join } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 
+function getMessageContent(message: RawJSONLines): unknown {
+  if (!('message' in message) || !message.message || typeof message.message !== 'object') {
+    return undefined
+  }
+  return (message.message as { content?: unknown }).content
+}
+
 describe('sessionScanner', () => {
   let testDir: string
   let projectDir: string
@@ -68,7 +75,7 @@ describe('sessionScanner', () => {
     expect(collectedMessages).toHaveLength(1)
     expect(collectedMessages[0].type).toBe('user')
     if (collectedMessages[0].type === 'user') {
-      const content = collectedMessages[0].message.content
+      const content = getMessageContent(collectedMessages[0])
       const text = typeof content === 'string' ? content : (content as any)[0].text
       expect(text).toBe('say lol')
     }
@@ -80,8 +87,8 @@ describe('sessionScanner', () => {
     
     expect(collectedMessages).toHaveLength(2)
     expect(collectedMessages[1].type).toBe('assistant')
-    if (collectedMessages[1].type === 'assistant' && collectedMessages[1].message) {
-      expect((collectedMessages[1].message.content as any)[0].text).toBe('lol')
+    if (collectedMessages[1].type === 'assistant') {
+      expect((getMessageContent(collectedMessages[1]) as any)[0].text).toBe('lol')
     }
     
     // PHASE 2: Resumed session (1-continue-run-ls-tool.jsonl)
@@ -119,7 +126,7 @@ describe('sessionScanner', () => {
     const lastUserMsg = userMessages[userMessages.length - 1]
     expect(lastUserMsg).toBeDefined()
     if (lastUserMsg && lastUserMsg.type === 'user') {
-      expect(lastUserMsg.message.content).toBe('run ls tool ')
+      expect(getMessageContent(lastUserMsg)).toBe('run ls tool ')
     }
     
     // Write remaining lines (assistant tool use, tool result, final assistant message) - starting from line 4
@@ -138,10 +145,107 @@ describe('sessionScanner', () => {
     // Verify last message is assistant with the file listing
     const lastAssistantMsg = collectedMessages[collectedMessages.length - 1]
     expect(lastAssistantMsg.type).toBe('assistant')
-    if (lastAssistantMsg.type === 'assistant' && lastAssistantMsg.message?.content) {
-      const content = (lastAssistantMsg.message.content as any)[0].text
+    if (lastAssistantMsg.type === 'assistant') {
+      const content = (getMessageContent(lastAssistantMsg) as any)[0].text
       expect(content).toContain('0-say-lol-session.jsonl')
       expect(content).toContain('readme.md')
     }
+  })
+
+  it('silently skips Claude metadata lines that would otherwise duplicate or spam the timeline', async () => {
+    scanner = await createSessionScanner({
+      sessionId: null,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg)
+    })
+
+    const sessionId = 'metadata-filter-session'
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+    const lines = [
+      JSON.stringify({
+        type: 'user',
+        uuid: 'user-1',
+        timestamp: '2026-04-17T00:00:00.000Z',
+        message: { content: 'hello' }
+      }),
+      JSON.stringify({
+        type: 'last-prompt',
+        sessionId,
+        lastPrompt: 'hello'
+      }),
+      JSON.stringify({
+        type: 'permission-mode',
+        sessionId,
+        permissionMode: 'default'
+      }),
+      JSON.stringify({
+        type: 'attachment',
+        uuid: 'attachment-1',
+        timestamp: '2026-04-17T00:00:01.000Z',
+        attachment: {
+          type: 'skill_listing',
+          content: '- test-skill'
+        }
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        uuid: 'assistant-1',
+        timestamp: '2026-04-17T00:00:02.000Z',
+        message: {
+          content: [{ type: 'text', text: 'pong' }]
+        }
+      })
+    ].join('\n') + '\n'
+
+    await writeFile(sessionFile, lines)
+    scanner.onNewSession(sessionId)
+    await new Promise(resolve => setTimeout(resolve, 150))
+
+    expect(collectedMessages).toHaveLength(2)
+    expect(collectedMessages.map((msg) => msg.type)).toEqual(['user', 'assistant'])
+  })
+
+  it('keeps plan attachments like plan_mode and todo_reminder in the scanned message stream', async () => {
+    scanner = await createSessionScanner({
+      sessionId: null,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg)
+    })
+
+    const sessionId = 'plan-filter-session'
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+    const lines = [
+      JSON.stringify({
+        type: 'attachment',
+        uuid: 'attachment-plan-mode',
+        timestamp: '2026-04-17T00:00:00.000Z',
+        attachment: {
+          type: 'plan_mode',
+          planFilePath: '/tmp/demo-plan.md',
+          planExists: false
+        }
+      }),
+      JSON.stringify({
+        type: 'attachment',
+        uuid: 'attachment-todo',
+        timestamp: '2026-04-17T00:00:01.000Z',
+        attachment: {
+          type: 'todo_reminder',
+          itemCount: 1,
+          content: [{
+            content: 'Review the plan',
+            status: 'in_progress',
+            activeForm: 'Reviewing the plan'
+          }]
+        }
+      })
+    ].join('\n') + '\n'
+
+    await writeFile(sessionFile, lines)
+    scanner.onNewSession(sessionId)
+    await new Promise(resolve => setTimeout(resolve, 150))
+
+    expect(collectedMessages).toHaveLength(2)
+    expect(collectedMessages.map((msg) => msg.type)).toEqual(['attachment', 'attachment'])
   })
 })

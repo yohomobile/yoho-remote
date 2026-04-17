@@ -9,11 +9,13 @@ import { DiffView } from '@/components/DiffView'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { PermissionFooter } from '@/components/ToolCard/PermissionFooter'
 import { AskUserQuestionFooter } from '@/components/ToolCard/AskUserQuestionFooter'
+import { ExitPlanModeFooter } from '@/components/ToolCard/ExitPlanModeFooter'
 import {
     isAskUserQuestionToolName,
     shouldRenderAskUserQuestionAsRegularTool,
     shouldRenderAskUserQuestionInteractively,
 } from '@/components/ToolCard/askUserQuestion'
+import { isExitPlanModeToolName, shouldRenderExitPlanModeInteractively } from '@/components/ToolCard/planMode'
 import { getToolPresentation } from '@/components/ToolCard/knownTools'
 import { getToolFullViewComponent, getToolViewComponent } from '@/components/ToolCard/views/_all'
 import { getToolResultViewComponent } from '@/components/ToolCard/views/_results'
@@ -337,8 +339,10 @@ function ToolCardInner(props: ToolCardProps) {
     const runningFrom = props.block.tool.startedAt ?? props.block.tool.createdAt
     const permission = props.block.tool.permission
     const isAskUserQuestion = isAskUserQuestionToolName(toolName)
+    const isExitPlanMode = isExitPlanModeToolName(toolName)
     const rendersAskUserQuestionInteractively = isAskUserQuestion && shouldRenderAskUserQuestionInteractively(props.block.tool)
     const rendersAskUserQuestionAsRegularTool = isAskUserQuestion && shouldRenderAskUserQuestionAsRegularTool(props.block.tool)
+    const rendersExitPlanModeInteractively = isExitPlanMode && shouldRenderExitPlanModeInteractively(props.block.tool)
     const showInline = !presentation.minimal
         && toolName !== 'Task'
         && toolName !== 'Agent'
@@ -350,7 +354,7 @@ function ToolCardInner(props: ToolCardProps) {
         permission.status === 'pending'
         || ((permission.status === 'denied' || permission.status === 'canceled') && Boolean(permission.reason))
     ))
-    const hasBody = showInline || taskSummary !== null || showsPermissionFooter || rendersAskUserQuestionInteractively
+    const hasBody = showInline || taskSummary !== null || showsPermissionFooter || rendersAskUserQuestionInteractively || rendersExitPlanModeInteractively
     const stateColor = statusColorClass(props.block.tool.state)
     const { suppressFocusRing, onTriggerPointerDown, onTriggerKeyDown, onTriggerBlur } = usePointerFocusRing()
 
@@ -466,6 +470,14 @@ function ToolCardInner(props: ToolCardProps) {
 
                     {rendersAskUserQuestionInteractively ? (
                         <AskUserQuestionFooter
+                            api={props.api}
+                            sessionId={props.sessionId}
+                            tool={props.block.tool}
+                            disabled={props.disabled}
+                            onDone={props.onDone}
+                        />
+                    ) : rendersExitPlanModeInteractively ? (
+                        <ExitPlanModeFooter
                             api={props.api}
                             sessionId={props.sessionId}
                             tool={props.block.tool}

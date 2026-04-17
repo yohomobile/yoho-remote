@@ -9,6 +9,7 @@ import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import { reduceChatBlocks } from '@/chat/reducer'
 import { reconcileChatBlocks } from '@/chat/reconcile'
+import { collectActiveMonitors } from '@/chat/activeMonitors'
 import { YohoRemoteComposer } from '@/components/AssistantChat/YohoRemoteComposer'
 import { YohoRemoteThread } from '@/components/AssistantChat/YohoRemoteThread'
 import { useYohoRemoteRuntime } from '@/lib/assistant-runtime'
@@ -337,6 +338,10 @@ export function SessionChat(props: {
         onSendMessage: handleSendMessage,
         onAbort: handleAbort
     })
+    const activeMonitors = useMemo(
+        () => props.session.activeMonitors ?? collectActiveMonitors(reconciled.blocks),
+        [props.session.activeMonitors, reconciled.blocks]
+    )
     const resolvedModelMode = useMemo(() => {
         const fallbackMode = coerceModelMode(props.session.metadata?.runtimeModel)
         if (props.session.modelMode && props.session.modelMode !== 'default') {
@@ -618,6 +623,7 @@ export function SessionChat(props: {
                         autocompleteSuggestions={props.autocompleteSuggestions}
                         otherUserTyping={props.otherUserTyping}
                         setTextRef={composerSetTextRef}
+                        activeMonitors={activeMonitors}
                     />
                 </div>
             </AssistantRuntimeProvider>

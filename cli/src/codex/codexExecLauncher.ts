@@ -10,7 +10,10 @@
 import { render } from 'ink';
 import React from 'react';
 import { randomUUID } from 'node:crypto';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { devNull } from 'node:os';
+import path from 'node:path';
 import { createInterface } from 'node:readline';
 
 import { logger } from '@/ui/logger';
@@ -57,21 +60,26 @@ interface ExecMcpToolCallItem extends ExecItemBase {
     server: string;
     tool: string;
     arguments: unknown;
-    result: unknown;
+    result?: unknown;
+    error?: { message?: string } | null;
 }
 
 interface ExecCommandExecutionItem extends ExecItemBase {
     type: 'command_execution';
     command: string;
-    output?: unknown;
-    exit_code?: number;
+    aggregated_output?: unknown;
+    exit_code?: number | null;
     [key: string]: unknown;
 }
 
-interface ExecFileEditItem extends ExecItemBase {
-    type: 'file_edit';
-    file_path?: string;
-    diff?: string;
+interface ExecFileChange extends Record<string, unknown> {
+    path: string;
+    kind: 'add' | 'delete' | 'update';
+}
+
+interface ExecFileChangeItem extends ExecItemBase {
+    type: 'file_change';
+    changes: ExecFileChange[];
 }
 
 interface ExecReasoningItem extends ExecItemBase {
@@ -79,14 +87,67 @@ interface ExecReasoningItem extends ExecItemBase {
     text: string;
 }
 
-type ExecItem = ExecAgentMessageItem | ExecMcpToolCallItem | ExecCommandExecutionItem | ExecFileEditItem | ExecReasoningItem | ExecItemBase;
+interface ExecTodoItem {
+    text: string;
+    completed: boolean;
+}
+
+interface ExecTodoListItem extends ExecItemBase {
+    type: 'todo_list';
+    items: ExecTodoItem[];
+}
+
+interface ExecWebSearchItem extends ExecItemBase {
+    type: 'web_search';
+    query: string;
+    action?: unknown;
+}
+
+interface ExecCollabToolCallItem extends ExecItemBase {
+    type: 'collab_tool_call';
+    tool: 'spawn_agent' | 'send_input' | 'wait' | 'close_agent';
+    sender_thread_id: string;
+    receiver_thread_ids: string[];
+    prompt?: string | null;
+    agents_states?: Record<string, { status: string; message?: string | null }>;
+}
+
+interface ExecErrorItem extends ExecItemBase {
+    type: 'error';
+    message: string;
+}
+
+type PatchArtifactResolvers = {
+    resolveUnifiedDiff?: (change: ExecFileChange) => string | null;
+    resolveContent?: (change: ExecFileChange) => string | null;
+};
+
+type ExecEnrichedFileChange = ExecFileChange & {
+    unified_diff?: string;
+    content?: string;
+};
+
+type ExecItem =
+    | ExecAgentMessageItem
+    | ExecMcpToolCallItem
+    | ExecCommandExecutionItem
+    | ExecFileChangeItem
+    | ExecReasoningItem
+    | ExecTodoListItem
+    | ExecWebSearchItem
+    | ExecCollabToolCallItem
+    | ExecErrorItem
+    | ExecItemBase;
 
 type ExecEvent =
     | { type: 'thread.started'; thread_id: string }
     | { type: 'turn.started' }
+    | { type: 'turn.failed'; error?: { message?: string } }
     | { type: 'item.started'; item: ExecItem }
+    | { type: 'item.updated'; item: ExecItem }
     | { type: 'item.completed'; item: ExecItem }
-    | { type: 'turn.completed'; usage?: { input_tokens?: number; output_tokens?: number } }
+    | { type: 'turn.completed'; usage?: { input_tokens?: number; cached_input_tokens?: number; output_tokens?: number } }
+    | { type: 'error'; message?: string }
     | { type: string; [key: string]: unknown };
 
 export async function codexExecLauncher(session: CodexSession): Promise<'switch' | 'exit'> {
@@ -444,6 +505,7 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
         let resolved = false;
         let eventCount = 0;
         const eventTypes: string[] = [];
+        const announcedToolCalls = new Set<string>();
         // Captured from JSONL `error` / `turn.failed` events — the authoritative
         // failure reason (e.g. "You've hit your usage limit"), as opposed to
         // stderr which often contains only benign chatter like "Reading
@@ -515,6 +577,7 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
                 session,
                 messageBuffer,
                 turnPrefix,
+                announcedToolCalls,
                 onThreadId: (id) => {
                     resultThreadId = id;
                     onThreadId(id);
@@ -577,6 +640,10 @@ interface EventHandlerContext {
     messageBuffer: MessageBuffer;
     turnPrefix: string;
     onThreadId: (id: string) => void;
+    announcedToolCalls: Set<string>;
+    lastStreamErrorMessage?: string | null;
+    workspaceGitRoot?: string | null;
+    patchArtifactResolvers?: PatchArtifactResolvers;
 }
 
 function handleExecEvent(event: ExecEvent, ctx: EventHandlerContext): void {
@@ -596,6 +663,7 @@ function handleExecEvent(event: ExecEvent, ctx: EventHandlerContext): void {
         }
 
         case 'turn.started': {
+            ctx.lastStreamErrorMessage = null;
             messageBuffer.addMessage('Starting task...', 'status');
             break;
         }
@@ -606,6 +674,12 @@ function handleExecEvent(event: ExecEvent, ctx: EventHandlerContext): void {
             break;
         }
 
+        case 'item.updated': {
+            const item = (event as { item: ExecItem }).item;
+            handleItemUpdated(item, ctx);
+            break;
+        }
+
         case 'item.completed': {
             const item = (event as { item: ExecItem }).item;
             handleItemCompleted(item, ctx);
@@ -613,16 +687,50 @@ function handleExecEvent(event: ExecEvent, ctx: EventHandlerContext): void {
         }
 
         case 'turn.completed': {
-            const usage = (event as { usage?: { input_tokens?: number; output_tokens?: number } }).usage;
+            const usage = (event as { usage?: { input_tokens?: number; cached_input_tokens?: number; output_tokens?: number } }).usage;
             messageBuffer.addMessage('Task completed', 'status');
 
             if (usage) {
                 session.sendCodexMessage({
                     type: 'token_count',
-                    info: usage,
+                    info: {
+                        input_tokens: usage.input_tokens,
+                        cache_read_input_tokens: usage.cached_input_tokens,
+                        output_tokens: usage.output_tokens
+                    },
                     id: randomUUID()
                 });
             }
+            break;
+        }
+
+        case 'turn.failed': {
+            const errorMessage = getExecEventErrorMessage(event);
+            messageBuffer.addMessage(`Task failed${errorMessage ? `: ${errorMessage}` : ''}`, 'status');
+            if (errorMessage && errorMessage !== ctx.lastStreamErrorMessage) {
+                session.sendCodexMessage({
+                    type: 'error',
+                    message: errorMessage,
+                    source: 'turn_failed',
+                    id: randomUUID()
+                });
+            }
+            break;
+        }
+
+        case 'error': {
+            const errorMessage = getExecEventErrorMessage(event);
+            if (!errorMessage) {
+                break;
+            }
+            ctx.lastStreamErrorMessage = errorMessage;
+            messageBuffer.addMessage(`Error: ${errorMessage}`, 'status');
+            session.sendCodexMessage({
+                type: 'error',
+                message: errorMessage,
+                source: 'stream',
+                id: randomUUID()
+            });
             break;
         }
     }
@@ -659,17 +767,12 @@ function handleItemStarted(item: ExecItem, ctx: EventHandlerContext): void {
             break;
         }
 
-        case 'file_edit': {
-            const editItem = item as ExecFileEditItem;
-            const label = editItem.file_path ? `Editing ${editItem.file_path}...` : 'Editing file...';
+        case 'file_change': {
+            const changeItem = item as ExecFileChangeItem;
+            const filesMsg = changeItem.changes.length === 1 ? changeItem.changes[0]?.path ?? '1 file' : `${changeItem.changes.length} files`;
+            const label = changeItem.changes.length === 1 ? `Editing ${filesMsg}...` : `Editing ${filesMsg}...`;
             messageBuffer.addMessage(label, 'tool');
-            session.sendCodexMessage({
-                type: 'tool-call',
-                name: 'CodexPatch',
-                callId,
-                input: { file_path: editItem.file_path },
-                id: randomUUID()
-            });
+            ensureToolCall(session, ctx, callId, 'CodexPatch', buildCodexPatchInput(changeItem, ctx));
             break;
         }
 
@@ -682,7 +785,54 @@ function handleItemStarted(item: ExecItem, ctx: EventHandlerContext): void {
             });
             break;
         }
+
+        case 'web_search': {
+            const searchItem = item as ExecWebSearchItem;
+            const label = searchItem.query?.trim() ? `Searching web: ${searchItem.query}` : 'Searching web...';
+            messageBuffer.addMessage(label, 'tool');
+            ensureToolCall(session, ctx, callId, 'WebSearch', buildWebSearchPayload(searchItem));
+            break;
+        }
+
+        case 'todo_list': {
+            const todoItem = item as ExecTodoListItem;
+            const planPayload = buildCodexPlanPayload(todoItem);
+            if (!planPayload) {
+                break;
+            }
+            messageBuffer.addMessage('Updating plan...', 'tool');
+            ensureToolCall(session, ctx, callId, 'CodexPlan', planPayload);
+            break;
+        }
+
+        case 'collab_tool_call': {
+            const collabItem = item as ExecCollabToolCallItem;
+            messageBuffer.addMessage(`${describeCollabTool(collabItem.tool)}...`, 'tool');
+            ensureToolCall(session, ctx, callId, mapCollabToolName(collabItem.tool), buildCollabToolPayload(collabItem));
+            break;
+        }
     }
+}
+
+function handleItemUpdated(item: ExecItem, ctx: EventHandlerContext): void {
+    if (item.type !== 'todo_list') {
+        return;
+    }
+
+    const { session, turnPrefix } = ctx;
+    const callId = `${turnPrefix}-${item.id}`;
+    const planPayload = buildCodexPlanPayload(item as ExecTodoListItem);
+    if (!planPayload) {
+        return;
+    }
+
+    ensureToolCall(session, ctx, callId, 'CodexPlan', planPayload);
+    session.sendCodexMessage({
+        type: 'tool-call-result',
+        callId,
+        output: planPayload,
+        id: randomUUID()
+    });
 }
 
 function handleItemCompleted(item: ExecItem, ctx: EventHandlerContext): void {
@@ -703,15 +853,18 @@ function handleItemCompleted(item: ExecItem, ctx: EventHandlerContext): void {
 
         case 'mcp_tool_call': {
             const mcpItem = item as ExecMcpToolCallItem;
-            const resultStr = typeof mcpItem.result === 'string'
-                ? mcpItem.result
-                : JSON.stringify(mcpItem.result);
+            const outputPayload = mcpItem.error?.message
+                ? { error: mcpItem.error.message }
+                : (mcpItem.result ?? { status: mcpItem.status });
+            const resultStr = typeof outputPayload === 'string'
+                ? outputPayload
+                : JSON.stringify(outputPayload);
             const truncated = resultStr?.substring(0, 200) ?? '';
             messageBuffer.addMessage(`Result: ${truncated}${(resultStr?.length ?? 0) > 200 ? '...' : ''}`, 'result');
             session.sendCodexMessage({
                 type: 'tool-call-result',
                 callId,
-                output: mcpItem.result,
+                output: outputPayload,
                 id: randomUUID()
             });
             break;
@@ -733,20 +886,18 @@ function handleItemCompleted(item: ExecItem, ctx: EventHandlerContext): void {
             break;
         }
 
-        case 'file_edit': {
-            const editItem = item as ExecFileEditItem;
+        case 'file_change': {
+            const changeItem = item as ExecFileChangeItem;
+            ensureToolCall(session, ctx, callId, 'CodexPatch', buildCodexPatchInput(changeItem, ctx));
+            const firstPath = changeItem.changes[0]?.path;
             messageBuffer.addMessage(
-                editItem.file_path ? `Modified: ${editItem.file_path}` : 'File modified',
+                firstPath ? `Modified: ${firstPath}` : 'Files modified',
                 'result'
             );
             session.sendCodexMessage({
                 type: 'tool-call-result',
                 callId,
-                output: {
-                    file_path: editItem.file_path,
-                    diff: editItem.diff,
-                    status: 'completed'
-                },
+                output: buildCodexPatchResult(changeItem, ctx),
                 id: randomUUID()
             });
             break;
@@ -760,12 +911,323 @@ function handleItemCompleted(item: ExecItem, ctx: EventHandlerContext): void {
             });
             break;
         }
+
+        case 'web_search': {
+            const searchItem = item as ExecWebSearchItem;
+            ensureToolCall(session, ctx, callId, 'WebSearch', buildWebSearchPayload(searchItem));
+            session.sendCodexMessage({
+                type: 'tool-call-result',
+                callId,
+                output: buildWebSearchPayload(searchItem),
+                id: randomUUID()
+            });
+            break;
+        }
+
+        case 'todo_list': {
+            const todoItem = item as ExecTodoListItem;
+            const planPayload = buildCodexPlanPayload(todoItem);
+            if (!planPayload) {
+                break;
+            }
+            ensureToolCall(session, ctx, callId, 'CodexPlan', planPayload);
+            session.sendCodexMessage({
+                type: 'tool-call-result',
+                callId,
+                output: planPayload,
+                id: randomUUID()
+            });
+            break;
+        }
+
+        case 'collab_tool_call': {
+            const collabItem = item as ExecCollabToolCallItem;
+            const toolName = mapCollabToolName(collabItem.tool);
+            const payload = buildCollabToolPayload(collabItem);
+            ensureToolCall(session, ctx, callId, toolName, payload);
+            session.sendCodexMessage({
+                type: 'tool-call-result',
+                callId,
+                output: payload,
+                id: randomUUID()
+            });
+            break;
+        }
+
+        case 'error': {
+            const errorItem = item as ExecErrorItem;
+            messageBuffer.addMessage(`Notice: ${errorItem.message}`, 'status');
+            session.sendCodexMessage({
+                type: 'notice',
+                level: 'warning',
+                source: 'item',
+                message: errorItem.message,
+                id: randomUUID()
+            });
+            break;
+        }
     }
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function ensureToolCall(
+    session: CodexSession,
+    ctx: EventHandlerContext,
+    callId: string,
+    name: string,
+    input: unknown
+): void {
+    if (ctx.announcedToolCalls.has(callId)) {
+        return;
+    }
+
+    ctx.announcedToolCalls.add(callId);
+    session.sendCodexMessage({
+        type: 'tool-call',
+        name,
+        callId,
+        input,
+        id: randomUUID()
+    });
+}
+
+function getExecEventErrorMessage(event: ExecEvent): string | null {
+    const direct = (event as { message?: unknown }).message;
+    if (typeof direct === 'string' && direct.trim().length > 0) {
+        return direct.trim();
+    }
+
+    const nested = (event as { error?: { message?: unknown } }).error?.message;
+    if (typeof nested === 'string' && nested.trim().length > 0) {
+        return nested.trim();
+    }
+
+    return null;
+}
+
+function buildCodexPlanPayload(item: ExecTodoListItem): { plan: Array<{ step: string; status: 'completed' | 'pending' }> } | null {
+    if (!Array.isArray(item.items) || item.items.length === 0) {
+        return null;
+    }
+
+    return {
+        plan: item.items.map((todo) => ({
+            step: todo.text,
+            status: todo.completed ? 'completed' : 'pending',
+        }))
+    };
+}
+
+function buildWebSearchPayload(item: ExecWebSearchItem): Record<string, unknown> {
+    return {
+        id: item.id,
+        query: item.query,
+        action: item.action ?? null,
+    };
+}
+
+function buildCodexPatchInput(
+    item: ExecFileChangeItem,
+    source?: EventHandlerContext | PatchArtifactResolvers
+): { changes: Record<string, { kind: string; unified_diff?: string; content?: string }> } {
+    const changes = buildCodexPatchChanges(item, source);
+
+    return {
+        changes: Object.fromEntries(
+            changes.map((change) => [change.path, {
+                kind: change.kind,
+                ...(typeof change.unified_diff === 'string' ? { unified_diff: change.unified_diff } : {}),
+                ...(typeof change.content === 'string' ? { content: change.content } : {}),
+            }])
+        )
+    };
+}
+
+function buildCodexPatchResult(
+    item: ExecFileChangeItem,
+    source?: EventHandlerContext | PatchArtifactResolvers
+): Record<string, unknown> {
+    return {
+        changes: buildCodexPatchChanges(item, source),
+        status: item.status ?? 'completed',
+    };
+}
+
+function buildCodexPatchChanges(
+    item: ExecFileChangeItem,
+    source?: EventHandlerContext | PatchArtifactResolvers
+): ExecEnrichedFileChange[] {
+    const resolvers = getPatchArtifactResolvers(source);
+
+    return item.changes.map((change) => {
+        const unifiedDiff = resolvers?.resolveUnifiedDiff?.(change) ?? undefined;
+        const content = unifiedDiff
+            ? undefined
+            : (resolvers?.resolveContent?.(change) ?? undefined);
+
+        return {
+            ...change,
+            ...(typeof unifiedDiff === 'string' && unifiedDiff.length > 0 ? { unified_diff: unifiedDiff } : {}),
+            ...(typeof content === 'string' && content.length > 0 ? { content } : {}),
+        };
+    });
+}
+
+function getPatchArtifactResolvers(source?: EventHandlerContext | PatchArtifactResolvers): PatchArtifactResolvers | undefined {
+    if (!source) {
+        return undefined;
+    }
+
+    if ('session' in source) {
+        if (!source.patchArtifactResolvers) {
+            source.patchArtifactResolvers = createWorkspacePatchArtifactResolvers(source);
+        }
+        return source.patchArtifactResolvers;
+    }
+
+    return source;
+}
+
+function createWorkspacePatchArtifactResolvers(ctx: EventHandlerContext): PatchArtifactResolvers {
+    return {
+        resolveUnifiedDiff: (change) => resolveWorkspaceUnifiedDiff(ctx, change),
+        resolveContent: (change) => resolveWorkspaceFileContent(ctx.session.path, change),
+    };
+}
+
+function resolveWorkspaceUnifiedDiff(ctx: EventHandlerContext, change: ExecFileChange): string | null {
+    const absolutePath = resolveWorkspacePath(ctx.session.path, change.path);
+    const gitRoot = getWorkspaceGitRoot(ctx);
+
+    if (gitRoot) {
+        const relativePath = path.relative(gitRoot, absolutePath);
+        if (relativePath && !relativePath.startsWith(`..${path.sep}`) && relativePath !== '..' && !path.isAbsolute(relativePath)) {
+            const diff = readGitDiff(gitRoot, relativePath.split(path.sep).join('/'));
+            if (diff) {
+                return diff;
+            }
+        }
+    }
+
+    if (change.kind === 'add') {
+        return readNoIndexDiff(absolutePath);
+    }
+
+    return null;
+}
+
+function resolveWorkspaceFileContent(workspacePath: string, change: ExecFileChange): string | null {
+    if (change.kind !== 'add') {
+        return null;
+    }
+
+    try {
+        const content = readFileSync(resolveWorkspacePath(workspacePath, change.path), 'utf8');
+        if (!content || content.includes('\u0000')) {
+            return null;
+        }
+        return content.length > 100_000 ? `${content.slice(0, 100_000)}\n...` : content;
+    } catch {
+        return null;
+    }
+}
+
+function getWorkspaceGitRoot(ctx: EventHandlerContext): string | null {
+    if (ctx.workspaceGitRoot !== undefined) {
+        return ctx.workspaceGitRoot;
+    }
+
+    try {
+        const gitRoot = execFileSync('git', ['-C', ctx.session.path, 'rev-parse', '--show-toplevel'], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
+        ctx.workspaceGitRoot = gitRoot || null;
+    } catch {
+        ctx.workspaceGitRoot = null;
+    }
+
+    return ctx.workspaceGitRoot;
+}
+
+function readGitDiff(gitRoot: string, relativePath: string): string | null {
+    try {
+        const diff = execFileSync('git', ['-C', gitRoot, 'diff', '--no-ext-diff', '--unified=3', '--', relativePath], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+            maxBuffer: 2_000_000,
+        });
+        const trimmed = diff.trimEnd();
+        return trimmed.length > 0 ? trimmed : null;
+    } catch {
+        return null;
+    }
+}
+
+function readNoIndexDiff(absolutePath: string): string | null {
+    try {
+        const diff = execFileSync('git', ['diff', '--no-index', '--no-ext-diff', '--unified=3', '--', devNull, absolutePath], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+            maxBuffer: 2_000_000,
+        });
+        const trimmed = diff.trimEnd();
+        return trimmed.length > 0 ? trimmed : null;
+    } catch (error) {
+        const stdout = error instanceof Error && 'stdout' in error
+            ? (typeof error.stdout === 'string'
+                ? error.stdout
+                : Buffer.isBuffer(error.stdout)
+                    ? error.stdout.toString('utf8')
+                    : '')
+            : '';
+        const trimmed = stdout.trimEnd();
+        return trimmed.length > 0 ? trimmed : null;
+    }
+}
+
+function resolveWorkspacePath(workspacePath: string, filePath: string): string {
+    return path.isAbsolute(filePath) ? filePath : path.resolve(workspacePath, filePath);
+}
+
+function mapCollabToolName(tool: ExecCollabToolCallItem['tool']): string {
+    switch (tool) {
+        case 'spawn_agent':
+            return 'spawn_agent';
+        case 'send_input':
+            return 'send_input';
+        case 'wait':
+            return 'wait_agent';
+        case 'close_agent':
+            return 'close_agent';
+    }
+}
+
+function describeCollabTool(tool: ExecCollabToolCallItem['tool']): string {
+    switch (tool) {
+        case 'spawn_agent':
+            return 'Spawning agent';
+        case 'send_input':
+            return 'Sending input to agent';
+        case 'wait':
+            return 'Waiting for agent';
+        case 'close_agent':
+            return 'Closing agent';
+    }
+}
+
+function buildCollabToolPayload(item: ExecCollabToolCallItem): Record<string, unknown> {
+    return {
+        sender_thread_id: item.sender_thread_id,
+        receiver_thread_ids: item.receiver_thread_ids,
+        prompt: item.prompt ?? null,
+        agents_states: item.agents_states ?? {},
+        status: item.status ?? null,
+    };
+}
 
 function parseTimeoutEnv(name: string, fallback: number): number {
     const raw = process.env[name];
@@ -779,3 +1241,15 @@ function parseTimeoutEnv(name: string, fallback: number): number {
     }
     return parsed;
 }
+
+export const __testOnly = {
+    handleExecEvent,
+    buildCodexPlanPayload,
+    buildWebSearchPayload,
+    buildCodexPatchInput,
+    buildCodexPatchResult,
+    buildCodexPatchChanges,
+    mapCollabToolName,
+    buildCollabToolPayload,
+    getExecEventErrorMessage,
+};

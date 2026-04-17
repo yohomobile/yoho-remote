@@ -137,38 +137,56 @@ function dedupeAgentEvents(blocks: ChatBlock[]): ChatBlock[] {
 
         const event = block.event as { type: string; [key: string]: unknown }
 
-        // Merge turn-duration + session-result into a single event.
-        // When session-result follows turn-duration, replace the previous turn-duration
-        // with a combined event showing turn time + turn count (no cost).
-        if (event.type === 'session-result') {
+        // Drop turn-duration when it follows session-result.
+        // Why: CLI emits `result` (→ session-result) first, then manually emits
+        // `system/turn_duration` (→ turn-duration) right after. session-result's
+        // durationMs already covers the turn, so turn-duration is redundant noise.
+        if (event.type === 'turn-duration') {
             const prev = result.length > 0 ? result[result.length - 1] : null
             if (prev && prev.kind === 'agent-event') {
-                const prevEvent = prev.event as { type: string; [key: string]: unknown }
-                if (prevEvent.type === 'turn-duration') {
-                    const numTurns = typeof event.numTurns === 'number' ? event.numTurns : null
-                    const cost = typeof event.cost === 'number' ? event.cost : null
-                    const isError = typeof event.isError === 'boolean' ? event.isError : false
-                    const stopReason = typeof event.stopReason === 'string' ? event.stopReason : undefined
-                    const terminalReason = typeof event.terminalReason === 'string' ? event.terminalReason : undefined
-                    result[result.length - 1] = {
-                        ...prev,
-                        event: {
-                            ...prevEvent,
-                            numTurns,
-                            ...(cost !== null ? { cost } : {}),
-                            ...(isError ? { isError } : {}),
-                            ...(stopReason ? { stopReason } : {}),
-                            ...(terminalReason ? { terminalReason } : {})
-                        }
-                    }
+                const prevEvent = prev.event as { type: string }
+                if (prevEvent.type === 'session-result') {
                     continue
                 }
             }
-            // session-result without preceding turn-duration: show it standalone
+        }
+
+        // session-result: show standalone.
+        if (event.type === 'session-result') {
             result.push(block)
             prevEventKey = `event:session-result`
             prevTitleChangedTo = null
             continue
+        }
+
+        // Merge task-notification into the matching task-started (same taskId).
+        // Why: Task lifecycle emits task_started (description) then task_notification
+        // (summary) and both often carry the same text — the UI was rendering them
+        // as two separate lines (🚀 description, 📋 summary). Instead, fold the
+        // status from the notification into the original task-started block so the
+        // single entry updates from 🚀 to ✅/❌ on completion.
+        if (event.type === 'task-notification') {
+            const taskId = typeof event.taskId === 'string' ? event.taskId : undefined
+            if (taskId) {
+                for (let i = result.length - 1; i >= 0; i--) {
+                    const b = result[i]
+                    if (b.kind !== 'agent-event') continue
+                    const e = b.event as { type: string; taskId?: unknown; status?: unknown; toolUseId?: unknown }
+                    if (e.type === 'task-started' && e.taskId === taskId) {
+                        const notifToolUseId = typeof event.toolUseId === 'string' ? event.toolUseId : undefined
+                        result[i] = {
+                            ...b,
+                            event: {
+                                ...e,
+                                status: typeof event.status === 'string' ? event.status : e.status,
+                                toolUseId: notifToolUseId ?? e.toolUseId
+                            }
+                        } as ChatBlock
+                        break
+                    }
+                }
+                continue
+            }
         }
 
         if (event.type === 'title-changed' && typeof event.title === 'string') {
@@ -338,6 +356,74 @@ function mergeCliOutputBlocks(blocks: ChatBlock[]): ChatBlock[] {
 
 // Maximum time gap (ms) between consecutive agent-text blocks to be considered same turn
 const STREAMING_MERGE_GAP_MS = 2000
+const USER_ECHO_DEDUPE_GAP_MS = 10_000
+
+function isTextMergeTransparentBlock(block: ChatBlock): boolean {
+    return block.kind === 'agent-event'
+}
+
+function findPreviousVisibleTextBlock<T extends ChatBlock['kind']>(
+    blocks: ChatBlock[],
+    kind: T
+): Extract<ChatBlock, { kind: T }> | null {
+    for (let i = blocks.length - 1; i >= 0; i -= 1) {
+        const block = blocks[i]
+        if (block.kind === kind) {
+            return block as Extract<ChatBlock, { kind: T }>
+        }
+        if (!isTextMergeTransparentBlock(block)) {
+            return null
+        }
+    }
+    return null
+}
+
+function removeBlockById(blocks: ChatBlock[], id: string): void {
+    const index = blocks.findIndex((block) => block.id === id)
+    if (index >= 0) {
+        blocks.splice(index, 1)
+    }
+}
+
+function dedupeUserEchoBlocks(blocks: ChatBlock[]): ChatBlock[] {
+    const deduped: ChatBlock[] = []
+
+    for (const block of blocks) {
+        if (block.kind !== 'user-text') {
+            deduped.push(block)
+            continue
+        }
+
+        const prev = findPreviousVisibleTextBlock(deduped, 'user-text')
+        if (
+            prev
+            && prev.text === block.text
+            && Math.abs(block.createdAt - prev.createdAt) < USER_ECHO_DEDUPE_GAP_MS
+        ) {
+            const prevSentFrom = getMetaSentFrom(prev.meta)
+            const nextSentFrom = getMetaSentFrom(block.meta)
+            const hasCliEcho = prevSentFrom === 'cli' || nextSentFrom === 'cli'
+            const hasUserOrigin = prevSentFrom === 'webapp'
+                || prevSentFrom === 'telegram-bot'
+                || prevSentFrom === 'brain'
+                || nextSentFrom === 'webapp'
+                || nextSentFrom === 'telegram-bot'
+                || nextSentFrom === 'brain'
+
+            if (hasCliEcho && hasUserOrigin) {
+                if (prevSentFrom === 'cli' && nextSentFrom !== 'cli') {
+                    removeBlockById(deduped, prev.id)
+                    deduped.push(block)
+                }
+                continue
+            }
+        }
+
+        deduped.push(block)
+    }
+
+    return deduped
+}
 
 function mergeAgentTextBlocks(blocks: ChatBlock[]): ChatBlock[] {
     const merged: ChatBlock[] = []
@@ -348,23 +434,53 @@ function mergeAgentTextBlocks(blocks: ChatBlock[]): ChatBlock[] {
             continue
         }
 
-        const prev = merged[merged.length - 1]
-        if (prev && prev.kind === 'agent-text') {
+        const prev = findPreviousVisibleTextBlock(merged, 'agent-text')
+        if (prev) {
             // Check if they belong to the same message (same base id before the index suffix)
             // IDs are like "msg-123:0", "msg-123:1" - same message has same base id
             const prevBaseId = prev.id.split(':')[0]
             const currBaseId = block.id.split(':')[0]
             if (prevBaseId === currBaseId) {
+                if (block.text === prev.text) {
+                    removeBlockById(merged, prev.id)
+                    merged.push(block)
+                    continue
+                }
+                if (block.text.startsWith(prev.text)) {
+                    removeBlockById(merged, prev.id)
+                    merged.push(block)
+                    continue
+                }
+                if (prev.text.startsWith(block.text)) {
+                    continue
+                }
                 // Merge consecutive agent-text blocks from the same message (for streaming deltas)
-                merged[merged.length - 1] = { ...prev, text: prev.text + block.text }
+                removeBlockById(merged, prev.id)
+                merged.push({ ...block, text: prev.text + block.text })
                 continue
             }
 
             // For streaming backends, merge blocks with small time gaps
             // This handles cases where each streaming chunk has a unique message ID
             const timeGap = block.createdAt - prev.createdAt
-            if (timeGap >= 0 && timeGap < STREAMING_MERGE_GAP_MS) {
-                merged[merged.length - 1] = { ...prev, text: prev.text + block.text }
+            const prevSentFrom = getMetaSentFrom(prev.meta)
+            const nextSentFrom = getMetaSentFrom(block.meta)
+            if (prevSentFrom === 'cli' && nextSentFrom === 'cli' && timeGap >= 0 && timeGap < STREAMING_MERGE_GAP_MS) {
+                if (block.text === prev.text) {
+                    removeBlockById(merged, prev.id)
+                    merged.push(block)
+                    continue
+                }
+                if (block.text.startsWith(prev.text)) {
+                    removeBlockById(merged, prev.id)
+                    merged.push(block)
+                    continue
+                }
+                if (prev.text.startsWith(block.text)) {
+                    continue
+                }
+                removeBlockById(merged, prev.id)
+                merged.push({ ...block, text: prev.text + block.text })
                 continue
             }
         }
@@ -824,7 +940,7 @@ function reduceTimeline(
     }
 
     return {
-        blocks: mergeAgentReasoningBlocks(mergeAgentTextBlocks(dedupeResultTextBlocks(mergeAgentBrowserBlocks(mergeCliOutputBlocks(blocks))))),
+        blocks: mergeAgentReasoningBlocks(mergeAgentTextBlocks(dedupeResultTextBlocks(mergeAgentBrowserBlocks(mergeCliOutputBlocks(dedupeUserEchoBlocks(blocks)))))),
         toolBlocksById,
         hasReadyEvent
     }
@@ -835,7 +951,7 @@ export type LatestUsage = {
     outputTokens: number
     cacheCreation: number
     cacheRead: number
-    contextSize: number
+    contextSize?: number
     timestamp: number
     // For Codex new format: model_context_window from token_count event.
     // When present, contextSize / modelContextWindow gives the context usage percentage.
@@ -965,29 +1081,42 @@ export function reduceChatBlocks(
             const inputTokens = msg.usage.input_tokens
             const cacheCreation = msg.usage.cache_creation_input_tokens || 0
             const cacheRead = msg.usage.cache_read_input_tokens || 0
+            const isTokenCount = msg.role === 'event' && msg.content && typeof msg.content === 'object' && 'type' in msg.content && msg.content.type === 'token-count'
+            const contextTokensReliable = msg.usage.context_tokens_reliable !== false
+            const clearContextUsage = msg.usage.clear_context_usage === true
+            const hasNonZeroUsage = inputTokens !== 0
+                || msg.usage.output_tokens !== 0
+                || cacheCreation !== 0
+                || cacheRead !== 0
+            const hasRateLimitSignal = msg.usage.rate_limit_used_percent !== undefined
+            const hasExplicitCodexContextSignal = isTokenCount && (clearContextUsage || msg.usage.context_tokens_reliable === true)
 
-            // Skip if all values are 0 (continue searching)
-            if (inputTokens === 0 && cacheCreation === 0 && cacheRead === 0) {
+            if (!hasNonZeroUsage && !hasRateLimitSignal && !hasExplicitCodexContextSignal) {
                 continue
             }
 
-            // Context size = sum of all input token types
-            // Per Anthropic API spec: input_tokens, cache_creation_input_tokens, and
-            // cache_read_input_tokens are separate and must be summed for total context
-            // Example from actual data: input=6, cache_read=806111, cache_creation=4972 → total=811089
-            const contextSize = inputTokens + cacheCreation + cacheRead
             const usage = {
                 inputTokens,
                 outputTokens: msg.usage.output_tokens,
                 cacheCreation,
                 cacheRead,
-                contextSize,
+                contextSize: contextTokensReliable ? inputTokens + cacheCreation + cacheRead : undefined,
                 timestamp: msg.createdAt
             }
 
-            // Track last token-count event for Codex context percentage
-            const isTokenCount = msg.role === 'event' && msg.content && typeof msg.content === 'object' && 'type' in msg.content && msg.content.type === 'token-count'
             if (isTokenCount) {
+                if (clearContextUsage) {
+                    if (!lastTokenCount && hasRateLimitSignal) {
+                        lastTokenCount = {
+                            ...usage,
+                            modelContextWindow: msg.usage.model_context_window,
+                            reasoningOutputTokens: msg.usage.reasoning_output_tokens || undefined,
+                            rateLimitUsedPercent: msg.usage.rate_limit_used_percent
+                        }
+                    }
+                    break
+                }
+
                 if (!lastTokenCount) {
                     lastTokenCount = {
                         ...usage,

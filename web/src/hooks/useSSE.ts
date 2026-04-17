@@ -150,7 +150,8 @@ export function useSSE(options: {
                                 modelReasoningEffort: statusData?.modelReasoningEffort,
                                 permissionMode: statusData?.permissionMode,
                                 active: statusData?.active,
-                                thinking: statusData?.thinking
+                                thinking: statusData?.thinking,
+                                activeMonitorCount: statusData?.activeMonitorCount
                             })
                         }
 
@@ -160,7 +161,13 @@ export function useSSE(options: {
                             }
                             queryClient.setQueryData<SessionResponse>(
                                 queryKeys.session(event.sessionId),
-                                { session: toSessionFromSsePayload(rawData) }
+                                (prev) => {
+                                    const nextSession = toSessionFromSsePayload(rawData)
+                                    if (nextSession.activeMonitors === undefined && prev?.session?.activeMonitors !== undefined) {
+                                        nextSession.activeMonitors = prev.session.activeMonitors
+                                    }
+                                    return { session: nextSession }
+                                }
                             )
                             // 列表项里还有 pendingRequestsCount / todoProgress 等派生字段，只能从服务端重新拉。
                             void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
@@ -184,6 +191,7 @@ export function useSSE(options: {
                                             ...(statusData.modelMode !== undefined && { modelMode: statusData.modelMode as Session['modelMode'] }),
                                             ...(statusData.modelReasoningEffort !== undefined && { modelReasoningEffort: statusData.modelReasoningEffort as Session['modelReasoningEffort'] }),
                                             ...(statusData.fastMode !== undefined && { fastMode: statusData.fastMode }),
+                                            ...(statusData.activeMonitors !== undefined && { activeMonitors: statusData.activeMonitors }),
                                             ...(statusData.terminationReason !== undefined && { terminationReason: statusData.terminationReason }),
                                         }
                                     }
@@ -205,6 +213,7 @@ export function useSSE(options: {
                                         (statusData.modelMode !== undefined && statusData.modelMode !== target.modelMode) ||
                                         (statusData.modelReasoningEffort !== undefined && statusData.modelReasoningEffort !== target.modelReasoningEffort) ||
                                         (statusData.fastMode !== undefined && statusData.fastMode !== target.fastMode) ||
+                                        (statusData.activeMonitorCount !== undefined && statusData.activeMonitorCount !== target.activeMonitorCount) ||
                                         (statusData.terminationReason !== undefined && statusData.terminationReason !== target.terminationReason)
                                     if (!hasChange) return prev
                                     return {
@@ -219,6 +228,7 @@ export function useSSE(options: {
                                                     ...(statusData.modelMode !== undefined && { modelMode: statusData.modelMode as SessionSummary['modelMode'] }),
                                                     ...(statusData.modelReasoningEffort !== undefined && { modelReasoningEffort: statusData.modelReasoningEffort as SessionSummary['modelReasoningEffort'] }),
                                                     ...(statusData.fastMode !== undefined && { fastMode: statusData.fastMode }),
+                                                    ...(statusData.activeMonitorCount !== undefined && { activeMonitorCount: statusData.activeMonitorCount }),
                                                     ...(statusData.terminationReason !== undefined && { terminationReason: statusData.terminationReason }),
                                                 }
                                                 : s

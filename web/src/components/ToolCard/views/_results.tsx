@@ -155,6 +155,20 @@ function looksLikeHtml(text: string): boolean {
     return trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html') || trimmed.startsWith('<div') || trimmed.startsWith('<span')
 }
 
+function getObjectString(value: unknown, key: string): string | null {
+    if (!isObject(value)) return null
+    const candidate = value[key]
+    return typeof candidate === 'string' && candidate.trim().length > 0 ? candidate.trim() : null
+}
+
+function snakeToWords(value: string): string {
+    return value
+        .split('_')
+        .filter((part) => part.length > 0)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ')
+}
+
 function looksLikeJson(text: string): boolean {
     const trimmed = text.trim()
     return (trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))
@@ -747,6 +761,86 @@ const CodexReasoningResultView: ToolViewComponent = (props: ToolViewProps) => {
     )
 }
 
+export function extractWebSearchDisplayData(input: unknown, result: unknown): {
+    query: string | null
+    actionLabel: string | null
+    actionDetails: string[]
+} {
+    const source = isObject(result) ? result : isObject(input) ? input : null
+    if (!source) {
+        return {
+            query: null,
+            actionLabel: null,
+            actionDetails: []
+        }
+    }
+
+    const query = getObjectString(source, 'query')
+    const action = isObject(source.action) ? source.action : null
+    const actionType = action ? getObjectString(action, 'type') ?? getObjectString(action, 'kind') : null
+    const actionLabel = actionType ? snakeToWords(actionType) : null
+    const actionDetails: string[] = []
+
+    if (action) {
+        const actionQuery = getObjectString(action, 'query')
+        if (actionQuery && actionQuery !== query) {
+            actionDetails.push(actionQuery)
+        }
+
+        if (Array.isArray(action.queries)) {
+            for (const candidate of action.queries) {
+                if (typeof candidate === 'string' && candidate.trim().length > 0) {
+                    actionDetails.push(candidate.trim())
+                }
+            }
+        }
+
+        const url = getObjectString(action, 'url')
+        if (url) {
+            actionDetails.push(url)
+        }
+    }
+
+    return {
+        query,
+        actionLabel,
+        actionDetails
+    }
+}
+
+const WebSearchResultView: ToolViewComponent = (props: ToolViewProps) => {
+    const display = extractWebSearchDisplayData(props.block.tool.input, props.block.tool.result)
+
+    if (!display.query && !display.actionLabel && display.actionDetails.length === 0) {
+        return props.block.tool.result === undefined || props.block.tool.result === null
+            ? <div className="text-sm text-[var(--app-hint)]">{placeholderForState(props.block.tool.state)}</div>
+            : <CodeBlock code={safeStringify(props.block.tool.result)} language="json" />
+    }
+
+    return (
+        <>
+            <div className="flex flex-col gap-1">
+                {display.query ? (
+                    <div className="text-sm text-[var(--app-fg)] break-words">
+                        Query: {display.query}
+                    </div>
+                ) : null}
+                {display.actionLabel ? (
+                    <div className="text-sm text-[var(--app-hint)]">
+                        Action: {display.actionLabel}
+                    </div>
+                ) : null}
+                {display.actionDetails.map((detail) => (
+                    <div key={detail} className="text-sm text-[var(--app-hint)] break-all">
+                        {detail}
+                    </div>
+                ))}
+            </div>
+            {props.block.tool.result !== undefined && props.block.tool.result !== null ? <RawJsonDevOnly value={props.block.tool.result} /> : null}
+        </>
+    )
+}
+
 const CodexDiffResultView: ToolViewComponent = (props: ToolViewProps) => {
     const result = props.block.tool.result
     if (result === undefined || result === null) {
@@ -959,7 +1053,7 @@ export const toolResultViewRegistry: Record<string, ToolViewComponent> = {
     MultiEdit: MutationResultView,
     Write: MutationResultView,
     WebFetch: MarkdownResultView,
-    WebSearch: MarkdownResultView,
+    WebSearch: WebSearchResultView,
     NotebookRead: ReadResultView,
     NotebookEdit: MutationResultView,
     TodoWrite: TodoWriteResultView,

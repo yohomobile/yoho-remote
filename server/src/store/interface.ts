@@ -79,6 +79,7 @@ export interface IStore {
         modelReasoningEffort?: string
         fastMode?: boolean
     }, namespace: string): Promise<boolean>
+    setSessionActiveMonitors(id: string, activeMonitors: unknown, namespace: string): Promise<boolean>
     getSession(id: string): Promise<StoredSession | null>
     getSessionByNamespace(id: string, namespace: string): Promise<StoredSession | null>
     getSessions(orgId?: string | null): Promise<StoredSession[]>

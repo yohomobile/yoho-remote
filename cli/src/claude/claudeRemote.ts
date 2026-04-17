@@ -355,6 +355,7 @@ export async function claudeRemote(opts: {
                         if (c.type === 'tool_result' && c.tool_use_id && opts.isAborted(c.tool_use_id)) {
                             logger.debug('[claudeRemote] Tool aborted, exiting claudeRemote');
                             clearThinkingTimeout();
+                            messages.end();
                             return;
                         }
                     }
@@ -372,5 +373,10 @@ export async function claudeRemote(opts: {
     } finally {
         clearThinkingTimeout();
         updateThinking(false);
+        // Ensure subprocess stdin EOF so claude child exits on any return/throw path.
+        // Why: without this, abnormal exits leave the subprocess sleeping on ep_poll
+        // forever (250-330MB each) because streamToStdin only calls stdin.end() when
+        // this iterable ends. end() is idempotent so double-calls from happy paths are safe.
+        messages.end();
     }
 }

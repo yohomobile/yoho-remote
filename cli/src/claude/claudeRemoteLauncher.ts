@@ -372,9 +372,14 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
         if (logMessage) {
             // Add permissions field to tool result content
-            if (logMessage.type === 'user' && logMessage.message?.content) {
-                const content = Array.isArray(logMessage.message.content)
-                    ? logMessage.message.content
+            if (logMessage.type === 'user' && 'message' in logMessage) {
+                const logMessageContent = (
+                    logMessage.message
+                    && typeof logMessage.message === 'object'
+                    && 'content' in logMessage.message
+                ) ? (logMessage.message as { content?: unknown }).content : undefined
+                const content = Array.isArray(logMessageContent)
+                    ? logMessageContent
                     : [];
 
                 // Modify the content array to add permissions to each tool_result
@@ -702,6 +707,13 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 await messageQueue.flush();
                 messageQueue.destroy();
                 logger.debug('[remote]: message queue flushed');
+
+                // Belt-and-suspenders: fire abort so any still-living claude subprocess
+                // gets SIGTERM via spawn's signal option. Safe to call after a clean
+                // turn — signal is already consumed.
+                if (abortController && !abortController.signal.aborted) {
+                    abortController.abort();
+                }
 
                 // Reset abort controller and future
                 abortController = null;

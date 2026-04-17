@@ -46,7 +46,35 @@ function extractTodosFromClaudeOutput(content: Record<string, unknown>): TodoIte
     if (content.type !== 'output') return null
 
     const data = isObject(content.data) ? content.data : null
-    if (!data || data.type !== 'assistant') return null
+    if (!data) return null
+
+    if (data.type === 'attachment') {
+        const attachment = isObject(data.attachment) ? data.attachment : null
+        if (!attachment || attachment.type !== 'todo_reminder') return null
+
+        const rawItems = Array.isArray(attachment.content) ? attachment.content : []
+        const todos: TodoItem[] = []
+
+        rawItems.forEach((item, index) => {
+            if (!isObject(item)) return
+            const contentValue = typeof item.content === 'string' ? item.content.trim() : ''
+            const statusValue = typeof item.status === 'string' ? item.status : null
+            if (!contentValue) return
+            if (statusValue !== 'pending' && statusValue !== 'in_progress' && statusValue !== 'completed') return
+
+            todos.push({
+                content: contentValue,
+                status: statusValue,
+                priority: 'medium',
+                id: `claude-plan-${index + 1}`
+            })
+        })
+
+        const parsed = TodosSchema.safeParse(todos)
+        return parsed.success && parsed.data.length > 0 ? parsed.data : null
+    }
+
+    if (data.type !== 'assistant') return null
 
     const message = isObject(data.message) ? data.message : null
     if (!message) return null

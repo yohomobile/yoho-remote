@@ -108,7 +108,8 @@ export class PostgresStore implements IStore {
                 permission_mode TEXT,
                 model_mode TEXT,
                 model_reasoning_effort TEXT,
-                fast_mode BOOLEAN
+                fast_mode BOOLEAN,
+                active_monitors JSONB
             );
             -- Add created_by column if not exists (migration)
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_by TEXT;
@@ -119,6 +120,7 @@ export class PostgresStore implements IStore {
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS fast_mode BOOLEAN;
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS termination_reason TEXT;
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_message_at BIGINT;
+            ALTER TABLE sessions ADD COLUMN IF NOT EXISTS active_monitors JSONB;
             UPDATE sessions SET last_message_at = sub.max_created
             FROM (
                 SELECT session_id, MAX(created_at) AS max_created
@@ -858,6 +860,20 @@ export class PostgresStore implements IStore {
             UPDATE sessions SET ${updates.join(', ')}
             WHERE id = $${paramIndex} AND namespace = $${paramIndex + 1}
         `, values)
+        return (result.rowCount ?? 0) > 0
+    }
+
+    async setSessionActiveMonitors(id: string, activeMonitors: unknown, namespace: string): Promise<boolean> {
+        const result = await this.pool.query(`
+            UPDATE sessions
+            SET active_monitors = $1, updated_at = $2, seq = seq + 1
+            WHERE id = $3 AND namespace = $4
+        `, [
+            JSON.stringify(activeMonitors),
+            Date.now(),
+            id,
+            namespace
+        ])
         return (result.rowCount ?? 0) > 0
     }
 
@@ -3136,7 +3152,8 @@ export class PostgresStore implements IStore {
             modelReasoningEffort: row.model_reasoning_effort ?? null,
             fastMode: row.fast_mode ?? null,
             terminationReason: row.termination_reason ?? null,
-            lastMessageAt: row.last_message_at != null ? Number(row.last_message_at) : null
+            lastMessageAt: row.last_message_at != null ? Number(row.last_message_at) : null,
+            activeMonitors: row.active_monitors ?? null
         }
     }
 

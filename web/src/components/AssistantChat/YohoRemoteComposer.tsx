@@ -28,6 +28,7 @@ import { FloatingOverlay } from '@/components/ChatInput/FloatingOverlay'
 import { Autocomplete } from '@/components/ChatInput/Autocomplete'
 import { StatusBar } from '@/components/AssistantChat/StatusBar'
 import { ComposerButtons } from '@/components/AssistantChat/ComposerButtons'
+import type { ActiveMonitor } from '@/chat/activeMonitors'
 import { FileIcon } from '@/components/FileIcon'
 import type { ApiClient } from '@/api/client'
 import { isFlutterApp } from '@/hooks/useFlutterApp'
@@ -297,6 +298,7 @@ export function YohoRemoteComposer(props: {
     autocompleteSuggestions?: (query: string) => Promise<Suggestion[]>
     otherUserTyping?: TypingUser | null
     setTextRef?: React.MutableRefObject<((text: string) => void) | null>
+    activeMonitors?: ActiveMonitor[]
 }) {
     const {
         apiClient,
@@ -1767,6 +1769,7 @@ export function YohoRemoteComposer(props: {
                             onSwitch={handleSwitch}
                             hasAttachments={hasAttachments}
                             onSendWithAttachments={handleSendWithAttachments}
+                            activeMonitors={props.activeMonitors}
                         />
                         {/* Hidden image input */}
                         <input

@@ -22,37 +22,101 @@ export type CodexPatchEntry = {
     text: string | null
 }
 
-export function getCodexPatchEntries(input: unknown, result: unknown): CodexPatchEntry[] {
-    if (isObject(input) && isObject(input.changes)) {
-        const entries = Object.entries(input.changes).map(([filePath, change]) => {
-            if (!isObject(change)) {
-                return {
-                    filePath,
-                    language: 'text' as const,
-                    text: null
-                }
-            }
-
-            const unifiedDiff = getString(change, 'unified_diff')
-            if (unifiedDiff) {
-                return {
-                    filePath,
-                    language: 'diff' as const,
-                    text: unifiedDiff
-                }
-            }
-
-            const content = getString(change, 'content')
-            return {
-                filePath,
-                language: 'text' as const,
-                text: content
-            }
-        })
-
-        if (entries.length > 0) {
-            return entries
+function getChangeEntry(filePath: string | null, change: unknown): CodexPatchEntry {
+    if (!isObject(change)) {
+        return {
+            filePath,
+            language: 'text',
+            text: null
         }
+    }
+
+    const unifiedDiff = getStringAny(change, ['unified_diff', 'diff'])
+    if (unifiedDiff) {
+        return {
+            filePath,
+            language: 'diff',
+            text: unifiedDiff
+        }
+    }
+
+    const content = getString(change, 'content')
+    return {
+        filePath,
+        language: 'text',
+        text: content
+    }
+}
+
+function getEntriesFromInputChanges(input: unknown): CodexPatchEntry[] {
+    if (!isObject(input) || !isObject(input.changes)) {
+        return []
+    }
+
+    const entries = Object.entries(input.changes).map(([filePath, change]) => getChangeEntry(filePath, change))
+    return entries.length > 0 ? entries : []
+}
+
+function getEntriesFromResultChanges(result: unknown): CodexPatchEntry[] {
+    if (!isObject(result) || !Array.isArray(result.changes)) {
+        return []
+    }
+
+    const entries = result.changes.flatMap((change): CodexPatchEntry[] => {
+        if (!isObject(change)) {
+            return []
+        }
+        const filePath = getStringAny(change, ['path', 'file_path'])
+        return [getChangeEntry(filePath, change)]
+    })
+
+    return entries.length > 0 ? entries : []
+}
+
+function mergePatchEntries(inputEntries: CodexPatchEntry[], resultEntries: CodexPatchEntry[]): CodexPatchEntry[] {
+    if (inputEntries.length === 0) return resultEntries
+    if (resultEntries.length === 0) return inputEntries
+
+    const overlayByPath = new Map<string, CodexPatchEntry>()
+    for (const entry of resultEntries) {
+        if (entry.filePath) {
+            overlayByPath.set(entry.filePath, entry)
+        }
+    }
+
+    const merged = inputEntries.map((entry) => {
+        if (!entry.filePath) {
+            return entry
+        }
+        const overlay = overlayByPath.get(entry.filePath)
+        if (!overlay) {
+            return entry
+        }
+        return {
+            filePath: overlay.filePath ?? entry.filePath,
+            language: overlay.text ? overlay.language : entry.language,
+            text: overlay.text ?? entry.text
+        }
+    })
+
+    const knownPaths = new Set(merged.map((entry) => entry.filePath).filter((value): value is string => typeof value === 'string'))
+    for (const entry of resultEntries) {
+        if (!entry.filePath || knownPaths.has(entry.filePath)) {
+            continue
+        }
+        merged.push(entry)
+    }
+
+    return merged
+}
+
+export function getCodexPatchEntries(input: unknown, result: unknown): CodexPatchEntry[] {
+    const mergedEntries = mergePatchEntries(
+        getEntriesFromInputChanges(input),
+        getEntriesFromResultChanges(result)
+    )
+    if (mergedEntries.length > 0) {
+        return mergedEntries
     }
 
     const resultDiff = getString(result, 'diff')

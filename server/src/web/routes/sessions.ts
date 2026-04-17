@@ -1,6 +1,11 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
-import type { DecryptedMessage, Session, SyncEngine } from '../../sync/syncEngine'
+import {
+    SessionActiveMonitorsSchema,
+    type DecryptedMessage,
+    type Session,
+    type SyncEngine,
+} from '../../sync/syncEngine'
 import type { SSEManager } from '../../sse/sseManager'
 import type { IStore, UserRole, StoredSession } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
@@ -73,8 +78,17 @@ type SessionSummary = {
     modelMode?: Session['modelMode']
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     fastMode?: boolean
+    activeMonitorCount?: number
     viewers?: SessionViewer[]
     terminationReason?: string
+}
+
+function getStoredActiveMonitorCount(stored: StoredSession): number | undefined {
+    const parsed = SessionActiveMonitorsSchema.safeParse(stored.activeMonitors)
+    if (!parsed.success) {
+        return undefined
+    }
+    return parsed.data.length
 }
 
 function toSessionSummary(session: Session): SessionSummary {
@@ -113,6 +127,7 @@ function toSessionSummary(session: Session): SessionSummary {
         modelMode: session.modelMode,
         modelReasoningEffort: session.modelReasoningEffort,
         fastMode: session.fastMode,
+        activeMonitorCount: session.activeMonitors.length,
         terminationReason: session.terminationReason,
     }
 }
@@ -141,6 +156,7 @@ function storedSessionToSummary(stored: StoredSession): SessionSummary {
         modelMode: stored.modelMode as Session['modelMode'] | undefined,
         modelReasoningEffort: stored.modelReasoningEffort as Session['modelReasoningEffort'] | undefined,
         fastMode: stored.fastMode ?? undefined,
+        activeMonitorCount: getStoredActiveMonitorCount(stored),
         terminationReason: stored.terminationReason ?? undefined,
     }
 }
@@ -465,25 +481,178 @@ async function resolveSpawnTarget(
     return { ok: true, directory: sessionPath }
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object'
+}
+
+function extractMessageSentFrom(content: unknown): string | null {
+    if (!isObject(content)) {
+        return null
+    }
+    const meta = isObject(content.meta) ? content.meta : null
+    return typeof meta?.sentFrom === 'string' ? meta.sentFrom : null
+}
+
+function extractTaggedValue(text: string, tagName: string): string | null {
+    const pattern = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, 'i')
+    const match = text.match(pattern)
+    const value = match?.[1]?.trim()
+    return value && value.length > 0 ? value : null
+}
+
+function extractTodoReminderText(items: unknown): string | null {
+    if (!Array.isArray(items)) {
+        return null
+    }
+
+    const lines = items
+        .map((item) => {
+            if (!isObject(item)) return null
+            const content = typeof item.content === 'string' ? item.content.trim() : ''
+            const status = typeof item.status === 'string' ? item.status : 'pending'
+            if (!content) return null
+            return `- [${status}] ${content}`
+        })
+        .filter((line): line is string => Boolean(line))
+
+    if (lines.length === 0) {
+        return null
+    }
+
+    return `当前待办：\n${lines.join('\n')}`
+}
+
+function extractClaudeAttachmentText(dataRecord: Record<string, unknown>): string | null {
+    if (dataRecord.type !== 'attachment') {
+        return null
+    }
+
+    const attachment = isObject(dataRecord.attachment) ? dataRecord.attachment : null
+    if (!attachment) {
+        return null
+    }
+
+    const attachmentType = typeof attachment.type === 'string' ? attachment.type : null
+    if (attachmentType === 'plan_file_reference') {
+        const planFilePath = typeof attachment.planFilePath === 'string' ? attachment.planFilePath.trim() : ''
+        const planContent = typeof attachment.planContent === 'string' ? attachment.planContent.trim() : ''
+        if (planContent) {
+            return planFilePath
+                ? `当前计划文件（${planFilePath}）：\n${planContent}`
+                : `当前计划文件：\n${planContent}`
+        }
+        if (planFilePath) {
+            return `当前计划文件：${planFilePath}`
+        }
+        return null
+    }
+
+    if (attachmentType === 'todo_reminder') {
+        return extractTodoReminderText(attachment.content)
+    }
+
+    if (attachmentType === 'plan_mode') {
+        const planFilePath = typeof attachment.planFilePath === 'string' ? attachment.planFilePath.trim() : ''
+        return planFilePath
+            ? `当前处于计划模式（计划文件：${planFilePath}）`
+            : '当前处于计划模式'
+    }
+
+    if (attachmentType === 'queued_command') {
+        const prompt = typeof attachment.prompt === 'string' ? attachment.prompt.trim() : ''
+        if (!prompt) {
+            return null
+        }
+        const summary = extractTaggedValue(prompt, 'summary')
+        if (summary) {
+            return summary
+        }
+        if (attachment.commandMode === 'prompt') {
+            return `排队命令：${prompt}`
+        }
+    }
+
+    return null
+}
+
 function extractUserText(content: unknown): string | null {
     if (!content || typeof content !== 'object') {
         return null
     }
     const record = content as Record<string, unknown>
-    if (record.role !== 'user') {
+
+    const extractClaudeUserMessageText = (value: unknown): string | null => {
+        if (typeof value === 'string') {
+            return value.trim() || null
+        }
+        if (!Array.isArray(value)) {
+            return null
+        }
+        const texts = value
+            .map((item) => {
+                if (!item || typeof item !== 'object') return null
+                const itemRecord = item as Record<string, unknown>
+                if (itemRecord.type === 'text' && typeof itemRecord.text === 'string') {
+                    return itemRecord.text.trim()
+                }
+                if (itemRecord.type === 'image') {
+                    const source = itemRecord.source
+                    const mediaType = source && typeof source === 'object'
+                        ? (source as Record<string, unknown>).media_type
+                        : undefined
+                    return `[Image: ${typeof mediaType === 'string' ? mediaType : 'image'}]`
+                }
+                if (itemRecord.type === 'document') {
+                    const source = itemRecord.source
+                    const mediaType = source && typeof source === 'object'
+                        ? (source as Record<string, unknown>).media_type
+                        : undefined
+                    return `[Document: ${typeof mediaType === 'string' ? mediaType : 'file'}]`
+                }
+                return null
+            })
+            .filter((text): text is string => Boolean(text))
+        if (texts.length === 0) {
+            return null
+        }
+        return texts.join('\n')
+    }
+
+    if (record.role === 'user') {
+        const body = record.content as Record<string, unknown> | string | undefined
+        if (!body) {
+            return null
+        }
+        if (typeof body === 'string') {
+            return body.trim() || null
+        }
+        if (typeof body === 'object' && body.type === 'text' && typeof body.text === 'string') {
+            return body.text.trim() || null
+        }
         return null
     }
-    const body = record.content as Record<string, unknown> | string | undefined
-    if (!body) {
+
+    if (record.role !== 'agent') {
         return null
     }
-    if (typeof body === 'string') {
-        return body.trim() || null
+
+    const payload = record.content as Record<string, unknown> | undefined
+    if (!payload || payload.type !== 'output') {
+        return null
     }
-    if (typeof body === 'object' && body.type === 'text' && typeof body.text === 'string') {
-        return body.text.trim() || null
+
+    const data = payload.data
+    if (!data || typeof data !== 'object') {
+        return null
     }
-    return null
+
+    const dataRecord = data as Record<string, unknown>
+    if (dataRecord.type !== 'user' || typeof dataRecord.message !== 'object') {
+        return null
+    }
+
+    const message = dataRecord.message as Record<string, unknown>
+    return extractClaudeUserMessageText(message.content)
 }
 
 function extractAgentText(content: unknown): string | null {
@@ -508,6 +677,16 @@ function extractAgentText(content: unknown): string | null {
     }
     if (dataRecord.type === 'message' && typeof dataRecord.message === 'string') {
         return dataRecord.message.trim() || null
+    }
+    if (dataRecord.type === 'tool_use_summary' && typeof dataRecord.summary === 'string') {
+        return dataRecord.summary.trim() || null
+    }
+    if (dataRecord.type === 'result' && typeof dataRecord.result === 'string') {
+        return dataRecord.result.trim() || null
+    }
+    const attachmentText = extractClaudeAttachmentText(dataRecord)
+    if (attachmentText) {
+        return attachmentText
     }
     if (dataRecord.type === 'assistant' && typeof dataRecord.message === 'object') {
         const message = dataRecord.message as Record<string, unknown>
@@ -534,7 +713,55 @@ function extractAgentText(content: unknown): string | null {
     return null
 }
 
-function buildResumeContextMessage(session: Session, messages: DecryptedMessage[]): string | null {
+type ResumeDialogLine = {
+    speaker: '用户' | '助手'
+    text: string
+    sentFrom: string | null
+}
+
+function appendResumeDialogLine(lines: ResumeDialogLine[], next: ResumeDialogLine): void {
+    const text = next.text.trim()
+    if (!text) {
+        return
+    }
+
+    const candidate = { ...next, text }
+    const previous = lines.at(-1)
+    if (!previous) {
+        lines.push(candidate)
+        return
+    }
+
+    if (previous.speaker === candidate.speaker) {
+        if (
+            candidate.speaker === '用户'
+            && previous.text === candidate.text
+            && (previous.sentFrom === 'cli' || candidate.sentFrom === 'cli')
+        ) {
+            if (previous.sentFrom === 'cli' && candidate.sentFrom !== 'cli') {
+                lines[lines.length - 1] = candidate
+            }
+            return
+        }
+
+        if (candidate.speaker === '助手') {
+            if (previous.text === candidate.text) {
+                return
+            }
+            if (candidate.text.startsWith(previous.text) && candidate.text.length > previous.text.length) {
+                lines[lines.length - 1] = candidate
+                return
+            }
+            if (previous.text.startsWith(candidate.text) && previous.text.length > candidate.text.length) {
+                return
+            }
+        }
+    }
+
+    lines.push(candidate)
+}
+
+export function buildResumeContextMessage(session: Session, messages: DecryptedMessage[]): string | null {
     const summary = session.metadata?.summary?.text?.trim()
     const lines: string[] = [
         '#InitPrompt-ResumeContext',
@@ -544,16 +771,24 @@ function buildResumeContextMessage(session: Session, messages: DecryptedMessage[
         lines.push(`摘要：${summary}`)
     }
 
-    const dialogLines: string[] = []
+    const dialogLines: ResumeDialogLine[] = []
     for (const message of messages) {
         const userText = extractUserText(message.content)
         if (userText) {
-            dialogLines.push(`用户：${userText}`)
+            appendResumeDialogLine(dialogLines, {
+                speaker: '用户',
+                text: userText,
+                sentFrom: extractMessageSentFrom(message.content)
+            })
             continue
         }
         const agentText = extractAgentText(message.content)
         if (agentText) {
-            dialogLines.push(`助手：${agentText}`)
+            appendResumeDialogLine(dialogLines, {
+                speaker: '助手',
+                text: agentText,
+                sentFrom: extractMessageSentFrom(message.content)
+            })
         }
     }
 
@@ -563,7 +798,7 @@ function buildResumeContextMessage(session: Session, messages: DecryptedMessage[
 
     if (dialogLines.length > 0) {
         lines.push('最近对话片段：')
-        lines.push(...dialogLines)
+        lines.push(...dialogLines.map((line) => `${line.speaker}：${line.text}`))
     }
 
     if (lines.length <= 2) {
@@ -986,6 +1221,7 @@ export function createSessionsRoutes(
                 summary.modelMode = memorySession.modelMode ?? summary.modelMode
                 summary.modelReasoningEffort = memorySession.modelReasoningEffort ?? summary.modelReasoningEffort
                 summary.fastMode = memorySession.fastMode ?? summary.fastMode
+                summary.activeMonitorCount = memorySession.activeMonitors.length
                 summary.terminationReason = memorySession.terminationReason ?? summary.terminationReason
 
                 // Add viewers info

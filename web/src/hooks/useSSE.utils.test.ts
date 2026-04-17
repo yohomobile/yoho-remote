@@ -12,6 +12,10 @@ describe('useSSE utils', () => {
             active: true,
             thinking: false,
         })).toBe(true)
+
+        expect(hasSessionStatusFields({
+            activeMonitorCount: 1,
+        })).toBe(true)
     })
 
     test('recognizes sid-only refresh hints', () => {
@@ -73,5 +77,38 @@ describe('useSSE utils', () => {
         expect(session.permissionMode).toBe('safe-yolo')
         expect(session.modelMode).toBe('gpt-5.4')
         expect(session.fastMode).toBe(true)
+    })
+
+    test('maps active monitors from full session payloads', () => {
+        const session = toSessionFromSsePayload({
+            id: 'session-1',
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            thinking: false,
+            metadata: { path: '/tmp/project', host: 'ncu' },
+            agentState: null,
+            activeMonitors: [{
+                id: 'mon-1',
+                description: 'watch logs',
+                command: 'tail -f app.log',
+                persistent: false,
+                timeoutMs: 30_000,
+                startedAt: 123,
+                taskId: 'task-1',
+                state: 'running',
+            }],
+        })
+
+        expect(session.activeMonitors).toEqual([{
+            id: 'mon-1',
+            description: 'watch logs',
+            command: 'tail -f app.log',
+            persistent: false,
+            timeoutMs: 30_000,
+            startedAt: 123,
+            taskId: 'task-1',
+            state: 'running',
+        }])
     })
 })

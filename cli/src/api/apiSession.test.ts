@@ -88,3 +88,80 @@ describe('ApiSessionClient state update failures', () => {
         debugSpy.mockRestore()
     })
 })
+
+describe('ApiSessionClient.sendClaudeSessionMessage', () => {
+    it('skips internal Claude metadata messages like last-prompt', () => {
+        const emit = vi.fn()
+        const client = Object.create(ApiSessionClient.prototype) as any
+
+        client.sessionId = 'session-3'
+        client.socket = { emit }
+        client.updateMetadata = vi.fn()
+
+        client.sendClaudeSessionMessage({
+            type: 'last-prompt',
+            sessionId: 'session-3',
+            lastPrompt: 'hello'
+        } as any)
+
+        expect(emit).not.toHaveBeenCalled()
+    })
+
+    it('skips internal Claude top-level events like file-history-snapshot', () => {
+        const emit = vi.fn()
+        const client = Object.create(ApiSessionClient.prototype) as any
+
+        client.sessionId = 'session-3b'
+        client.socket = { emit }
+        client.updateMetadata = vi.fn()
+
+        client.sendClaudeSessionMessage({
+            type: 'file-history-snapshot',
+            sessionId: 'session-3b',
+            uuid: 'snapshot-1',
+        } as any)
+
+        expect(emit).not.toHaveBeenCalled()
+    })
+
+    it('forwards plan attachments like plan_mode instead of filtering them out', () => {
+        const emit = vi.fn()
+        const client = Object.create(ApiSessionClient.prototype) as any
+
+        client.sessionId = 'session-4'
+        client.socket = { emit }
+        client.updateMetadata = vi.fn()
+
+        client.sendClaudeSessionMessage({
+            type: 'attachment',
+            uuid: 'attachment-plan-mode',
+            timestamp: '2026-04-17T00:00:00.000Z',
+            attachment: {
+                type: 'plan_mode',
+                planFilePath: '/tmp/demo-plan.md',
+                planExists: false
+            }
+        } as any)
+
+        expect(emit).toHaveBeenCalledTimes(1)
+        expect(emit).toHaveBeenCalledWith('message', {
+            sid: 'session-4',
+            message: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: expect.objectContaining({
+                        type: 'attachment',
+                        attachment: expect.objectContaining({
+                            type: 'plan_mode',
+                            planFilePath: '/tmp/demo-plan.md'
+                        })
+                    })
+                },
+                meta: {
+                    sentFrom: 'cli'
+                }
+            }
+        })
+    })
+})

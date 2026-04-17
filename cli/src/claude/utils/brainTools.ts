@@ -523,6 +523,11 @@ export function registerBrainTools(
                 }
             }
 
+            if (session.metadata?.source === 'brain-child' && !session.metadata?.mainSessionId) {
+                await api.patchSessionMetadata(args.sessionId, { mainSessionId: brainSessionId })
+                logger.debug(`[brain] Repaired missing mainSessionId for child session ${args.sessionId}`)
+            }
+
             // Send message - fire and forget
             await api.sendMessageToSession(args.sessionId, args.message, 'brain')
 

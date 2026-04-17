@@ -9,6 +9,14 @@ export type UsageData = {
     model_context_window?: number
     reasoning_output_tokens?: number
     rate_limit_used_percent?: number
+    context_tokens_reliable?: boolean
+    clear_context_usage?: boolean
+}
+
+export type PlanTodoReminderItem = {
+    content: string
+    status: 'pending' | 'in_progress' | 'completed'
+    activeForm?: string
 }
 
 export type AgentEvent =
@@ -18,6 +26,26 @@ export type AgentEvent =
     | { type: 'limit-reached'; endsAt: number }
     | { type: 'ready' }
     | { type: 'turn-duration'; durationMs: number }
+    | {
+        type: 'plan-mode'
+        reminderType?: string
+        isSubAgent?: boolean
+        planFilePath?: string
+        planExists?: boolean
+    }
+    | {
+        type: 'todo-reminder'
+        items: PlanTodoReminderItem[]
+        itemCount: number
+        pendingCount: number
+        inProgressCount: number
+        completedCount: number
+    }
+    | {
+        type: 'plan-file'
+        planFilePath?: string
+        planContent?: string
+    }
     | ({ type: string } & Record<string, unknown>)
 
 export type ToolResultPermission = {

@@ -1,5 +1,5 @@
 import type { DecryptedMessage } from '@/types/api'
-import type { AgentEvent, NormalizedAgentContent, NormalizedMessage, ToolResultPermission } from '@/chat/types'
+import type { AgentEvent, NormalizedAgentContent, NormalizedMessage, PlanTodoReminderItem, ToolResultPermission } from '@/chat/types'
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object'
@@ -56,7 +56,7 @@ function inferCodexToolResultIsError(output: unknown): boolean {
     }
 
     const status = asString(output.status)?.toLowerCase()
-    if (status === 'error' || status === 'failed') {
+    if (status === 'error' || status === 'failed' || status === 'declined') {
         return true
     }
 
@@ -211,6 +211,15 @@ function normalizeAssistantOutput(
     const inputTokens = usage ? asNumber(usage.input_tokens) : null
     const outputTokens = usage ? asNumber(usage.output_tokens) : null
 
+    if (blocks.length === 0 && Array.isArray(modelContent) && modelContent.length > 0) {
+        blocks.push({
+            type: 'text',
+            text: safeStringify(modelContent),
+            uuid,
+            parentUUID
+        })
+    }
+
     return {
         id: messageId,
         localId,
@@ -274,7 +283,7 @@ function normalizeUserOutput(
     createdAt: number,
     data: Record<string, unknown>,
     meta?: unknown
-): NormalizedMessage | null {
+): NormalizedMessage | NormalizedMessage[] | null {
     const uuid = asString(data.uuid) ?? messageId
     const parentUUID = asString(data.parentUuid) ?? null
     const isSidechain = Boolean(data.isSidechain)
@@ -324,13 +333,14 @@ function normalizeUserOutput(
         }
     }
 
-    const blocks: NormalizedAgentContent[] = []
+    const userTextParts: string[] = []
+    const agentBlocks: NormalizedAgentContent[] = []
 
     if (Array.isArray(messageContent)) {
         for (const block of messageContent) {
             if (!isObject(block) || typeof block.type !== 'string') continue
             if (block.type === 'text' && typeof block.text === 'string') {
-                blocks.push({ type: 'text', text: block.text, uuid, parentUUID })
+                userTextParts.push(block.text)
                 continue
             }
             if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
@@ -340,7 +350,7 @@ function normalizeUserOutput(
 
                 const permissions = normalizeToolResultPermissions(block.permissions)
 
-                blocks.push({
+                agentBlocks.push({
                     type: 'tool-result',
                     tool_use_id: block.tool_use_id,
                     content: embeddedToolUseResult ?? rawContent,
@@ -354,26 +364,209 @@ function normalizeUserOutput(
             if (block.type === 'image') {
                 const source = isObject(block.source) ? block.source : null
                 const mediaType = source ? asString(source.media_type) : null
-                blocks.push({ type: 'text', text: `[Image: ${mediaType ?? 'image'}]`, uuid, parentUUID })
+                userTextParts.push(`[Image: ${mediaType ?? 'image'}]`)
                 continue
             }
             if (block.type === 'document') {
                 const source = isObject(block.source) ? block.source : null
                 const mediaType = source ? asString(source.media_type) : null
-                blocks.push({ type: 'text', text: `[Document: ${mediaType ?? 'file'}]`, uuid, parentUUID })
+                userTextParts.push(`[Document: ${mediaType ?? 'file'}]`)
+                continue
             }
+            userTextParts.push(safeStringify(block))
         }
     }
 
-    return {
-        id: messageId,
-        localId,
-        createdAt,
-        role: 'agent',
-        isSidechain,
-        content: blocks,
-        meta
+    const userText = userTextParts
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0)
+        .join('\n')
+
+    const userMessage: NormalizedMessage | null = userText
+        ? {
+            id: agentBlocks.length > 0 ? `${messageId}:user` : messageId,
+            localId,
+            createdAt,
+            role: 'user',
+            isSidechain: false,
+            content: { type: 'text', text: userText },
+            meta
+        }
+        : null
+
+    const agentMessage: NormalizedMessage | null = agentBlocks.length > 0
+        ? {
+            id: userMessage ? `${messageId}:tool-result` : messageId,
+            localId,
+            createdAt,
+            role: 'agent',
+            isSidechain,
+            content: agentBlocks,
+            meta
+        }
+        : null
+
+    if (userMessage && agentMessage) {
+        return [userMessage, agentMessage]
     }
+    return userMessage ?? agentMessage
+}
+
+function normalizePlanTodoReminderItems(value: unknown): PlanTodoReminderItem[] {
+    if (!Array.isArray(value)) return []
+
+    const items: PlanTodoReminderItem[] = []
+    for (const raw of value) {
+        if (!isObject(raw)) continue
+        const content = asString(raw.content)?.trim()
+        const status = asString(raw.status)
+        if (!content) continue
+        if (status !== 'pending' && status !== 'in_progress' && status !== 'completed') continue
+        const activeForm = asString(raw.activeForm)?.trim()
+        items.push({
+            content,
+            status,
+            activeForm: activeForm && activeForm.length > 0 ? activeForm : undefined
+        })
+    }
+
+    return items
+}
+
+function extractTaggedValue(text: string, tagName: string): string | null {
+    const pattern = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, 'i')
+    const match = text.match(pattern)
+    const value = match?.[1]?.trim()
+    return value && value.length > 0 ? value : null
+}
+
+function normalizeQueuedCommandAttachment(
+    messageId: string,
+    localId: string | null,
+    createdAt: number,
+    attachment: Record<string, unknown>,
+    meta?: unknown
+): NormalizedMessage | null {
+    const prompt = asString(attachment.prompt)?.trim()
+    const commandMode = asString(attachment.commandMode)
+
+    if (commandMode === 'task-notification' && prompt) {
+        return {
+            id: messageId,
+            localId,
+            createdAt,
+            role: 'event',
+            content: {
+                type: 'task-notification',
+                taskId: extractTaggedValue(prompt, 'task-id') ?? undefined,
+                toolUseId: extractTaggedValue(prompt, 'tool-use-id') ?? undefined,
+                status: extractTaggedValue(prompt, 'status') ?? undefined,
+                summary: extractTaggedValue(prompt, 'summary') ?? prompt
+            } as AgentEvent,
+            isSidechain: false,
+            meta
+        }
+    }
+
+    if (commandMode === 'prompt' && prompt) {
+        return {
+            id: messageId,
+            localId,
+            createdAt,
+            role: 'event',
+            content: {
+                type: 'message',
+                message: `Queued command: ${prompt}`
+            },
+            isSidechain: false,
+            meta
+        }
+    }
+
+    return null
+}
+
+function normalizeClaudeAttachment(
+    messageId: string,
+    localId: string | null,
+    createdAt: number,
+    data: Record<string, unknown>,
+    meta?: unknown
+): NormalizedMessage | null {
+    const attachment = isObject(data.attachment) ? data.attachment : null
+    if (!attachment) return null
+
+    const attachmentType = asString(attachment.type)
+
+    if (attachmentType === 'plan_mode') {
+        return {
+            id: messageId,
+            localId,
+            createdAt,
+            role: 'event',
+            content: {
+                type: 'plan-mode',
+                reminderType: asString(attachment.reminderType) ?? undefined,
+                isSubAgent: asBoolean(attachment.isSubAgent) ?? undefined,
+                planFilePath: asString(attachment.planFilePath) ?? undefined,
+                planExists: asBoolean(attachment.planExists) ?? undefined
+            } as AgentEvent,
+            isSidechain: false,
+            meta
+        }
+    }
+
+    if (attachmentType === 'todo_reminder') {
+        const items = normalizePlanTodoReminderItems(attachment.content)
+        if (items.length === 0) {
+            return null
+        }
+
+        return {
+            id: messageId,
+            localId,
+            createdAt,
+            role: 'event',
+            content: {
+                type: 'todo-reminder',
+                items,
+                itemCount: asNumber(attachment.itemCount) ?? items.length,
+                pendingCount: items.filter((item) => item.status === 'pending').length,
+                inProgressCount: items.filter((item) => item.status === 'in_progress').length,
+                completedCount: items.filter((item) => item.status === 'completed').length
+            } as AgentEvent,
+            isSidechain: false,
+            meta
+        }
+    }
+
+    if (attachmentType === 'plan_file_reference') {
+        const planFilePath = asString(attachment.planFilePath) ?? undefined
+        const planContent = asString(attachment.planContent) ?? undefined
+        if (!planFilePath && !planContent) {
+            return null
+        }
+
+        return {
+            id: messageId,
+            localId,
+            createdAt,
+            role: 'event',
+            content: {
+                type: 'plan-file',
+                planFilePath,
+                planContent
+            } as AgentEvent,
+            isSidechain: false,
+            meta
+        }
+    }
+
+    if (attachmentType === 'queued_command') {
+        return normalizeQueuedCommandAttachment(messageId, localId, createdAt, attachment, meta)
+    }
+
+    return null
 }
 
 function normalizeAgentRecord(
@@ -405,6 +598,9 @@ function normalizeAgentRecord(
         if (data.type === 'user') {
             return normalizeUserOutput(messageId, localId, createdAt, data, meta)
         }
+        if (data.type === 'attachment') {
+            return normalizeClaudeAttachment(messageId, localId, createdAt, data, meta)
+        }
         if (data.type === 'system') {
             const subtype = asString(data.subtype)
 
@@ -434,6 +630,7 @@ function normalizeAgentRecord(
                         description: asString(data.description) ?? undefined,
                         taskId: asString(data.task_id) ?? undefined,
                         taskType: asString(data.task_type) ?? undefined,
+                        toolUseId: asString(data.tool_use_id) ?? undefined,
                     } as AgentEvent,
                     isSidechain: false,
                     meta
@@ -451,6 +648,7 @@ function normalizeAgentRecord(
                         summary: asString(data.summary) ?? undefined,
                         status: asString(data.status) ?? undefined,
                         taskId: asString(data.task_id) ?? undefined,
+                        toolUseId: asString(data.tool_use_id) ?? undefined,
                     } as AgentEvent,
                     isSidechain: false,
                     meta
@@ -490,6 +688,18 @@ function normalizeAgentRecord(
                 }
             }
 
+            if (subtype === 'microcompact_boundary') {
+                return {
+                    id: messageId,
+                    localId,
+                    createdAt,
+                    role: 'event',
+                    content: { type: 'compact-boundary' } as AgentEvent,
+                    isSidechain: false,
+                    meta
+                }
+            }
+
             if (subtype === 'status') {
                 const status = asString(data.status)
                 if (status === 'compacting') {
@@ -504,6 +714,22 @@ function normalizeAgentRecord(
                     }
                 }
                 return null
+            }
+
+            if (subtype === 'local_command') {
+                const localCommandContent = asString(data.content)?.trim()
+                if (!localCommandContent) {
+                    return null
+                }
+                return {
+                    id: messageId,
+                    localId,
+                    createdAt,
+                    role: 'agent',
+                    isSidechain: false,
+                    content: [{ type: 'text', text: localCommandContent, uuid: messageId, parentUUID: null }],
+                    meta
+                }
             }
 
             if (subtype === 'hook_started' || subtype === 'hook_progress' || subtype === 'hook_response') {
@@ -865,6 +1091,9 @@ function normalizeAgentRecord(
                 return null
             }
 
+            const source = asString(data.source)?.trim()
+            const prefix = source === 'item' ? 'Notice' : 'Error'
+
             return {
                 id: messageId,
                 localId,
@@ -872,7 +1101,30 @@ function normalizeAgentRecord(
                 role: 'event',
                 content: {
                     type: 'message',
-                    message: `Error: ${errorMessage}`
+                    message: `${prefix}: ${errorMessage}`
+                },
+                isSidechain: false,
+                meta
+            }
+        }
+
+        if (data.type === 'notice') {
+            const noticeMessage = asString(data.message)?.trim()
+            if (!noticeMessage) {
+                return null
+            }
+
+            const level = asString(data.level)?.trim().toLowerCase()
+            const prefix = level === 'warning' ? 'Notice' : 'Message'
+
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'event',
+                content: {
+                    type: 'message',
+                    message: `${prefix}: ${noticeMessage}`
                 },
                 isSidechain: false,
                 meta
@@ -885,8 +1137,8 @@ function normalizeAgentRecord(
             // New format: nested last_token_usage + model_context_window (per-turn accurate data)
             // TokenUsageInfo { last_token_usage: TokenUsage, total_token_usage: TokenUsage, model_context_window: i64 }
             const lastUsage = isObject(info?.last_token_usage) ? (info.last_token_usage as Record<string, unknown>) : null
-            // Old format (Codex ≤0.77): no model_context_window — fall back to 200K (o4-mini/o3 context window)
-            const modelContextWindow = asNumber(info?.model_context_window) ?? 200_000
+            const modelContextWindow = asNumber(info?.model_context_window) ?? undefined
+            const clearContextUsage = info === null
 
             let inputTokens: number | null
             let outputTokens: number | null
@@ -912,15 +1164,21 @@ function normalizeAgentRecord(
                 cacheReadTokens = 0
                 cacheCreationTokens = 0
             } else {
-                // Old format: flat input_tokens (cumulative session billing total).
-                // cached_input_tokens is SUBSET of input_tokens — avoid double-counting.
+                // Old format (codex exec --json): flat usage totals are cumulative billing counters
+                // and do NOT reflect the current context window after compaction/resume.
+                // We keep them for non-context stats only.
                 inputTokens = asNumber(info?.input_tokens)
                 outputTokens = asNumber(info?.output_tokens)
                 cacheReadTokens = asNumber(info?.cache_read_input_tokens) ?? 0
                 cacheCreationTokens = asNumber(info?.cache_creation_input_tokens) ?? 0
             }
 
-            if (inputTokens === null && outputTokens === null && cacheReadTokens === 0 && cacheCreationTokens === 0) {
+            const hasAnyTokenCount = inputTokens !== null
+                || outputTokens !== null
+                || cacheReadTokens !== 0
+                || cacheCreationTokens !== 0
+
+            if (!hasAnyTokenCount && rateLimitUsedPercent === undefined && !clearContextUsage) {
                 return null
             }
 
@@ -939,7 +1197,9 @@ function normalizeAgentRecord(
                     cache_read_input_tokens: cacheReadTokens,
                     model_context_window: modelContextWindow,
                     reasoning_output_tokens: reasoningOutputTokens,
-                    rate_limit_used_percent: rateLimitUsedPercent
+                    rate_limit_used_percent: rateLimitUsedPercent,
+                    context_tokens_reliable: Boolean(lastUsage),
+                    clear_context_usage: clearContextUsage || undefined
                 }
             }
         }
@@ -1063,6 +1323,82 @@ function normalizeUserRecord(
     return null
 }
 
+const SUPPRESSED_CLAUDE_TOP_LEVEL_TYPES = new Set([
+    'last-prompt',
+    'permission-mode',
+    'ai-title',
+    'custom-title',
+    'agent-name',
+    'queue-operation'
+])
+
+const SUPPRESSED_CLAUDE_ATTACHMENT_TYPES = new Set([
+    'skill_listing',
+    'hook_success',
+    'hook_non_blocking_error',
+    'compact_file_reference',
+    'command_permissions',
+    'nested_memory',
+    'deferred_tools_delta',
+    'date_change',
+    'file',
+    'directory',
+    'edited_text_file',
+    'invoked_skills'
+])
+
+function shouldSuppressKnownAgentContent(content: unknown): boolean {
+    if (!isObject(content) || typeof content.type !== 'string') return false
+
+    if (content.type === 'event') {
+        const event = normalizeAgentEvent(content.data)
+        return event?.type === 'ready'
+    }
+
+    if (content.type !== 'output') return false
+
+    const data = isObject(content.data) ? content.data : null
+    if (!data || typeof data.type !== 'string') return false
+
+    if (Boolean(data.isMeta) || Boolean(data.isCompactSummary)) return true
+
+    if (SUPPRESSED_CLAUDE_TOP_LEVEL_TYPES.has(data.type)) {
+        return true
+    }
+
+    if (data.type === 'attachment') {
+        const attachment = isObject(data.attachment) ? data.attachment : null
+        const attachmentType = asString(attachment?.type)
+        if (attachmentType === 'todo_reminder') {
+            return normalizePlanTodoReminderItems(attachment?.content).length === 0
+        }
+        return attachmentType !== null && SUPPRESSED_CLAUDE_ATTACHMENT_TYPES.has(attachmentType)
+    }
+
+    if (data.type === 'auth_status' || data.type === 'prompt_suggestion' || data.type === 'queue-operation') {
+        return true
+    }
+
+    if (data.type === 'rate_limit_event') {
+        const info = isObject(data.rate_limit_info) ? data.rate_limit_info : null
+        return asString(info?.status) === 'allowed'
+    }
+
+    if (data.type === 'system') {
+        const subtype = asString(data.subtype)
+        return subtype === 'task_progress' || subtype === 'files_persisted' || subtype === 'init'
+            || (subtype === 'status' && asString(data.status) !== 'compacting')
+    }
+
+    if (data.type === 'progress') {
+        const progressData = isObject(data.data) ? data.data : null
+        const progressType = asString(progressData?.type)
+        return progressType === 'agent_progress'
+    }
+
+    return false
+}
+
 export function normalizeDecryptedMessage(message: DecryptedMessage): NormalizedMessage | NormalizedMessage[] | null {
     const record = unwrapRoleWrappedRecordEnvelope(message.content)
     if (!record) {
@@ -1112,14 +1448,10 @@ export function normalizeDecryptedMessage(message: DecryptedMessage): Normalized
         if (!normalized && isCodexContent(record.content)) {
             return null
         }
-        // If normalizeAgentRecord explicitly returned null for a known output
-        // type (system status, filtered events, etc.), suppress the message
-        // instead of falling back to raw JSON stringify.
-        if (!normalized && isObject(record.content)) {
-            const contentType = (record.content as Record<string, unknown>).type
-            if (contentType === 'output' || contentType === 'event') {
-                return null
-            }
+        // Only suppress content we intentionally filter out. Unknown Claude
+        // output/event subtypes should degrade to raw JSON instead of vanishing.
+        if (!normalized && shouldSuppressKnownAgentContent(record.content)) {
+            return null
         }
         if (!normalized) {
             return {

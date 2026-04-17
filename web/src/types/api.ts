@@ -64,6 +64,17 @@ export type TodoItem = {
     id: string
 }
 
+export type SessionActiveMonitor = {
+    id: string
+    description: string
+    command: string
+    persistent: boolean
+    timeoutMs: number | null
+    startedAt: number
+    taskId: string | null
+    state: 'running' | 'unknown'
+}
+
 export type Session = {
     id: string
     createdAt: number
@@ -79,6 +90,7 @@ export type Session = {
     modelMode?: ModelMode
     modelReasoningEffort?: ModelReasoningEffort
     fastMode?: boolean
+    activeMonitors?: SessionActiveMonitor[]
     terminationReason?: string
 }
 
@@ -254,6 +266,7 @@ export type SessionSummary = {
     modelMode?: ModelMode
     modelReasoningEffort?: ModelReasoningEffort
     fastMode?: boolean
+    activeMonitorCount?: number
     viewers?: SessionViewer[]
     terminationReason?: string  // e.g. 'LICENSE_EXPIRED', 'LICENSE_SUSPENDED'
 }

@@ -1,5 +1,7 @@
 import { ComposerPrimitive } from '@assistant-ui/react'
 import { DownloadButton } from './DownloadButton'
+import { MonitorStatusButton } from './MonitorStatusButton'
+import type { ActiveMonitor } from '@/chat/activeMonitors'
 
 function SettingsIcon() {
     return (
@@ -202,6 +204,7 @@ export function ComposerButtons(props: {
     onSwitch: () => void
     hasAttachments?: boolean
     onSendWithAttachments?: () => void
+    activeMonitors?: ActiveMonitor[]
 }) {
     return (
         <div className="flex items-center justify-between px-2 pb-2">
@@ -270,6 +273,10 @@ export function ComposerButtons(props: {
                 ) : null}
 
                 {props.sessionId ? <DownloadButton sessionId={props.sessionId} /> : null}
+
+                {props.activeMonitors && props.activeMonitors.length > 0 ? (
+                    <MonitorStatusButton monitors={props.activeMonitors} />
+                ) : null}
 
                 {props.showAbortButton ? (
                     <button

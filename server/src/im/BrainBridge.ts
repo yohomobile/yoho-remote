@@ -60,6 +60,40 @@ type BufferedAgentMessage = {
     seq: number | null
 }
 
+function mergeStreamingAgentTexts(texts: string[]): string[] {
+    const merged: string[] = []
+
+    for (const rawText of texts) {
+        const text = rawText.trim()
+        if (!text) {
+            continue
+        }
+
+        const previous = merged.at(-1)
+        if (!previous) {
+            merged.push(text)
+            continue
+        }
+
+        if (previous === text) {
+            continue
+        }
+
+        if (text.startsWith(previous) && text.length > previous.length) {
+            merged[merged.length - 1] = text
+            continue
+        }
+
+        if (previous.startsWith(text) && previous.length > text.length) {
+            continue
+        }
+
+        merged.push(text)
+    }
+
+    return merged
+}
+
 export class BrainBridge implements IMBridgeCallbacks {
     private syncEngine: SyncEngine
     private store: IStore
@@ -1609,8 +1643,9 @@ export class BrainBridge implements IMBridgeCallbacks {
 
         const texts = raw.map(m => m.text)
 
-        // Deduplicate consecutive identical messages
-        const deduped = texts.filter((m, i) => i === 0 || m !== texts[i - 1])
+        // Claude/Codex may emit cumulative assistant text snapshots plus a final
+        // result text. Keep only the most complete adjacent variant.
+        const deduped = mergeStreamingAgentTexts(texts)
 
         // Drop short narration fragments if a longer reply follows
         // BUT always keep messages containing structured action/card blocks

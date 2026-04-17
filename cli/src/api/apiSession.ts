@@ -33,6 +33,50 @@ import {
     TerminalWritePayloadSchema
 } from '@/terminal/types'
 
+function isObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object'
+}
+
+const SKIPPABLE_CLAUDE_TOP_LEVEL_TYPES = new Set([
+    'file-history-snapshot',
+    'change',
+    'last-prompt',
+    'permission-mode',
+    'ai-title',
+    'custom-title',
+    'agent-name',
+    'queue-operation',
+])
+
+const SKIPPABLE_CLAUDE_ATTACHMENT_TYPES = new Set([
+    'skill_listing',
+    'hook_success',
+    'hook_non_blocking_error',
+    'compact_file_reference',
+    'command_permissions',
+    'nested_memory',
+    'deferred_tools_delta',
+    'date_change',
+    'file',
+    'directory',
+    'edited_text_file',
+    'invoked_skills',
+])
+
+function shouldSkipClaudeSessionMessage(body: RawJSONLines): boolean {
+    if (SKIPPABLE_CLAUDE_TOP_LEVEL_TYPES.has(body.type)) {
+        return true
+    }
+
+    if (body.type !== 'attachment') {
+        return false
+    }
+
+    const attachment = 'attachment' in body && isObject(body.attachment) ? body.attachment : null
+    const attachmentType = typeof attachment?.type === 'string' ? attachment.type : null
+    return attachmentType !== null && SKIPPABLE_CLAUDE_ATTACHMENT_TYPES.has(attachmentType)
+}
+
 export class ApiSessionClient extends EventEmitter {
     private readonly token: string
     readonly sessionId: string
@@ -339,14 +383,20 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     sendClaudeSessionMessage(body: RawJSONLines): void {
-        let content: MessageContent
+        if (shouldSkipClaudeSessionMessage(body)) {
+            return
+        }
 
-        if (body.type === 'user' && typeof body.message.content === 'string' && body.isSidechain !== true && body.isMeta !== true) {
+        let content: MessageContent
+        const message = 'message' in body && isObject(body.message) ? body.message : null
+        const messageContent = message?.content
+
+        if (body.type === 'user' && typeof messageContent === 'string' && body.isSidechain !== true && body.isMeta !== true) {
             content = {
                 role: 'user',
                 content: {
                     type: 'text',
-                    text: body.message.content
+                    text: messageContent
                 },
                 meta: {
                     sentFrom: 'cli'
@@ -370,11 +420,12 @@ export class ApiSessionClient extends EventEmitter {
             message: content
         })
 
-        if (body.type === 'summary' && 'summary' in body && 'leafUuid' in body) {
+        if (body.type === 'summary' && typeof body.summary === 'string' && typeof body.leafUuid === 'string') {
+            const summaryText = body.summary
             this.updateMetadata((metadata) => ({
                 ...metadata,
                 summary: {
-                    text: body.summary,
+                    text: summaryText,
                     updatedAt: Date.now()
                 }
             }))

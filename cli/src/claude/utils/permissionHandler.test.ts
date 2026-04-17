@@ -192,6 +192,125 @@ describe('PermissionHandler', () => {
         })
     })
 
+    it('matches ExitPlanMode tool calls across casing and optional input drift', async () => {
+        const { session, rpcHandlers, getAgentState } = createSessionStub()
+        const handler = new PermissionHandler(session as any)
+        const signal = new AbortController().signal
+        const sdkInput = {
+            plan: 'Do work'
+        }
+        const transcriptInput = {
+            allowedPrompts: [],
+            plan: 'Do work'
+        }
+
+        const promise = handler.handleToolCall('exit_plan_mode', sdkInput, DEFAULT_MODE, { signal })
+
+        setTimeout(() => {
+            handler.onMessage(createAssistantToolUseMessage({
+                id: 'tool-exit-drift',
+                name: 'ExitPlanMode',
+                input: transcriptInput
+            }) as any)
+        }, 10)
+
+        setTimeout(() => {
+            const permissionHandler = rpcHandlers.get('permission')
+            if (!permissionHandler) {
+                throw new Error('permission handler not registered')
+            }
+            permissionHandler({
+                id: 'tool-exit-drift',
+                approved: false,
+                reason: 'Plan rejected'
+            })
+        }, 40)
+
+        await expect(promise).resolves.toEqual({
+            behavior: 'deny',
+            message: 'Plan rejected'
+        })
+
+        expect(getAgentState()).toMatchObject({
+            completedRequests: {
+                'tool-exit-drift': {
+                    tool: 'exit_plan_mode',
+                    arguments: sdkInput,
+                    status: 'denied',
+                    reason: 'Plan rejected'
+                }
+            }
+        })
+    })
+
+    it('matches AskUserQuestion tool calls when transcript includes default fields omitted by SDK input', async () => {
+        const { session, rpcHandlers, getAgentState } = createSessionStub()
+        const handler = new PermissionHandler(session as any)
+        const signal = new AbortController().signal
+        const sdkInput = {
+            questions: [{
+                header: '改造范围',
+                question: '你希望改造到什么程度？',
+                options: [{ label: '只改配色', description: '最小改动量' }]
+            }]
+        }
+        const transcriptInput = {
+            questions: [{
+                header: '改造范围',
+                question: '你希望改造到什么程度？',
+                options: [{ label: '只改配色', description: '最小改动量' }],
+                multiSelect: false
+            }]
+        }
+
+        const promise = handler.handleToolCall('ask_user_question', sdkInput, DEFAULT_MODE, { signal })
+
+        setTimeout(() => {
+            handler.onMessage(createAssistantToolUseMessage({
+                id: 'tool-ask-drift',
+                name: 'AskUserQuestion',
+                input: transcriptInput
+            }) as any)
+        }, 10)
+
+        setTimeout(() => {
+            const permissionHandler = rpcHandlers.get('permission')
+            if (!permissionHandler) {
+                throw new Error('permission handler not registered')
+            }
+            permissionHandler({
+                id: 'tool-ask-drift',
+                approved: true,
+                answers: {
+                    '0': ['只改配色']
+                }
+            })
+        }, 40)
+
+        await expect(promise).resolves.toEqual({
+            behavior: 'allow',
+            updatedInput: {
+                ...sdkInput,
+                answers: {
+                    '0': ['只改配色']
+                }
+            }
+        })
+
+        expect(getAgentState()).toMatchObject({
+            completedRequests: {
+                'tool-ask-drift': {
+                    tool: 'ask_user_question',
+                    arguments: sdkInput,
+                    status: 'approved',
+                    answers: {
+                        '0': ['只改配色']
+                    }
+                }
+            }
+        })
+    })
+
     it('synthesizes a completed request for orphan AskUserQuestion validation errors', () => {
         const { session, getAgentState } = createSessionStub()
         const handler = new PermissionHandler(session as any)

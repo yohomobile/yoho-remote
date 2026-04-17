@@ -42,6 +42,16 @@ function isAgentToolName(toolName: string): boolean {
     return toolName === 'Agent' || toolName === 'Task';
 }
 
+function normalizeToolMatchName(toolName: string): string {
+    if (isAskUserQuestionToolName(toolName)) return 'AskUserQuestion';
+    if (isExitPlanModeToolName(toolName)) return 'ExitPlanMode';
+    return toolName;
+}
+
+function toolNamesMatch(left: string, right: string): boolean {
+    return normalizeToolMatchName(left) === normalizeToolMatchName(right);
+}
+
 function isRootOnlySubagentToolName(toolName: string): boolean {
     return isAgentToolName(toolName) || isExitPlanModeToolName(toolName);
 }
@@ -187,6 +197,90 @@ function buildSubagentPromptInput(input: unknown): Record<string, unknown> | nul
         ...input,
         prompt: `${SUBAGENT_PROMPT_GUARD}\n\n${prompt}`
     };
+}
+
+function normalizeToolCallInput(value: unknown): unknown {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    if (Array.isArray(value)) {
+        const normalized = value
+            .map((item) => normalizeToolCallInput(item))
+            .filter((item) => item !== undefined);
+        return normalized;
+    }
+
+    if (!isObject(value)) {
+        return value;
+    }
+
+    const normalizedEntries = Object.entries(value)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .flatMap(([key, item]) => {
+            const normalized = normalizeToolCallInput(item);
+            if (normalized === undefined) {
+                return [];
+            }
+            if (Array.isArray(normalized) && normalized.length === 0) {
+                return [];
+            }
+            return [[key, normalized] as const];
+        });
+
+    return Object.fromEntries(normalizedEntries);
+}
+
+function isNormalizedSubset(left: unknown, right: unknown): boolean {
+    if (deepEqual(left, right)) {
+        return true;
+    }
+
+    if (Array.isArray(left)) {
+        if (!Array.isArray(right) || left.length !== right.length) {
+            return false;
+        }
+        return left.every((item, index) => isNormalizedSubset(item, right[index]));
+    }
+
+    if (isObject(left)) {
+        if (!isObject(right)) {
+            return false;
+        }
+        for (const [key, value] of Object.entries(left)) {
+            if (!(key in right)) {
+                return false;
+            }
+            if (!isNormalizedSubset(value, right[key])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    return false;
+}
+
+function getToolCallInputMatchScore(left: unknown, right: unknown): number {
+    if (deepEqual(left, right)) {
+        return 4;
+    }
+
+    const normalizedLeft = normalizeToolCallInput(left);
+    const normalizedRight = normalizeToolCallInput(right);
+
+    if (deepEqual(normalizedLeft, normalizedRight)) {
+        return 3;
+    }
+
+    if (
+        isNormalizedSubset(normalizedLeft, normalizedRight)
+        || isNormalizedSubset(normalizedRight, normalizedLeft)
+    ) {
+        return 2;
+    }
+
+    return -1;
 }
 
 export class PermissionHandler {
@@ -457,35 +551,61 @@ export class PermissionHandler {
     /**
      * Resolves tool call ID based on tool name and input
      */
-    private resolveToolCallId(name: string, args: unknown): string | null {
-        // Search in reverse (most recent first)
+    private findMatchingToolCall(
+        name: string,
+        args: unknown,
+        opts?: {
+            allowNameOnlyFallback?: boolean;
+            includeUsed?: boolean;
+        }
+    ): ToolCallRecord | null {
+        const allowNameOnlyFallback = opts?.allowNameOnlyFallback === true;
+        const includeUsed = opts?.includeUsed === true;
+        let bestMatch: { call: ToolCallRecord; score: number } | null = null;
+
         for (let i = this.toolCalls.length - 1; i >= 0; i--) {
             const call = this.toolCalls[i];
-            if (call.name === name && deepEqual(call.input, args)) {
-                if (call.used) {
-                    return null;
+            if (!toolNamesMatch(call.name, name)) {
+                continue;
+            }
+            if (!includeUsed && call.used) {
+                continue;
+            }
+
+            const score = getToolCallInputMatchScore(call.input, args);
+            if (score >= 0) {
+                if (!bestMatch || score > bestMatch.score) {
+                    bestMatch = { call, score };
+                    if (score === 4) {
+                        break;
+                    }
                 }
-                // Found unused match - mark as used and return
-                call.used = true;
-                return call.id;
+                continue;
+            }
+
+            if (allowNameOnlyFallback && !bestMatch) {
+                bestMatch = { call, score: 1 };
             }
         }
 
-        return null;
+        return bestMatch?.call ?? null;
+    }
+
+    private resolveToolCallId(name: string, args: unknown): string | null {
+        const call = this.findMatchingToolCall(name, args, {
+            allowNameOnlyFallback: requiresUserApproval(name)
+        });
+        if (!call || call.used) {
+            return null;
+        }
+        call.used = true;
+        return call.id;
     }
 
     private findUnusedToolCall(name: string, args: unknown): ToolCallRecord | null {
-        for (let i = this.toolCalls.length - 1; i >= 0; i--) {
-            const call = this.toolCalls[i];
-            if (call.used) {
-                continue;
-            }
-            if (call.name === name && deepEqual(call.input, args)) {
-                return call;
-            }
-        }
-
-        return null;
+        return this.findMatchingToolCall(name, args, {
+            allowNameOnlyFallback: requiresUserApproval(name)
+        });
     }
 
     private async awaitToolCall(name: string, args: unknown, signal: AbortSignal, timeoutMs = 5_000): Promise<ToolCallRecord | null> {

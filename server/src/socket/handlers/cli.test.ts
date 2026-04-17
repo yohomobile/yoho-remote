@@ -76,4 +76,85 @@ describe('registerCliHandlers', () => {
         expect(aliveCalls).toHaveLength(1)
         expect(aliveCalls[0]).toEqual({ sid: 'session-1', time: 123 })
     })
+
+    test('suppresses duplicate CLI user echoes when the same webapp message was just stored', async () => {
+        const handlers = new Map<string, (...args: any[]) => unknown>()
+        let addMessageCalls = 0
+
+        const socket = {
+            id: 'socket-echo',
+            data: { namespace: 'default' },
+            handshake: { auth: {} },
+            join: () => undefined,
+            on: (event: string, handler: (...args: any[]) => unknown) => {
+                handlers.set(event, handler)
+            },
+            emit: () => {},
+            to: () => ({ emit: () => {} }),
+            disconnect: () => {},
+        }
+
+        const store = {
+            getSessionByNamespace: async (id: string, namespace: string) => (
+                id === 'session-echo' && namespace === 'default'
+                    ? { id, namespace }
+                    : null
+            ),
+            getSession: async () => null,
+            getMachineByNamespace: async () => null,
+            getMachine: async () => null,
+            getMessages: async () => [{
+                id: 'msg-webapp',
+                sessionId: 'session-echo',
+                seq: 1,
+                createdAt: 100,
+                localId: null,
+                content: {
+                    role: 'user',
+                    content: {
+                        type: 'text',
+                        text: '继续'
+                    },
+                    meta: {
+                        sentFrom: 'webapp'
+                    }
+                }
+            }],
+            addMessage: async () => {
+                addMessageCalls += 1
+                throw new Error('duplicate echo should not be stored')
+            },
+        }
+
+        const io = {
+            of: () => ({
+                sockets: new Map<string, { disconnect: (close?: boolean) => void }>(),
+            }),
+        }
+
+        registerCliHandlers(socket as any, {
+            io: io as any,
+            store: store as any,
+            rpcRegistry: new RpcRegistry(),
+        })
+
+        const messageHandler = handlers.get('message')
+        expect(messageHandler).toBeDefined()
+
+        await messageHandler!({
+            sid: 'session-echo',
+            message: {
+                role: 'user',
+                content: {
+                    type: 'text',
+                    text: '继续'
+                },
+                meta: {
+                    sentFrom: 'cli'
+                }
+            }
+        })
+
+        expect(addMessageCalls).toBe(0)
+    })
 })

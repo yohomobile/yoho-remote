@@ -14,6 +14,8 @@ export type SessionStatusUpdateData = {
     modelMode?: string
     modelReasoningEffort?: string
     fastMode?: boolean
+    activeMonitors?: Session['activeMonitors']
+    activeMonitorCount?: number
     terminationReason?: string
     sid?: string
 }
@@ -31,6 +33,8 @@ export function hasSessionStatusFields(data: SessionStatusUpdateData | null): bo
         data.modelMode !== undefined ||
         data.modelReasoningEffort !== undefined ||
         data.fastMode !== undefined ||
+        data.activeMonitors !== undefined ||
+        data.activeMonitorCount !== undefined ||
         data.terminationReason !== undefined
     )
 }
@@ -74,6 +78,7 @@ export function toSessionFromSsePayload(data: Record<string, unknown>): Session 
         ...(typeof data.modelMode === 'string' && { modelMode: data.modelMode as Session['modelMode'] }),
         ...(typeof data.modelReasoningEffort === 'string' && { modelReasoningEffort: data.modelReasoningEffort as Session['modelReasoningEffort'] }),
         ...(typeof data.fastMode === 'boolean' && { fastMode: data.fastMode }),
+        ...(Array.isArray(data.activeMonitors) && { activeMonitors: data.activeMonitors as Session['activeMonitors'] }),
         ...(typeof data.terminationReason === 'string' && { terminationReason: data.terminationReason }),
     }
 }

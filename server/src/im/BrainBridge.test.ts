@@ -109,4 +109,38 @@ describe('BrainBridge', () => {
         expect(replies[0]?.payload.text).not.toContain('等子 session 回传结果')
         expect((bridge as any).lastDeliveredSeq.get(chatId)).toBe(46)
     })
+
+    test('merges cumulative Claude assistant text into a single final summary', async () => {
+        const replies: Array<{ chatId: string; payload: { text: string } }> = []
+        const chatId = 'oc_cumulative'
+
+        const bridge = new BrainBridge({
+            syncEngine: {
+                subscribe: () => () => {},
+            } as any,
+            store: {
+                updateFeishuChatState: async () => true,
+            } as any,
+            adapter: {
+                platform: 'feishu',
+                start: async () => {},
+                stop: async () => {},
+                sendReply: async (targetChatId: string, payload: { text: string }) => {
+                    replies.push({ chatId: targetChatId, payload })
+                },
+            } as any,
+        })
+
+        ;(bridge as any).agentMessages.set(chatId, [
+            { text: '今天上午 Medusa', messageId: 'msg-1', seq: 1 },
+            { text: '今天上午 Medusa 总订单 254 单', messageId: 'msg-1', seq: 2 },
+            { text: '今天上午 Medusa 总订单 254 单', messageId: null, seq: 3 },
+        ])
+
+        await (bridge as any).sendSummary(chatId)
+
+        expect(replies).toHaveLength(1)
+        expect(replies[0]?.payload.text).toContain('今天上午 Medusa 总订单 254 单')
+        expect(replies[0]?.payload.text).not.toContain('今天上午 Medusa\n今天上午 Medusa 总订单 254 单')
+    })
 })

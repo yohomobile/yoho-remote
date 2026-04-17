@@ -29,6 +29,7 @@ export type StoredSession = {
     fastMode: boolean | null
     terminationReason: string | null
     lastMessageAt: number | null
+    activeMonitors: unknown | null
 }
 
 export type SpawnAgentType = 'claude' | 'codex'

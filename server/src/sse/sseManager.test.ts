@@ -70,4 +70,48 @@ describe('SSEManager namespace filtering', () => {
         expect(received).toHaveLength(2)
         expect(received.map((entry) => entry.id).sort()).toEqual(['alpha', 'beta'])
     })
+
+    it('keeps detail-only session updates away from all-sessions subscribers', () => {
+        const manager = new SSEManager(0)
+        const receivedAll: SyncEvent[] = []
+        const receivedDetail: SyncEvent[] = []
+
+        manager.subscribe({
+            id: 'all',
+            namespace: 'alpha',
+            all: true,
+            clientId: 'all-client',
+            send: (event) => {
+                receivedAll.push(event)
+            },
+            sendHeartbeat: () => {}
+        })
+
+        manager.subscribe({
+            id: 'detail',
+            namespace: 'alpha',
+            sessionId: 's1',
+            clientId: 'detail-client',
+            send: (event) => {
+                receivedDetail.push(event)
+            },
+            sendHeartbeat: () => {}
+        })
+
+        receivedAll.length = 0
+        receivedDetail.length = 0
+
+        manager.broadcast({
+            type: 'session-updated',
+            namespace: 'alpha',
+            sessionId: 's1',
+            data: {
+                activeMonitors: [{ id: 'mon-1', command: 'tail -f app.log' }]
+            },
+            notifyRecipientClientIds: []
+        })
+
+        expect(receivedAll).toHaveLength(0)
+        expect(receivedDetail).toHaveLength(1)
+    })
 })

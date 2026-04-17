@@ -15,6 +15,7 @@ function createSession(id: string, metadata: Record<string, unknown>): Session {
         metadataVersion: 1,
         agentState: null,
         agentStateVersion: 1,
+        activeMonitors: [],
         thinking: false,
         thinkingAt: 0,
         modelMode: 'default',
@@ -103,6 +104,116 @@ function createUserTextMessage(seq: number, text: string, sentFrom: string = 'we
                 sentFrom,
             },
         },
+    }
+}
+
+function createMonitorToolCallMessage(seq: number, opts: {
+    id?: string
+    description?: string
+    command?: string
+    persistent?: boolean
+    timeoutMs?: number | null
+} = {}) {
+    return {
+        id: `m-${seq}`,
+        seq,
+        localId: null,
+        createdAt: 1_000 + seq,
+        content: {
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'assistant',
+                    message: {
+                        content: [{
+                            type: 'tool_use',
+                            id: opts.id ?? 'monitor-tool',
+                            name: 'Monitor',
+                            input: {
+                                description: opts.description ?? 'watch logs',
+                                command: opts.command ?? 'tail -f app.log',
+                                persistent: opts.persistent === true,
+                                ...(opts.timeoutMs !== undefined && opts.timeoutMs !== null ? { timeout_ms: opts.timeoutMs } : {})
+                            }
+                        }]
+                    }
+                }
+            }
+        }
+    }
+}
+
+function createMonitorTaskStartedMessage(seq: number, toolUseId: string, taskId: string = 'task-1') {
+    return {
+        id: `m-${seq}`,
+        seq,
+        localId: null,
+        createdAt: 1_000 + seq,
+        content: {
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'system',
+                    subtype: 'task_started',
+                    tool_use_id: toolUseId,
+                    task_id: taskId,
+                }
+            }
+        }
+    }
+}
+
+function createMonitorTaskNotificationMessage(seq: number, toolUseId: string, status: string = 'completed') {
+    return {
+        id: `m-${seq}`,
+        seq,
+        localId: null,
+        createdAt: 1_000 + seq,
+        content: {
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'system',
+                    subtype: 'task_notification',
+                    tool_use_id: toolUseId,
+                    task_id: 'task-1',
+                    status,
+                }
+            }
+        }
+    }
+}
+
+function createMonitorToolResultMessage(seq: number, toolUseId: string, opts: {
+    isError?: boolean
+    permissions?: { result?: string; decision?: string }
+} = {}) {
+    return {
+        id: `m-${seq}`,
+        seq,
+        localId: null,
+        createdAt: 1_000 + seq,
+        content: {
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'user',
+                    message: {
+                        content: [{
+                            type: 'tool_result',
+                            tool_use_id: toolUseId,
+                            content: 'monitor started',
+                            is_error: opts.isError === true,
+                            ...(opts.permissions ? { permissions: opts.permissions } : {}),
+                        }]
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -255,6 +366,60 @@ describe('SyncEngine', () => {
 
         expect(sent).toHaveLength(0)
         expect(engine.isBrainChildInitDone(childSession.id)).toBe(true)
+    })
+
+    test('recovers init completion from persisted history before sending a buffered brain message', async () => {
+        const childMessages = [
+            createUserTextMessage(1, '#InitPrompt-Yoho开发规范（最高优先级）'),
+            createAgentAssistantMessage(2, '初始化完成，等待后续任务。'),
+        ]
+        const added: Array<{ sessionId: string; content: unknown }> = []
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getMessages: async () => childMessages,
+            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+                added.push({ sessionId, content })
+                return {
+                    id: 'stored-message',
+                    sessionId,
+                    seq: 3,
+                    localId: localId ?? null,
+                    content,
+                    createdAt: 1_003,
+                }
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const childSession = createSession('child-session', {
+            source: 'brain-child',
+            summary: { text: 'Child', updatedAt: 0 },
+        })
+
+        ;(engine as any).sessions.set(childSession.id, childSession)
+
+        await engine.sendMessage(childSession.id, { text: '请继续处理这个任务', sentFrom: 'brain' })
+
+        expect(engine.isBrainChildInitDone(childSession.id)).toBe(true)
+        expect(added).toHaveLength(1)
+        expect(added[0]?.sessionId).toBe(childSession.id)
+        expect((added[0]?.content as any)?.meta?.sentFrom).toBe('brain')
+        expect((engine as any).brainChildPendingMessages.get(childSession.id)).toBeUndefined()
     })
 
     test('marks disconnected sessions inactive in memory and allows heartbeat reactivation', async () => {
@@ -425,5 +590,248 @@ describe('SyncEngine', () => {
 
         expect(machine.active).toBe(true)
         expect(autoResumeCalls).toEqual([{ machineId: machine.id, namespace: machine.namespace }])
+    })
+
+    test('tracks monitor lifecycle from realtime messages', async () => {
+        const persisted: unknown[] = []
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActiveMonitors: async (_id: string, activeMonitors: unknown) => {
+                persisted.push(activeMonitors)
+                return true
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const session = createSession('session-monitor', {
+            host: 'ncu',
+            path: '/tmp/project',
+        })
+        ;(engine as any).sessions.set(session.id, session)
+
+        await engine.handleRealtimeEvent({
+            type: 'message-received',
+            sessionId: session.id,
+            message: createMonitorToolCallMessage(1, { id: 'mon-1', description: 'watch logs', timeoutMs: 30_000 }),
+        })
+
+        expect(engine.getSession(session.id)?.activeMonitors).toEqual([])
+
+        await engine.handleRealtimeEvent({
+            type: 'message-received',
+            sessionId: session.id,
+            message: createMonitorTaskStartedMessage(2, 'mon-1', 'task-1'),
+        })
+
+        expect(engine.getSession(session.id)?.activeMonitors).toEqual([{
+            id: 'mon-1',
+            description: 'watch logs',
+            command: 'tail -f app.log',
+            persistent: false,
+            timeoutMs: 30_000,
+            startedAt: 1002,
+            taskId: 'task-1',
+            state: 'running',
+        }])
+
+        await engine.handleRealtimeEvent({
+            type: 'message-received',
+            sessionId: session.id,
+            message: createMonitorTaskNotificationMessage(3, 'mon-1', 'completed'),
+        })
+
+        expect(engine.getSession(session.id)?.activeMonitors).toEqual([])
+        expect(persisted).toHaveLength(2)
+    })
+
+    test('does not expose a monitor before task_started arrives', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActiveMonitors: async () => true,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const session = createSession('session-monitor', {
+            host: 'ncu',
+            path: '/tmp/project',
+        })
+        ;(engine as any).sessions.set(session.id, session)
+
+        await engine.handleRealtimeEvent({
+            type: 'message-received',
+            sessionId: session.id,
+            message: createMonitorToolCallMessage(1, { id: 'mon-2' }),
+        })
+        await engine.handleRealtimeEvent({
+            type: 'message-received',
+            sessionId: session.id,
+            message: createMonitorToolResultMessage(2, 'mon-2'),
+        })
+
+        expect(engine.getSession(session.id)?.activeMonitors).toEqual([])
+    })
+
+    test('ignores task_started events without a preceding monitor tool call', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActiveMonitors: async () => true,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const session = createSession('session-monitor', {
+            host: 'ncu',
+            path: '/tmp/project',
+        })
+        ;(engine as any).sessions.set(session.id, session)
+
+        await engine.handleRealtimeEvent({
+            type: 'message-received',
+            sessionId: session.id,
+            message: createMonitorTaskStartedMessage(1, 'not-a-monitor', 'task-ghost'),
+        })
+
+        expect(engine.getSession(session.id)?.activeMonitors).toEqual([])
+    })
+
+    test('marks active monitors unknown on session disconnect', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActiveMonitors: async () => true,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const session = createSession('session-monitor', {
+            host: 'ncu',
+            path: '/tmp/project',
+        })
+        session.activeMonitors = [{
+            id: 'mon-3',
+            description: 'watch logs',
+            command: 'tail -f app.log',
+            persistent: false,
+            timeoutMs: null,
+            startedAt: 1001,
+            taskId: 'task-1',
+            state: 'running',
+        }]
+        ;(engine as any).sessions.set(session.id, session)
+
+        engine.handleSessionDisconnect({ sid: session.id, time: Date.now() })
+
+        await new Promise(resolve => setTimeout(resolve, 0))
+        expect(engine.getSession(session.id)?.activeMonitors).toEqual([{
+            id: 'mon-3',
+            description: 'watch logs',
+            command: 'tail -f app.log',
+            persistent: false,
+            timeoutMs: null,
+            startedAt: 1001,
+            taskId: 'task-1',
+            state: 'unknown',
+        }])
+    })
+
+    test('drops pending monitor metadata when tool result is denied', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActiveMonitors: async () => true,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const session = createSession('session-monitor', {
+            host: 'ncu',
+            path: '/tmp/project',
+        })
+        ;(engine as any).sessions.set(session.id, session)
+
+        await engine.handleRealtimeEvent({
+            type: 'message-received',
+            sessionId: session.id,
+            message: createMonitorToolCallMessage(1, { id: 'mon-denied' }),
+        })
+        await engine.handleRealtimeEvent({
+            type: 'message-received',
+            sessionId: session.id,
+            message: createMonitorToolResultMessage(2, 'mon-denied', {
+                permissions: { result: 'denied', decision: 'denied' }
+            }),
+        })
+        await engine.handleRealtimeEvent({
+            type: 'message-received',
+            sessionId: session.id,
+            message: createMonitorTaskStartedMessage(3, 'mon-denied', 'task-denied'),
+        })
+
+        expect(engine.getSession(session.id)?.activeMonitors).toEqual([])
     })
 })

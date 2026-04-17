@@ -3,6 +3,8 @@ import type { AgentState, ModelMode, TypingUser } from '@/types/api'
 import { getContextBudgetTokens } from '@/chat/modelConfig'
 import { useVibingMessage } from '@/hooks/useVibingMessage'
 
+const CODEX_CONTEXT_BASELINE_TOKENS = 12_000
+
 function formatCompactTokenCount(value: number): string {
     if (value >= 1_000_000) {
         const compact = value >= 10_000_000 ? Math.round(value / 1_000_000) : Math.round((value / 100_000)) / 10
@@ -59,9 +61,7 @@ function getConnectionStatus(
     }
 }
 
-function getContextWarning(contextSize: number, maxContextSize: number): { text: string; color: string } | null {
-    const percentageUsed = (contextSize / maxContextSize) * 100
-
+function getPercentageWarning(percentageUsed: number): { text: string; color: string } {
     if (percentageUsed >= 95) {
         return { text: `${Math.round(percentageUsed)}% used`, color: 'text-red-500' }
     } else if (percentageUsed >= 90) {
@@ -69,6 +69,28 @@ function getContextWarning(contextSize: number, maxContextSize: number): { text:
     } else {
         return { text: `${Math.round(percentageUsed)}% used`, color: 'text-[var(--app-hint)]' }
     }
+}
+
+function getContextWarning(contextSize: number, maxContextSize: number): { text: string; color: string } | null {
+    return getPercentageWarning((contextSize / maxContextSize) * 100)
+}
+
+function getCodexContextWarning(contextSize: number, modelContextWindow?: number): { text: string; color: string } | null {
+    if (modelContextWindow === undefined) {
+        if (contextSize <= 0) {
+            return null
+        }
+        return { text: `${formatCompactTokenCount(contextSize)} used`, color: 'text-[var(--app-hint)]' }
+    }
+
+    if (modelContextWindow <= CODEX_CONTEXT_BASELINE_TOKENS) {
+        return getPercentageWarning(100)
+    }
+
+    const effectiveWindow = modelContextWindow - CODEX_CONTEXT_BASELINE_TOKENS
+    const used = Math.max(contextSize - CODEX_CONTEXT_BASELINE_TOKENS, 0)
+    const percentageUsed = Math.max(0, Math.min(100, (used / effectiveWindow) * 100))
+    return getPercentageWarning(percentageUsed)
 }
 
 // Get display name from email (first part before @)
@@ -104,9 +126,8 @@ export function StatusBar(props: {
     const contextWarning = useMemo(
         () => {
             if (props.agentFlavor === 'codex') {
-                // Codex new format: model_context_window + last_token_usage.input_tokens (per-turn)
-                if (props.contextSize === undefined || !props.modelContextWindow) return null
-                return getContextWarning(props.contextSize, props.modelContextWindow)
+                if (props.contextSize === undefined) return null
+                return getCodexContextWarning(props.contextSize, props.modelContextWindow)
             }
             if (props.contextSize === undefined) return null
             if (props.agentFlavor && props.agentFlavor !== 'claude') return null

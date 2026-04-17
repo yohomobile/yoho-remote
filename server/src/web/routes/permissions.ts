@@ -42,13 +42,12 @@ export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null):
 
         const requests = session.agentState?.requests ?? null
         if (!requests || !requests[requestId]) {
-            console.warn(`[AskUserQuestion] approve failed - request not found`, {
+            console.warn(`[permissions] approve before request state sync`, {
                 sessionId,
                 requestId,
                 availableRequestIds: requests ? Object.keys(requests) : [],
                 hasAgentState: !!session.agentState,
             })
-            return c.json({ error: 'Request not found' }, 404)
         }
 
         const mode = parsed.data.mode
@@ -56,10 +55,10 @@ export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null):
         const decision = parsed.data.decision
         const answers = parsed.data.answers
 
-        console.log(`[AskUserQuestion] approve permission`, {
+        console.log(`[permissions] approve`, {
             sessionId,
             requestId,
-            tool: requests[requestId].tool,
+            tool: requests?.[requestId]?.tool ?? null,
             hasAnswers: !!answers,
         })
 
@@ -83,7 +82,12 @@ export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null):
 
         const requests = session.agentState?.requests ?? null
         if (!requests || !requests[requestId]) {
-            return c.json({ error: 'Request not found' }, 404)
+            console.warn(`[permissions] deny before request state sync`, {
+                sessionId,
+                requestId,
+                availableRequestIds: requests ? Object.keys(requests) : [],
+                hasAgentState: !!session.agentState,
+            })
         }
 
         const json = await c.req.json().catch(() => null)

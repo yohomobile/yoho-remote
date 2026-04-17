@@ -24,6 +24,37 @@ import { getBrainSessionPreferencesFromEnv } from '@/utils/brainSessionPreferenc
 
 export { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 
+export function buildCodexSessionMetadata(opts: {
+    workingDirectory: string;
+    machineId: string;
+    startedBy: 'daemon' | 'terminal';
+    sessionSource?: string | null;
+    mainSessionId?: string | null;
+    brainPreferences?: Record<string, unknown> | null;
+}): Metadata {
+    return {
+        path: opts.workingDirectory,
+        host: os.hostname(),
+        version: packageJson.version,
+        os: os.platform(),
+        machineId: opts.machineId,
+        source: opts.sessionSource || undefined,
+        mainSessionId: opts.mainSessionId || undefined,
+        homeDir: os.homedir(),
+        yohoRemoteHomeDir: configuration.yohoRemoteHomeDir,
+        yohoRemoteLibDir: runtimePath(),
+        yohoRemoteToolsDir: resolve(runtimePath(), 'tools', 'unpacked'),
+        startedFromDaemon: opts.startedBy === 'daemon',
+        hostPid: process.pid,
+        hostProcessStartedAt: getCurrentProcessStartedAtMs(),
+        startedBy: opts.startedBy,
+        lifecycleState: 'running',
+        lifecycleStateSince: Date.now(),
+        flavor: 'codex',
+        ...(opts.brainPreferences ? { brainPreferences: opts.brainPreferences } : {}),
+    };
+}
+
 export async function runCodex(opts: {
     startedBy?: 'daemon' | 'terminal';
     codexArgs?: string[];
@@ -41,9 +72,10 @@ export async function runCodex(opts: {
     const sessionTag = randomUUID();
     const startedBy = opts.startedBy ?? 'terminal';
     const sessionSource = process.env.YR_SESSION_SOURCE?.trim();
+    const mainSessionId = process.env.YR_MAIN_SESSION_ID?.trim();
     const brainPreferences = getBrainSessionPreferencesFromEnv();
 
-    logger.debug(`[codex] Starting with options: startedBy=${startedBy}`);
+    logger.debug(`[codex] Starting with options: startedBy=${startedBy}, source=${sessionSource}, mainSessionId=${mainSessionId}`);
 
     const api = await ApiClient.create();
 
@@ -64,26 +96,14 @@ export async function runCodex(opts: {
         controlledByUser: false
     };
 
-    const metadata: Metadata = {
-        path: workingDirectory,
-        host: os.hostname(),
-        version: packageJson.version,
-        os: os.platform(),
-        machineId: machineId,
-        source: sessionSource || undefined,
-        homeDir: os.homedir(),
-        yohoRemoteHomeDir: configuration.yohoRemoteHomeDir,
-        yohoRemoteLibDir: runtimePath(),
-        yohoRemoteToolsDir: resolve(runtimePath(), 'tools', 'unpacked'),
-        startedFromDaemon: startedBy === 'daemon',
-        hostPid: process.pid,
-        hostProcessStartedAt: getCurrentProcessStartedAtMs(),
+    const metadata = buildCodexSessionMetadata({
+        workingDirectory,
+        machineId,
         startedBy,
-        lifecycleState: 'running',
-        lifecycleStateSince: Date.now(),
-        flavor: 'codex',
-        ...(brainPreferences ? { brainPreferences } : {}),
-    };
+        sessionSource,
+        mainSessionId,
+        brainPreferences,
+    });
 
     let response: Awaited<ReturnType<typeof api.getOrCreateSession>> | null = null;
     const yohoRemoteSessionId = opts.yohoRemoteSessionId?.trim() || null;

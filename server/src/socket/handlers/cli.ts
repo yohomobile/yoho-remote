@@ -11,6 +11,7 @@ import {
     getSessionSourceFromMetadata,
     isSupportedSessionSource,
 } from '../../sessionSourcePolicy'
+import type { StoredMessage } from '../../store/types'
 
 type SessionAlivePayload = {
     sid: string
@@ -94,6 +95,61 @@ type AccessErrorReason = 'namespace-missing' | 'access-denied' | 'not-found'
 type AccessResult<T> =
     | { ok: true; value: T }
     | { ok: false; reason: AccessErrorReason }
+
+function isObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object'
+}
+
+function extractPlainUserTextMessage(content: unknown): { text: string; sentFrom: string | null } | null {
+    if (!isObject(content) || content.role !== 'user') {
+        return null
+    }
+
+    const body = isObject(content.content) ? content.content : null
+    if (!body || body.type !== 'text' || typeof body.text !== 'string') {
+        return null
+    }
+
+    const text = body.text.trim()
+    if (!text) {
+        return null
+    }
+
+    const meta = isObject(content.meta) ? content.meta : null
+    const sentFrom = typeof meta?.sentFrom === 'string' ? meta.sentFrom : null
+
+    return { text, sentFrom }
+}
+
+async function shouldSuppressCliUserEcho(
+    store: IStore,
+    sessionId: string,
+    content: unknown
+): Promise<boolean> {
+    const incoming = extractPlainUserTextMessage(content)
+    if (!incoming || incoming.sentFrom !== 'cli') {
+        return false
+    }
+
+    let recentMessages: StoredMessage[]
+    try {
+        recentMessages = await store.getMessages(sessionId, 3)
+    } catch {
+        return false
+    }
+
+    const latest = recentMessages.at(-1)
+    if (!latest) {
+        return false
+    }
+
+    const previous = extractPlainUserTextMessage(latest.content)
+    if (!previous) {
+        return false
+    }
+
+    return previous.sentFrom !== 'cli' && previous.text === incoming.text
+}
 
 export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDeps): void {
     const {
@@ -260,6 +316,10 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
                 return
             }
             const session = sessionAccess.value
+
+            if (await shouldSuppressCliUserEcho(store, sid, content)) {
+                return
+            }
 
             const msg = await store.addMessage(sid, content, localId)
 
