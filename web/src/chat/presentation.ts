@@ -91,6 +91,13 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
         return { icon: '⏳', text }
     }
 
+    if (event.type === 'task-updated') {
+        const status = (event as Record<string, unknown>).status
+        const icon = status === 'completed' ? '✅' : status === 'failed' ? '❌' : '📋'
+        const text = `Task ${status ?? 'updated'}`
+        return { icon, text }
+    }
+
     if (event.type === 'compact-boundary') {
         return { icon: '📦', text: 'Context compacted' }
     }
