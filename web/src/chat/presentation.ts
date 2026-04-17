@@ -15,6 +15,13 @@ function formatDuration(ms: number): string {
     return `${mins}m ${secs}s`
 }
 
+function truncateEventText(text: string, maxLen = 120): string {
+    const firstLine = text.split('\n')[0]
+    if (firstLine.length < text.length) text = firstLine
+    if (text.length > maxLen) text = text.slice(0, maxLen - 3) + '...'
+    return text
+}
+
 export type EventPresentation = {
     icon: string | null
     text: string
@@ -73,13 +80,13 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
     if (event.type === 'task-notification') {
         const summary = (event as Record<string, unknown>).summary
         const status = (event as Record<string, unknown>).status
-        const text = typeof summary === 'string' && summary ? summary : `Task ${status ?? 'completed'}`
+        const text = typeof summary === 'string' && summary ? truncateEventText(summary) : `Task ${status ?? 'completed'}`
         return { icon: '📋', text }
     }
 
     if (event.type === 'task-started') {
         const desc = (event as Record<string, unknown>).description
-        const text = typeof desc === 'string' && desc ? desc : 'Background task started'
+        const text = typeof desc === 'string' && desc ? truncateEventText(desc) : 'Background task started'
         return { icon: '🚀', text }
     }
 
