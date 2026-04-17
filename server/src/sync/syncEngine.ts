@@ -311,6 +311,10 @@ export class SyncEngine {
     // 推送频率限制：每个 session 最少间隔 30 秒才能再次发送推送
     private readonly lastPushNotificationAt: Map<string, number> = new Map()
     private readonly PUSH_NOTIFICATION_MIN_INTERVAL_MS = 30_000
+    // task-complete 通知冷却：同一 session 60 秒内只发一次完整通知（toast + push）
+    // 防止 Monitor/loop 等高频 thinking→done 转换导致通知轰炸
+    private readonly lastTaskCompleteAt: Map<string, number> = new Map()
+    private readonly TASK_COMPLETE_COOLDOWN_MS = 60_000
     private static readonly TASK_MESSAGE_SETTLE_POLL_MS = 50
     private static readonly TASK_MESSAGE_SETTLE_WINDOW_MS = 200
     private static readonly TASK_MESSAGE_SETTLE_MAX_WAIT_MS = 3_000
@@ -599,6 +603,7 @@ export class SyncEngine {
         this.lastBroadcastAtBySessionId.delete(sessionId)
         this.todoBackfillAttemptedSessionIds.delete(sessionId)
         this.lastPushNotificationAt.delete(sessionId)
+        this.lastTaskCompleteAt.delete(sessionId)
         this.deletingSessions.delete(sessionId)
         this.brainChildInitCompleted.delete(sessionId)
         this.brainChildPendingMessages.delete(sessionId)
@@ -1010,8 +1015,13 @@ export class SyncEngine {
             this.lastBroadcastAtBySessionId.set(session.id, now)
             const taskJustCompleted = wasThinking && !session.thinking
 
-            // 如果任务刚完成，需要获取订阅者信息以过滤 SSE 广播
-            if (taskJustCompleted) {
+            // 冷却期内的 thinking→done 转换：只广播状态变化，不发通知
+            // 防止 Monitor/loop 等高频循环导致通知轰炸
+            const lastCompleteAt = this.lastTaskCompleteAt.get(session.id) ?? 0
+            const inCooldown = taskJustCompleted && (now - lastCompleteAt < this.TASK_COMPLETE_COOLDOWN_MS)
+
+            if (taskJustCompleted && !inCooldown) {
+                this.lastTaskCompleteAt.set(session.id, now)
                 this.emitTaskCompleteEvent(session)
             } else {
                 this.emit({
@@ -2055,6 +2065,10 @@ export class SyncEngine {
         }
 
         const msg = await this.store.addMessage(sessionId, content, payload.localId ?? undefined)
+
+        // 用户主动发消息 → 重置 task-complete 冷却期
+        // 确保用户交互后的下一次 thinking→done 能正常触发通知
+        this.lastTaskCompleteAt.delete(sessionId)
 
         if (session) {
             session.lastMessageAt = msg.createdAt
