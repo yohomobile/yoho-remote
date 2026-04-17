@@ -3,6 +3,7 @@ import type { Machine, Project, SessionSummary } from '@/types/api'
 import { ViewersBadge } from './ViewersBadge'
 import { LoadingState } from './LoadingState'
 import { useVibingMessage } from '@/hooks/useVibingMessage'
+import { useDebouncedThinking } from '@/hooks/useDebouncedThinking'
 import { getMachineTitle } from '@/lib/machines'
 import { formatSessionModelLabel } from '@/lib/sessionModelLabel'
 import { matchSessionToProject } from '@/lib/projectMatching'
@@ -188,7 +189,8 @@ function SessionItem(props: {
         : false
     const progress = getTodoProgress(s)
     const hasPending = s.pendingRequestsCount > 0
-    const isThinking = s.thinking && !hasPending  // thinking but not waiting for permission
+    const debouncedThinking = useDebouncedThinking(Boolean(s.thinking))
+    const isThinking = debouncedThinking && !hasPending
     const vibingMessage = useVibingMessage(Boolean(isThinking))
     const runtimeAgent = s.metadata?.runtimeAgent?.trim()
     const sourceTag = getSourceTag(s)

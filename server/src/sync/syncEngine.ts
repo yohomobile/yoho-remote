@@ -1462,8 +1462,10 @@ export class SyncEngine {
         await this.store.setSessionActive(session.id, false, t, session.namespace, session.terminationReason ?? null)
         this._dbActiveSessionIds.delete(session.id)
 
-        // 如果任务刚完成，使用带订阅者过滤的事件
-        if (wasThinking) {
+        // 如果任务刚完成，使用带订阅者过滤的事件（受 cooldown 限制）
+        const lastCompleteAt = this.lastTaskCompleteAt.get(session.id) ?? 0
+        if (wasThinking && (t - lastCompleteAt >= this.TASK_COMPLETE_COOLDOWN_MS)) {
+            this.lastTaskCompleteAt.set(session.id, t)
             this.emitTaskCompleteEvent(session)
         } else {
             this.emit({

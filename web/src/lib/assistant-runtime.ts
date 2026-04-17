@@ -5,6 +5,7 @@ import { renderEventLabel } from '@/chat/presentation'
 import type { ChatBlock, CliOutputBlock } from '@/chat/types'
 import type { AgentEvent, ToolCallBlock } from '@/chat/types'
 import type { MessageStatus as YohoRemoteMessageStatus, Session } from '@/types/api'
+import { useDebouncedThinking } from '@/hooks/useDebouncedThinking'
 
 function safeStringify(value: unknown): string {
     if (typeof value === 'string') return value
@@ -179,6 +180,8 @@ export function useYohoRemoteRuntime(props: {
     onSendMessage: (text: string) => void
     onAbort: () => Promise<void>
 }) {
+    const debouncedThinking = useDebouncedThinking(Boolean(props.session.thinking))
+
     const groupedMessages = useMemo(
         () => convertBlocksToThreadMessages(props.blocks),
         [props.blocks]
@@ -186,7 +189,7 @@ export function useYohoRemoteRuntime(props: {
     const convertedMessages = useExternalMessageConverter<ThreadMessageLike>({
         callback: (message) => message,
         messages: groupedMessages,
-        isRunning: props.session.thinking,
+        isRunning: debouncedThinking,
     })
 
     const onNew = useCallback(async (message: AppendMessage) => {
@@ -203,12 +206,12 @@ export function useYohoRemoteRuntime(props: {
     // useExternalStoreRuntime may use adapter identity for subscriptions
     const adapter = useMemo(() => ({
         isDisabled: !props.session.active || props.isSending,
-        isRunning: props.session.thinking,
+        isRunning: debouncedThinking,
         messages: convertedMessages,
         onNew,
         onCancel,
         unstable_capabilities: { copy: true }
-    }), [props.session.active, props.isSending, props.session.thinking, convertedMessages, onNew, onCancel])
+    }), [props.session.active, props.isSending, debouncedThinking, convertedMessages, onNew, onCancel])
 
     return useExternalStoreRuntime(adapter)
 }
