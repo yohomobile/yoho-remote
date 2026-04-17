@@ -25,6 +25,7 @@ import { runtimePath } from '../projectPath';
 import { resolve } from 'node:path';
 import type { Session } from './session';
 import { readModeEnv } from '@/utils/modeEnv';
+import { resolveClaudeModelArg } from '@/utils/claudeModelArg';
 import { getYohoAuxMcpServers } from '@/utils/yohoMcpServers';
 import { getCurrentProcessStartedAtMs } from '@/utils/process';
 import { getBrainSessionPreferencesFromEnv } from '@/utils/brainSessionPreferences';
@@ -247,8 +248,10 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     // Permission mode is always bypassPermissions for Claude sessions
     let currentPermissionMode: PermissionMode = 'bypassPermissions';
     let currentModelMode: SessionModelMode = modeEnv.modelMode ?? (options.model === 'sonnet' || options.model === 'opus' || options.model === 'opus-4-7' || options.model === 'glm-5.1' ? options.model : 'sonnet');
-    // Sync currentModel with modelMode: 'opus'/'sonnet' → pass as --model
-    let currentModel = currentModelMode;
+    // Sync currentModel with modelMode. Mode labels like 'opus-4-7' are internal
+    // and must be expanded to a real Claude API model ID before being passed to
+    // the SDK; proxy modes (glm-5.1, gpt-*, grok-*) fall through unchanged.
+    let currentModel = resolveClaudeModelArg(currentModelMode) ?? currentModelMode;
     let currentFallbackModel: string | undefined = undefined; // Track current fallback model
     if (modeEnv.modelMode) {
         logger.debug(`[loop] Using mode settings from environment: modelMode=${modeEnv.modelMode}, reasoningEffort=${modeEnv.modelReasoningEffort}`);
@@ -466,7 +469,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
                 throw new Error('Invalid model mode');
             }
             currentModelMode = config.modelMode;
-            currentModel = config.modelMode;
+            currentModel = resolveClaudeModelArg(config.modelMode) ?? config.modelMode;
         }
 
         if (config.fastMode !== undefined) {
