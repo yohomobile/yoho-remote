@@ -295,6 +295,23 @@ function normalizeUserOutput(
         }
     }
 
+    if (isSidechain && !parentUUID && Array.isArray(messageContent)) {
+        const allText = messageContent.length > 0 && messageContent.every(
+            (b) => isObject(b) && b.type === 'text' && typeof b.text === 'string'
+        )
+        if (allText) {
+            const prompt = (messageContent as Array<{ text: string }>).map((b) => b.text).join('\n')
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'agent',
+                isSidechain: true,
+                content: [{ type: 'sidechain', uuid, prompt }]
+            }
+        }
+    }
+
     if (typeof messageContent === 'string') {
         return {
             id: messageId,
