@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { randomBytes } from 'node:crypto'
+import { z } from 'zod'
 import type {
     AgentState,
     CliMessagesResponse,
@@ -28,6 +29,19 @@ export type StoredMessage = {
     localId?: string | null
     content: unknown
 }
+
+const SendMessageToSessionResponseSchema = z.object({
+    ok: z.boolean(),
+    status: z.enum(['delivered', 'queued', 'busy', 'offline', 'not_found', 'access_denied']),
+    sessionId: z.string(),
+    retryable: z.boolean().optional(),
+    resumeRequired: z.boolean().optional(),
+    error: z.string().optional(),
+    queue: z.enum(['brain-child-init']).optional(),
+    queueDepth: z.number().int().min(0).optional(),
+})
+
+export type SendMessageToSessionResult = z.infer<typeof SendMessageToSessionResponseSchema>
 
 export class ApiClient {
     static async create(): Promise<ApiClient> {
@@ -235,12 +249,12 @@ export class ApiClient {
         }))
     }
 
-    async sendMessageToSession(sessionId: string, text: string, sentFrom?: string): Promise<void> {
+    async sendMessageToSession(sessionId: string, text: string, sentFrom?: string): Promise<SendMessageToSessionResult> {
         const idempotencyKey = ulid()
         let lastError: unknown = null
         for (let attempt = 0; attempt < 3; attempt++) {
             try {
-                await axios.post(
+                const response = await axios.post(
                     `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/messages`,
                     { text, sentFrom },
                     {
@@ -252,8 +266,17 @@ export class ApiClient {
                         timeout: 30_000
                     }
                 )
-                return
+                const parsed = SendMessageToSessionResponseSchema.safeParse(response.data)
+                if (!parsed.success) {
+                    throw new Error('Invalid /cli/sessions/:id/messages response')
+                }
+                return parsed.data
             } catch (error: unknown) {
+                const responseData = axios.isAxiosError(error) ? error.response?.data : undefined
+                const parsed = SendMessageToSessionResponseSchema.safeParse(responseData)
+                if (parsed.success) {
+                    return parsed.data
+                }
                 lastError = error
                 if (!isRetryableSendMessageError(error)) {
                     throw error
@@ -558,6 +581,70 @@ export class ApiClient {
         const query = params.toString()
         const response = await axios.get(
             `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/tail${query ? `?${query}` : ''}`,
+            {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 15_000
+            }
+        )
+        return response.data
+    }
+
+    async searchSessions(opts: {
+        query: string
+        limit?: number
+        includeOffline?: boolean
+        mainSessionId?: string
+        directory?: string
+        flavor?: 'claude' | 'codex'
+        source?: string
+    }): Promise<{
+        query: string
+        returned: number
+        results: Array<{
+            sessionId: string
+            score: number
+            active: boolean
+            thinking: boolean
+            activeAt: number | null
+            updatedAt: number
+            lastMessageAt: number | null
+            pendingRequestsCount: number
+            permissionMode: string | null
+            modelMode: string | null
+            modelReasoningEffort: string | null
+            fastMode: boolean | null
+            metadata: {
+                path: string | null
+                summary: { text: string; updatedAt: number } | null
+                brainSummary: string | null
+                source: string | null
+                caller: string | null
+                machineId: string | null
+                flavor: string | null
+                mainSessionId: string | null
+            }
+            match: {
+                source: 'turn-summary' | 'brain-summary' | 'title' | 'path'
+                text: string
+                createdAt: number | null
+                seqStart: number | null
+                seqEnd: number | null
+            }
+        }>
+    }> {
+        const params = new URLSearchParams({ query: opts.query })
+        if (opts.limit !== undefined) params.set('limit', String(opts.limit))
+        if (opts.includeOffline !== undefined) params.set('includeOffline', String(opts.includeOffline))
+        if (opts.mainSessionId) params.set('mainSessionId', opts.mainSessionId)
+        if (opts.directory) params.set('directory', opts.directory)
+        if (opts.flavor) params.set('flavor', opts.flavor)
+        if (opts.source) params.set('source', opts.source)
+        const query = params.toString()
+        const response = await axios.get(
+            `${configuration.serverUrl}/cli/sessions/search?${query}`,
             {
                 headers: {
                     Authorization: `Bearer ${this.token}`,

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
     BRAIN_SESSION_ABORT_DESCRIPTION,
@@ -67,5 +67,64 @@ describe('brainTools descriptions', () => {
         expect(registrations.find((item) => item.name === 'session_set_config')?.description).toContain('运行时 steering')
         expect(registrations.find((item) => item.name === 'session_inspect')?.description).toContain('lastMessageAt')
         expect(registrations.find((item) => item.name === 'session_tail')?.description).toContain('真实输出/事件片段')
+    })
+
+    it('returns structured delivery data from session_send while keeping natural-language text', async () => {
+        const handlers = new Map<string, (args: any) => Promise<any>>()
+        const fakeMcp = {
+            registerTool: (name: string, _meta: { description?: string }, handler: (args: any) => Promise<any>) => {
+                handlers.set(name, handler)
+            },
+        }
+        const apiClient = {
+            getSession: vi.fn(async () => ({
+                id: 'child-session',
+                active: true,
+                thinking: false,
+                metadata: {
+                    source: 'brain-child',
+                    mainSessionId: 'brain-session',
+                },
+            })),
+            patchSessionMetadata: vi.fn(async () => undefined),
+            sendMessageToSession: vi.fn(async () => ({
+                ok: false,
+                status: 'busy',
+                sessionId: 'child-session',
+                retryable: true,
+            })),
+        }
+
+        registerBrainTools(fakeMcp as any, [], {
+            apiClient: apiClient as any,
+            machineId: 'machine-1',
+            brainSessionId: 'brain-session',
+            sessionCaller: 'webapp',
+            brainPreferences: null,
+        })
+
+        const handler = handlers.get('session_send')
+        expect(handler).toBeTypeOf('function')
+
+        const result = await handler?.({
+            sessionId: 'child-session',
+            message: '修复问题',
+        })
+
+        expect(apiClient.sendMessageToSession).toHaveBeenCalledWith('child-session', '修复问题', 'brain')
+        expect(result?.isError).toBeUndefined()
+        expect(result).toMatchObject({
+            structuredContent: {
+                delivery: {
+                    status: 'busy',
+                    sessionId: 'child-session',
+                    retryable: true,
+                },
+            },
+            content: [{
+                type: 'text',
+                text: expect.stringContaining('当前消息未投递'),
+            }],
+        })
     })
 })

@@ -1,14 +1,15 @@
 import { hostname } from 'node:os'
 import { Pool } from 'pg'
-import { PgBoss, type JobWithMetadata } from 'pg-boss'
+import { PgBoss } from 'pg-boss'
 import packageJson from '../package.json'
-import { QUEUE, summarizeTurnPayloadSchema } from './boss'
+import { QUEUE } from './boss'
 import { loadConfig } from './config'
 import { RunStore } from './db/runStore'
 import { ensureWorkerSchema } from './db/schema'
 import { SessionStore } from './db/sessionStore'
 import { SummaryStore } from './db/summaryStore'
-import { handleSummarizeTurn } from './handlers/summarizeTurn'
+import { registerWorkerJobs } from './jobs/core'
+import { workerJobDefinitions } from './jobs/summarizeTurn'
 import { DeepSeekClient } from './llm/deepseek'
 import type { WorkerContext } from './types'
 
@@ -72,22 +73,7 @@ async function main(): Promise<void> {
     }
 
     await boss.start()
-    await boss.createQueue(QUEUE.SUMMARIZE_TURN, queueOptions)
-    await boss.updateQueue(QUEUE.SUMMARIZE_TURN, queueOptions)
-    await boss.work(QUEUE.SUMMARIZE_TURN, {
-        batchSize: 1,
-        localConcurrency: config.workerConcurrency,
-        includeMetadata: true,
-    }, async (jobs: JobWithMetadata<unknown>[]) => {
-        for (const job of jobs) {
-            const parsed = summarizeTurnPayloadSchema.safeParse(job.data)
-            if (!parsed.success) {
-                console.error('[Worker] Invalid summarize-turn payload:', parsed.error.flatten())
-                continue
-            }
-            await handleSummarizeTurn(parsed.data, job, ctx)
-        }
-    })
+    await registerWorkerJobs(boss, ctx, workerJobDefinitions)
 
     console.log(
         '[Worker] Started.'

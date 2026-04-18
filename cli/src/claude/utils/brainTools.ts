@@ -12,6 +12,7 @@ import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { ApiClient } from '@/api/api'
 import { logger } from '@/ui/logger'
+import { registerChatMessagesTool } from './interactionTools'
 import {
     BRAIN_CLAUDE_CHILD_MODELS,
     BRAIN_CODEX_CHILD_MODELS,
@@ -514,40 +515,15 @@ export function registerBrainTools(
         inputSchema: sendSchema,
     }, async (args: { sessionId: string; message: string }) => {
         try {
-            // Check if session is thinking first
-            let session
+            let session = null
             try {
                 session = await api.getSession(args.sessionId)
-            } catch (err: any) {
-                return {
-                    content: [{
-                        type: 'text' as const,
-                        text: `Session ${args.sessionId} 未找到或无法访问: ${err.message}`,
-                    }],
-                    isError: true,
-                }
-            }
-
-            if (session.thinking) {
-                return {
-                    content: [{
-                        type: 'text' as const,
-                        text: `Session ${args.sessionId} 正在处理上一个任务（thinking=true）。请稍后再发送。`,
-                    }],
-                }
-            }
-
-            if (!session.active) {
-                return {
-                    content: [{
-                        type: 'text' as const,
-                        text: `Session ${args.sessionId} 当前不在线（active=false）。请创建新 session 或等待其重新上线。`,
-                    }],
-                }
+            } catch {
+                session = null
             }
 
             const metadataPatch: Record<string, unknown> = {}
-            if (session.metadata?.source === 'brain-child') {
+            if (session?.metadata?.source === 'brain-child') {
                 if (!session.metadata?.mainSessionId) {
                     metadataPatch.mainSessionId = brainSessionId
                 }
@@ -563,16 +539,68 @@ export function registerBrainTools(
                 logger.debug(`[brain] Repaired missing brain metadata for child session ${args.sessionId}`)
             }
 
-            // Send message - fire and forget
-            await api.sendMessageToSession(args.sessionId, args.message, 'brain')
+            const delivery = await api.sendMessageToSession(args.sessionId, args.message, 'brain')
 
-            logger.debug(`[brain] Message sent to session ${args.sessionId}, returning immediately (async callback mode)`)
+            if (delivery.status === 'delivered') {
+                logger.debug(`[brain] Message delivered to session ${args.sessionId}, returning immediately (async callback mode)`)
+                return {
+                    content: [{
+                        type: 'text' as const,
+                        text: `任务已发送到 Session ${args.sessionId}。\n\n子 session 正在后台执行，完成后结果会自动推送到你的对话中。你可以继续处理其他任务。`,
+                    }],
+                    structuredContent: {
+                        delivery,
+                    },
+                }
+            }
+
+            if (delivery.status === 'queued') {
+                return {
+                    content: [{
+                        type: 'text' as const,
+                        text: `任务已进入 Session ${args.sessionId} 的轻量排队区，等待子 session 完成初始化后自动投递。\n\n当前仅做初始化前缓冲，不会建立完整调度队列。`,
+                    }],
+                    structuredContent: {
+                        delivery,
+                    },
+                }
+            }
+
+            if (delivery.status === 'busy') {
+                return {
+                    content: [{
+                        type: 'text' as const,
+                        text: `Session ${args.sessionId} 正在处理上一个任务，当前消息未投递。\n\n请等待 child callback；如果确认要改派或纠偏，先调用 session_stop，再重新 session_send。`,
+                    }],
+                    structuredContent: {
+                        delivery,
+                    },
+                }
+            }
+
+            if (delivery.status === 'offline') {
+                return {
+                    content: [{
+                        type: 'text' as const,
+                        text: `Session ${args.sessionId} 当前不在线，消息未投递。\n\n请先调用 session_resume；如果恢复返回了新的 sessionId，后续必须改用新的 sessionId 再 session_send。`,
+                    }],
+                    structuredContent: {
+                        delivery,
+                    },
+                }
+            }
 
             return {
                 content: [{
                     type: 'text' as const,
-                    text: `任务已发送到 Session ${args.sessionId}。\n\n子 session 正在后台执行，完成后结果会自动推送到你的对话中。你可以继续处理其他任务。`,
+                    text: delivery.status === 'access_denied'
+                        ? `Session ${args.sessionId} 无权访问，消息未投递。`
+                        : `Session ${args.sessionId} 未找到，消息未投递。`,
                 }],
+                structuredContent: {
+                    delivery,
+                },
+                isError: true,
             }
         } catch (err: any) {
             return {
@@ -1020,44 +1048,7 @@ export function registerBrainTools(
         })
     })
 
-    // ===== 13. chat_messages =====
-    const chatMessagesSchema: z.ZodTypeAny = z.object({
-        chatId: z.string().describe('飞书 chat_id（群聊或单聊）'),
-        limit: z.number().optional().describe('返回条数，默认 50，最大 200'),
-        beforeTimestamp: z.number().optional().describe('只返回此时间戳之前的消息（毫秒），用于翻页'),
-    })
-
-    mcp.registerTool<any, any>('chat_messages', {
-        title: 'Chat Messages',
-        description: '查询飞书聊天的历史消息记录（单聊或群聊）。返回持久化的消息列表，按时间倒序。可用于了解对话上下文、查找之前讨论的内容。',
-        inputSchema: chatMessagesSchema,
-    }, async (args: { chatId: string; limit?: number; beforeTimestamp?: number }) => {
-        try {
-            const limit = Math.min(args.limit || 50, 200)
-            const messages = await api.getFeishuChatMessages(args.chatId, limit, args.beforeTimestamp)
-
-            if (messages.length === 0) {
-                return {
-                    content: [{ type: 'text' as const, text: '没有找到消息记录。' }],
-                }
-            }
-
-            const lines = messages.reverse().map((m: any) =>
-                `[${new Date(m.createdAt).toLocaleTimeString('zh-CN', { hour12: false })}] ${m.senderName}: ${m.content}`
-            )
-            return {
-                content: [{
-                    type: 'text' as const,
-                    text: `共 ${messages.length} 条消息：\n${lines.join('\n')}`,
-                }],
-            }
-        } catch (err: any) {
-            return {
-                content: [{ type: 'text' as const, text: `查询失败: ${err.message || String(err)}` }],
-                isError: true,
-            }
-        }
-    })
+    registerChatMessagesTool(mcp, toolNames, { apiClient: api })
 
     toolNames.push(
         'session_create',
@@ -1074,7 +1065,6 @@ export function registerBrainTools(
         'session_tail',
         'session_set_config',
         'session_set_model_mode',
-        'chat_messages',
     )
 
     logger.debug(`[brain] Registered ${toolNames.length - initialToolCount} brain tools (async mode) for session ${brainSessionId}`)

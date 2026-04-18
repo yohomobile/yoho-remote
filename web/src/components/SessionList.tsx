@@ -461,8 +461,10 @@ export function SessionList(props: {
     }, [effectiveOwnerFilter, props.sessions, props.archiveFilter])
 
     const listEntries = useMemo(
-        () => buildSessionListEntries(filteredSessions),
-        [filteredSessions]
+        () => buildSessionListEntries(filteredSessions, {
+            sortMode: effectiveOwnerFilter === 'brain' ? 'createdAtDesc' : 'activity',
+        }),
+        [effectiveOwnerFilter, filteredSessions]
     )
     useEffect(() => {
         const visibleBrainSessionIds = new Set(

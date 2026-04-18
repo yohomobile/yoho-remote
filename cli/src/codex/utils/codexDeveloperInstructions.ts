@@ -1,4 +1,10 @@
 import { trimIdent } from '@/utils/trimIdent';
+import {
+    BRAIN_CHILD_INTERACTION_YOHO_REMOTE_TOOL_NAMES,
+    BRAIN_CHILD_OPTIONAL_HOST_TOOL_NAMES,
+    BRAIN_CHILD_YOHO_REMOTE_TOOL_NAMES,
+    buildBrainChildCodexFunctionTools,
+} from '@/utils/brainChildToolAllowlist';
 
 const YOHO_VAULT_RUNTIME_TOOLS = [
     'functions.yoho_vault__recall',
@@ -16,6 +22,11 @@ const YOHO_VAULT_RUNTIME_TOOLS = [
     'functions.yoho_vault__skill_import',
 ] as const;
 
+export const BRAIN_CHILD_SAFE_YOHO_REMOTE_TOOL_NAMES = [
+    ...BRAIN_CHILD_YOHO_REMOTE_TOOL_NAMES,
+    ...BRAIN_CHILD_INTERACTION_YOHO_REMOTE_TOOL_NAMES,
+] as const;
+
 const SKILL_RUNTIME_TOOLS = [
     'functions.skill__search',
     'functions.skill__get',
@@ -31,11 +42,15 @@ function extractFunctionNamespace(toolName: string): string | null {
     return match ? `functions.${match[1]}__*` : null;
 }
 
+function mapYohoRemoteRuntimeFunctionTools(toolNames: readonly string[]): string[] {
+    return toolNames.map((toolName) => `functions.yoho_remote__${toolName}`);
+}
+
 export function buildCodexRuntimeFunctionTools(args: {
     yohoRemoteToolNames: string[];
     auxServerNames: string[];
 }): string[] {
-    const tools = args.yohoRemoteToolNames.map((toolName) => `functions.yoho_remote__${toolName}`);
+    const tools = mapYohoRemoteRuntimeFunctionTools(args.yohoRemoteToolNames);
     const auxServerNames = new Set(args.auxServerNames);
 
     if (auxServerNames.has('yoho_vault')) {
@@ -46,6 +61,17 @@ export function buildCodexRuntimeFunctionTools(args: {
     }
 
     return [...new Set(tools)].sort();
+}
+
+export function buildCodexBrainChildRuntimeFunctionTools(args: {
+    yohoRemoteToolNames: string[];
+    auxServerNames: string[];
+}): string[] {
+    return buildBrainChildCodexFunctionTools({
+        yohoRemoteToolNames: args.yohoRemoteToolNames,
+        auxServerNames: args.auxServerNames,
+        includeInteractionTools: true,
+    });
 }
 
 export function buildCodexDeveloperInstructions(args: {
@@ -84,6 +110,18 @@ export function buildCodexDeveloperInstructions(args: {
         Do NOT use shell commands such as "codex mcp list", "claude mcp list", "which mcp", or read ~/.codex/config.toml / ~/.claude/settings.json to decide whether these runtime functions exist.
         When the user asks for environment info, project list, recall, remember, credentials, or skill search, call the matching runtime function directly if it is available.
     `);
+
+    if (args.sessionSource === 'brain-child') {
+        return trimIdent(`
+            This session is a Brain child worker, not the Brain orchestration hub.
+            Only the brain-child-safe Yoho helper set should be available here. Use it for local task support such as title updates, downloads, environment inspection, project CRUD, chat history lookup, vault recall/remember, credentials, skill/session-history lookup, and structured user Q&A via functions.yoho_remote__ask_user_question when available.
+            Do not assume session orchestration or cross-session control functions such as functions.yoho_remote__session_* exist unless they explicitly appear in the runtime tool list.
+            Host-provided tools such as ${BRAIN_CHILD_OPTIONAL_HOST_TOOL_NAMES.join(', ')} are not provisioned by Yoho Remote MCP registration here. Use them only if the host truly exposes them in the runtime tool list.
+            Do not use this child session as a dispatcher for other sessions.
+
+            ${runtimeSection}
+        `);
+    }
 
     if (args.sessionSource !== 'brain') {
         return runtimeSection;

@@ -67,6 +67,7 @@ type SessionViewer = {
 
 type SessionSummary = {
     id: string
+    createdAt: number
     active: boolean
     activeAt: number
     updatedAt: number
@@ -129,6 +130,7 @@ function toSessionSummary(session: Session): SessionSummary {
 
     return {
         id: session.id,
+        createdAt: session.createdAt,
         active: session.active,
         activeAt: session.activeAt,
         updatedAt: session.updatedAt,
@@ -158,6 +160,7 @@ function storedSessionToSummary(stored: StoredSession): SessionSummary {
 
     return {
         id: stored.id,
+        createdAt: stored.createdAt,
         active: stored.active,
         activeAt: stored.activeAt ?? stored.updatedAt,
         updatedAt: stored.updatedAt,

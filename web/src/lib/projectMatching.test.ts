@@ -36,6 +36,7 @@ describe('matchSessionToProject', () => {
     function createSession(path: string, machineId?: string, basePath?: string): SessionSummary {
         return {
             id: 'session-1',
+            createdAt: 1,
             active: true,
             activeAt: 1,
             updatedAt: 1,

@@ -1,30 +1,13 @@
-import { QUEUE, type SummarizeTurnPayload } from '../boss'
+import type { SummarizeTurnPayload } from '../boss'
 import { extractTurnContent, isMidStreamToolUse, isTurnStartUserMessage } from '../extract/messageExtractor'
 import { PermanentLLMError, safeLLMCall } from '../llm/errors'
+import { extractJobErrorCode, PermanentJobError, TransientJobError } from '../jobs/errors'
+import type { WorkerJobMetadata } from '../jobs/core'
 import type { DbMessage, L1SummaryRecord, ProviderTelemetry, WorkerContext } from '../types'
 
 const TRIVIAL_ASSISTANT_CHAR_THRESHOLD = 200
 const MAX_USER_TEXT_CHARS = 4_000
 const MAX_ASSISTANT_TEXT_CHARS = 8_000
-
-type SummarizeTurnJob = {
-    id?: string | null
-    retryCount?: number
-    retryLimit?: number
-    retryDelay?: number
-    retryBackoff?: boolean
-    retryDelayMax?: number
-    singletonKey?: string | null
-    createdOn?: Date
-    startedOn?: Date
-}
-
-class PermanentJobError extends Error {
-    constructor(message: string) {
-        super(message)
-        this.name = 'PermanentJobError'
-    }
-}
 
 function truncate(value: string, maxLength: number): string {
     if (value.length <= maxLength) {
@@ -60,15 +43,13 @@ function extractProviderTelemetry(error: unknown): ProviderTelemetry | null {
     const requestId = record?.requestId ?? null
     const finishReason = record?.finishReason ?? null
     const errorCode = record?.code ?? null
+    const hasProviderContext = provider != null
+        || model != null
+        || statusCode != null
+        || requestId != null
+        || finishReason != null
 
-    if (
-        provider == null
-        && model == null
-        && statusCode == null
-        && requestId == null
-        && finishReason == null
-        && errorCode == null
-    ) {
+    if (!hasProviderContext) {
         return null
     }
 
@@ -88,7 +69,7 @@ function buildRunMetadata(input: {
     workerHost: string
     workerVersion: string
     queueSchema: string
-    job: SummarizeTurnJob
+    job: WorkerJobMetadata
     seqEnd?: number | null
     messageCount?: number
     realMessageCount?: number
@@ -101,12 +82,16 @@ function buildRunMetadata(input: {
     providerSkippedReason?: string | null
 }): Record<string, unknown> {
     const metadata: Record<string, unknown> = {
+        job_family: input.job.family,
+        job_name: input.job.name,
+        job_version: input.job.version,
+        idempotency_key: input.job.idempotencyKey,
         payload_namespace: input.payload.namespace,
         session_namespace: input.sessionNamespace,
         user_seq: input.payload.userSeq,
         seq_start: input.payload.userSeq,
         scheduled_at_ms: input.payload.scheduledAtMs,
-        queue_name: QUEUE.SUMMARIZE_TURN,
+        queue_name: input.job.queueName,
         queue_schema: input.queueSchema,
         worker_host: input.workerHost,
         worker_version: input.workerVersion,
@@ -207,7 +192,7 @@ function getLastAssistantLikeMessage(messages: DbMessage[]): DbMessage | null {
 
 export async function handleSummarizeTurn(
     payload: SummarizeTurnPayload,
-    job: SummarizeTurnJob,
+    job: WorkerJobMetadata,
     ctx: WorkerContext
 ): Promise<void> {
     const startedAt = Date.now()
@@ -227,6 +212,7 @@ export async function handleSummarizeTurn(
         durationMs: number
         tokensIn?: number | null
         tokensOut?: number | null
+        errorCode?: string | null
         error?: string | null
         metadata?: Record<string, unknown> | null
     }): Parameters<typeof ctx.runStore.insert>[0] => ({
@@ -234,6 +220,10 @@ export async function handleSummarizeTurn(
         namespace: sessionNamespace,
         level: 1,
         jobId: job.id ?? null,
+        jobName: job.name,
+        jobFamily: job.family,
+        jobVersion: job.version,
+        idempotencyKey: job.idempotencyKey,
         status: input.status,
         durationMs: input.durationMs,
         tokensIn: input.tokensIn ?? null,
@@ -249,6 +239,7 @@ export async function handleSummarizeTurn(
         providerStatus: provider?.statusCode ?? null,
         providerRequestId: provider?.requestId ?? null,
         providerFinishReason: provider?.finishReason ?? null,
+        errorCode: input.errorCode ?? null,
         error: input.error ?? null,
         metadata: input.metadata ?? null,
     })
@@ -287,6 +278,7 @@ export async function handleSummarizeTurn(
             await recordRun(buildRunInput({
                 status: 'error_permanent',
                 durationMs: Date.now() - startedAt,
+                errorCode: 'session_not_found',
                 error: 'Session not found',
                 metadata: buildMetadata(),
             }))
@@ -296,10 +288,14 @@ export async function handleSummarizeTurn(
         sessionNamespace = session.namespace
         if (session.thinking) {
             providerSkippedReason = 'session_still_thinking'
-            const error = new Error('Session still thinking — retry later')
+            const error = new TransientJobError(
+                'session_still_thinking',
+                'Session still thinking — retry later'
+            )
             await recordRun(buildRunInput({
                 status: 'error_transient',
                 durationMs: Date.now() - startedAt,
+                errorCode: error.code,
                 error: error.message,
                 metadata: buildMetadata(),
             }))
@@ -310,11 +306,17 @@ export async function handleSummarizeTurn(
         messageCount = messages.length
         if (messages.length === 0) {
             providerSkippedReason = 'turn_start_not_found'
-            throw new PermanentJobError(`Turn start seq ${payload.userSeq} not found`)
+            throw new PermanentJobError(
+                'turn_start_not_found',
+                `Turn start seq ${payload.userSeq} not found`
+            )
         }
         if (messages[0]?.seq !== payload.userSeq || !isTurnStartUserMessage(messages[0]?.content)) {
             providerSkippedReason = 'invalid_turn_start_message'
-            throw new PermanentJobError(`Turn start seq ${payload.userSeq} is not a user text message`)
+            throw new PermanentJobError(
+                'invalid_turn_start_message',
+                `Turn start seq ${payload.userSeq} is not a user text message`
+            )
         }
 
         const lastRawMessage = messages[messages.length - 1]
@@ -322,10 +324,14 @@ export async function handleSummarizeTurn(
         const lastAssistantMessage = getLastAssistantLikeMessage(messages)
         if (lastAssistantMessage && isMidStreamToolUse(lastAssistantMessage.content)) {
             providerSkippedReason = 'turn_incomplete_mid_tool_use'
-            const error = new Error('Turn appears incomplete (last assistant-like message is tool_use) — retry later')
+            const error = new TransientJobError(
+                'turn_incomplete_mid_tool_use',
+                'Turn appears incomplete (last assistant-like message is tool_use) — retry later'
+            )
             await recordRun(buildRunInput({
                 status: 'error_transient',
                 durationMs: Date.now() - startedAt,
+                errorCode: error.code,
                 error: error.message,
                 metadata: buildMetadata(),
             }))
@@ -342,6 +348,7 @@ export async function handleSummarizeTurn(
             await recordRun(buildRunInput({
                 status: 'skipped',
                 durationMs: Date.now() - startedAt,
+                errorCode: 'insufficient_real_messages',
                 error: 'Turn has fewer than 2 real activity messages',
                 metadata: buildMetadata(),
             }))
@@ -353,13 +360,19 @@ export async function handleSummarizeTurn(
             await recordRun(buildRunInput({
                 status: 'skipped',
                 durationMs: Date.now() - startedAt,
+                errorCode: 'trivial_turn',
                 error: 'trivial turn (assistantText < 200 chars, no tool_use)',
                 metadata: buildMetadata(),
             }))
             return
         }
 
-        const cachedResult = await ctx.runStore.getLatestCachedL1Result(payload.sessionId, payload.userSeq)
+        const cachedResult = await ctx.runStore.getLatestCachedL1Result(
+            payload.sessionId,
+            payload.userSeq,
+            job.name,
+            job.version
+        )
         cacheHit = cachedResult !== null
         providerSkippedReason = cacheHit ? 'cache_hit' : null
 
@@ -434,6 +447,7 @@ export async function handleSummarizeTurn(
                 durationMs: Date.now() - startedAt,
                 tokensIn: llmResult.tokensIn,
                 tokensOut: llmResult.tokensOut,
+                errorCode: extractJobErrorCode(error),
                 error: transientError.message,
                 metadata: buildMetadata({
                     cachedResult: {
@@ -449,6 +463,7 @@ export async function handleSummarizeTurn(
         }
     } catch (error) {
         provider = provider ?? extractProviderTelemetry(error)
+        const errorCode = extractJobErrorCode(error)
         if (!provider && error instanceof PermanentLLMError) {
             provider = {
                 provider: 'deepseek',
@@ -465,6 +480,7 @@ export async function handleSummarizeTurn(
                 await ctx.runStore.insert(buildRunInput({
                     status: 'error_permanent',
                     durationMs: Date.now() - startedAt,
+                    errorCode,
                     error: error.message,
                     metadata: buildMetadata(),
                 }))
@@ -476,6 +492,7 @@ export async function handleSummarizeTurn(
             await ctx.runStore.insert(buildRunInput({
                 status: 'error_transient',
                 durationMs: Date.now() - startedAt,
+                errorCode,
                 error: (error as Error).message,
                 metadata: buildMetadata(),
             })).catch(() => {})

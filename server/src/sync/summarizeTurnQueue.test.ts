@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import {
     SUMMARIZE_TURN_QUEUE_NAME,
+    SUMMARIZE_TURN_JOB_VERSION,
     createSummarizeTurnQueuePublisher,
-    type SummarizeTurnJobPayload
+    type SummarizeTurnJobData
 } from './summarizeTurnQueue'
 
 type BossInstanceRecord = {
@@ -20,7 +21,7 @@ type BossInstanceRecord = {
     }>
     sendCalls: Array<{
         queueName: string
-        payload: SummarizeTurnJobPayload
+        payload: SummarizeTurnJobData
         options?: { singletonKey?: string }
     }>
 }
@@ -78,7 +79,7 @@ class FakePgBoss {
 
     async send(
         queueName: string,
-        payload: SummarizeTurnJobPayload,
+        payload: SummarizeTurnJobData,
         options?: { singletonKey?: string }
     ): Promise<string> {
         this.record.sendCalls.push({ queueName, payload, options })
@@ -183,11 +184,15 @@ describe('createSummarizeTurnQueuePublisher', () => {
             bossSchema: 'pgboss'
         })
 
-        const payload: SummarizeTurnJobPayload = {
-            sessionId: 'session-1',
-            namespace: 'ns-a',
-            userSeq: 11,
-            scheduledAtMs: 1_700_000_000_123
+        const payload: SummarizeTurnJobData = {
+            version: SUMMARIZE_TURN_JOB_VERSION,
+            idempotencyKey: 'turn:session-1:11',
+            payload: {
+                sessionId: 'session-1',
+                namespace: 'ns-a',
+                userSeq: 11,
+                scheduledAtMs: 1_700_000_000_123
+            },
         }
 
         await publisher?.send(SUMMARIZE_TURN_QUEUE_NAME, payload, {

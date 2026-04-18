@@ -27,6 +27,7 @@ import type { Session } from './session';
 import { readModeEnv } from '@/utils/modeEnv';
 import { resolveClaudeModelArg } from '@/utils/claudeModelArg';
 import { getYohoAuxMcpServers } from '@/utils/yohoMcpServers';
+import { buildBrainChildClaudeAllowedTools } from '@/utils/brainChildToolAllowlist';
 import { getCurrentProcessStartedAtMs } from '@/utils/process';
 import { getBrainSessionPreferencesFromEnv } from '@/utils/brainSessionPreferences';
 import { mergeResumeMetadata } from '@/utils/mergeResumeMetadata';
@@ -258,8 +259,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     let mergeAppendSystemPrompt = (userAppendSystemPrompt?: string): string | undefined => {
         return userAppendSystemPrompt;
     };
-    let currentAllowedTools: string[] | undefined = sessionSource === 'brain'
-        ? [
+    const brainAllowedTools = [
             'WebSearch',
             'WebFetch',
             ...yohoRemoteServer.toolNames
@@ -285,8 +285,17 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
             'mcp__skill__update',
             'mcp__skill__discover',
             'mcp__skill__import',
-        ]
-        : undefined; // Track current allowed tools
+        ];
+    const brainChildAllowedTools = buildBrainChildClaudeAllowedTools({
+        yohoRemoteToolNames: yohoRemoteServer.toolNames,
+        sessionCaller,
+        includeInteractionTools: true,
+    });
+    let currentAllowedTools: string[] | undefined = sessionSource === 'brain'
+        ? brainAllowedTools
+        : sessionSource === 'brain-child'
+            ? brainChildAllowedTools
+            : undefined; // Track current allowed tools
     let currentDisallowedTools: string[] | undefined = sessionSource === 'brain' ? ['AskUserQuestion'] : undefined;
 
     const syncSessionModes = () => {
@@ -530,40 +539,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         sessionId: resumeSessionId,
         messageQueue,
         api,
-        allowedTools: sessionSource === 'brain'
-            ? [
-                // Brain mode: whitelist MCP tools + selected built-in tools for direct task handling.
-                // WebSearch/WebFetch allow Brain to handle simple queries (news, lookups) without
-                // creating child sessions. Other built-in tools (Read, Write, Bash, etc.) are still
-                // blocked so Brain focuses on orchestration for code tasks.
-                'WebSearch',
-                'WebFetch',
-                // Feishu sessions: exclude change_title (title is set server-side)
-                ...yohoRemoteServer.toolNames
-                    .filter(t => sessionCaller === 'feishu' ? t !== 'change_title' : true)
-                    .map(toolName => `mcp__yoho_remote__${toolName}`),
-                'mcp__yoho-vault__recall',
-                'mcp__yoho-vault__remember',
-                'mcp__yoho-vault__list_credentials',
-                'mcp__yoho-vault__get_credential',
-                'mcp__yoho-vault__set_credential',
-                'mcp__yoho-vault__delete_credential',
-                'mcp__yoho-vault__skill_search',
-                'mcp__yoho-vault__skill_get',
-                'mcp__yoho-vault__skill_list',
-                'mcp__yoho-vault__skill_save',
-                'mcp__yoho-vault__skill_update',
-                'mcp__yoho-vault__skill_discover',
-                'mcp__yoho-vault__skill_import',
-                'mcp__skill__search',
-                'mcp__skill__get',
-                'mcp__skill__list',
-                'mcp__skill__save',
-                'mcp__skill__update',
-                'mcp__skill__discover',
-                'mcp__skill__import',
-            ]
-            : undefined,
+        allowedTools: currentAllowedTools,
         onModeChange: (newMode) => {
             session.sendSessionEvent({ type: 'switch', mode: newMode });
             session.updateAgentState((currentState) => ({

@@ -1,10 +1,17 @@
 export const SUMMARIZE_TURN_QUEUE_NAME = 'summarize-turn'
+export const SUMMARIZE_TURN_JOB_VERSION = 1 as const
 
 export type SummarizeTurnJobPayload = {
     sessionId: string
     namespace: string
     userSeq: number
     scheduledAtMs: number
+}
+
+export type SummarizeTurnJobData = {
+    version: typeof SUMMARIZE_TURN_JOB_VERSION
+    idempotencyKey: string
+    payload: SummarizeTurnJobPayload
 }
 
 type QueueOptions = {
@@ -21,7 +28,7 @@ type SendOptions = {
 export interface SummarizeTurnQueuePublisher {
     send(
         queueName: string,
-        payload: SummarizeTurnJobPayload,
+        payload: SummarizeTurnJobData,
         options?: SendOptions
     ): Promise<unknown>
     stop(): Promise<void>
@@ -44,7 +51,7 @@ type PgBossLike = {
     updateQueue(queueName: string, options?: QueueOptions): Promise<unknown>
     send(
         queueName: string,
-        payload: SummarizeTurnJobPayload,
+        payload: SummarizeTurnJobData,
         options?: SendOptions
     ): Promise<unknown>
 }

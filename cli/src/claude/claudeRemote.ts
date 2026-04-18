@@ -11,6 +11,7 @@ import { systemPrompt } from "./utils/systemPrompt";
 import { PermissionResult } from "./sdk/types";
 import { buildMessageContent } from "./utils/imageMessage";
 import { resolveFileReferences } from "./utils/fileMessage";
+import { CLAUDE_BUILTIN_TOOLS } from "./utils/claudeBuiltinTools";
 import { isFatalAuthResultError, toClaudeLimitError } from "./utils/resultErrorClassifier";
 
 // Timeout for waiting on Claude API response (10 minutes)
@@ -124,12 +125,6 @@ export async function claudeRemote(opts: {
     let mode = initial.mode;
 
     // All Claude Code built-in tools (non-MCP). Used to build disallowedTools for restricted sessions.
-    const BUILTIN_TOOLS = [
-        'Task', 'Agent', 'TaskOutput', 'Bash', 'Glob', 'Grep', 'ExitPlanMode', 'Read', 'Edit', 'Write',
-        'NotebookEdit', 'WebFetch', 'TodoWrite', 'WebSearch', 'TaskStop', 'AskUserQuestion',
-        'Skill', 'EnterPlanMode',
-    ];
-
     // When mode.allowedTools is set (e.g. Brain sessions), we use --disallowedTools to block all
     // built-in tools that are NOT in the whitelist. This is the only reliable way to prevent
     // Claude Code from auto-allowing tools (e.g. Read for files within cwd) without going
@@ -145,7 +140,7 @@ export async function claudeRemote(opts: {
     if (hasToolRestrictions) {
         // Block all built-in tools not explicitly allowed
         const allowedSet = new Set(allAllowedTools);
-        const builtinToBlock = BUILTIN_TOOLS.filter(t => !allowedSet.has(t));
+        const builtinToBlock = CLAUDE_BUILTIN_TOOLS.filter(t => !allowedSet.has(t));
         effectiveDisallowedTools = [...new Set([...effectiveDisallowedTools, ...builtinToBlock])];
         logger.debug(`[claudeRemote] Tool restrictions active — disallowing built-in tools: ${builtinToBlock.join(', ')}`);
     }

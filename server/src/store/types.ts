@@ -34,6 +34,22 @@ export type StoredSession = {
     activeMonitors: unknown | null
 }
 
+export type StoredSessionSearchMatchSource = 'turn-summary' | 'brain-summary' | 'title' | 'path'
+
+export type StoredSessionSearchMatch = {
+    source: StoredSessionSearchMatchSource
+    text: string
+    createdAt: number | null
+    seqStart: number | null
+    seqEnd: number | null
+}
+
+export type StoredSessionSearchResult = {
+    session: StoredSession
+    score: number
+    match: StoredSessionSearchMatch
+}
+
 export type SpawnAgentType = 'claude' | 'codex'
 
 export type StoredMachine = {

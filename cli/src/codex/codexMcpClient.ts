@@ -20,6 +20,7 @@ type ElicitRequestedSchema = {
     properties?: Record<string, unknown>;
     required?: string[];
 };
+type ElicitAnswers = Record<string, string[]>;
 
 export type CodexApprovalKind = 'mcp_tool_call' | 'exec_command' | 'unknown';
 
@@ -386,9 +387,35 @@ function coerceValueForSchema(
 function buildElicitationContent(
     decision: 'approved' | 'approved_for_session' | 'denied' | 'abort',
     requestedSchema: ElicitRequestedSchema | null,
-    reason?: string
+    reason?: string,
+    answers?: ElicitAnswers
 ): ElicitContent {
     const approved = decision === 'approved' || decision === 'approved_for_session';
+
+    if (answers && Object.keys(answers).length > 0) {
+        if (requestedSchema?.properties && Object.keys(requestedSchema.properties).length > 0) {
+            const content: Record<string, ElicitResponseValue> = {};
+            for (const [key, schema] of Object.entries(requestedSchema.properties)) {
+                const answer = answers[key];
+                if (!answer || answer.length === 0) {
+                    continue;
+                }
+                const schemaType = isObject(schema) && typeof schema.type === 'string' ? schema.type : null;
+                content[key] = schemaType === 'array' ? answer : answer[0]!;
+            }
+            if (Object.keys(content).length > 0) {
+                return content;
+            }
+        }
+
+        const firstAnswer = Object.values(answers)[0];
+        if (requestedSchema?.type === 'array' && firstAnswer) {
+            return firstAnswer;
+        }
+        if (requestedSchema?.type === 'string' && firstAnswer?.[0]) {
+            return firstAnswer[0];
+        }
+    }
 
     if (requestedSchema?.properties && Object.keys(requestedSchema.properties).length > 0) {
         const content: Record<string, ElicitResponseValue> = {};
@@ -459,7 +486,8 @@ function buildElicitationContent(
 function buildElicitationResult(
     decision: 'approved' | 'approved_for_session' | 'denied' | 'abort',
     requestedSchema: ElicitRequestedSchema | null,
-    reason?: string
+    reason?: string,
+    answers?: ElicitAnswers
 ): {
     action: 'accept' | 'decline' | 'cancel';
     content?: ElicitContent;
@@ -473,7 +501,7 @@ function buildElicitationResult(
                 ? 'cancel'
                 : 'decline';
 
-    const content = buildElicitationContent(decision, requestedSchema, reason);
+    const content = buildElicitationContent(decision, requestedSchema, reason, answers);
     return reason ? { action, content, decision, reason } : { action, content, decision };
 }
 
@@ -703,7 +731,7 @@ export class CodexMcpClient {
                 })
             );
 
-            const elicitationResult = buildElicitationResult(result.decision, requestedSchema, result.reason);
+            const elicitationResult = buildElicitationResult(result.decision, requestedSchema, result.reason, result.answers);
             logger.debug(
                 '[CodexMCP] Elicitation response payload:',
                 stringifyForLog({
@@ -935,3 +963,7 @@ export class CodexMcpClient {
         logger.debug('[CodexMCP] Disconnected');
     }
 }
+
+export const __testOnly = {
+    buildElicitationResult,
+};

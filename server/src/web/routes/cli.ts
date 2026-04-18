@@ -5,7 +5,7 @@ import { join, basename, resolve } from 'node:path'
 import { configuration, getConfiguration } from '../../configuration'
 import { safeCompareStrings } from '../../utils/crypto'
 import { parseAccessToken } from '../../utils/accessToken'
-import type { Machine, Session, SyncEngine } from '../../sync/syncEngine'
+import type { Machine, Session, SendMessageOutcome, SyncEngine } from '../../sync/syncEngine'
 import type { SSEManager } from '../../sse/sseManager'
 import { serializeMachine, sortMachinesForDisplay } from './machinePayload'
 import { getLicenseService } from '../../license/licenseService'
@@ -51,6 +51,28 @@ const cliSendMessageSchema = z.object({
     sentFrom: z.string().optional()
 })
 
+type SessionSendResponse =
+    | {
+        ok: true
+        status: 'delivered'
+        sessionId: string
+    }
+    | {
+        ok: true
+        status: 'queued'
+        sessionId: string
+        queue: 'brain-child-init'
+        queueDepth: number
+    }
+    | {
+        ok: false
+        status: 'busy' | 'offline' | 'not_found' | 'access_denied'
+        sessionId: string
+        retryable: boolean
+        resumeRequired?: boolean
+        error?: string
+    }
+
 const getMessagesQuerySchema = z.object({
     afterSeq: z.coerce.number().int().min(0).optional(),
     limit: z.coerce.number().int().min(1).max(200).optional()
@@ -58,6 +80,18 @@ const getMessagesQuerySchema = z.object({
 
 const tailQuerySchema = z.object({
     limit: z.coerce.number().int().min(1).max(20).optional()
+})
+
+const booleanQuerySchema = z.union([z.literal('true'), z.literal('false')]).transform((value) => value === 'true')
+
+const sessionSearchQuerySchema = z.object({
+    query: z.string().trim().min(1),
+    limit: z.coerce.number().int().min(1).max(10).optional(),
+    includeOffline: booleanQuerySchema.optional(),
+    mainSessionId: z.string().trim().min(1).optional(),
+    directory: z.string().trim().min(1).optional(),
+    flavor: z.enum(['claude', 'codex']).optional(),
+    source: z.string().trim().min(1).optional(),
 })
 
 const brainSpawnSchema = z.object({
@@ -162,6 +196,42 @@ type BrainSessionTailItem = {
     subtype: string | null
     sentFrom: string | null
     snippet: string
+}
+
+type BrainSessionSearchPayload = {
+    query: string
+    returned: number
+    results: Array<{
+        sessionId: string
+        score: number
+        active: boolean
+        thinking: boolean
+        activeAt: number | null
+        updatedAt: number
+        lastMessageAt: number | null
+        pendingRequestsCount: number
+        permissionMode: string | null
+        modelMode: string | null
+        modelReasoningEffort: string | null
+        fastMode: boolean | null
+        metadata: {
+            path: string | null
+            summary: { text: string; updatedAt: number } | null
+            brainSummary: string | null
+            source: string | null
+            caller: string | null
+            machineId: string | null
+            flavor: string | null
+            mainSessionId: string | null
+        }
+        match: {
+            source: 'turn-summary' | 'brain-summary' | 'title' | 'path'
+            text: string
+            createdAt: number | null
+            seqStart: number | null
+            seqEnd: number | null
+        }
+    }>
 }
 
 function getContextBudget(modelMode?: string): number {
@@ -755,6 +825,83 @@ async function buildBrainSessionInspectPayload(engine: SyncEngine, session: Sess
     }
 }
 
+function buildBrainSessionSearchPayload(args: {
+    storedResults: Array<{
+        session: {
+            id: string
+            active: boolean
+            thinking: boolean
+            activeAt: number | null
+            updatedAt: number
+            lastMessageAt: number | null
+            permissionMode: string | null
+            modelMode: string | null
+            modelReasoningEffort: string | null
+            fastMode: boolean | null
+            metadata: unknown | null
+        }
+        score: number
+        match: {
+            source: 'turn-summary' | 'brain-summary' | 'title' | 'path'
+            text: string
+            createdAt: number | null
+            seqStart: number | null
+            seqEnd: number | null
+        }
+    }>
+    engine: SyncEngine | null
+    namespace: string
+    query: string
+}): BrainSessionSearchPayload {
+    return {
+        query: args.query,
+        returned: args.storedResults.length,
+        results: args.storedResults.map((item) => {
+            const memorySession = args.engine?.getSessionByNamespace(item.session.id, args.namespace)
+            const metadata = asRecord(memorySession?.metadata ?? item.session.metadata)
+            const summaryRecord = asRecord(metadata?.summary)
+            const requests = memorySession?.agentState?.requests
+
+            return {
+                sessionId: item.session.id,
+                score: item.score,
+                active: memorySession?.active ?? item.session.active,
+                thinking: memorySession?.thinking ?? item.session.thinking,
+                activeAt: memorySession?.activeAt ?? item.session.activeAt,
+                updatedAt: memorySession?.updatedAt ?? item.session.updatedAt,
+                lastMessageAt: memorySession?.lastMessageAt ?? item.session.lastMessageAt,
+                pendingRequestsCount: requests ? Object.keys(requests).length : 0,
+                permissionMode: memorySession?.permissionMode ?? item.session.permissionMode,
+                modelMode: memorySession?.modelMode ?? item.session.modelMode,
+                modelReasoningEffort: memorySession?.modelReasoningEffort ?? item.session.modelReasoningEffort,
+                fastMode: memorySession?.fastMode ?? item.session.fastMode,
+                metadata: {
+                    path: asNonEmptyString(metadata?.path) ?? null,
+                    summary: summaryRecord && typeof summaryRecord.text === 'string'
+                        ? {
+                            text: summaryRecord.text,
+                            updatedAt: typeof summaryRecord.updatedAt === 'number' ? summaryRecord.updatedAt : 0,
+                        }
+                        : null,
+                    brainSummary: asNonEmptyString(metadata?.brainSummary) ?? null,
+                    source: asNonEmptyString(metadata?.source) ?? null,
+                    caller: asNonEmptyString(metadata?.caller) ?? null,
+                    machineId: asNonEmptyString(metadata?.machineId) ?? null,
+                    flavor: asNonEmptyString(metadata?.flavor) ?? null,
+                    mainSessionId: asNonEmptyString(metadata?.mainSessionId) ?? null,
+                },
+                match: {
+                    source: item.match.source,
+                    text: clipText(item.match.text, 280),
+                    createdAt: item.match.createdAt,
+                    seqStart: item.match.seqStart,
+                    seqEnd: item.match.seqEnd,
+                },
+            }
+        }),
+    }
+}
+
 async function checkCliSessionLicense(c: { json: (data: any, status: number) => any }, orgId: string | null | undefined): Promise<Response | null> {
     if (!orgId) return null
     try {
@@ -896,6 +1043,24 @@ function resolveMachineForNamespace(
     return { ok: false, status: 404, error: 'Machine not found' }
 }
 
+function toSessionSendResponse(sessionId: string, outcome: SendMessageOutcome): SessionSendResponse {
+    if (outcome.status === 'queued') {
+        return {
+            ok: true,
+            status: 'queued',
+            sessionId,
+            queue: outcome.queue,
+            queueDepth: outcome.queueDepth,
+        }
+    }
+
+    return {
+        ok: true,
+        status: 'delivered',
+        sessionId,
+    }
+}
+
 export function createCliRoutes(
     getSyncEngine: () => SyncEngine | null,
     getSseManager?: () => SSEManager | null,
@@ -945,6 +1110,37 @@ export function createCliRoutes(
         return c.json({ session })
     })
 
+    app.get('/sessions/search', async (c) => {
+        const parsed = sessionSearchQuerySchema.safeParse(c.req.query())
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid query', details: parsed.error.issues }, 400)
+        }
+        if (!store) {
+            return c.json({ error: 'Store not available' }, 503)
+        }
+
+        const namespace = c.get('namespace')
+        const engine = getSyncEngine()
+        const limit = parsed.data.limit ?? 5
+        const storedResults = await store.searchSessionHistory({
+            namespace,
+            query: parsed.data.query,
+            limit,
+            includeOffline: parsed.data.includeOffline ?? true,
+            mainSessionId: parsed.data.mainSessionId,
+            directory: parsed.data.directory,
+            flavor: parsed.data.flavor,
+            source: parsed.data.source,
+        })
+
+        return c.json(buildBrainSessionSearchPayload({
+            storedResults,
+            engine,
+            namespace,
+            query: parsed.data.query,
+        }))
+    })
+
     app.get('/sessions/:id', (c) => {
         const engine = getSyncEngine()
         if (!engine) {
@@ -991,7 +1187,15 @@ export function createCliRoutes(
         const namespace = c.get('namespace')
         const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
         if (!resolved.ok) {
-            return c.json({ error: resolved.error }, resolved.status)
+            const status = resolved.status === 403 ? 'access_denied' : 'not_found'
+            const body: SessionSendResponse = {
+                ok: false,
+                status,
+                sessionId,
+                retryable: false,
+                error: resolved.error,
+            }
+            return c.json(body, resolved.status)
         }
 
         const body = await c.req.json().catch(() => null)
@@ -1000,11 +1204,33 @@ export function createCliRoutes(
             return c.json({ error: 'Invalid body' }, 400)
         }
 
-        await engine.sendMessage(sessionId, {
+        if (!resolved.session.active) {
+            const offline: SessionSendResponse = {
+                ok: false,
+                status: 'offline',
+                sessionId,
+                retryable: true,
+                resumeRequired: true,
+            }
+            return c.json(offline)
+        }
+
+        if (resolved.session.thinking) {
+            const busy: SessionSendResponse = {
+                ok: false,
+                status: 'busy',
+                sessionId,
+                retryable: true,
+            }
+            return c.json(busy)
+        }
+
+        const outcome = await engine.sendMessage(sessionId, {
             text: parsed.data.text,
-            sentFrom: (parsed.data.sentFrom || 'webapp') as 'webapp' | 'telegram-bot'
+            sentFrom: parsed.data.sentFrom || 'webapp'
         })
-        return c.json({ ok: true })
+        const response: SessionSendResponse = toSessionSendResponse(sessionId, outcome)
+        return c.json(response)
     })
 
     app.post('/sessions/:id/abort', async (c) => {

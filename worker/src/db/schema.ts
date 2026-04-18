@@ -35,6 +35,10 @@ const SUMMARIZATION_RUNS_DDL = `
         namespace TEXT NOT NULL,
         level SMALLINT NOT NULL,
         job_id TEXT,
+        job_name TEXT,
+        job_family TEXT,
+        job_version INTEGER,
+        idempotency_key TEXT,
         status TEXT NOT NULL,
         duration_ms INTEGER,
         tokens_in INTEGER,
@@ -50,11 +54,16 @@ const SUMMARIZATION_RUNS_DDL = `
         provider_status INTEGER,
         provider_request_id TEXT,
         provider_finish_reason TEXT,
+        error_code TEXT,
         error TEXT,
         metadata JSONB,
         created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
     );
 
+    ALTER TABLE summarization_runs ADD COLUMN IF NOT EXISTS job_name TEXT;
+    ALTER TABLE summarization_runs ADD COLUMN IF NOT EXISTS job_family TEXT;
+    ALTER TABLE summarization_runs ADD COLUMN IF NOT EXISTS job_version INTEGER;
+    ALTER TABLE summarization_runs ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
     ALTER TABLE summarization_runs ADD COLUMN IF NOT EXISTS worker_host TEXT;
     ALTER TABLE summarization_runs ADD COLUMN IF NOT EXISTS worker_version TEXT;
     ALTER TABLE summarization_runs ADD COLUMN IF NOT EXISTS queue_schema TEXT;
@@ -66,12 +75,17 @@ const SUMMARIZATION_RUNS_DDL = `
     ALTER TABLE summarization_runs ADD COLUMN IF NOT EXISTS provider_status INTEGER;
     ALTER TABLE summarization_runs ADD COLUMN IF NOT EXISTS provider_request_id TEXT;
     ALTER TABLE summarization_runs ADD COLUMN IF NOT EXISTS provider_finish_reason TEXT;
+    ALTER TABLE summarization_runs ADD COLUMN IF NOT EXISTS error_code TEXT;
 
     CREATE INDEX IF NOT EXISTS idx_sr_session ON summarization_runs(session_id, level);
     CREATE INDEX IF NOT EXISTS idx_sr_status ON summarization_runs(status) WHERE status != 'success';
     CREATE INDEX IF NOT EXISTS idx_sr_created ON summarization_runs(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_sr_namespace_created
         ON summarization_runs(namespace, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sr_job_created
+        ON summarization_runs(job_name, created_at DESC) WHERE job_name IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_sr_idempotency_key
+        ON summarization_runs(idempotency_key) WHERE idempotency_key IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_sr_provider_request_id
         ON summarization_runs(provider_request_id) WHERE provider_request_id IS NOT NULL;
 `

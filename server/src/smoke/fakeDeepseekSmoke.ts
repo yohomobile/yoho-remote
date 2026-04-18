@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { Pool } from 'pg'
 import {
     createSummarizeTurnQueuePublisher,
+    SUMMARIZE_TURN_JOB_VERSION,
 } from '../sync/summarizeTurnQueue'
 import {
     HELP_TEXT,
@@ -343,13 +344,18 @@ async function main(): Promise<void> {
         }
 
         const scheduledAtMs = Date.now()
+        const idempotencyKey = `turn:${config.sessionId}:${userSeq}`
         await publisher.send('summarize-turn', {
-            sessionId: config.sessionId,
-            namespace: config.namespace,
-            userSeq,
-            scheduledAtMs,
+            version: SUMMARIZE_TURN_JOB_VERSION,
+            idempotencyKey,
+            payload: {
+                sessionId: config.sessionId,
+                namespace: config.namespace,
+                userSeq,
+                scheduledAtMs,
+            },
         }, {
-            singletonKey: `turn:${config.sessionId}:${userSeq}`
+            singletonKey: idempotencyKey
         })
 
         const verification = await waitForVerification(pool, config.sessionId, userSeq)

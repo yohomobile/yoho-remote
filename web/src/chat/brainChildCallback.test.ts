@@ -17,7 +17,7 @@ const CALLBACK_TEXT = [
     '3. 验证通过'
 ].join('\n')
 
-function createMessage(text: string): DecryptedMessage {
+function createMessage(text: string, meta: Record<string, unknown> = { sentFrom: 'brain-callback' }): DecryptedMessage {
     return {
         id: 'brain-callback-message',
         seq: 1,
@@ -29,9 +29,7 @@ function createMessage(text: string): DecryptedMessage {
                 type: 'text',
                 text
             },
-            meta: {
-                sentFrom: 'brain-callback'
-            }
+            meta
         }
     }
 }
@@ -86,6 +84,52 @@ describe('brainChildCallback', () => {
                 type: 'brain-child-callback',
                 sessionId: 'child-session-123'
             }
+        })
+    })
+
+    test('prefers structured callback envelope from message meta when present', () => {
+        const normalized = normalizeDecryptedMessage(createMessage(CALLBACK_TEXT, {
+            sentFrom: 'brain-callback',
+            brainChildCallback: {
+                type: 'brain-child-callback',
+                version: 1,
+                sessionId: 'child-session-structured',
+                mainSessionId: 'brain-main',
+                title: '结构化回调验证',
+                previousSummary: '上一轮总结',
+                details: ['消息数: 7'],
+                stats: {
+                    messageCount: 7,
+                    contextBudget: 100_000,
+                    contextSize: 4_321,
+                    contextRemainingPercent: 96,
+                    inputTokens: 3210,
+                    outputTokens: 456,
+                },
+                result: {
+                    text: '结构化结果正文',
+                    source: 'result',
+                    seq: 9,
+                },
+            },
+        }))
+        const list = Array.isArray(normalized) ? normalized : normalized ? [normalized] : []
+
+        expect(list).toHaveLength(1)
+        expect(list[0]?.content).toMatchObject({
+            type: 'brain-child-callback',
+            sessionId: 'child-session-structured',
+            title: '结构化回调验证',
+            previousSummary: '上一轮总结',
+            details: ['消息数: 7'],
+            report: '结构化结果正文',
+            envelope: {
+                mainSessionId: 'brain-main',
+                stats: {
+                    contextSize: 4321,
+                    outputTokens: 456,
+                },
+            },
         })
     })
 })

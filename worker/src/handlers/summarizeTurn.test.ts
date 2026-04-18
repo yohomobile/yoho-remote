@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test'
-import type { SummarizeTurnPayload } from '../boss'
+import { SUMMARIZE_TURN_JOB_VERSION, type SummarizeTurnPayload } from '../boss'
 import type { InsertRunInput } from '../db/runStore'
 import type { InsertL1SummaryInput } from '../db/summaryStore'
+import type { WorkerJobMetadata } from '../jobs/core'
 import { handleSummarizeTurn } from './summarizeTurn'
 import type { DbMessage, L1SummaryRecord, WorkerContext } from '../types'
 
@@ -18,6 +19,18 @@ function message(seq: number, content: unknown): DbMessage {
         seq,
         content,
         createdAt: seq * 1000,
+    }
+}
+
+function createJob(overrides: Partial<WorkerJobMetadata> = {}): WorkerJobMetadata {
+    return {
+        id: 'job-default',
+        name: 'summarize-turn',
+        family: 'session-summary',
+        version: SUMMARIZE_TURN_JOB_VERSION,
+        queueName: 'summarize-turn',
+        idempotencyKey: 'turn:session-1:10',
+        ...overrides,
     }
 }
 
@@ -63,7 +76,14 @@ function createContext(options?: {
             insert: async (input: InsertRunInput) => {
                 insertedRuns.push(input)
             },
-            getLatestCachedL1Result: async () => options?.cachedResult ?? null,
+            getLatestCachedL1Result: async (
+                _sessionId: string,
+                _seqStart: number,
+                _jobName: string,
+                _jobVersion: number
+            ) => {
+                return options?.cachedResult ?? null
+            },
             pruneOlderThan: async () => 0,
         },
         deepseekClient: {
@@ -114,10 +134,17 @@ describe('handleSummarizeTurn', () => {
             ],
         })
 
-        await handleSummarizeTurn(payload, { id: 'job-trivial' }, ctx)
+        await handleSummarizeTurn(payload, createJob({ id: 'job-trivial' }), ctx)
 
         expect(insertedRuns).toHaveLength(1)
-        expect(insertedRuns[0]?.status).toBe('skipped')
+        expect(insertedRuns[0]).toMatchObject({
+            status: 'skipped',
+            jobName: 'summarize-turn',
+            jobFamily: 'session-summary',
+            jobVersion: SUMMARIZE_TURN_JOB_VERSION,
+            idempotencyKey: 'turn:session-1:10',
+            errorCode: 'trivial_turn',
+        })
         expect(insertedRuns[0]?.error).toContain('trivial turn')
         expect(getLlmCalls()).toBe(0)
         expect(getSummaryInsertCalls()).toBe(0)
@@ -132,12 +159,15 @@ describe('handleSummarizeTurn', () => {
             },
         })
 
-        await expect(handleSummarizeTurn(payload, { id: 'job-thinking' }, ctx)).rejects.toThrow(
+        await expect(handleSummarizeTurn(payload, createJob({ id: 'job-thinking' }), ctx)).rejects.toThrow(
             'Session still thinking'
         )
 
         expect(insertedRuns).toHaveLength(1)
-        expect(insertedRuns[0]?.status).toBe('error_transient')
+        expect(insertedRuns[0]).toMatchObject({
+            status: 'error_transient',
+            errorCode: 'session_still_thinking',
+        })
         expect(insertedRuns[0]?.error).toContain('Session still thinking')
         expect(getLlmCalls()).toBe(0)
     })
@@ -166,12 +196,15 @@ describe('handleSummarizeTurn', () => {
             ],
         })
 
-        await expect(handleSummarizeTurn(payload, { id: 'job-mid-stream' }, ctx)).rejects.toThrow(
+        await expect(handleSummarizeTurn(payload, createJob({ id: 'job-mid-stream' }), ctx)).rejects.toThrow(
             'Turn appears incomplete'
         )
 
         expect(insertedRuns).toHaveLength(1)
-        expect(insertedRuns[0]?.status).toBe('error_transient')
+        expect(insertedRuns[0]).toMatchObject({
+            status: 'error_transient',
+            errorCode: 'turn_incomplete_mid_tool_use',
+        })
         expect(insertedRuns[0]?.error).toContain('Turn appears incomplete')
         expect(getLlmCalls()).toBe(0)
     })
@@ -201,7 +234,7 @@ describe('handleSummarizeTurn', () => {
             ],
         })
 
-        await handleSummarizeTurn(payload, {
+        await handleSummarizeTurn(payload, createJob({
             id: 'job-success',
             retryCount: 2,
             retryLimit: 4,
@@ -211,7 +244,7 @@ describe('handleSummarizeTurn', () => {
             singletonKey: 'turn:session-1:10',
             createdOn: new Date(1_717_171_700_000),
             startedOn: new Date(1_717_171_705_000),
-        }, ctx)
+        }), ctx)
 
         expect(getLlmCalls()).toBe(1)
         expect(getSummaryInsertCalls()).toBe(1)
@@ -228,6 +261,10 @@ describe('handleSummarizeTurn', () => {
         expect(insertedRuns).toHaveLength(1)
         expect(insertedRuns[0]).toMatchObject({
             status: 'success',
+            jobName: 'summarize-turn',
+            jobFamily: 'session-summary',
+            jobVersion: SUMMARIZE_TURN_JOB_VERSION,
+            idempotencyKey: 'turn:session-1:10',
             workerHost: 'worker-a',
             workerVersion: '0.1.0-test',
             queueSchema: 'yr_boss',
@@ -246,6 +283,10 @@ describe('handleSummarizeTurn', () => {
             retry_delay_seconds: 15,
             retry_backoff: true,
             retry_delay_max_seconds: 300,
+            job_name: 'summarize-turn',
+            job_family: 'session-summary',
+            job_version: SUMMARIZE_TURN_JOB_VERSION,
+            idempotency_key: 'turn:session-1:10',
             singleton_key: 'turn:session-1:10',
             worker_host: 'worker-a',
             worker_version: '0.1.0-test',
@@ -294,7 +335,7 @@ describe('handleSummarizeTurn', () => {
             ],
         })
 
-        await handleSummarizeTurn(payload, { id: 'job-cache-hit' }, ctx)
+        await handleSummarizeTurn(payload, createJob({ id: 'job-cache-hit' }), ctx)
 
         expect(getLlmCalls()).toBe(0)
         expect(getSummaryInsertCalls()).toBe(1)
@@ -302,8 +343,11 @@ describe('handleSummarizeTurn', () => {
         expect(insertedSummaries[0]?.summary).toBe('缓存摘要')
         expect(insertedSummaries[0]?.metadata.topic).toBe('缓存主题')
         expect(insertedRuns).toHaveLength(1)
-        expect(insertedRuns[0]?.status).toBe('success')
         expect(insertedRuns[0]).toMatchObject({
+            status: 'success',
+            jobName: 'summarize-turn',
+            jobVersion: SUMMARIZE_TURN_JOB_VERSION,
+            idempotencyKey: 'turn:session-1:10',
             cacheHit: true,
             providerName: 'deepseek',
             providerRequestId: 'req-cache-1',

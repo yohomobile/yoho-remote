@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { SyncEngine, type Session } from './syncEngine'
 import {
     SUMMARIZE_TURN_QUEUE_NAME,
-    type SummarizeTurnJobPayload,
+    SUMMARIZE_TURN_JOB_VERSION,
+    type SummarizeTurnJobData,
     type SummarizeTurnQueuePublisher
 } from './summarizeTurnQueue'
 
@@ -33,7 +34,7 @@ describe('SyncEngine summarize-turn publisher contract', () => {
         const getTurnBoundaryCalls: string[] = []
         const sendCalls: Array<{
             queueName: string
-            payload: SummarizeTurnJobPayload
+            payload: SummarizeTurnJobData
             options?: { singletonKey?: string }
         }> = []
 
@@ -96,11 +97,13 @@ describe('SyncEngine summarize-turn publisher contract', () => {
         expect(getTurnBoundaryCalls).toEqual([session.id])
         expect(sendCalls).toHaveLength(1)
         expect(sendCalls[0]?.queueName).toBe(SUMMARIZE_TURN_QUEUE_NAME)
-        expect(sendCalls[0]?.payload.sessionId).toBe(session.id)
-        expect(sendCalls[0]?.payload.namespace).toBe(session.namespace)
-        expect(sendCalls[0]?.payload.userSeq).toBe(5)
-        expect(sendCalls[0]?.payload.scheduledAtMs).toBeGreaterThanOrEqual(startedAt)
-        expect(sendCalls[0]?.payload.scheduledAtMs).toBeLessThanOrEqual(Date.now())
+        expect(sendCalls[0]?.payload.version).toBe(SUMMARIZE_TURN_JOB_VERSION)
+        expect(sendCalls[0]?.payload.idempotencyKey).toBe(`turn:${session.id}:5`)
+        expect(sendCalls[0]?.payload.payload.sessionId).toBe(session.id)
+        expect(sendCalls[0]?.payload.payload.namespace).toBe(session.namespace)
+        expect(sendCalls[0]?.payload.payload.userSeq).toBe(5)
+        expect(sendCalls[0]?.payload.payload.scheduledAtMs).toBeGreaterThanOrEqual(startedAt)
+        expect(sendCalls[0]?.payload.payload.scheduledAtMs).toBeLessThanOrEqual(Date.now())
         expect(sendCalls[0]?.options).toEqual({
             singletonKey: `turn:${session.id}:5`
         })

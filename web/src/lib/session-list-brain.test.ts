@@ -17,6 +17,7 @@ function createSession(
 
     return {
         id,
+        createdAt: 1,
         active: true,
         activeAt: 1,
         updatedAt: 1,
@@ -126,6 +127,7 @@ describe('session-list-brain', () => {
 
     test('prefers recent activity over pending count for brain children within a group', () => {
         const brain = createSession('brain-1', {
+            createdAt: 10,
             updatedAt: 50,
             metadata: {
                 path: '/tmp/brain-1',
@@ -133,6 +135,7 @@ describe('session-list-brain', () => {
             },
         })
         const stalePendingChild = createSession('child-old', {
+            createdAt: 20,
             updatedAt: 100,
             lastMessageAt: 100,
             pendingRequestsCount: 2,
@@ -143,6 +146,7 @@ describe('session-list-brain', () => {
             },
         })
         const freshChild = createSession('child-new', {
+            createdAt: 30,
             updatedAt: 300,
             lastMessageAt: 300,
             pendingRequestsCount: 0,
@@ -166,5 +170,118 @@ describe('session-list-brain', () => {
                 pendingRequestsCount: 2,
             },
         })
+    })
+
+    test('sorts top-level brain entries by createdAt desc in brain list mode', () => {
+        const staleNewer = createSession('brain-newer', {
+            createdAt: 300,
+            active: false,
+            updatedAt: 100,
+            metadata: {
+                path: '/tmp/brain-newer',
+                source: 'brain',
+            },
+        })
+        const activeOlder = createSession('brain-older', {
+            createdAt: 100,
+            active: true,
+            updatedAt: 999,
+            lastMessageAt: 999,
+            metadata: {
+                path: '/tmp/brain-older',
+                source: 'brain',
+            },
+        })
+        const orphanChild = createSession('child-middle', {
+            createdAt: 200,
+            active: true,
+            updatedAt: 500,
+            lastMessageAt: 500,
+            metadata: {
+                path: '/tmp/child-middle',
+                source: 'brain-child',
+                mainSessionId: 'missing-brain',
+            },
+        })
+
+        const entries = buildSessionListEntries([activeOlder, staleNewer, orphanChild], {
+            sortMode: 'createdAtDesc',
+        })
+
+        expect(entries.map((entry) => entry.session.id)).toEqual([
+            'brain-newer',
+            'child-middle',
+            'brain-older',
+        ])
+    })
+
+    test('sorts grouped brain children by createdAt desc in brain list mode', () => {
+        const brain = createSession('brain-1', {
+            createdAt: 100,
+            updatedAt: 100,
+            metadata: {
+                path: '/tmp/brain-1',
+                source: 'brain',
+            },
+        })
+        const newerChild = createSession('child-newer', {
+            createdAt: 300,
+            updatedAt: 50,
+            metadata: {
+                path: '/tmp/child-newer',
+                source: 'brain-child',
+                mainSessionId: 'brain-1',
+            },
+        })
+        const olderChild = createSession('child-older', {
+            createdAt: 200,
+            updatedAt: 999,
+            lastMessageAt: 999,
+            pendingRequestsCount: 2,
+            metadata: {
+                path: '/tmp/child-older',
+                source: 'brain-child',
+                mainSessionId: 'brain-1',
+            },
+        })
+
+        const entries = buildSessionListEntries([olderChild, newerChild, brain], {
+            sortMode: 'createdAtDesc',
+        })
+
+        expect(entries).toHaveLength(1)
+        expect(entries[0]).toMatchObject({
+            kind: 'brain-group',
+            children: [
+                { id: 'child-newer' },
+                { id: 'child-older' },
+            ],
+        })
+    })
+
+    test('uses session id as a stable tie-breaker when createdAt matches in brain list mode', () => {
+        const alpha = createSession('alpha-session', {
+            createdAt: 100,
+            metadata: {
+                path: '/tmp/alpha-session',
+                source: 'brain',
+            },
+        })
+        const beta = createSession('beta-session', {
+            createdAt: 100,
+            metadata: {
+                path: '/tmp/beta-session',
+                source: 'brain',
+            },
+        })
+
+        const entries = buildSessionListEntries([beta, alpha], {
+            sortMode: 'createdAtDesc',
+        })
+
+        expect(entries.map((entry) => entry.session.id)).toEqual([
+            'alpha-session',
+            'beta-session',
+        ])
     })
 })

@@ -31,6 +31,8 @@ export type SessionListVisibleRow = {
     isExpanded: boolean
 }
 
+type SessionListSortMode = 'activity' | 'createdAtDesc'
+
 function isBrainSession(session: SessionSummary): boolean {
     return session.metadata?.source === 'brain'
 }
@@ -41,6 +43,12 @@ function isBrainChildSession(session: SessionSummary): boolean {
 
 function getSessionTimestamp(session: SessionSummary): number {
     return session.lastMessageAt ?? session.updatedAt
+}
+
+function compareCreatedAtDescWithStableId(left: SessionSummary, right: SessionSummary): number {
+    const createdAtDiff = right.createdAt - left.createdAt
+    if (createdAtDiff !== 0) return createdAtDiff
+    return left.id.localeCompare(right.id)
 }
 
 function getEntryRank(active: boolean): number {
@@ -69,6 +77,10 @@ function compareSessions(left: SessionSummary, right: SessionSummary): number {
             timestamp: getSessionTimestamp(right),
         }
     )
+}
+
+function compareSessionsByCreatedAt(left: SessionSummary, right: SessionSummary): number {
+    return compareCreatedAtDescWithStableId(left, right)
 }
 
 function buildBrainGroupStatusSummary(
@@ -110,8 +122,18 @@ function compareEntries(left: SessionListEntry, right: SessionListEntry): number
     )
 }
 
-export function buildSessionListEntries(sessions: SessionSummary[]): SessionListEntry[] {
+function compareEntriesByCreatedAt(left: SessionListEntry, right: SessionListEntry): number {
+    return compareCreatedAtDescWithStableId(left.session, right.session)
+}
+
+export function buildSessionListEntries(
+    sessions: SessionSummary[],
+    options: { sortMode?: SessionListSortMode } = {}
+): SessionListEntry[] {
     if (!Array.isArray(sessions) || sessions.length === 0) return []
+    const sortMode = options.sortMode ?? 'activity'
+    const compareSessionRows = sortMode === 'createdAtDesc' ? compareSessionsByCreatedAt : compareSessions
+    const compareTopLevelEntries = sortMode === 'createdAtDesc' ? compareEntriesByCreatedAt : compareEntries
 
     const visibleBrainParents = new Map<string, SessionSummary>()
     sessions.forEach(session => {
@@ -147,7 +169,7 @@ export function buildSessionListEntries(sessions: SessionSummary[]): SessionList
             return
         }
 
-        const children = [...(childrenByParent.get(session.id) ?? [])].sort(compareSessions)
+        const children = [...(childrenByParent.get(session.id) ?? [])].sort(compareSessionRows)
         if (children.length === 0) {
             entries.push({ kind: 'session', session })
             return
@@ -161,7 +183,7 @@ export function buildSessionListEntries(sessions: SessionSummary[]): SessionList
         })
     })
 
-    return entries.sort(compareEntries)
+    return entries.sort(compareTopLevelEntries)
 }
 
 export function buildVisibleSessionRows(

@@ -50,6 +50,8 @@ import type {
     AutoIterApprovalMethod,
     PostgresConfig,
     SpawnAgentType,
+    StoredSessionSearchMatchSource,
+    StoredSessionSearchResult,
 } from './types'
 import { isRealActivityMessage, isTurnStartUserMessage } from './messageUtils'
 
@@ -100,6 +102,25 @@ function extractMessageSourceTimestamp(value: unknown, depth = 0, seen = new Set
     }
 
     return null
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return null
+    }
+    return value as Record<string, unknown>
+}
+
+function asTrimmedString(value: unknown): string | null {
+    if (typeof value !== 'string') {
+        return null
+    }
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : null
+}
+
+function escapeLikePattern(value: string): string {
+    return value.replace(/[\\%_]/g, '\\$&')
 }
 
 export class PostgresStore implements IStore {
@@ -1014,6 +1035,200 @@ export class PostgresStore implements IStore {
     async getSessionsByNamespace(namespace: string): Promise<StoredSession[]> {
         const result = await this.pool.query('SELECT * FROM sessions WHERE namespace = $1 ORDER BY COALESCE(last_message_at, updated_at) DESC', [namespace])
         return result.rows.map(row => this.toStoredSession(row))
+    }
+
+    async searchSessionHistory(input: {
+        namespace: string
+        query: string
+        limit: number
+        includeOffline?: boolean
+        mainSessionId?: string
+        directory?: string
+        flavor?: string
+        source?: string
+    }): Promise<StoredSessionSearchResult[]> {
+        const normalizedQuery = input.query.trim().toLowerCase()
+        if (!normalizedQuery) {
+            return []
+        }
+
+        const tokens = Array.from(new Set(
+            normalizedQuery
+                .split(/[\s,，/|:_-]+/)
+                .map(token => token.trim())
+                .filter(token => token.length >= 2)
+        )).slice(0, 8)
+        const patternTerms = Array.from(new Set([normalizedQuery, ...tokens]))
+        const patterns = patternTerms.map(term => `%${escapeLikePattern(term)}%`)
+
+        const conditions = ['s.namespace = $1']
+        const params: unknown[] = [input.namespace]
+        let paramIndex = params.length + 1
+
+        if (!input.includeOffline) {
+            conditions.push('s.active = true')
+        }
+        if (input.mainSessionId) {
+            conditions.push(`s.metadata->>'mainSessionId' = $${paramIndex++}`)
+            params.push(input.mainSessionId)
+        }
+        if (input.directory) {
+            conditions.push(`s.metadata->>'path' = $${paramIndex++}`)
+            params.push(input.directory)
+        }
+        if (input.flavor) {
+            conditions.push(`COALESCE(s.metadata->>'flavor', 'claude') = $${paramIndex++}`)
+            params.push(input.flavor)
+        }
+        if (input.source) {
+            conditions.push(`s.metadata->>'source' = $${paramIndex++}`)
+            params.push(input.source)
+        }
+
+        const patternParam = paramIndex++
+        params.push(patterns)
+        conditions.push(`(
+            LOWER(COALESCE(s.metadata->>'brainSummary', '')) LIKE ANY($${patternParam})
+            OR LOWER(COALESCE(s.metadata->'summary'->>'text', '')) LIKE ANY($${patternParam})
+            OR LOWER(COALESCE(s.metadata->>'path', '')) LIKE ANY($${patternParam})
+            OR matched_summary.summary IS NOT NULL
+        )`)
+
+        const limitParam = paramIndex++
+        params.push(Math.max(input.limit * 8, 24))
+
+        const result = await this.pool.query(`
+            SELECT
+                s.*,
+                matched_summary.summary AS matched_summary,
+                matched_summary.created_at AS matched_summary_created_at,
+                matched_summary.seq_start AS matched_summary_seq_start,
+                matched_summary.seq_end AS matched_summary_seq_end
+            FROM sessions s
+            LEFT JOIN LATERAL (
+                SELECT
+                    ss.summary,
+                    ss.created_at,
+                    ss.seq_start,
+                    ss.seq_end
+                FROM session_summaries ss
+                WHERE ss.session_id = s.id
+                  AND ss.namespace = s.namespace
+                  AND ss.level = 1
+                  AND LOWER(ss.summary) LIKE ANY($${patternParam})
+                ORDER BY ss.created_at DESC
+                LIMIT 1
+            ) matched_summary ON TRUE
+            WHERE ${conditions.join('\n              AND ')}
+            ORDER BY COALESCE(s.last_message_at, s.updated_at) DESC
+            LIMIT $${limitParam}
+        `, params)
+
+        const weightBySource: Record<StoredSessionSearchMatchSource, number> = {
+            'turn-summary': 9,
+            'brain-summary': 7,
+            title: 5,
+            path: 3,
+        }
+
+        const scoreSource = (
+            text: string | null,
+            source: StoredSessionSearchMatchSource
+        ): { score: number; text: string | null } => {
+            const normalizedText = text?.trim()
+            if (!normalizedText) {
+                return { score: 0, text: null }
+            }
+            const lower = normalizedText.toLowerCase()
+            let score = 0
+            if (lower.includes(normalizedQuery)) {
+                score += weightBySource[source] * 10
+            }
+            for (const token of tokens) {
+                if (lower.includes(token)) {
+                    score += weightBySource[source] * 3
+                }
+            }
+            return { score, text: normalizedText }
+        }
+
+        const ranked = result.rows.map((row) => {
+            const session = this.toStoredSession(row)
+            const metadata = asRecord(session.metadata)
+            const title = asTrimmedString(asRecord(metadata?.summary)?.text)
+            const brainSummary = asTrimmedString(metadata?.brainSummary)
+            const path = asTrimmedString(metadata?.path)
+            const matchedSummary = asTrimmedString(row.matched_summary)
+
+            const candidates: Array<{
+                source: StoredSessionSearchMatchSource
+                text: string | null
+                createdAt: number | null
+                seqStart: number | null
+                seqEnd: number | null
+                score: number
+            }> = [
+                {
+                    source: 'turn-summary',
+                    text: matchedSummary,
+                    createdAt: row.matched_summary_created_at != null ? Number(row.matched_summary_created_at) : null,
+                    seqStart: row.matched_summary_seq_start != null ? Number(row.matched_summary_seq_start) : null,
+                    seqEnd: row.matched_summary_seq_end != null ? Number(row.matched_summary_seq_end) : null,
+                    score: scoreSource(matchedSummary, 'turn-summary').score,
+                },
+                {
+                    source: 'brain-summary',
+                    text: brainSummary,
+                    createdAt: null,
+                    seqStart: null,
+                    seqEnd: null,
+                    score: scoreSource(brainSummary, 'brain-summary').score,
+                },
+                {
+                    source: 'title',
+                    text: title,
+                    createdAt: null,
+                    seqStart: null,
+                    seqEnd: null,
+                    score: scoreSource(title, 'title').score,
+                },
+                {
+                    source: 'path',
+                    text: path,
+                    createdAt: null,
+                    seqStart: null,
+                    seqEnd: null,
+                    score: scoreSource(path, 'path').score,
+                },
+            ]
+
+            const best = candidates.sort((a, b) => b.score - a.score)[0]
+            return best && best.score > 0
+                ? {
+                    session,
+                    score: best.score,
+                    match: {
+                        source: best.source,
+                        text: best.text ?? '',
+                        createdAt: best.createdAt,
+                        seqStart: best.seqStart,
+                        seqEnd: best.seqEnd,
+                    },
+                }
+                : null
+        }).filter((item): item is StoredSessionSearchResult => Boolean(item))
+
+        ranked.sort((a, b) => {
+            if (a.score !== b.score) {
+                return b.score - a.score
+            }
+            if (a.session.active !== b.session.active) {
+                return a.session.active ? -1 : 1
+            }
+            return (b.session.lastMessageAt ?? b.session.updatedAt) - (a.session.lastMessageAt ?? a.session.updatedAt)
+        })
+
+        return ranked.slice(0, input.limit)
     }
 
     async getActiveSessionCount(orgId: string): Promise<number> {

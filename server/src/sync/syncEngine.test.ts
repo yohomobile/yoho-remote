@@ -282,8 +282,8 @@ describe('SyncEngine', () => {
         expect(sent[0]?.payload.text).toContain('子任务最终结果')
     })
 
-    test('prefers result text over assistant narration in brain callback', async () => {
-        const sent: Array<{ sessionId: string; payload: { text: string } }> = []
+    test('prefers result text over assistant narration in brain callback and attaches a structured envelope', async () => {
+        const sent: Array<{ sessionId: string; payload: { text: string; meta?: Record<string, unknown> } }> = []
         const childMessages = [
             createAgentAssistantMessage(1, '现在时间正确了。让我汇总关键数据并生成执行报告：'),
             createAgentResultMessage(2, '## 查询结果汇总\n总订单数：254'),
@@ -320,8 +320,9 @@ describe('SyncEngine', () => {
         ;(engine as any).sessions.set(mainSession.id, mainSession)
         ;(engine as any).sessions.set(childSession.id, childSession)
         ;(engine as any).sessionMessages.set(childSession.id, childMessages)
-        ;(engine as any).sendMessage = async (sessionId: string, payload: { text: string }) => {
+        ;(engine as any).sendMessage = async (sessionId: string, payload: { text: string; meta?: Record<string, unknown> }) => {
             sent.push({ sessionId, payload })
+            return { status: 'delivered' }
         }
 
         await (engine as any).sendBrainCallbackIfNeeded(childSession)
@@ -329,6 +330,23 @@ describe('SyncEngine', () => {
         expect(sent).toHaveLength(1)
         expect(sent[0]?.payload.text).toContain('总订单数：254')
         expect(sent[0]?.payload.text).not.toContain('让我汇总关键数据并生成执行报告')
+        expect(sent[0]?.payload.meta).toMatchObject({
+            brainChildCallback: {
+                type: 'brain-child-callback',
+                version: 1,
+                sessionId: 'child-session',
+                mainSessionId: 'main-session',
+                title: 'Child',
+                result: {
+                    text: '## 查询结果汇总\n总订单数：254',
+                    source: 'result',
+                    seq: 2,
+                },
+                stats: {
+                    messageCount: 2,
+                },
+            },
+        })
     })
 
     test('forwards full brain-child result back to the main brain session without truncation', async () => {

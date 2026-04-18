@@ -1,4 +1,4 @@
-import type { AgentEvent } from '@/chat/types'
+import type { AgentEvent, BrainChildCallbackEnvelope } from '@/chat/types'
 
 const BRAIN_CHILD_CALLBACK_HEADER = '[子 session 任务完成]'
 const SESSION_PREFIX = 'Session:'
@@ -15,7 +15,95 @@ function extractPrefixedValue(line: string, prefix: string): string | undefined 
     return value.length > 0 ? value : undefined
 }
 
-export function parseBrainChildCallbackMessage(text: string): BrainChildCallbackEvent | null {
+function asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object') {
+        return null
+    }
+    return value as Record<string, unknown>
+}
+
+function asString(value: unknown): string | undefined {
+    return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+function parseBrainChildCallbackEnvelope(meta: unknown): BrainChildCallbackEnvelope | null {
+    const metaRecord = asRecord(meta)
+    const rawEnvelope = asRecord(metaRecord?.brainChildCallback)
+    if (!rawEnvelope) {
+        return null
+    }
+
+    const stats = asRecord(rawEnvelope.stats)
+    const result = asRecord(rawEnvelope.result)
+    const sessionId = asString(rawEnvelope.sessionId)
+    const mainSessionId = asString(rawEnvelope.mainSessionId)
+    const title = asString(rawEnvelope.title)
+    const type = rawEnvelope.type
+    const version = rawEnvelope.version
+    const messageCount = stats?.messageCount
+    const contextBudget = stats?.contextBudget
+    const contextRemainingPercent = stats?.contextRemainingPercent
+    const inputTokens = stats?.inputTokens
+    const outputTokens = stats?.outputTokens
+    const contextSize = stats?.contextSize
+    const resultText = asString(result?.text)
+    const resultSource = result?.source
+    const resultSeq = result?.seq
+
+    if (
+        type !== 'brain-child-callback'
+        || version !== 1
+        || !sessionId
+        || !mainSessionId
+        || !title
+        || typeof messageCount !== 'number'
+        || typeof contextBudget !== 'number'
+        || !resultText
+        || (resultSource !== 'result' && resultSource !== 'assistant' && resultSource !== 'message' && resultSource !== 'raw-data' && resultSource !== 'none')
+    ) {
+        return null
+    }
+
+    return {
+        type: 'brain-child-callback',
+        version: 1,
+        sessionId,
+        mainSessionId,
+        title,
+        previousSummary: typeof rawEnvelope.previousSummary === 'string' ? rawEnvelope.previousSummary : null,
+        details: Array.isArray(rawEnvelope.details)
+            ? rawEnvelope.details.filter((item): item is string => typeof item === 'string')
+            : [],
+        stats: {
+            messageCount,
+            contextBudget,
+            ...(typeof contextRemainingPercent === 'number' ? { contextRemainingPercent } : {}),
+            ...(typeof inputTokens === 'number' ? { inputTokens } : {}),
+            ...(typeof outputTokens === 'number' ? { outputTokens } : {}),
+            ...(typeof contextSize === 'number' ? { contextSize } : {}),
+        },
+        result: {
+            text: resultText,
+            source: resultSource,
+            ...(typeof resultSeq === 'number' ? { seq: resultSeq } : {}),
+        },
+    }
+}
+
+export function parseBrainChildCallbackMessage(text: string, meta?: unknown): BrainChildCallbackEvent | null {
+    const envelope = parseBrainChildCallbackEnvelope(meta)
+    if (envelope) {
+        return {
+            type: 'brain-child-callback',
+            sessionId: envelope.sessionId,
+            title: envelope.title,
+            previousSummary: envelope.previousSummary ?? undefined,
+            details: envelope.details,
+            report: envelope.result.text,
+            envelope,
+        }
+    }
+
     const normalized = text.replace(/\r\n?/g, '\n').trimStart()
     if (!normalized.startsWith(BRAIN_CHILD_CALLBACK_HEADER)) {
         return null

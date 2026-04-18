@@ -73,7 +73,7 @@ function createBrainChildCallbackEventMessage(
     text: string,
     meta?: unknown
 ): NormalizedMessage | null {
-    const event = parseBrainChildCallbackMessage(text)
+    const event = parseBrainChildCallbackMessage(text, meta)
     if (!event) {
         return null
     }

@@ -32,6 +32,8 @@ import { buildCodexExecArgs, type CodexExecStartConfig } from './utils/codexExec
 import { resolveCodexBinary } from './codexBinary';
 import { getYohoAuxMcpServers, VAULT_HTTP_PORT } from '@/utils/yohoMcpServers';
 import {
+    BRAIN_CHILD_SAFE_YOHO_REMOTE_TOOL_NAMES,
+    buildCodexBrainChildRuntimeFunctionTools,
     buildCodexConfigOverrides,
     buildCodexDeveloperInstructions,
     buildCodexRuntimeFunctionTools,
@@ -261,12 +263,20 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
     });
 
     const isBrainSession = session.sessionSource === 'brain';
+    const isBrainChildSession = session.sessionSource === 'brain-child';
     const runtimeFunctionTools = isBrainSession
         ? buildCodexRuntimeFunctionTools({
             yohoRemoteToolNames: yohoRemoteServer.toolNames,
             auxServerNames: Object.keys(mcpServers),
         })
-        : [];
+        : isBrainChildSession
+            ? buildCodexBrainChildRuntimeFunctionTools({
+                yohoRemoteToolNames: yohoRemoteServer.toolNames.filter((toolName) =>
+                    BRAIN_CHILD_SAFE_YOHO_REMOTE_TOOL_NAMES.includes(toolName as typeof BRAIN_CHILD_SAFE_YOHO_REMOTE_TOOL_NAMES[number])
+                ),
+                auxServerNames: Object.keys(mcpServers),
+            })
+            : [];
     if (runtimeFunctionTools.length > 0) {
         session.client.updateMetadata((metadata) => ({
             ...metadata,
@@ -274,7 +284,7 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
         }));
     }
 
-    const developerInstructions = isBrainSession
+    const developerInstructions = (isBrainSession || isBrainChildSession)
         ? buildCodexDeveloperInstructions({
             sessionSource: session.sessionSource,
             runtimeFunctionTools,

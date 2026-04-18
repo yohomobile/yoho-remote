@@ -1,6 +1,7 @@
 // IStore 接口定义 - 所有方法异步化
 import type {
     StoredSession,
+    StoredSessionSearchResult,
     StoredMachine,
     StoredMessage,
     StoredUser,
@@ -86,6 +87,16 @@ export interface IStore {
     getSessionByNamespace(id: string, namespace: string): Promise<StoredSession | null>
     getSessions(orgId?: string | null): Promise<StoredSession[]>
     getSessionsByNamespace(namespace: string): Promise<StoredSession[]>
+    searchSessionHistory(input: {
+        namespace: string
+        query: string
+        limit: number
+        includeOffline?: boolean
+        mainSessionId?: string
+        directory?: string
+        flavor?: string
+        source?: string
+    }): Promise<StoredSessionSearchResult[]>
     getActiveSessionCount(orgId: string): Promise<number>
     deleteSession(id: string): Promise<boolean>
     patchSessionMetadata(id: string, patch: Record<string, unknown>, namespace: string): Promise<boolean>

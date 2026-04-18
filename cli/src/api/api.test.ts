@@ -144,6 +144,45 @@ describe('ApiClient.brainSpawnSession', () => {
         )
     })
 
+    it('posts to the CLI send endpoint and returns the delivery verdict', async () => {
+        const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({
+            data: {
+                ok: true,
+                status: 'queued',
+                sessionId: 'child-session',
+                queue: 'brain-child-init',
+                queueDepth: 1,
+            },
+        } as any)
+
+        const client = Object.create(ApiClient.prototype) as ApiClient
+        ;(client as any).token = 'test-token'
+
+        const result = await client.sendMessageToSession('child-session', 'run task', 'brain')
+
+        expect(result).toEqual({
+            ok: true,
+            status: 'queued',
+            sessionId: 'child-session',
+            queue: 'brain-child-init',
+            queueDepth: 1,
+        })
+        expect(postSpy).toHaveBeenCalledWith(
+            expect.stringContaining('/cli/sessions/child-session/messages'),
+            {
+                text: 'run task',
+                sentFrom: 'brain',
+            },
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer test-token',
+                    'Content-Type': 'application/json',
+                    'idempotency-key': expect.any(String),
+                }),
+            })
+        )
+    })
+
     it('gets orchestration-focused inspect data from the CLI inspect endpoint', async () => {
         const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({
             data: {
@@ -197,6 +236,61 @@ describe('ApiClient.brainSpawnSession', () => {
         })
         expect(getSpy).toHaveBeenCalledWith(
             expect.stringContaining('/cli/sessions/child-session/tail?limit=3'),
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer test-token',
+                    'Content-Type': 'application/json',
+                }),
+            })
+        )
+    })
+
+    it('gets structured session history matches from the CLI search endpoint', async () => {
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({
+            data: {
+                query: 'publisher worker',
+                returned: 1,
+                results: [{
+                    sessionId: 'child-session',
+                    score: 99,
+                    match: {
+                        source: 'turn-summary',
+                        text: '验证 worker / publisher / session_summaries 闭环',
+                        createdAt: 123,
+                        seqStart: 10,
+                        seqEnd: 18,
+                    },
+                }],
+            },
+        } as any)
+
+        const client = Object.create(ApiClient.prototype) as ApiClient
+        ;(client as any).token = 'test-token'
+
+        const result = await client.searchSessions({
+            query: 'publisher worker',
+            limit: 3,
+            mainSessionId: 'brain-main',
+            flavor: 'codex',
+        })
+
+        expect(result).toEqual({
+            query: 'publisher worker',
+            returned: 1,
+            results: [{
+                sessionId: 'child-session',
+                score: 99,
+                match: {
+                    source: 'turn-summary',
+                    text: '验证 worker / publisher / session_summaries 闭环',
+                    createdAt: 123,
+                    seqStart: 10,
+                    seqEnd: 18,
+                },
+            }],
+        })
+        expect(getSpy).toHaveBeenCalledWith(
+            expect.stringContaining('/cli/sessions/search?query=publisher+worker&limit=3&mainSessionId=brain-main&flavor=codex'),
             expect.objectContaining({
                 headers: expect.objectContaining({
                     Authorization: 'Bearer test-token',

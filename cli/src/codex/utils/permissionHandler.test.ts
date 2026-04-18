@@ -62,4 +62,37 @@ describe('CodexPermissionHandler', () => {
             reason: 'User rejected'
         })
     })
+
+    it('requires explicit answers for ask_user_question even in yolo mode', async () => {
+        const { session, rpcHandlers } = createSessionStub()
+        const handler = new CodexPermissionHandler(session as any, {
+            getPermissionMode: () => 'yolo'
+        })
+
+        const promise = handler.handleToolCall('req-ask', 'ask_user_question', {
+            questions: [{ question: 'Pick one option', options: [{ label: 'A' }, { label: 'B' }] }]
+        }, {
+            approvalKind: 'mcp_tool_call'
+        })
+
+        const permissionHandler = rpcHandlers.get('permission')
+        if (!permissionHandler) {
+            throw new Error('permission handler not registered')
+        }
+
+        permissionHandler({
+            id: 'req-ask',
+            approved: true,
+            answers: {
+                '0': ['A']
+            }
+        })
+
+        await expect(promise).resolves.toEqual({
+            decision: 'approved',
+            answers: {
+                '0': ['A']
+            }
+        })
+    })
 })

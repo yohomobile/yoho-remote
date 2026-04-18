@@ -253,6 +253,7 @@ export type SetRolePromptResponse = { ok: true; prompts: RolePrompt[] }
 
 export type SessionSummary = {
     id: string
+    createdAt: number
     active: boolean
     activeAt: number
     updatedAt: number

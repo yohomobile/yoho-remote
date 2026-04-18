@@ -232,6 +232,15 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
         logger.debug('[yrMCP] Brain tools registered');
     }
 
+    if (resolvedSessionSource === 'brain-child') {
+        const { registerAskUserQuestionTool, registerChatMessagesTool } = await import('./interactionTools');
+        registerAskUserQuestionTool(mcp, toolNames);
+        if (apiClient) {
+            registerChatMessagesTool(mcp, toolNames, { apiClient });
+        }
+        logger.debug('[yrMCP] Brain-child safe interaction tools registered');
+    }
+
     const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined
     });

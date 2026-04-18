@@ -20,6 +20,7 @@ import { getWebPushService } from '../services/webPush'
 import { extractResumeSpawnMetadata } from '../resumeSpawnMetadata'
 import {
     SUMMARIZE_TURN_QUEUE_NAME,
+    SUMMARIZE_TURN_JOB_VERSION,
     type SummarizeTurnJobPayload,
     type SummarizeTurnQueuePublisher
 } from './summarizeTurnQueue'
@@ -129,6 +130,37 @@ export interface Session {
      *  Value is the timestamp until which the resume guard is active. */
     resumingUntil?: number
 }
+
+export type BrainChildCallbackEnvelope = {
+    type: 'brain-child-callback'
+    version: 1
+    sessionId: string
+    mainSessionId: string
+    title: string
+    previousSummary?: string | null
+    details: string[]
+    stats: {
+        messageCount: number
+        contextBudget: number
+        contextRemainingPercent?: number
+        inputTokens?: number
+        outputTokens?: number
+        contextSize?: number
+    }
+    result: {
+        text: string
+        source: 'result' | 'assistant' | 'message' | 'raw-data' | 'none'
+        seq?: number | null
+    }
+}
+
+export type SendMessageOutcome =
+    | { status: 'delivered' }
+    | {
+        status: 'queued'
+        queue: 'brain-child-init'
+        queueDepth: number
+    }
 
 export interface Machine {
     id: string
@@ -1663,9 +1695,14 @@ export class SyncEngine {
             userSeq,
             scheduledAtMs: Date.now()
         }
+        const idempotencyKey = `turn:${session.id}:${userSeq}`
 
-        await this.boss.send(SUMMARIZE_TURN_QUEUE_NAME, payload, {
-            singletonKey: `turn:${session.id}:${userSeq}`
+        await this.boss.send(SUMMARIZE_TURN_QUEUE_NAME, {
+            version: SUMMARIZE_TURN_JOB_VERSION,
+            idempotencyKey,
+            payload,
+        }, {
+            singletonKey: idempotencyKey
         })
     }
 
@@ -1838,9 +1875,35 @@ export class SyncEngine {
             const messageCount = await this.store.getMessageCount(session.id)
             const CONTEXT_BUDGET = getContextBudget(session.modelMode)
             let statsLine = `消息数: ${messageCount}`
+            let contextRemainingPercent: number | undefined
             if (lastUsage) {
-                const remainingPercent = Math.max(0, Math.round((1 - lastUsage.contextSize / CONTEXT_BUDGET) * 100))
-                statsLine = `Context 剩余: ~${remainingPercent}% (${lastUsage.contextSize.toLocaleString()} / ${CONTEXT_BUDGET.toLocaleString()} tokens) | ${statsLine}`
+                contextRemainingPercent = Math.max(0, Math.round((1 - lastUsage.contextSize / CONTEXT_BUDGET) * 100))
+                statsLine = `Context 剩余: ~${contextRemainingPercent}% (${lastUsage.contextSize.toLocaleString()} / ${CONTEXT_BUDGET.toLocaleString()} tokens) | ${statsLine}`
+            }
+
+            const callbackEnvelope: BrainChildCallbackEnvelope = {
+                type: 'brain-child-callback',
+                version: 1,
+                sessionId: session.id,
+                mainSessionId,
+                title: sessionTitle,
+                previousSummary: typeof brainSummary === 'string' ? brainSummary : null,
+                details: [statsLine],
+                stats: {
+                    messageCount,
+                    contextBudget: CONTEXT_BUDGET,
+                    ...(contextRemainingPercent !== undefined ? { contextRemainingPercent } : {}),
+                    ...(lastUsage ? {
+                        inputTokens: lastUsage.input_tokens,
+                        outputTokens: lastUsage.output_tokens,
+                        contextSize: lastUsage.contextSize,
+                    } : {}),
+                },
+                result: {
+                    text: callbackResult,
+                    source: resultSource,
+                    seq: resultSeq,
+                },
             }
 
             const callbackMessage = [
@@ -1862,6 +1925,9 @@ export class SyncEngine {
                     await this.sendMessage(mainSessionId, {
                         text: callbackMessage,
                         sentFrom: 'brain-callback',
+                        meta: {
+                            brainChildCallback: callbackEnvelope,
+                        },
                     })
                     return // success
                 } catch (e) {
@@ -2796,7 +2862,7 @@ export class SyncEngine {
         return true
     }
 
-    async sendMessage(sessionId: string, payload: { text: string; localId?: string | null; sentFrom?: string; meta?: Record<string, unknown> }): Promise<void> {
+    async sendMessage(sessionId: string, payload: { text: string; localId?: string | null; sentFrom?: string; meta?: Record<string, unknown> }): Promise<SendMessageOutcome> {
         // If this is a brain-sent message and the brain-child hasn't finished its init prompt yet,
         // buffer it and deliver it once the init prompt completes.
         if ((payload.sentFrom as string) === 'brain') {
@@ -2811,7 +2877,11 @@ export class SyncEngine {
                     pending.push(payload.text)
                     this.brainChildPendingMessages.set(sessionId, pending)
                     console.log(`[brain-queue] Buffered brain message for ${sessionId.slice(0, 8)} (init not done yet), queue size=${pending.length}`)
-                    return
+                    return {
+                        status: 'queued',
+                        queue: 'brain-child-init',
+                        queueDepth: pending.length,
+                    }
                 }
             }
         }
@@ -2897,6 +2967,8 @@ export class SyncEngine {
                 createdAt: msg.createdAt
             }
         })
+
+        return { status: 'delivered' }
     }
 
     /**

@@ -25,6 +25,10 @@ export type InsertRunInput = {
     namespace: string
     level: 1 | 2 | 3
     jobId?: string | null
+    jobName?: string | null
+    jobFamily?: string | null
+    jobVersion?: number | null
+    idempotencyKey?: string | null
     status: 'success' | 'error_transient' | 'error_permanent' | 'skipped'
     durationMs?: number | null
     tokensIn?: number | null
@@ -40,6 +44,7 @@ export type InsertRunInput = {
     providerStatus?: number | null
     providerRequestId?: string | null
     providerFinishReason?: string | null
+    errorCode?: string | null
     error?: string | null
     metadata?: Record<string, unknown> | null
 }
@@ -50,18 +55,20 @@ export class RunStore {
     async insert(input: InsertRunInput): Promise<void> {
         await this.pool.query(
             `INSERT INTO summarization_runs (
-                id, session_id, namespace, level, job_id, status,
+                id, session_id, namespace, level, job_id, job_name, job_family, job_version, idempotency_key, status,
                 duration_ms, tokens_in, tokens_out,
                 worker_host, worker_version, queue_schema,
                 retry_count, retry_limit, cache_hit,
                 provider_name, provider_model, provider_status, provider_request_id, provider_finish_reason,
-                error, metadata, created_at
+                error_code, error, metadata, created_at
             )
             VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9,
-                $10, $11, $12, $13, $14, $15,
-                $16, $17, $18, $19, $20,
-                $21, $22, $23
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                $11, $12, $13,
+                $14, $15, $16,
+                $17, $18, $19,
+                $20, $21, $22, $23, $24,
+                $25, $26, $27, $28
             )`,
             [
                 randomUUID(),
@@ -69,6 +76,10 @@ export class RunStore {
                 input.namespace,
                 input.level,
                 input.jobId ?? null,
+                input.jobName ?? null,
+                input.jobFamily ?? null,
+                input.jobVersion ?? null,
+                input.idempotencyKey ?? null,
                 input.status,
                 input.durationMs ?? null,
                 input.tokensIn ?? null,
@@ -84,6 +95,7 @@ export class RunStore {
                 input.providerStatus ?? null,
                 input.providerRequestId ?? null,
                 input.providerFinishReason ?? null,
+                input.errorCode ?? null,
                 input.error ?? null,
                 input.metadata ?? null,
                 Date.now(),
@@ -91,18 +103,25 @@ export class RunStore {
         )
     }
 
-    async getLatestCachedL1Result(sessionId: string, seqStart: number): Promise<L1SummaryRecord | null> {
+    async getLatestCachedL1Result(
+        sessionId: string,
+        seqStart: number,
+        jobName: string,
+        jobVersion: number
+    ): Promise<L1SummaryRecord | null> {
         const result = await this.pool.query(
             `SELECT metadata
              FROM summarization_runs
              WHERE session_id = $1
                AND level = 1
+               AND job_name = $3
+               AND job_version = $4
                AND status = 'error_transient'
                AND metadata->>'seq_start' = $2
                AND metadata ? 'cached_result'
              ORDER BY created_at DESC
              LIMIT 1`,
-            [sessionId, String(seqStart)]
+            [sessionId, String(seqStart), jobName, jobVersion]
         )
 
         const metadata = asRecord(result.rows[0]?.metadata)

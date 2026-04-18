@@ -86,7 +86,7 @@ describe('createSessionsRoutes', () => {
         const response = await app.request('/api/sessions')
         expect(response.status).toBe(200)
 
-        const payload = await response.json() as { sessions: Array<{ id: string; lastMessageAt: number | null }> }
+        const payload = await response.json() as { sessions: Array<{ id: string; createdAt: number; lastMessageAt: number | null }> }
         expect(payload.sessions.map((session) => session.id)).toEqual([
             'session-new-message',
             'session-no-message',
@@ -94,6 +94,7 @@ describe('createSessionsRoutes', () => {
         ])
         expect(payload.sessions[0]?.lastMessageAt).toBe(1_700_000_000_400)
         expect(payload.sessions[1]?.lastMessageAt).toBeNull()
+        expect(payload.sessions[0]?.createdAt).toBe(1_700_000_000_000)
     })
 
     it('prefers recent activity over pending requests within active sessions', async () => {

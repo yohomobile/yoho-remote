@@ -345,6 +345,142 @@ describe('createCliRoutes projects', () => {
         expect(String(abortedSessionId)).toBe('child-session')
     })
 
+    it('returns a machine-readable busy verdict for session_send without enqueuing', async () => {
+        let sendCalled = 0
+        const session = {
+            id: 'child-session',
+            namespace: 'default',
+            active: true,
+            thinking: true,
+            metadata: {
+                path: '/tmp/child-session',
+            },
+        }
+        const engine = {
+            getSessionByNamespace: (sessionId: string, namespace: string) =>
+                sessionId === session.id && namespace === session.namespace ? session : null,
+            getSession: (sessionId: string) => sessionId === session.id ? session : null,
+            sendMessage: async () => {
+                sendCalled += 1
+                return { status: 'delivered' }
+            },
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/sessions/child-session/messages', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                text: 'run task',
+                sentFrom: 'brain',
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            ok: false,
+            status: 'busy',
+            sessionId: 'child-session',
+            retryable: true,
+        })
+        expect(sendCalled).toBe(0)
+    })
+
+    it('returns a machine-readable offline verdict for session_send without delivering', async () => {
+        let sendCalled = 0
+        const session = {
+            id: 'child-session',
+            namespace: 'default',
+            active: false,
+            thinking: false,
+            metadata: {
+                path: '/tmp/child-session',
+            },
+        }
+        const engine = {
+            getSessionByNamespace: (sessionId: string, namespace: string) =>
+                sessionId === session.id && namespace === session.namespace ? session : null,
+            getSession: (sessionId: string) => sessionId === session.id ? session : null,
+            sendMessage: async () => {
+                sendCalled += 1
+                return { status: 'delivered' }
+            },
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/sessions/child-session/messages', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                text: 'run task',
+                sentFrom: 'brain',
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            ok: false,
+            status: 'offline',
+            sessionId: 'child-session',
+            retryable: true,
+            resumeRequired: true,
+        })
+        expect(sendCalled).toBe(0)
+    })
+
+    it('returns a machine-readable queued verdict for init-buffered session_send', async () => {
+        let sendCalled = 0
+        const session = {
+            id: 'child-session',
+            namespace: 'default',
+            active: true,
+            thinking: false,
+            metadata: {
+                path: '/tmp/child-session',
+                source: 'brain-child',
+            },
+        }
+        const engine = {
+            getSessionByNamespace: (sessionId: string, namespace: string) =>
+                sessionId === session.id && namespace === session.namespace ? session : null,
+            getSession: (sessionId: string) => sessionId === session.id ? session : null,
+            sendMessage: async () => {
+                sendCalled += 1
+                return {
+                    status: 'queued',
+                    queue: 'brain-child-init',
+                    queueDepth: 1,
+                }
+            },
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/sessions/child-session/messages', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                text: 'run task',
+                sentFrom: 'brain',
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            ok: true,
+            status: 'queued',
+            sessionId: 'child-session',
+            queue: 'brain-child-init',
+            queueDepth: 1,
+        })
+        expect(sendCalled).toBe(1)
+    })
+
     it('applies shared runtime config through the CLI config route', async () => {
         let appliedConfig: Record<string, unknown> | null = null
         const session = {
@@ -732,5 +868,147 @@ describe('createCliRoutes projects', () => {
             oldestSeq: 1,
             hasMoreHistory: false,
         })
+    })
+
+    it('returns structured session history matches and overlays live session state', async () => {
+        let searchArgs: Record<string, unknown> | undefined
+        const store = {
+            searchSessionHistory: async (args: Record<string, unknown>) => {
+                searchArgs = args
+                return [{
+                    session: {
+                        id: 'child-session',
+                        active: false,
+                        thinking: false,
+                        activeAt: 1_700_000_000_000,
+                        updatedAt: 1_700_000_000_100,
+                        lastMessageAt: 1_700_000_000_200,
+                        permissionMode: 'read-only',
+                        modelMode: 'gpt-5.4',
+                        modelReasoningEffort: 'medium',
+                        fastMode: null,
+                        metadata: {
+                            path: '/tmp/project-a',
+                            source: 'brain-child',
+                            machineId: 'machine-1',
+                            flavor: 'codex',
+                            mainSessionId: 'brain-main',
+                            brainSummary: '处理过 worker / publisher / summary 闭环',
+                            summary: { text: 'Publisher smoke', updatedAt: 1_700_000_000_111 },
+                        },
+                    },
+                    score: 99,
+                    match: {
+                        source: 'turn-summary',
+                        text: '验证 worker / publisher / session_summaries 闭环',
+                        createdAt: 1_700_000_000_300,
+                        seqStart: 10,
+                        seqEnd: 18,
+                    },
+                }]
+            },
+        }
+        const engine = {
+            getSessionByNamespace: (sessionId: string, namespace: string) => sessionId === 'child-session' && namespace === 'default'
+                ? {
+                    id: 'child-session',
+                    active: true,
+                    thinking: true,
+                    activeAt: 1_700_000_000_500,
+                    updatedAt: 1_700_000_000_600,
+                    lastMessageAt: 1_700_000_000_700,
+                    permissionMode: 'yolo',
+                    modelMode: 'gpt-5.4-mini',
+                    modelReasoningEffort: 'high',
+                    fastMode: false,
+                    metadata: {
+                        path: '/tmp/project-a',
+                        source: 'brain-child',
+                        machineId: 'machine-1',
+                        flavor: 'codex',
+                        mainSessionId: 'brain-main',
+                        brainSummary: '处理过 worker / publisher / summary 闭环',
+                        summary: { text: 'Publisher smoke', updatedAt: 1_700_000_000_111 },
+                    },
+                    agentState: {
+                        requests: {
+                            req1: { tool: 'write_file' },
+                        },
+                    },
+                }
+                : undefined,
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any, undefined, store as any))
+
+        const response = await app.request('/cli/sessions/search?query=publisher%20worker&limit=3&mainSessionId=brain-main&flavor=codex', {
+            method: 'GET',
+            headers: authHeaders(),
+        })
+
+        expect(response.status).toBe(200)
+        expect(searchArgs).toEqual({
+            namespace: 'default',
+            query: 'publisher worker',
+            limit: 3,
+            includeOffline: true,
+            mainSessionId: 'brain-main',
+            directory: undefined,
+            flavor: 'codex',
+            source: undefined,
+        })
+        expect(await response.json()).toEqual({
+            query: 'publisher worker',
+            returned: 1,
+            results: [{
+                sessionId: 'child-session',
+                score: 99,
+                active: true,
+                thinking: true,
+                activeAt: 1_700_000_000_500,
+                updatedAt: 1_700_000_000_600,
+                lastMessageAt: 1_700_000_000_700,
+                pendingRequestsCount: 1,
+                permissionMode: 'yolo',
+                modelMode: 'gpt-5.4-mini',
+                modelReasoningEffort: 'high',
+                fastMode: false,
+                metadata: {
+                    path: '/tmp/project-a',
+                    summary: { text: 'Publisher smoke', updatedAt: 1_700_000_000_111 },
+                    brainSummary: '处理过 worker / publisher / summary 闭环',
+                    source: 'brain-child',
+                    caller: null,
+                    machineId: 'machine-1',
+                    flavor: 'codex',
+                    mainSessionId: 'brain-main',
+                },
+                match: {
+                    source: 'turn-summary',
+                    text: '验证 worker / publisher / session_summaries 闭环',
+                    createdAt: 1_700_000_000_300,
+                    seqStart: 10,
+                    seqEnd: 18,
+                },
+            }],
+        })
+    })
+
+    it('rejects invalid session search query', async () => {
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => null, undefined, {
+            searchSessionHistory: async () => [],
+        } as any))
+
+        const response = await app.request('/cli/sessions/search?limit=2', {
+            method: 'GET',
+            headers: authHeaders(),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual(expect.objectContaining({
+            error: 'Invalid query',
+        }))
     })
 })

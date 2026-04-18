@@ -14,6 +14,7 @@ interface PermissionResponse {
     approved: boolean;
     decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort';
     reason?: string;
+    answers?: Record<string, string[]>;
 }
 
 interface PendingRequest {
@@ -26,6 +27,11 @@ interface PendingRequest {
 interface PermissionResult {
     decision: 'approved' | 'approved_for_session' | 'denied' | 'abort';
     reason?: string;
+    answers?: Record<string, string[]>;
+}
+
+function isAskUserQuestionToolName(toolName: string): boolean {
+    return toolName === 'AskUserQuestion' || toolName === 'ask_user_question';
 }
 
 export class CodexPermissionHandler {
@@ -57,6 +63,7 @@ export class CodexPermissionHandler {
         logger.debug(`[Codex] handleToolCall called: id=${toolCallId} tool=${toolName} kind=${options?.approvalKind ?? 'unknown'} mode=${permissionMode ?? 'unknown'}`);
         if (
             options?.approvalKind === 'mcp_tool_call'
+            && !isAskUserQuestionToolName(toolName)
             && (permissionMode === 'yolo' || permissionMode === 'safe-yolo')
         ) {
             logger.debug(`[Codex] Auto-approving MCP tool call in ${permissionMode}: ${toolName} (${toolCallId})`);
@@ -102,7 +109,7 @@ export class CodexPermissionHandler {
             const existingResponse = this.responses.get(toolCallId);
             if (existingResponse) {
                 this.pendingRequests.delete(toolCallId);
-                const result = this.buildPermissionResult(existingResponse);
+                const result = this.buildPermissionResult(existingResponse, pendingRequest.toolName);
                 pendingRequest.resolve(result);
                 this.completeRequestState(toolCallId, existingResponse, result);
                 return;
@@ -112,16 +119,26 @@ export class CodexPermissionHandler {
         });
     }
 
-    private buildPermissionResult(response: PermissionResponse): PermissionResult {
+    private buildPermissionResult(response: PermissionResponse, toolName?: string): PermissionResult {
         const reason = typeof response.reason === 'string' ? response.reason : undefined;
+        const answers = response.answers;
+        if (toolName && isAskUserQuestionToolName(toolName) && response.approved && (!answers || Object.keys(answers).length === 0)) {
+            return {
+                decision: 'denied',
+                reason: 'No answers were provided.'
+            };
+        }
+
         return response.approved
             ? {
                 decision: response.decision === 'approved_for_session' ? 'approved_for_session' : 'approved',
-                reason
+                reason,
+                answers
             }
             : {
                 decision: response.decision === 'denied' ? 'denied' : 'abort',
-                reason
+                reason,
+                answers
             };
     }
 
@@ -140,9 +157,10 @@ export class CodexPermissionHandler {
                     [id]: {
                         ...request,
                         completedAt: Date.now(),
-                        status: response.approved ? 'approved' : 'denied',
+                        status: result.decision === 'approved' || result.decision === 'approved_for_session' ? 'approved' : 'denied',
                         decision: result.decision,
-                        reason: result.reason
+                        reason: result.reason,
+                        answers: result.answers
                     }
                 }
             } satisfies AgentState;
@@ -169,7 +187,7 @@ export class CodexPermissionHandler {
                 this.pendingRequests.delete(response.id);
 
                 // Resolve the permission request
-                const result = this.buildPermissionResult(response);
+                const result = this.buildPermissionResult(response, pending.toolName);
 
                 pending.resolve(result);
                 logger.debug(`[Codex] Permission RPC resolved: id=${response.id} tool=${pending.toolName} decision=${result.decision}`);

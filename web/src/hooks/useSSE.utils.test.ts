@@ -121,6 +121,7 @@ describe('useSSE utils', () => {
         const previous = {
             sessions: [{
                 id: 'session-1',
+                createdAt: 1,
                 active: true,
                 activeAt: 10,
                 updatedAt: 20,
@@ -148,6 +149,7 @@ describe('useSSE utils', () => {
         const previous = {
             sessions: [{
                 id: 'session-1',
+                createdAt: 1,
                 active: true,
                 activeAt: 10,
                 updatedAt: 20,

@@ -19,6 +19,29 @@ export type PlanTodoReminderItem = {
     activeForm?: string
 }
 
+export type BrainChildCallbackEnvelope = {
+    type: 'brain-child-callback'
+    version: 1
+    sessionId: string
+    mainSessionId: string
+    title: string
+    previousSummary?: string | null
+    details: string[]
+    stats: {
+        messageCount: number
+        contextBudget: number
+        contextRemainingPercent?: number
+        inputTokens?: number
+        outputTokens?: number
+        contextSize?: number
+    }
+    result: {
+        text: string
+        source: 'result' | 'assistant' | 'message' | 'raw-data' | 'none'
+        seq?: number | null
+    }
+}
+
 export type AgentEvent =
     | { type: 'switch'; mode: 'local' | 'remote' }
     | { type: 'message'; message: string }
@@ -53,6 +76,7 @@ export type AgentEvent =
         previousSummary?: string
         details: string[]
         report?: string
+        envelope?: BrainChildCallbackEnvelope
     }
     | ({ type: string } & Record<string, unknown>)
 
