@@ -2334,7 +2334,40 @@ export class SyncEngine {
             )
             console.log(`[auto-resume] Stats: total=${allSessions.length}, dbActiveIds=${dbActiveCount}, inactiveForMachine=${inactiveForMachine.length}`)
 
-            if (inactiveForMachine.length > 0 && inactiveForMachine.length <= 20) {
+            // Build a skip-reason histogram over *all* inactiveForMachine sessions (not
+            // capped by the per-session debug log below). Separates brain sessions so we
+            // can spot when daemon-started/brain workloads get silently excluded.
+            const skipHistogram = new Map<string, number>()
+            const brainSkipHistogram = new Map<string, number>()
+            let brainTotal = 0
+            let brainCandidates = 0
+            const now = Date.now()
+            for (const s of inactiveForMachine) {
+                const reasons = this.getAutoResumeSkipReasons(s, machineId, namespace, machineSupportedAgents, now)
+                    .filter(reason => reason !== 'already-active' && reason !== 'wrong-machine' && reason !== 'wrong-namespace')
+                const key = reasons.length === 0 ? '(candidate)' : reasons.sort().join('|')
+                skipHistogram.set(key, (skipHistogram.get(key) ?? 0) + 1)
+                const source = (s.metadata as Record<string, unknown>)?.source
+                if (source === 'brain' || source === 'brain-child') {
+                    brainTotal++
+                    if (reasons.length === 0) brainCandidates++
+                    brainSkipHistogram.set(key, (brainSkipHistogram.get(key) ?? 0) + 1)
+                }
+            }
+            const histogramLines = Array.from(skipHistogram.entries())
+                .sort((a, b) => b[1] - a[1])
+                .map(([k, v]) => `  ${v}× ${k}`)
+                .join('\n')
+            console.log(`[auto-resume] Skip-reason histogram for ${machineId.slice(0, 8)}:\n${histogramLines}`)
+            if (brainTotal > 0) {
+                const brainLines = Array.from(brainSkipHistogram.entries())
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([k, v]) => `  ${v}× ${k}`)
+                    .join('\n')
+                console.log(`[auto-resume] Brain sessions: total=${brainTotal} candidates=${brainCandidates}\n${brainLines}`)
+            }
+
+            if (inactiveForMachine.length > 0 && inactiveForMachine.length <= 200) {
                 for (const s of inactiveForMachine) {
                     const reasons = this.getAutoResumeSkipReasons(s, machineId, namespace, machineSupportedAgents, Date.now())
                         .filter(reason => reason !== 'already-active' && reason !== 'wrong-machine' && reason !== 'wrong-namespace')
@@ -2695,11 +2728,36 @@ export class SyncEngine {
         // - handleMachineAlive correctly detects offline→online transition for auto-resume
         // - Only sessions that were active in DB before restart are candidates for auto-resume
         // Note: We track DB-active sessions separately for auto-resume before clearing.
+        // Also include daemon-started sessions whose last heartbeat is within
+        // STARTUP_DAEMON_RESUME_WINDOW_MS — covers the case where a daemon restart
+        // flipped session.active=false in DB right before the server restarted
+        // (otherwise brain / daemon-started sessions would be silently skipped with
+        // `not-in-dbActive` even though they were alive a minute ago).
+        const STARTUP_DAEMON_RESUME_WINDOW_MS = 30 * 60 * 1000
+        const startupNow = Date.now()
+        let activeInDb = 0
+        let daemonRecentlyActive = 0
+        let brainInDbActive = 0
         this._dbActiveSessionIds = new Set(
             Array.from(this.sessions.values())
-                .filter(s => s.active)
+                .filter(s => {
+                    if (s.active) {
+                        activeInDb++
+                        const source = (s.metadata as Record<string, unknown>)?.source
+                        if (source === 'brain' || source === 'brain-child') brainInDbActive++
+                        return true
+                    }
+                    const startedByDaemon = s.metadata?.startedFromDaemon === true || s.metadata?.startedBy === 'daemon'
+                    if (!startedByDaemon) return false
+                    if (startupNow - s.activeAt > STARTUP_DAEMON_RESUME_WINDOW_MS) return false
+                    daemonRecentlyActive++
+                    const source = (s.metadata as Record<string, unknown>)?.source
+                    if (source === 'brain' || source === 'brain-child') brainInDbActive++
+                    return true
+                })
                 .map(s => s.id)
         )
+        console.log(`[hydrate] _dbActiveSessionIds built: activeInDb=${activeInDb}, daemonRecentlyActive=${daemonRecentlyActive}, brain=${brainInDbActive}, total=${this._dbActiveSessionIds.size}, window=${STARTUP_DAEMON_RESUME_WINDOW_MS}ms`)
         this.startupSuppressedTaskCompleteSessionIds.clear()
         this.startupSuppressedTerminationReplaySessionIds.clear()
         for (const session of this.sessions.values()) {
