@@ -48,6 +48,22 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
         }
     });
 
+    const handleSessionClearMessages = (payload: { sid?: string; sessionId?: string; time?: number }) => {
+        const targetSessionId = typeof payload.sid === 'string' && payload.sid.length > 0
+            ? payload.sid
+            : typeof payload.sessionId === 'string' && payload.sessionId.length > 0
+                ? payload.sessionId
+                : session.client.sessionId;
+        if (targetSessionId !== session.client.sessionId) {
+            return;
+        }
+        scanner.clearSessionCache(
+            targetSessionId,
+            typeof payload.time === 'number' && Number.isFinite(payload.time) ? payload.time : Date.now()
+        );
+    };
+    session.client.on('session:clear-messages', handleSessionClearMessages);
+
     try {
         async function abortProcess() {
             if (!processAbortController.signal.aborted) {
@@ -134,6 +150,7 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
         session.client.rpcHandlerManager.registerHandler('abort', async () => {});
         session.client.rpcHandlerManager.registerHandler('switch', async () => {});
         session.queue.setOnMessage(null);
+        session.client.off('session:clear-messages', handleSessionClearMessages);
         await scanner.cleanup();
     }
 

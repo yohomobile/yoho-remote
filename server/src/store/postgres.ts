@@ -51,7 +51,56 @@ import type {
     PostgresConfig,
     SpawnAgentType,
 } from './types'
-import { isRealActivityMessage } from './messageUtils'
+import { isRealActivityMessage, isTurnStartUserMessage } from './messageUtils'
+
+function parseTimestampCandidate(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return value
+    }
+    if (typeof value === 'string' && value.trim()) {
+        const numeric = Number(value)
+        if (Number.isFinite(numeric)) {
+            return numeric
+        }
+        const parsed = Date.parse(value)
+        return Number.isFinite(parsed) ? parsed : null
+    }
+    return null
+}
+
+function extractMessageSourceTimestamp(value: unknown, depth = 0, seen = new Set<unknown>()): number | null {
+    if (!value || typeof value !== 'object' || depth > 4 || seen.has(value)) {
+        return null
+    }
+
+    seen.add(value)
+    const record = value as Record<string, unknown>
+
+    for (const key of ['timestamp', 'createdAt', 'created_at']) {
+        const parsed = parseTimestampCandidate(record[key])
+        if (parsed !== null) {
+            return parsed
+        }
+    }
+
+    for (const key of ['content', 'data', 'message', 'payload']) {
+        const nested = extractMessageSourceTimestamp(record[key], depth + 1, seen)
+        if (nested !== null) {
+            return nested
+        }
+    }
+
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const nested = extractMessageSourceTimestamp(item, depth + 1, seen)
+            if (nested !== null) {
+                return nested
+            }
+        }
+    }
+
+    return null
+}
 
 export class PostgresStore implements IStore {
     private pool: Pool
@@ -99,6 +148,8 @@ export class PostgresStore implements IStore {
                 todos_updated_at BIGINT,
                 active BOOLEAN DEFAULT FALSE,
                 active_at BIGINT,
+                thinking BOOLEAN DEFAULT FALSE,
+                thinking_at BIGINT,
                 seq INTEGER DEFAULT 0,
                 advisor_task_id TEXT,
                 creator_chat_id TEXT,
@@ -121,6 +172,8 @@ export class PostgresStore implements IStore {
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS termination_reason TEXT;
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_message_at BIGINT;
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS active_monitors JSONB;
+            ALTER TABLE sessions ADD COLUMN IF NOT EXISTS thinking BOOLEAN DEFAULT FALSE;
+            ALTER TABLE sessions ADD COLUMN IF NOT EXISTS thinking_at BIGINT;
             UPDATE sessions SET last_message_at = sub.max_created
             FROM (
                 SELECT session_id, MAX(created_at) AS max_created
@@ -165,7 +218,8 @@ export class PostgresStore implements IStore {
                 local_id TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq);
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_local_id ON messages(session_id, local_id) WHERE local_id IS NOT NULL;
+            DROP INDEX IF EXISTS idx_messages_local_id;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_local_id ON messages(session_id, local_id);
 
             -- Users 表
             CREATE TABLE IF NOT EXISTS users (
@@ -624,19 +678,9 @@ export class PostgresStore implements IStore {
     // ========== Session 操作 ==========
 
     async getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string): Promise<StoredSession> {
-        const existing = await this.pool.query(
-            'SELECT * FROM sessions WHERE tag = $1 AND namespace = $2 ORDER BY created_at DESC LIMIT 1',
-            [tag, namespace]
-        )
-
-        if (existing.rows.length > 0) {
-            return this.toStoredSession(existing.rows[0])
-        }
-
         const now = Date.now()
-        const id = randomUUID()
-
-        await this.pool.query(`
+        const id = tag
+        const result = await this.pool.query(`
             INSERT INTO sessions (
                 id, tag, namespace, machine_id, created_at, updated_at,
                 metadata, metadata_version,
@@ -644,6 +688,8 @@ export class PostgresStore implements IStore {
                 todos, todos_updated_at,
                 active, active_at, seq
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            ON CONFLICT (id) DO UPDATE SET updated_at = $6
+            RETURNING *
         `, [
             id, tag, namespace, null, now, now,
             metadata ? JSON.stringify(metadata) : null, 1,
@@ -651,8 +697,6 @@ export class PostgresStore implements IStore {
             null, null,
             true, now, 0  // 新 session 默认 active=true，这样心跳不会被归档检查阻止
         ])
-
-        const result = await this.pool.query('SELECT * FROM sessions WHERE id = $1', [id])
         return this.toStoredSession(result.rows[0])
     }
 
@@ -812,11 +856,78 @@ export class PostgresStore implements IStore {
     }
 
     async setSessionActive(id: string, active: boolean, activeAt: number, namespace: string, terminationReason?: string | null): Promise<boolean> {
-        const result = await this.pool.query(`
-            UPDATE sessions SET active = $1, active_at = $2, termination_reason = COALESCE($5, termination_reason)
-            WHERE id = $3 AND namespace = $4
-        `, [active, activeAt, id, namespace, terminationReason ?? null])
+        const result = terminationReason === undefined
+            ? await this.pool.query(`
+                UPDATE sessions SET active = $1, active_at = $2
+                WHERE id = $3 AND namespace = $4
+            `, [active, activeAt, id, namespace])
+            : terminationReason === null
+                ? await this.pool.query(`
+                    UPDATE sessions SET active = $1, active_at = $2, termination_reason = NULL
+                    WHERE id = $3 AND namespace = $4
+                `, [active, activeAt, id, namespace])
+                : await this.pool.query(`
+                    UPDATE sessions SET active = $1, active_at = $2, termination_reason = $5
+                    WHERE id = $3 AND namespace = $4
+                `, [active, activeAt, id, namespace, terminationReason])
         return (result.rowCount ?? 0) > 0
+    }
+
+    async setSessionThinking(id: string, thinking: boolean, namespace: string): Promise<void> {
+        await this.pool.query(`
+            UPDATE sessions
+            SET thinking = $1, thinking_at = $2
+            WHERE id = $3 AND namespace = $4
+        `, [thinking, Date.now(), id, namespace])
+    }
+
+    async getTurnBoundary(sessionId: string): Promise<{ turnStartSeq: number; turnEndSeq: number } | null> {
+        const userResult = await this.pool.query(`
+            SELECT seq, content
+            FROM messages
+            WHERE session_id = $1
+              AND content->>'role' = 'user'
+            ORDER BY seq DESC
+            LIMIT 50
+        `, [sessionId])
+
+        let turnStartSeq: number | null = null
+        for (const row of userResult.rows as Array<{ seq: number; content: unknown }>) {
+            if (!isTurnStartUserMessage(row.content)) {
+                continue
+            }
+            turnStartSeq = Number(row.seq)
+            break
+        }
+
+        if (turnStartSeq == null) {
+            return null
+        }
+
+        const tailResult = await this.pool.query(`
+            SELECT seq, content
+            FROM messages
+            WHERE session_id = $1
+              AND seq >= $2
+            ORDER BY seq ASC
+        `, [sessionId, turnStartSeq])
+
+        let turnEndSeq = Number(turnStartSeq)
+        for (const row of tailResult.rows) {
+            if (!isRealActivityMessage(row.content)) {
+                continue
+            }
+            turnEndSeq = Number(row.seq)
+        }
+
+        if (turnEndSeq <= Number(turnStartSeq)) {
+            return null
+        }
+
+        return {
+            turnStartSeq: Number(turnStartSeq),
+            turnEndSeq
+        }
     }
 
     async setSessionModelConfig(id: string, config: {
@@ -1077,23 +1188,38 @@ export class PostgresStore implements IStore {
             )
             const nextSeq = seqResult.rows[0].next_seq
 
-            const now = Date.now()
+            const persistedAt = extractMessageSourceTimestamp(content) ?? Date.now()
             const id = randomUUID()
 
-            await client.query(`
+            const insertResult = await client.query(`
                 INSERT INTO messages (id, session_id, content, created_at, seq, local_id)
                 VALUES ($1, $2, $3, $4, $5, $6)
-            `, [id, sessionId, JSON.stringify(content), now, nextSeq, localId || null])
+                ON CONFLICT (session_id, local_id) DO NOTHING
+            `, [id, sessionId, JSON.stringify(content), persistedAt, nextSeq, localId || null])
+
+            if ((insertResult.rowCount ?? 0) === 0) {
+                if (localId) {
+                    const existing = await client.query(
+                        'SELECT * FROM messages WHERE session_id = $1 AND local_id = $2 LIMIT 1',
+                        [sessionId, localId]
+                    )
+                    if (existing.rows.length > 0) {
+                        await client.query('COMMIT')
+                        return this.toStoredMessage(existing.rows[0])
+                    }
+                }
+                throw new Error('Failed to store message')
+            }
 
             if (isRealActivityMessage(content)) {
                 await client.query(
                     'UPDATE sessions SET seq = seq + 1, updated_at = $1, last_message_at = $1 WHERE id = $2',
-                    [now, sessionId]
+                    [persistedAt, sessionId]
                 )
             } else {
                 await client.query(
                     'UPDATE sessions SET seq = seq + 1, updated_at = $1 WHERE id = $2',
-                    [now, sessionId]
+                    [persistedAt, sessionId]
                 )
             }
 
@@ -1149,6 +1275,15 @@ export class PostgresStore implements IStore {
     }
 
     async clearMessages(sessionId: string, keepCount: number = 30): Promise<{ deleted: number; remaining: number }> {
+        if (keepCount <= 0) {
+            const deleteResult = await this.pool.query(
+                'DELETE FROM messages WHERE session_id = $1',
+                [sessionId]
+            )
+            const deleted = deleteResult.rowCount ?? 0
+            return { deleted, remaining: 0 }
+        }
+
         const countResult = await this.pool.query('SELECT COUNT(*) FROM messages WHERE session_id = $1', [sessionId])
         const total = parseInt(countResult.rows[0].count, 10)
 
@@ -1160,7 +1295,7 @@ export class PostgresStore implements IStore {
             DELETE FROM messages WHERE session_id = $1 AND seq <= (
                 SELECT seq FROM messages WHERE session_id = $1 ORDER BY seq DESC LIMIT 1 OFFSET $2
             )
-        `, [sessionId, keepCount - 1])
+        `, [sessionId, keepCount])
 
         const deleted = deleteResult.rowCount ?? 0
         return { deleted, remaining: total - deleted }
@@ -3141,6 +3276,8 @@ export class PostgresStore implements IStore {
             todosUpdatedAt: row.todos_updated_at ? Number(row.todos_updated_at) : null,
             active: row.active === true,
             activeAt: row.active_at ? Number(row.active_at) : null,
+            thinking: row.thinking === true,
+            thinkingAt: row.thinking_at != null ? Number(row.thinking_at) : null,
             seq: row.seq,
             advisorTaskId: row.advisor_task_id,
             creatorChatId: row.creator_chat_id,

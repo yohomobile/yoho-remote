@@ -26,6 +26,45 @@ function safeStringify(value: unknown): string {
     }
 }
 
+function withMessageEnvelope<T extends NormalizedMessage | NormalizedMessage[]>(
+    value: T,
+    message: DecryptedMessage
+): T {
+    if (Array.isArray(value)) {
+        return value.map((entry) => ({
+            ...entry,
+            seq: message.seq,
+            status: message.status,
+            originalText: message.originalText
+        })) as T
+    }
+
+    return {
+        ...value,
+        seq: message.seq,
+        status: message.status,
+        originalText: message.originalText
+    } as T
+}
+
+function createRawAgentTextMessage(
+    messageId: string,
+    localId: string | null,
+    createdAt: number,
+    text: string,
+    meta?: unknown
+): NormalizedMessage {
+    return {
+        id: messageId,
+        localId,
+        createdAt,
+        role: 'agent',
+        isSidechain: false,
+        content: [{ type: 'text', text, uuid: messageId, parentUUID: null }],
+        meta
+    }
+}
+
 function hasToolUseErrorTag(value: unknown): boolean {
     return typeof value === 'string' && /<tool_use_error>[\s\S]*<\/tool_use_error>/i.test(value)
 }
@@ -346,14 +385,13 @@ function normalizeUserOutput(
             if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
                 const isError = Boolean(block.is_error)
                 const rawContent = 'content' in block ? (block as Record<string, unknown>).content : undefined
-                const embeddedToolUseResult = 'toolUseResult' in data ? (data as Record<string, unknown>).toolUseResult : null
 
                 const permissions = normalizeToolResultPermissions(block.permissions)
 
                 agentBlocks.push({
                     type: 'tool-result',
                     tool_use_id: block.tool_use_id,
-                    content: embeddedToolUseResult ?? rawContent,
+                    content: rawContent,
                     is_error: isError,
                     uuid,
                     parentUUID,
@@ -1064,7 +1102,12 @@ function normalizeAgentRecord(
 
     if (content.type === 'codex') {
         const data = isObject(content.data) ? content.data : null
-        if (!data || typeof data.type !== 'string') return null
+        if (!data || typeof data.type !== 'string') {
+            console.warn('[normalize] Unknown Codex content without a subtype', {
+                messageId
+            })
+            return createRawAgentTextMessage(messageId, localId, createdAt, safeStringify(content), meta)
+        }
 
         if (data.type === 'plan') {
             // Support old format (data.entries) and new Codex format (data.plan)
@@ -1284,6 +1327,12 @@ function normalizeAgentRecord(
                 meta
             }
         }
+
+        console.warn('[normalize] Unknown Codex content subtype', {
+            messageId,
+            subtype: data.type
+        })
+        return createRawAgentTextMessage(messageId, localId, createdAt, safeStringify(content), meta)
     }
 
     return null
@@ -1412,35 +1461,31 @@ export function normalizeDecryptedMessage(message: DecryptedMessage): Normalized
         if (raw === '{}' || raw === '[]') {
             return null
         }
-        return {
+        return withMessageEnvelope({
             id: message.id,
             localId: message.localId,
             createdAt: message.createdAt,
             role: 'event',
             isSidechain: false,
             content: { type: 'message', message: `Unrecognized message format` } as AgentEvent,
-            status: message.status,
-            originalText: message.originalText
-        }
+        }, message)
     }
 
     if (record.role === 'user') {
         const normalized = normalizeUserRecord(message.id, message.localId, message.createdAt, record.content, record.meta)
         return normalized
-            ? { ...normalized, status: message.status, originalText: message.originalText }
-            : {
+            ? withMessageEnvelope(normalized, message)
+            : withMessageEnvelope({
                 id: message.id,
                 localId: message.localId,
                 createdAt: message.createdAt,
                 role: 'user',
                 isSidechain: false,
                 content: { type: 'text', text: safeStringify(record.content) },
-                meta: record.meta,
-                status: message.status,
-                originalText: message.originalText
-            }
+                meta: record.meta
+            }, message)
     }
-    if (record.role === 'agent') {
+    if (record.role === 'agent' || record.role === 'assistant') {
         if (isSkippableAgentContent(record.content)) {
             return null
         }
@@ -1454,25 +1499,23 @@ export function normalizeDecryptedMessage(message: DecryptedMessage): Normalized
             return null
         }
         if (!normalized) {
-            return {
-                id: message.id,
-                localId: message.localId,
-                createdAt: message.createdAt,
-                role: 'agent',
-                isSidechain: false,
-                content: [{ type: 'text', text: safeStringify(record.content), uuid: message.id, parentUUID: null }],
-                meta: record.meta,
-                status: message.status,
-                originalText: message.originalText
-            }
+            return withMessageEnvelope({
+                ...createRawAgentTextMessage(
+                    message.id,
+                    message.localId,
+                    message.createdAt,
+                    safeStringify(record.content),
+                    record.meta
+                ),
+            }, message)
         }
         if (Array.isArray(normalized)) {
-            return normalized.map(n => ({ ...n, status: message.status, originalText: message.originalText }))
+            return withMessageEnvelope(normalized, message)
         }
-        return { ...normalized, status: message.status, originalText: message.originalText }
+        return withMessageEnvelope(normalized, message)
     }
 
-    return {
+    return withMessageEnvelope({
         id: message.id,
         localId: message.localId,
         createdAt: message.createdAt,
@@ -1480,7 +1523,5 @@ export function normalizeDecryptedMessage(message: DecryptedMessage): Normalized
         isSidechain: false,
         content: [{ type: 'text', text: safeStringify(record.content), uuid: message.id, parentUUID: null }],
         meta: record.meta,
-        status: message.status,
-        originalText: message.originalText
-    }
+    }, message)
 }

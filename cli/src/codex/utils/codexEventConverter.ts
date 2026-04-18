@@ -79,6 +79,7 @@ function parseArguments(value: unknown): unknown {
 }
 
 function extractCallId(payload: Record<string, unknown>): string | null {
+    // These are tool-call identifiers, not session identifiers.
     const candidates = [
         'call_id',
         'callId',
@@ -95,6 +96,12 @@ function extractCallId(payload: Record<string, unknown>): string | null {
     }
 
     return null;
+}
+
+function extractSessionId(payload: Record<string, unknown>): string | null {
+    return asString(payload.session_id)
+        ?? asString(payload.sessionId)
+        ?? asString(payload.id);
 }
 
 const MODEL_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh']);
@@ -128,7 +135,7 @@ export function convertCodexEvent(rawEvent: unknown): CodexConversionResult | nu
     const eventRecord = asRecord(parsed.data);
 
     if (type === 'session_meta') {
-        const sessionId = payloadRecord ? asString(payloadRecord.id) : null;
+        const sessionId = payloadRecord ? extractSessionId(payloadRecord) : null;
         const modelInfo = payloadRecord ? extractModelInfo(payloadRecord) : null;
         if (!sessionId && !modelInfo) {
             return null;

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
 import * as watcherModule from '@/modules/watcher/startFileWatcher';
+import { logger } from '@/ui/logger';
 import { createCodexSessionScanner } from './codexSessionScanner';
 import type { CodexSessionEvent } from './codexEventConverter';
 
@@ -118,6 +119,78 @@ describe('codexSessionScanner', () => {
         expect(events[0].type).toBe('response_item');
     });
 
+    it('emits response_item events even when payload.id is a tool call id', async () => {
+        const sessionId = 'session-response-item';
+        sessionFile = join(sessionsDir, `codex-${sessionId}.jsonl`);
+
+        await writeFile(
+            sessionFile,
+            JSON.stringify({ type: 'session_meta', payload: { id: sessionId, cwd: '/data/github/yoho-remote', timestamp: '2025-12-22T00:00:00.000Z' } }) + '\n'
+        );
+
+        scanner = await createCodexSessionScanner({
+            sessionId,
+            onEvent: (event) => events.push(event)
+        });
+
+        await wait(150);
+
+        await appendFile(
+            sessionFile,
+            JSON.stringify({ type: 'response_item', payload: { type: 'function_call', id: 'call-1', name: 'Tool', arguments: '{}' } }) + '\n'
+        );
+
+        await wait(150);
+
+        expect(events).toHaveLength(1);
+        expect(events[0].type).toBe('response_item');
+    });
+
+    it('warns when multiple Codex sessions match the window and picks the closest one', async () => {
+        const referenceTimestampMs = Date.parse('2025-12-22T00:00:30.000Z');
+        const windowMs = 2 * 60 * 1000;
+        const closerSessionId = 'session-closer';
+        const fartherSessionId = 'session-farther';
+        const closerFile = join(sessionsDir, `codex-${closerSessionId}.jsonl`);
+        const fartherFile = join(sessionsDir, `codex-${fartherSessionId}.jsonl`);
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+        let foundSessionId: string | null = null;
+
+        await writeFile(
+            fartherFile,
+            [
+                JSON.stringify({ type: 'session_meta', payload: { id: fartherSessionId, cwd: '/data/github/yoho-remote', timestamp: '2025-12-22T00:00:05.000Z' } }),
+                JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message: 'farther' } })
+            ].join('\n') + '\n'
+        );
+        await writeFile(
+            closerFile,
+            [
+                JSON.stringify({ type: 'session_meta', payload: { id: closerSessionId, cwd: '/data/github/yoho-remote', timestamp: '2025-12-22T00:00:25.000Z' } }),
+                JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message: 'closer' } })
+            ].join('\n') + '\n'
+        );
+
+        scanner = await createCodexSessionScanner({
+            sessionId: null,
+            cwd: '/data/github/yoho-remote',
+            startupTimestampMs: referenceTimestampMs,
+            sessionStartWindowMs: windowMs,
+            onSessionFound: (sessionId) => {
+                foundSessionId = sessionId;
+            },
+            onEvent: (event) => events.push(event)
+        });
+
+        await wait(200);
+
+        expect(foundSessionId).toBe(closerSessionId);
+        expect(warnSpy).toHaveBeenCalled();
+        expect(warnSpy.mock.calls.some((call) => typeof call[0] === 'string' && call[0].includes('Multiple Codex sessions matched cwd'))).toBe(true);
+
+        warnSpy.mockRestore();
+    });
+
     it('fails fast when cwd is missing and no sessionId is provided', async () => {
         const sessionId = 'session-missing-cwd';
         const matchFailedMessage = 'No cwd provided for Codex session matching; refusing to fallback.';
@@ -179,5 +252,61 @@ describe('codexSessionScanner', () => {
 
         await wait(200);
         expect(stopWatcher).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips pre-clear Codex events after a session clear signal but still emits newer ones', async () => {
+        const sessionId = 'session-clear-cache';
+        sessionFile = join(sessionsDir, `codex-${sessionId}.jsonl`);
+        const oldTimestamp = '2026-04-17T00:00:00.000Z';
+
+        await writeFile(
+            sessionFile,
+            [
+                JSON.stringify({
+                    type: 'session_meta',
+                    payload: { id: sessionId, cwd: '/data/github/yoho-remote', timestamp: oldTimestamp }
+                }),
+                JSON.stringify({
+                    type: 'event_msg',
+                    timestamp: oldTimestamp,
+                    payload: { type: 'agent_message', message: 'before clear' }
+                })
+            ].join('\n') + '\n'
+        );
+
+        scanner = await createCodexSessionScanner({
+            sessionId,
+            onEvent: (event) => events.push(event)
+        });
+
+        await wait(150);
+        expect(events).toHaveLength(0);
+
+        scanner.clearSessionCache(sessionId, Date.parse('2026-04-17T00:00:02.000Z'));
+
+        await appendFile(
+            sessionFile,
+            JSON.stringify({
+                type: 'event_msg',
+                timestamp: oldTimestamp,
+                payload: { type: 'agent_message', message: 'after clear but old timestamp' }
+            }) + '\n'
+        );
+        await appendFile(
+            sessionFile,
+            JSON.stringify({
+                type: 'event_msg',
+                timestamp: '2026-04-17T00:00:05.000Z',
+                payload: { type: 'agent_message', message: 'after clear and new timestamp' }
+            }) + '\n'
+        );
+
+        await wait(250);
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({
+            type: 'event_msg',
+            timestamp: '2026-04-17T00:00:05.000Z'
+        });
     });
 });

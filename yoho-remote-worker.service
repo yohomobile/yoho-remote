@@ -1,0 +1,16 @@
+[Unit]
+Description=Yoho Remote Worker
+After=network-online.target yoho-remote-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=yoho
+WorkingDirectory=/var/lib/yoho-remote
+EnvironmentFile=/etc/yoho-remote/worker.env
+ExecStart=/opt/yoho-remote/yoho-remote-worker
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

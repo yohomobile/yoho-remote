@@ -77,12 +77,16 @@ export async function startDaemon(): Promise<void> {
   // In case the setup malfunctions - our signal handlers will not properly
   // shut down. We will force exit the process with code 1.
   let requestShutdown: (source: 'yr-app' | 'yr-cli' | 'os-signal' | 'exception', errorMessage?: string) => void;
+  let shutdownForceTimeout: ReturnType<typeof setTimeout> | null = null;
   let resolvesWhenShutdownRequested = new Promise<({ source: 'yr-app' | 'yr-cli' | 'os-signal' | 'exception', errorMessage?: string })>((resolve) => {
     requestShutdown = (source, errorMessage) => {
       logger.debug(`[DAEMON RUN] Requesting shutdown (source: ${source}, errorMessage: ${errorMessage})`);
+      if (shutdownForceTimeout) {
+        return;
+      }
 
       // Fallback - in case cleanup hangs - force exit after 10 seconds
-      setTimeout(async () => {
+      shutdownForceTimeout = setTimeout(async () => {
         logger.debug('[DAEMON RUN] Graceful shutdown timed out, forcing exit with code 1');
 
         // Give time for logs to be flushed
@@ -90,6 +94,7 @@ export async function startDaemon(): Promise<void> {
 
         process.exit(1);
       }, 10_000);
+      shutdownForceTimeout.unref?.();
 
       // Start graceful shutdown
       resolve({ source, errorMessage });
@@ -728,16 +733,90 @@ export async function startDaemon(): Promise<void> {
 
         pidToTrackedSession.set(pid, trackedSession);
 
+        let spawnWaitSettled = false;
+        let spawnWaitTimeout: ReturnType<typeof setTimeout> | null = null;
+        let rejectEarlyExit: ((error: Error) => void) | null = null;
+
+        const finalizeSpawnWait = (): boolean => {
+          if (spawnWaitSettled) {
+            return false;
+          }
+          spawnWaitSettled = true;
+          if (spawnWaitTimeout) {
+            clearTimeout(spawnWaitTimeout);
+            spawnWaitTimeout = null;
+          }
+          pidToAwaiter.delete(pid);
+          return true;
+        };
+
+        const buildEarlyExitError = (code: number | null, signal: NodeJS.Signals | null): Error => {
+          const tail = stderrTail.trim().slice(-512);
+          const tailText = tail
+            ? `\nStderr tail (last 512B):\n${tail}`
+            : '\nStderr tail (last 512B): (empty)';
+          return new Error(`Session process for PID ${pid} exited before the webhook was ready (code=${code ?? 'null'}, signal=${signal ?? 'null'}).${tailText}`);
+        };
+
+        const readyPromise = new Promise<TrackedSession>((resolve) => {
+          // Register awaiter
+          pidToAwaiter.set(pid, (completedSession) => {
+            if (!finalizeSpawnWait()) {
+              return;
+            }
+            logger.debug(`[DAEMON RUN] Session ${completedSession.yohoRemoteSessionId} fully spawned with webhook`);
+            addLog('webhook', `Session ready: ${completedSession.yohoRemoteSessionId}`, 'success');
+            addLog('complete', `Session created successfully`, 'success');
+            resolve(completedSession);
+          });
+        });
+
+        const exitPromise = new Promise<TrackedSession>((_, reject) => {
+          rejectEarlyExit = (error: Error) => {
+            if (!finalizeSpawnWait()) {
+              return;
+            }
+            reject(error);
+          };
+        });
+
+        const timeoutPromise = new Promise<TrackedSession>((_, reject) => {
+          // Set timeout for webhook
+          spawnWaitTimeout = setTimeout(() => {
+            if (!finalizeSpawnWait()) {
+              return;
+            }
+            logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${pid}`);
+            logStderrTail();
+            addLog('webhook', `Session webhook timeout for PID ${pid}`, 'error');
+            reject(new Error(`Session webhook timeout for PID ${pid}`));
+            // 15 second timeout - I have seen timeouts on 10 seconds
+            // even though session was still created successfully in ~2 more seconds
+          }, 15_000);
+          spawnWaitTimeout.unref?.();
+        });
+
         cliProcess.on('exit', (code, signal) => {
           logger.debug(`[DAEMON RUN] Child PID ${pid} exited with code ${code}, signal ${signal}`);
-          if (code !== 0 || signal) {
-            logStderrTail();
+          if (!spawnWaitSettled) {
+            if (code !== 0 || signal) {
+              logStderrTail();
+            }
+            const earlyExitError = buildEarlyExitError(code, signal);
+            addLog('webhook', earlyExitError.message, 'error');
+            rejectEarlyExit?.(earlyExitError);
           }
           onChildExited(pid);
         });
 
         cliProcess.on('error', (error) => {
           logger.debug(`[DAEMON RUN] Child process error:`, error);
+          if (!spawnWaitSettled) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            const childError = new Error(`Child process error for PID ${pid}: ${errorMessage}`);
+            addLog('webhook', childError.message, 'error');
+            rejectEarlyExit?.(childError);
+          }
           onChildExited(pid);
         });
 
@@ -745,38 +824,12 @@ export async function startDaemon(): Promise<void> {
         logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${pid}`);
         addLog('webhook', `Waiting for session to report back (PID: ${pid})...`, 'running');
 
-        const spawnResult = await new Promise<SpawnSessionResult>((resolve) => {
-          // Set timeout for webhook
-          const timeout = setTimeout(() => {
-            pidToAwaiter.delete(pid);
-            logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${pid}`);
-            logStderrTail();
-            addLog('webhook', `Session webhook timeout for PID ${pid}`, 'error');
-            resolve({
-              type: 'error',
-              errorMessage: `Session webhook timeout for PID ${pid}`,
-              logs: spawnLogs
-            });
-            // 15 second timeout - I have seen timeouts on 10 seconds
-            // even though session was still created successfully in ~2 more seconds
-          }, 15_000);
-
-          // Register awaiter
-          pidToAwaiter.set(pid, (completedSession) => {
-            clearTimeout(timeout);
-            logger.debug(`[DAEMON RUN] Session ${completedSession.yohoRemoteSessionId} fully spawned with webhook`);
-            addLog('webhook', `Session ready: ${completedSession.yohoRemoteSessionId}`, 'success');
-            addLog('complete', `Session created successfully`, 'success');
-            resolve({
-              type: 'success',
-              sessionId: completedSession.yohoRemoteSessionId!,
-              logs: spawnLogs
-            });
-          });
-        });
-        if (spawnResult.type !== 'success') {
-          await maybeCleanupWorktree('spawn-error');
-        }
+        const completedSession = await Promise.race([readyPromise, exitPromise, timeoutPromise]);
+        const spawnResult: SpawnSessionResult = {
+          type: 'success',
+          sessionId: completedSession.yohoRemoteSessionId!,
+          logs: spawnLogs
+        };
         return spawnResult;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -792,7 +845,7 @@ export async function startDaemon(): Promise<void> {
     };
 
     // Stop a session by sessionId or PID fallback
-    const stopSession = (sessionId: string): boolean => {
+    const stopSession = async (sessionId: string): Promise<boolean> => {
       logger.debug(`[DAEMON RUN] Attempting to stop session ${sessionId}`);
 
       // Try to find by sessionId first
@@ -805,26 +858,31 @@ export async function startDaemon(): Promise<void> {
             continue;
           }
 
-          if (session.startedBy === 'daemon' && session.childProcess) {
-            try {
-              void killProcessByChildProcess(session.childProcess);
-              logger.debug(`[DAEMON RUN] Requested termination for daemon-spawned session ${sessionId}`);
-            } catch (error) {
-              logger.debug(`[DAEMON RUN] Failed to kill session ${sessionId}:`, error);
+          try {
+            if (session.startedBy === 'daemon' && session.childProcess) {
+              const killed = await killProcessByChildProcess(session.childProcess, { timeout: 3000 });
+              if (killed) {
+                logger.debug(`[DAEMON RUN] Requested termination for daemon-spawned session ${sessionId}`);
+              } else {
+                logger.debug(`[DAEMON RUN] Failed to kill session ${sessionId}`);
+              }
+            } else {
+              // For externally started sessions, try to kill by PID
+              const killed = await killProcess(pid, { timeout: 3000 });
+              if (killed) {
+                logger.debug(`[DAEMON RUN] Requested termination for external session PID ${pid}`);
+              } else {
+                logger.debug(`[DAEMON RUN] Failed to kill external session PID ${pid}`);
+              }
             }
-          } else {
-            // For externally started sessions, try to kill by PID
-            try {
-              void killProcess(pid);
-              logger.debug(`[DAEMON RUN] Requested termination for external session PID ${pid}`);
-            } catch (error) {
-              logger.debug(`[DAEMON RUN] Failed to kill external session PID ${pid}:`, error);
-            }
+            return true;
+          } catch (error) {
+            logger.debug(`[DAEMON RUN] Failed to kill session ${sessionId}:`, error);
+            return false;
+          } finally {
+            pidToTrackedSession.delete(pid);
+            logger.debug(`[DAEMON RUN] Removed session ${sessionId} from tracking`);
           }
-
-          pidToTrackedSession.delete(pid);
-          logger.debug(`[DAEMON RUN] Removed session ${sessionId} from tracking`);
-          return true;
         }
       }
 
@@ -843,13 +901,6 @@ export async function startDaemon(): Promise<void> {
         for (const dir of tracked.tempDirs) {
           fs.rm(dir, { recursive: true, force: true }).catch(() => {});
         }
-      }
-
-      // Resolve pending awaiter so spawnSession doesn't wait for the full 15s timeout
-      const awaiter = pidToAwaiter.get(pid);
-      if (awaiter && tracked) {
-        pidToAwaiter.delete(pid);
-        awaiter(tracked);
       }
     };
 
@@ -939,7 +990,7 @@ export async function startDaemon(): Promise<void> {
     // 4. Write heartbeat
     const heartbeatIntervalMs = parseInt(process.env.YR_DAEMON_HEARTBEAT_INTERVAL || '60000');
     let heartbeatRunning = false
-    const restartOnStaleVersionAndHeartbeat = setInterval(async () => {
+    let restartOnStaleVersionAndHeartbeat: ReturnType<typeof setInterval> | null = setInterval(async () => {
       if (heartbeatRunning) {
         return;
       }
@@ -959,12 +1010,15 @@ export async function startDaemon(): Promise<void> {
 
       // Check if daemon needs update
       const installedCliMtimeMs = getInstalledCliMtimeMs();
-      if (typeof installedCliMtimeMs === 'number' &&
+        if (typeof installedCliMtimeMs === 'number' &&
           typeof startedWithCliMtimeMs === 'number' &&
           installedCliMtimeMs !== startedWithCliMtimeMs) {
         logger.debug('[DAEMON RUN] Daemon is outdated, triggering self-restart with latest version, clearing heartbeat interval');
 
-        clearInterval(restartOnStaleVersionAndHeartbeat);
+        const heartbeatInterval = restartOnStaleVersionAndHeartbeat;
+        if (heartbeatInterval !== null) {
+          clearInterval(heartbeatInterval);
+        }
 
         // Spawn new daemon
         // We do not need to clean ourselves up - we will be killed by the new daemon.
@@ -1033,33 +1087,83 @@ export async function startDaemon(): Promise<void> {
     }, heartbeatIntervalMs); // Every 60 seconds in production
 
     // Setup signal handlers
+    let shutdownInProgress = false;
     const cleanupAndShutdown = async (source: 'yr-app' | 'yr-cli' | 'os-signal' | 'exception', errorMessage?: string) => {
+      if (shutdownInProgress) {
+        logger.debug('[DAEMON RUN] Shutdown already in progress, skipping duplicate request');
+        return;
+      }
+      shutdownInProgress = true;
       logger.debug(`[DAEMON RUN] Starting proper cleanup (source: ${source}, errorMessage: ${errorMessage})...`);
 
-      // Clear health check interval
+      try {
       if (restartOnStaleVersionAndHeartbeat) {
-        clearInterval(restartOnStaleVersionAndHeartbeat);
-        logger.debug('[DAEMON RUN] Health check interval cleared');
+          const heartbeatInterval = restartOnStaleVersionAndHeartbeat;
+          clearInterval(heartbeatInterval);
+          restartOnStaleVersionAndHeartbeat = null;
+          logger.debug('[DAEMON RUN] Health check interval cleared');
+        }
+
+        try {
+          await apiMachine.updateDaemonState((state: DaemonState | null) => ({
+            ...state,
+            status: 'shutting-down',
+            shutdownRequestedAt: Date.now(),
+            shutdownSource: source
+          }));
+        } catch (error) {
+          logger.debug('[DAEMON RUN] Failed to update daemon state during shutdown', error);
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } finally {
+        try {
+          apiMachine.shutdown();
+        } catch (error) {
+          logger.debug('[DAEMON RUN] Failed to disconnect API machine during shutdown', error);
+        }
+
+        if (shutdownForceTimeout) {
+          clearTimeout(shutdownForceTimeout);
+          shutdownForceTimeout = null;
+        }
+
+        try {
+          await stopControlServer();
+        } catch (error) {
+          logger.debug('[DAEMON RUN] Failed to stop control server during shutdown', error);
+        }
+
+        const trackedSessions = Array.from(pidToTrackedSession.values());
+        pidToAwaiter.clear();
+        for (const tracked of trackedSessions) {
+          try {
+            if (tracked.childProcess) {
+              await killProcessByChildProcess(tracked.childProcess, { timeout: 3000 });
+            } else {
+              await killProcess(tracked.pid, { timeout: 3000 });
+            }
+          } catch (error) {
+            logger.debug('[DAEMON RUN] Failed to kill tracked session during shutdown', error);
+          }
+        }
+        pidToTrackedSession.clear();
+
+        try {
+          await cleanupDaemonState();
+        } catch (error) {
+          logger.debug('[DAEMON RUN] Failed to clean daemon state during shutdown', error);
+        }
+
+        try {
+          await releaseDaemonLock(daemonLockHandle);
+        } catch (error) {
+          logger.debug('[DAEMON RUN] Failed to release daemon lock during shutdown', error);
+        }
+
+        logger.info('daemon shutdown complete');
+        process.exit(0);
       }
-
-      // Update daemon state before shutting down
-      await apiMachine.updateDaemonState((state: DaemonState | null) => ({
-        ...state,
-        status: 'shutting-down',
-        shutdownRequestedAt: Date.now(),
-        shutdownSource: source
-      }));
-
-      // Give time for metadata update to send
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      apiMachine.shutdown();
-      await stopControlServer();
-      await cleanupDaemonState();
-      await releaseDaemonLock(daemonLockHandle);
-
-      logger.debug('[DAEMON RUN] Cleanup completed, exiting process');
-      process.exit(0);
     };
 
     logger.debug('[DAEMON RUN] Daemon started successfully, waiting for shutdown request');

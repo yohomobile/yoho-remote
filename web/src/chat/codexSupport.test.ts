@@ -839,4 +839,43 @@ describe('Codex frontend support', () => {
         expect(presentation.subtitle).toBe('Yoho Remote Codex 前端支持')
         expect(presentation.minimal).toBe(true)
     })
+
+    test('keeps distinct tool_result blocks when toolUseResult is present', () => {
+        const normalized = normalize(makeMessage({
+            id: 'tool-results',
+            createdAt: 500,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'user',
+                        message: {
+                            content: [
+                                {
+                                    type: 'tool_result',
+                                    tool_use_id: 'tool-1',
+                                    content: 'result-1'
+                                },
+                                {
+                                    type: 'tool_result',
+                                    tool_use_id: 'tool-2',
+                                    content: 'result-2'
+                                }
+                            ]
+                        },
+                        toolUseResult: 'shared-cache'
+                    }
+                }
+            }
+        }))
+
+        const reduced = reduceChatBlocks(normalized, null)
+        const toolBlocks = reduced.blocks.filter((block) => block.kind === 'tool-call')
+        expect(toolBlocks).toHaveLength(2)
+        expect(toolBlocks.map((block) => block.kind === 'tool-call' ? block.tool.result : null)).toEqual([
+            'result-1',
+            'result-2'
+        ])
+    })
 })

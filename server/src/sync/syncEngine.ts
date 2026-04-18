@@ -14,8 +14,15 @@ import type { SpawnAgentType } from '../store/types'
 import { isRealActivityMessage } from '../store/messageUtils'
 import type { RpcRegistry } from '../socket/rpcRegistry'
 import type { SSEManager } from '../sse/sseManager'
+import { buildSessionClearMessagesUpdate } from '../socket/handlers/cli'
 import { extractTodoWriteTodosFromMessageContent, TodosSchema, type TodoItem } from './todos'
 import { getWebPushService } from '../services/webPush'
+import { extractResumeSpawnMetadata } from '../resumeSpawnMetadata'
+import {
+    SUMMARIZE_TURN_QUEUE_NAME,
+    type SummarizeTurnJobPayload,
+    type SummarizeTurnQueuePublisher
+} from './summarizeTurnQueue'
 
 export type ConnectionStatus = 'disconnected' | 'connected'
 
@@ -557,7 +564,7 @@ export class SyncEngine {
 
     private readonly lastBroadcastAtBySessionId: Map<string, number> = new Map()
     private readonly lastBroadcastAtByMachineId: Map<string, number> = new Map()
-    private readonly todoBackfillAttemptedSessionIds: Set<string> = new Set()
+    private readonly todoBackfillStateBySessionId: Map<string, { attempts: number; timer: NodeJS.Timeout | null; nextRetryAt: number }> = new Map()
     private readonly deletingSessions: Set<string> = new Set()
     // Tracks brain-child sessions that have completed their init prompt at least once.
     // First thinking→false is the init prompt; subsequent completions are real task results.
@@ -574,6 +581,7 @@ export class SyncEngine {
     // task-complete 通知冷却：同一 session 60 秒内只发一次完整通知（toast + push）
     // 防止 Monitor/loop 等高频 thinking→done 转换导致通知轰炸
     private readonly lastTaskCompleteAt: Map<string, number> = new Map()
+    private missingSummarizeTurnQueueLogged = false
     private readonly TASK_COMPLETE_COOLDOWN_MS = 60_000
     private static readonly TASK_MESSAGE_SETTLE_POLL_MS = 50
     private static readonly TASK_MESSAGE_SETTLE_WINDOW_MS = 200
@@ -583,7 +591,8 @@ export class SyncEngine {
         private readonly store: IStore,
         private readonly io: Server,
         private readonly rpcRegistry: RpcRegistry,
-        private readonly sseManager: SSEManager
+        private readonly sseManager: SSEManager,
+        private readonly boss?: SummarizeTurnQueuePublisher
     ) {
         this.reloadAllAsync().catch(err => {
             console.error('[SyncEngine] Failed to load initial state from database:', err)
@@ -968,7 +977,7 @@ export class SyncEngine {
         this.sessionMessages.delete(sessionId)
         this.pendingMonitorCallsBySessionId.delete(sessionId)
         this.lastBroadcastAtBySessionId.delete(sessionId)
-        this.todoBackfillAttemptedSessionIds.delete(sessionId)
+        this.clearTodoBackfillState(sessionId)
         this.lastPushNotificationAt.delete(sessionId)
         this.lastTaskCompleteAt.delete(sessionId)
         this.deletingSessions.delete(sessionId)
@@ -1143,6 +1152,13 @@ export class SyncEngine {
 
         // Clear the in-memory cache for this session
         this.sessionMessages.delete(sessionId)
+
+        this.io.of('/cli').to(`session:${sessionId}`).emit('update', buildSessionClearMessagesUpdate({
+            sessionId,
+            keepCount,
+            deleted: result.deleted,
+            remaining: result.remaining
+        }))
 
         // Emit an event to notify clients
         this.emit({ type: 'messages-cleared', sessionId })
@@ -1361,12 +1377,25 @@ export class SyncEngine {
 
         const now = Date.now()
         const lastBroadcastAt = this.lastBroadcastAtBySessionId.get(session.id) ?? 0
+        const thinkingChanged = wasThinking !== session.thinking
+        const taskJustCompleted = wasThinking && !session.thinking
+
+        if (thinkingChanged) {
+            this.persistSessionThinking(session)
+        }
+
+        if (taskJustCompleted) {
+            this.enqueueTurnSummary(session).catch(error => {
+                console.error(`[syncEngine] failed to enqueue summarize-turn for session ${session.id}:`, error)
+            })
+        }
+
         const modeChanged = previousPermissionMode !== session.permissionMode
             || previousModelMode !== session.modelMode
             || previousReasoningEffort !== session.modelReasoningEffort
             || previousFastMode !== session.fastMode
         const shouldBroadcast = (!wasActive && session.active)
-            || (wasThinking !== session.thinking)
+            || thinkingChanged
             || modeChanged
             || (now - lastBroadcastAt > 10_000)
 
@@ -1381,7 +1410,6 @@ export class SyncEngine {
 
         if (shouldBroadcast) {
             this.lastBroadcastAtBySessionId.set(session.id, now)
-            const taskJustCompleted = wasThinking && !session.thinking
 
             // 冷却期内的 thinking→done 转换：只广播状态变化，不发通知
             // 防止 Monitor/loop 等高频循环导致通知轰炸
@@ -1505,6 +1533,45 @@ export class SyncEngine {
             }
             await new Promise(resolve => setTimeout(resolve, SyncEngine.TASK_MESSAGE_SETTLE_POLL_MS))
         }
+    }
+
+    private persistSessionThinking(session: Session): void {
+        this.store.setSessionThinking(session.id, session.thinking, session.namespace).catch(error => {
+            console.error(`[syncEngine] failed to persist thinking for session ${session.id}:`, error)
+        })
+    }
+
+    private async enqueueTurnSummary(session: Session): Promise<void> {
+        if (!this.boss) {
+            if (!this.missingSummarizeTurnQueueLogged) {
+                this.missingSummarizeTurnQueueLogged = true
+                console.warn('[syncEngine] summarize-turn queue publisher is unavailable; enqueue skipped')
+            }
+            return
+        }
+
+        await this.waitForSessionMessagesToSettle(session.id)
+
+        const boundary = await this.store.getTurnBoundary(session.id)
+        if (!boundary) {
+            return
+        }
+
+        const userSeq = boundary.turnStartSeq
+        if (!Number.isInteger(userSeq) || userSeq <= 0 || boundary.turnEndSeq <= userSeq) {
+            return
+        }
+
+        const payload: SummarizeTurnJobPayload = {
+            sessionId: session.id,
+            namespace: session.namespace,
+            userSeq,
+            scheduledAtMs: Date.now()
+        }
+
+        await this.boss.send(SUMMARIZE_TURN_QUEUE_NAME, payload, {
+            singletonKey: `turn:${session.id}:${userSeq}`
+        })
     }
 
     private shouldSkipInitialBrainCallback(messages: DecryptedMessage[]): boolean {
@@ -1827,6 +1894,9 @@ export class SyncEngine {
         session.active = false
         session.thinking = false
         session.thinkingAt = t
+        if (wasThinking !== session.thinking) {
+            this.persistSessionThinking(session)
+        }
         const clearedActiveMonitors = await this.clearSessionActiveMonitors(session)
         this.pendingMonitorCallsBySessionId.delete(session.id)
 
@@ -1868,8 +1938,12 @@ export class SyncEngine {
         }
 
         session.active = false
+        const wasThinking = session.thinking
         session.thinking = false
         session.thinkingAt = clampAliveTime(payload.time) ?? Date.now()
+        if (wasThinking !== session.thinking) {
+            this.persistSessionThinking(session)
+        }
         const changedActiveMonitors = session.activeMonitors.length > 0
             ? this.markSessionActiveMonitorsUnknown(session)
             : undefined
@@ -1944,7 +2018,11 @@ export class SyncEngine {
             if (!session.active) continue
             if (now - session.activeAt <= sessionTimeoutMs) continue
             session.active = false
+            const wasThinking = session.thinking
             session.thinking = false
+            if (wasThinking !== session.thinking) {
+                this.persistSessionThinking(session)
+            }
             this._dbActiveSessionIds.delete(session.id)
             const changedActiveMonitors = session.activeMonitors.length > 0
                 ? this.markSessionActiveMonitorsUnknown(session)
@@ -2099,8 +2177,13 @@ export class SyncEngine {
                     const previousActiveAt = session.activeAt
                     await this.store.setSessionActive(session.id, true, previousActiveAt, namespace)
                     session.active = true
+                    const previousThinking = session.thinking
                     session.thinking = false
+                    if (previousThinking !== session.thinking) {
+                        this.persistSessionThinking(session)
+                    }
                     session.resumingUntil = Date.now() + RESUME_TIMEOUT_MS
+                    const resumeMetadata = extractResumeSpawnMetadata(session.metadata)
 
                     const result = await this.spawnSession(
                         machineId, directory, flavor, undefined,
@@ -2109,7 +2192,8 @@ export class SyncEngine {
                             resumeSessionId: rawId,
                             permissionMode: session.permissionMode,
                             modelMode: session.modelMode,
-                            modelReasoningEffort: session.modelReasoningEffort
+                            modelReasoningEffort: session.modelReasoningEffort,
+                            ...resumeMetadata
                         }
                     )
 
@@ -2119,8 +2203,12 @@ export class SyncEngine {
                             await this.store.setSessionActive(session.id, false, previousActiveAt, namespace)
                             this._dbActiveSessionIds.delete(session.id)
                             session.active = false
+                            const timedOutThinking = session.thinking
                             session.activeAt = previousActiveAt
                             session.thinking = false
+                            if (timedOutThinking !== session.thinking) {
+                                this.persistSessionThinking(session)
+                            }
                             session.resumingUntil = undefined
                             console.warn(`[auto-resume] Session ${session.id.slice(0, 8)} spawn succeeded but no reconnect heartbeat arrived within ${RESUME_TIMEOUT_MS}ms`)
                             return
@@ -2240,6 +2328,7 @@ export class SyncEngine {
         if (!stored) {
             const existed = this.sessions.delete(sessionId)
             this.pendingMonitorCallsBySessionId.delete(sessionId)
+            this.clearTodoBackfillState(sessionId)
             if (existed) {
                 this.emit({ type: 'session-removed', sessionId })
             }
@@ -2248,20 +2337,17 @@ export class SyncEngine {
 
         const existing = this.sessions.get(sessionId)
 
-        if (stored.todos === null && !this.todoBackfillAttemptedSessionIds.has(sessionId)) {
-            this.todoBackfillAttemptedSessionIds.add(sessionId)
-            const messages = await this.store.getMessages(sessionId, 200)
-            for (let i = messages.length - 1; i >= 0; i -= 1) {
-                const message = messages[i]
-                const todos = extractTodoWriteTodosFromMessageContent(message.content)
-                if (todos) {
-                    const updated = await this.store.setSessionTodos(sessionId, todos, message.createdAt, stored.namespace)
-                    if (updated) {
-                        stored = await this.store.getSession(sessionId) ?? stored
-                    }
-                    break
-                }
+        const backfillState = this.todoBackfillStateBySessionId.get(sessionId)
+        if (stored.todos === null && (!backfillState || (!backfillState.timer && Date.now() >= backfillState.nextRetryAt))) {
+            const backfilled = await this.backfillTodosFromHistory(sessionId, stored.namespace)
+            if (backfilled) {
+                this.clearTodoBackfillState(sessionId)
+                stored = await this.store.getSession(sessionId) ?? stored
+            } else {
+                this.scheduleTodoBackfillRetry(sessionId, 'todo markers not found in history')
             }
+        } else if (stored.todos !== null) {
+            this.clearTodoBackfillState(sessionId)
         }
 
         const metadata = (() => {
@@ -2299,8 +2385,8 @@ export class SyncEngine {
             metadataVersion: stored.metadataVersion,
             agentState,
             agentStateVersion: stored.agentStateVersion,
-            thinking: existing?.thinking ?? false,
-            thinkingAt: existing?.thinkingAt ?? 0,
+            thinking: existing?.thinking ?? stored.thinking,
+            thinkingAt: existing?.thinkingAt ?? (stored.thinkingAt ?? 0),
             todos,
             permissionMode: existing?.permissionMode ?? (stored.permissionMode as any) ?? undefined,
             modelMode: existing?.modelMode ?? (stored.modelMode as any) ?? undefined,
@@ -2396,6 +2482,78 @@ export class SyncEngine {
         // Don't clean up zombie sessions on startup.
         // expireInactive() will handle stale sessions after the timer fires,
         // giving CLI processes time to reconnect and send heartbeats.
+    }
+
+    private clearTodoBackfillState(sessionId: string): void {
+        const state = this.todoBackfillStateBySessionId.get(sessionId)
+        if (state?.timer) {
+            clearTimeout(state.timer)
+        }
+        this.todoBackfillStateBySessionId.delete(sessionId)
+    }
+
+    private scheduleTodoBackfillRetry(sessionId: string, reason: string): void {
+        const state = this.todoBackfillStateBySessionId.get(sessionId) ?? {
+            attempts: 0,
+            timer: null as NodeJS.Timeout | null,
+            nextRetryAt: 0
+        }
+
+        if (state.timer) {
+            return
+        }
+
+        if (state.attempts >= 3) {
+            console.warn(`[todo-backfill] Giving up on session ${sessionId.slice(0, 8)} after ${state.attempts} attempts: ${reason}`)
+            this.clearTodoBackfillState(sessionId)
+            return
+        }
+
+        state.attempts += 1
+        const delay = 1_000 * (2 ** (state.attempts - 1))
+        state.nextRetryAt = Date.now() + delay
+        state.timer = setTimeout(() => {
+            const current = this.todoBackfillStateBySessionId.get(sessionId)
+            if (current) {
+                current.timer = null
+            }
+            void this.refreshSession(sessionId)
+        }, delay)
+
+        this.todoBackfillStateBySessionId.set(sessionId, state)
+        console.warn(`[todo-backfill] Failed attempt ${state.attempts} for session ${sessionId.slice(0, 8)}: ${reason}; retrying in ${delay}ms`)
+    }
+
+    private async backfillTodosFromHistory(sessionId: string, namespace: string): Promise<boolean> {
+        const PAGE_SIZE = 200
+        let afterSeq = 0
+
+        while (true) {
+            const messages = await this.store.getMessagesAfter(sessionId, afterSeq, PAGE_SIZE)
+            if (messages.length === 0) {
+                return false
+            }
+
+            for (const message of messages) {
+                const todos = extractTodoWriteTodosFromMessageContent(message.content)
+                if (!todos) {
+                    continue
+                }
+
+                const updated = await this.store.setSessionTodos(sessionId, todos, message.createdAt, namespace)
+                if (!updated) {
+                    return false
+                }
+
+                return true
+            }
+
+            if (messages.length < PAGE_SIZE) {
+                return false
+            }
+
+            afterSeq = messages[messages.length - 1].seq
+        }
     }
 
     async getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string): Promise<Session> {
@@ -2647,8 +2805,12 @@ export class SyncEngine {
         const session = this.sessions.get(sessionId)
         if (session) {
             // Only stop thinking, keep session active so user can continue
+            const wasThinking = session.thinking
             session.thinking = false
             session.abortedAt = Date.now()
+            if (wasThinking !== session.thinking) {
+                this.persistSessionThinking(session)
+            }
 
             // Notify clients that thinking stopped (session remains active)
             this.emit({ type: 'session-updated', sessionId, data: { thinking: false } })

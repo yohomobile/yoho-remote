@@ -88,6 +88,16 @@ function createAgentResultMessage(seq: number, text: string) {
     }
 }
 
+function createAgentEventMessage() {
+    return {
+        role: 'agent',
+        content: {
+            type: 'event',
+            event: 'noop',
+        },
+    }
+}
+
 function createUserTextMessage(seq: number, text: string, sentFrom: string = 'webapp') {
     return {
         id: `m-${seq}`,
@@ -431,6 +441,7 @@ describe('SyncEngine', () => {
             setSessionActive: async (id: string, active: boolean, activeAt: number, namespace: string) => {
                 setSessionActiveCalls.push({ id, active, activeAt, namespace })
             },
+            setSessionThinking: async () => {},
             setSessionModelConfig: async () => {},
         } as any
 
@@ -549,6 +560,156 @@ describe('SyncEngine', () => {
         unsubscribe()
     })
 
+    test('backfills todos by paginating from the start of history', async () => {
+        const pageCalls: Array<{ afterSeq: number; limit: number }> = []
+        const setSessionTodosCalls: Array<{ id: string; todos: unknown; todosUpdatedAt: number; namespace: string }> = []
+
+        const storedSession: any = createSession('session-1', {
+            path: '/tmp/project',
+            summary: { text: 'Session summary', updatedAt: 0 },
+        })
+        storedSession.todos = null
+
+        const firstPage = Array.from({ length: 200 }, (_, index) => ({
+            id: `msg-${index + 1}`,
+            sessionId: 'session-1',
+            seq: index + 1,
+            createdAt: 1_700_000_000_000 + index,
+            localId: null,
+            content: createAgentEventMessage(),
+        }))
+        const todoPage = [
+            {
+                id: 'msg-201',
+                sessionId: 'session-1',
+                seq: 201,
+                createdAt: 1_700_000_000_200,
+                localId: null,
+                content: {
+                    role: 'agent',
+                    content: {
+                        type: 'output',
+                        data: {
+                            type: 'attachment',
+                            attachment: {
+                                type: 'todo_reminder',
+                                itemCount: 1,
+                                content: [
+                                    {
+                                        content: 'Finish the patch',
+                                        status: 'pending'
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        ]
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getSession: async () => storedSession,
+            getMessagesAfter: async (sessionId: string, afterSeq: number, limit: number) => {
+                pageCalls.push({ afterSeq, limit })
+                expect(sessionId).toBe('session-1')
+                if (afterSeq === 0) {
+                    return firstPage
+                }
+                if (afterSeq === 200) {
+                    return todoPage as any
+                }
+                return []
+            },
+            setSessionTodos: async (id: string, todos: unknown, todosUpdatedAt: number, namespace: string) => {
+                setSessionTodosCalls.push({ id, todos, todosUpdatedAt, namespace })
+                storedSession.todos = todos as Session['todos']
+                storedSession.todosUpdatedAt = todosUpdatedAt
+                return true
+            }
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const session = await engine.getOrRefreshSession('session-1')
+
+        expect(session?.todos).toEqual([
+            {
+                id: 'claude-plan-1',
+                content: 'Finish the patch',
+                status: 'pending',
+                priority: 'medium'
+            }
+        ])
+        expect(pageCalls).toEqual([
+            { afterSeq: 0, limit: 200 },
+            { afterSeq: 200, limit: 200 }
+        ])
+        expect(setSessionTodosCalls).toHaveLength(1)
+        expect(setSessionTodosCalls[0]?.todosUpdatedAt).toBe(1_700_000_000_200)
+    })
+
+    test('broadcasts session:clear-messages updates to the CLI room', async () => {
+        const cliEmits: Array<{ room: string; event: string; payload: unknown }> = []
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            clearMessages: async (_sessionId: string, _keepCount: number) => ({
+                deleted: 3,
+                remaining: 2
+            })
+        } as any
+
+        const io = {
+            of: (namespace: string) => ({
+                to: (room: string) => ({
+                    emit: (event: string, payload: unknown) => {
+                        cliEmits.push({ room: `${namespace}:${room}`, event, payload })
+                    }
+                }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        await expect(engine.clearSessionMessages('session-1', 10)).resolves.toEqual({
+            deleted: 3,
+            remaining: 2
+        })
+
+        expect(cliEmits).toHaveLength(1)
+        expect(cliEmits[0]?.room).toBe('/cli:session:session-1')
+        expect(cliEmits[0]?.event).toBe('update')
+        expect(cliEmits[0]?.payload).toEqual(expect.objectContaining({
+            body: expect.objectContaining({
+                t: 'session:clear-messages',
+                sid: 'session-1',
+                keepCount: 10,
+                deleted: 3,
+                remaining: 2
+            })
+        }))
+    })
+
     test('machine disconnect creates an offline-to-online edge for auto-resume', async () => {
         const store = {
             getSessions: async () => [],
@@ -662,6 +823,7 @@ describe('SyncEngine', () => {
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
+            setSessionThinking: async () => {},
             setSessionActiveMonitors: async () => true,
         } as any
 

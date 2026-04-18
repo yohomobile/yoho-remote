@@ -1,10 +1,13 @@
 import axios from 'axios'
+import { randomBytes } from 'node:crypto'
 import type { AgentState, CliMessagesResponse, CreateMachineResponse, CreateSessionResponse, DaemonState, Machine, MachineMetadata, Metadata, Project, Session } from '@/api/types'
 import { AgentStateSchema, CliMessagesResponseSchema, CreateMachineResponseSchema, CreateSessionResponseSchema, DaemonStateSchema, MachineMetadataSchema, MetadataSchema } from '@/api/types'
 import { configuration } from '@/configuration'
 import { getAuthToken } from '@/api/auth'
 import { ApiMachineClient } from './apiMachine'
 import { ApiSessionClient } from './apiSession'
+
+const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 
 export type StoredMessage = {
     id: string
@@ -221,8 +224,8 @@ export class ApiClient {
     }
 
     async sendMessageToSession(sessionId: string, text: string, sentFrom?: string): Promise<void> {
-        // Retry up to 3 times with exponential backoff for transient failures
-        let lastError: Error | null = null
+        const idempotencyKey = ulid()
+        let lastError: unknown = null
         for (let attempt = 0; attempt < 3; attempt++) {
             try {
                 await axios.post(
@@ -231,21 +234,20 @@ export class ApiClient {
                     {
                         headers: {
                             Authorization: `Bearer ${this.token}`,
-                            'Content-Type': 'application/json'
+                            'Content-Type': 'application/json',
+                            'idempotency-key': idempotencyKey
                         },
                         timeout: 30_000
                     }
                 )
                 return
-            } catch (e: any) {
-                lastError = e
-                // Don't retry on 4xx client errors (except 408/429)
-                const status = e?.response?.status
-                if (status && status >= 400 && status < 500 && status !== 408 && status !== 429) {
-                    throw e
+            } catch (error: unknown) {
+                lastError = error
+                if (!isRetryableSendMessageError(error)) {
+                    throw error
                 }
                 if (attempt < 2) {
-                    await new Promise(r => setTimeout(r, (attempt + 1) * 1000))
+                    await new Promise((resolve) => setTimeout(resolve, 1000 * (2 ** attempt)))
                 }
             }
         }
@@ -530,4 +532,47 @@ export class ApiClient {
         return response.data.messages
     }
 
+}
+
+function isRetryableSendMessageError(error: unknown): boolean {
+    if (!axios.isAxiosError(error)) {
+        return true
+    }
+
+    if (!error.response) {
+        return true
+    }
+
+    const status = error.response.status
+    return status >= 500
+}
+
+function ulid(): string {
+    const timePart = encodeUlidTime(Date.now())
+    const randomPart = encodeUlidRandom(randomBytes(10))
+    return `${timePart}${randomPart}`
+}
+
+function encodeUlidTime(timeMs: number): string {
+    let value = BigInt(Math.max(0, Math.floor(timeMs)))
+    const chars = new Array<string>(10)
+    for (let index = 9; index >= 0; index -= 1) {
+        chars[index] = ULID_ALPHABET[Number(value % 32n)]
+        value /= 32n
+    }
+    return chars.join('')
+}
+
+function encodeUlidRandom(bytes: Uint8Array): string {
+    let value = 0n
+    for (const byte of bytes) {
+        value = (value << 8n) | BigInt(byte)
+    }
+
+    const chars = new Array<string>(16)
+    for (let index = 15; index >= 0; index -= 1) {
+        chars[index] = ULID_ALPHABET[Number(value % 32n)]
+        value /= 32n
+    }
+    return chars.join('')
 }

@@ -21,6 +21,7 @@ import { parseCodexCliOverrides } from './utils/codexCliOverrides';
 import { readModeEnv } from '@/utils/modeEnv';
 import { getCurrentProcessStartedAtMs } from '@/utils/process';
 import { getBrainSessionPreferencesFromEnv } from '@/utils/brainSessionPreferences';
+import { mergeResumeMetadata } from '@/utils/mergeResumeMetadata';
 
 export { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 
@@ -120,13 +121,7 @@ export async function runCodex(opts: {
     }
     const session = api.sessionSyncClient(response);
     if (yohoRemoteSessionId) {
-        session.updateMetadata((current) => ({
-            ...current,
-            ...metadata,
-            summary: current.summary ?? metadata.summary,
-            claudeSessionId: current.claudeSessionId ?? metadata.claudeSessionId,
-            codexSessionId: current.codexSessionId ?? metadata.codexSessionId
-        }));
+        session.updateMetadata((current) => mergeResumeMetadata(current, metadata));
     }
     const daemonSessionReporter = startDaemonSessionReporter({
         session,

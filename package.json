@@ -1,20 +1,24 @@
 {
     "name": "yoho-remote",
     "private": true,
-    "workspaces": ["cli", "server", "web"],
+    "workspaces": ["cli", "server", "web", "worker"],
     "scripts": {
         "dev": "concurrently \"bun run dev:server\" \"bun run dev:web\" --kill-others-on-exit",
-        "build": "bun run build:cli && bun run build:server && bun run build:web",
+        "build": "bun run build:cli && bun run build:server && bun run build:web && bun run build:worker",
         "build:cli": "cd cli && bun run build",
         "build:single-exe": "bun run build:web && (cd server && bun run generate:embedded-web-assets) && (cd cli && bun run build:exe:allinone)",
         "build:single-exe:all": "bun run build:web && (cd server && bun run generate:embedded-web-assets) && (cd cli && bun run build:exe:allinone:all)",
         "build:server": "cd server && bun run build",
+        "build:worker": "cd worker && bun run build",
         "build:web": "cd web && bun run build",
         "dev:server": "cd server && bun run dev",
+        "dev:worker": "cd worker && bun run dev",
         "dev:web": "cd web && bun run dev",
-        "typecheck": "bun run typecheck:cli && bun run typecheck:web && bun run typecheck:server",
+        "smoke:fake-deepseek": "cd server && bun run src/smoke/fakeDeepseekSmoke.ts",
+        "typecheck": "bun run typecheck:cli && bun run typecheck:web && bun run typecheck:server && bun run typecheck:worker",
         "typecheck:cli": "cd cli && bun run typecheck",
         "typecheck:server": "cd server && bun run typecheck",
+        "typecheck:worker": "cd worker && bun run typecheck",
         "typecheck:web": "cd web && bun run typecheck",
         "test": "bun run test:cli && bun run test:server",
         "test:cli": "cd cli && bun run test",
@@ -28,6 +32,7 @@
         "vite-plugin-pwa": "^1.2.0"
     },
     "dependencies": {
+        "pg-boss": "^12.15.0",
         "react-hot-toast": "^2.6.0",
         "socket.io-client": "^4.8.3"
     }

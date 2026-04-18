@@ -29,6 +29,7 @@ import { resolveClaudeModelArg } from '@/utils/claudeModelArg';
 import { getYohoAuxMcpServers } from '@/utils/yohoMcpServers';
 import { getCurrentProcessStartedAtMs } from '@/utils/process';
 import { getBrainSessionPreferencesFromEnv } from '@/utils/brainSessionPreferences';
+import { mergeResumeMetadata } from '@/utils/mergeResumeMetadata';
 import { readClaudeSettingsMcpServers } from '@/claude/utils/claudeSettings';
 import { getDefaultClaudeCodePath } from '@/claude/sdk/utils';
 import { buildRuntimeMcpSystemPrompt } from '@/claude/utils/systemPrompt';
@@ -160,13 +161,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     // Create realtime session
     const session = api.sessionSyncClient(response);
     if (yohoRemoteSessionId) {
-        session.updateMetadata((current) => ({
-            ...current,
-            ...metadata,
-            summary: current.summary ?? metadata.summary,
-            claudeSessionId: current.claudeSessionId ?? metadata.claudeSessionId,
-            codexSessionId: current.codexSessionId ?? metadata.codexSessionId
-        }));
+        session.updateMetadata((current) => mergeResumeMetadata(current, metadata));
     }
     const daemonSessionReporter = startDaemonSessionReporter({
         session,

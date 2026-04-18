@@ -11,6 +11,15 @@ describe('convertCodexEvent', () => {
         expect(result).toEqual({ sessionId: 'session-123' });
     });
 
+    it('extracts session_meta session_id aliases when present', () => {
+        const result = convertCodexEvent({
+            type: 'session_meta',
+            payload: { session_id: 'session-456' }
+        });
+
+        expect(result).toEqual({ sessionId: 'session-456' });
+    });
+
     it('extracts model info from turn_context', () => {
         const result = convertCodexEvent({
             type: 'turn_context',

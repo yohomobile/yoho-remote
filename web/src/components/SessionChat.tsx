@@ -85,6 +85,8 @@ function getAvailableModels(session: Session): { id: string; label: string }[] {
     return OPENROUTER_MODELS.map(m => ({ id: m.id, label: m.label }))
 }
 
+type ResumePhase = 'idle' | 'pending' | 'resolving'
+
 export function SessionChat(props: {
     api: ApiClient
     session: Session
@@ -119,15 +121,24 @@ export function SessionChat(props: {
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
     const [isResuming, setIsResuming] = useState(false)
     const [resumeError, setResumeError] = useState<string | null>(null)
-    const pendingMessageRef = useRef<string | null>(null)
+    const resumeQueueRef = useRef<string[]>([])
+    const resumePhaseRef = useRef<ResumePhase>('idle')
+    const resumeInFlightRef = useRef(false)
     const composerSetTextRef = useRef<((text: string) => void) | null>(null)
+
+    const setResumePhase = useCallback((phase: ResumePhase) => {
+        resumePhaseRef.current = phase
+        setIsResuming(phase !== 'idle')
+    }, [])
 
     useEffect(() => {
         normalizedCacheRef.current.clear()
         blocksByIdRef.current.clear()
+        resumeQueueRef.current = []
+        resumePhaseRef.current = 'idle'
+        resumeInFlightRef.current = false
         setIsResuming(false)
         setResumeError(null)
-        pendingMessageRef.current = null
     }, [props.session.id])
 
     // Update browser title with AI name
@@ -264,59 +275,102 @@ export function SessionChat(props: {
         await props.api.sendMessage(sessionId, trimmed)
     }, [props.api, props.onSend, props.session.id])
 
+    const enqueueResumeText = useCallback((pendingText: string) => {
+        const trimmed = pendingText.trim()
+        if (!trimmed) {
+            return false
+        }
+
+        resumeQueueRef.current.push(trimmed)
+        if (resumePhaseRef.current === 'idle') {
+            setResumePhase('pending')
+        }
+        return true
+    }, [setResumePhase])
+
+    const flushResumeQueue = useCallback(async (sessionId: string) => {
+        while (resumeQueueRef.current.length > 0) {
+            const next = resumeQueueRef.current.shift()
+            if (!next) {
+                continue
+            }
+
+            try {
+                await sendPendingMessage(sessionId, next)
+            } catch (error) {
+                resumeQueueRef.current.unshift(next)
+                throw error
+            }
+        }
+    }, [sendPendingMessage])
+
     const resumeSession = useCallback(async (pendingText?: string) => {
         if (pendingText) {
-            pendingMessageRef.current = pendingText
+            enqueueResumeText(pendingText)
         }
-        if (isResuming) {
-            return
-        }
-        if (props.session.active) {
-            const queued = pendingMessageRef.current
-            pendingMessageRef.current = null
-            if (queued) {
-                void sendPendingMessage(props.session.id, queued)
-            }
+        if (resumeInFlightRef.current) {
             return
         }
 
-        setIsResuming(true)
+        if (props.session.active && resumeQueueRef.current.length === 0) {
+            setResumePhase('idle')
+            return
+        }
+
+        resumeInFlightRef.current = true
+        if (resumeQueueRef.current.length > 0 || !props.session.active) {
+            setResumePhase('resolving')
+        }
         setResumeError(null)
+        let completedNormally = false
         try {
-            const result = await props.api.resumeSession(props.session.id)
-            await queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
-            props.onRefresh()
+            let targetSessionId = props.session.id
 
-            const queued = pendingMessageRef.current
-            pendingMessageRef.current = null
-            if (queued) {
-                await sendPendingMessage(result.sessionId, queued)
+            if (!props.session.active) {
+                const result = await props.api.resumeSession(props.session.id)
+                targetSessionId = result.sessionId
+                await queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+                props.onRefresh()
+
+                if (result.type === 'created' && result.sessionId !== props.session.id) {
+                    await flushResumeQueue(targetSessionId)
+                    navigate({
+                        to: '/sessions/$sessionId',
+                        params: { sessionId: result.sessionId }
+                    })
+                    return
+                }
             }
 
-            if (result.type === 'created' && result.sessionId !== props.session.id) {
-                navigate({
-                    to: '/sessions/$sessionId',
-                    params: { sessionId: result.sessionId }
-                })
-            }
+            await flushResumeQueue(targetSessionId)
+            completedNormally = true
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Failed to resume session'
             setResumeError(message)
             haptic.notification('error')
             console.error('Failed to resume session:', error)
         } finally {
-            setIsResuming(false)
+            resumeInFlightRef.current = false
+            if (completedNormally && props.session.active && resumeQueueRef.current.length > 0) {
+                setResumePhase('pending')
+                void resumeSession()
+            } else if (resumeQueueRef.current.length > 0) {
+                setResumePhase('pending')
+            } else {
+                setResumePhase('idle')
+            }
         }
     }, [
+        enqueueResumeText,
         haptic,
-        isResuming,
         navigate,
         props.api,
         props.onRefresh,
         props.session.active,
         props.session.id,
         queryClient,
-        sendPendingMessage
+        flushResumeQueue,
+        setResumePhase
     ])
 
     const handleResumeRequest = useCallback(() => {

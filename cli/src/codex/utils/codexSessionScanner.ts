@@ -18,6 +18,7 @@ interface CodexSessionScannerOptions {
 
 interface CodexSessionScanner {
     cleanup: () => Promise<void>;
+    clearSessionCache: (sessionId: string, clearedAtMs?: number) => void;
     onNewSession: (sessionId: string) => void;
 }
 
@@ -29,6 +30,7 @@ type PendingEvents = {
 type Candidate = {
     sessionId: string;
     score: number;
+    filePath: string;
 };
 
 const DEFAULT_SESSION_START_WINDOW_MS = 2 * 60 * 1000;
@@ -44,6 +46,7 @@ export async function createCodexSessionScanner(opts: CodexSessionScannerOptions
     const sessionTimestampByFile = new Map<string, number>();
     const pendingEventsByFile = new Map<string, PendingEvents>();
     const sessionMetaParsed = new Set<string>();
+    const sessionClearAtBySessionId = new Map<string, number>();
 
     let activeSessionId: string | null = opts.sessionId;
     let reportedSessionId: string | null = opts.sessionId;
@@ -66,6 +69,7 @@ export async function createCodexSessionScanner(opts: CodexSessionScannerOptions
         opts.onSessionMatchFailed?.(message);
         return {
             cleanup: async () => {},
+            clearSessionCache: () => {},
             onNewSession: () => {}
         };
     }
@@ -138,7 +142,7 @@ export async function createCodexSessionScanner(opts: CodexSessionScannerOptions
                 const parsed = JSON.parse(trimmed);
                 if (parsed?.type === 'session_meta') {
                     const payload = asRecord(parsed.payload);
-                    const sessionId = payload ? asString(payload.id) : null;
+                    const sessionId = payload ? extractSessionIdFromSessionMeta(payload) : null;
                     if (sessionId) {
                         sessionIdByFile.set(filePath, sessionId);
                     }
@@ -195,6 +199,18 @@ export async function createCodexSessionScanner(opts: CodexSessionScannerOptions
         }
     }
 
+    function clearCachedSessionState(sessionId: string): void {
+        const matchingFiles: string[] = [];
+        for (const [filePath, mappedSessionId] of sessionIdByFile.entries()) {
+            if (mappedSessionId === sessionId || filePath.endsWith(`-${sessionId}.jsonl`)) {
+                matchingFiles.push(filePath);
+            }
+        }
+        for (const filePath of matchingFiles) {
+            pendingEventsByFile.delete(filePath);
+        }
+    }
+
     function getCandidateForFile(filePath: string): Candidate | null {
         const sessionId = sessionIdByFile.get(filePath);
         if (!sessionId) {
@@ -218,7 +234,8 @@ export async function createCodexSessionScanner(opts: CodexSessionScannerOptions
 
         return {
             sessionId,
-            score: diff
+            score: diff,
+            filePath
         };
     }
 
@@ -244,8 +261,16 @@ export async function createCodexSessionScanner(opts: CodexSessionScannerOptions
         let emittedForFile = 0;
         for (const event of events) {
             const payload = asRecord(event.payload);
-            const payloadSessionId = payload ? asString(payload.id) : null;
+            // Only use explicit session identity fields here. `id` is often a
+            // call/tool identifier on response items, not the session id.
+            const payloadSessionId = extractSessionIdFromEventPayload(payload);
             const eventSessionId = payloadSessionId ?? fileSessionId ?? null;
+            const eventTimestamp = getEventTimestampMs(event);
+            const clearedAt = eventSessionId ? sessionClearAtBySessionId.get(eventSessionId) : undefined;
+
+            if (clearedAt !== undefined && eventTimestamp !== null && eventTimestamp < clearedAt) {
+                continue;
+            }
 
             if (activeSessionId && eventSessionId && eventSessionId !== activeSessionId) {
                 continue;
@@ -284,6 +309,7 @@ export async function createCodexSessionScanner(opts: CodexSessionScannerOptions
         pruneMissingFiles(files);
         const sortedFiles = await sortFilesByMtime(files);
         let bestWithinWindow: Candidate | null = null;
+        const candidatesWithinWindow: Candidate[] = [];
 
         for (const filePath of sortedFiles) {
             if (isClosing) {
@@ -308,6 +334,7 @@ export async function createCodexSessionScanner(opts: CodexSessionScannerOptions
             if (!activeSessionId && targetCwd) {
                 appendPendingEvents(filePath, events, fileSessionId ?? null);
                 if (candidate) {
+                    candidatesWithinWindow.push(candidate);
                     if (!bestWithinWindow || candidate.score < bestWithinWindow.score) {
                         bestWithinWindow = candidate;
                     }
@@ -323,7 +350,22 @@ export async function createCodexSessionScanner(opts: CodexSessionScannerOptions
 
         if (!activeSessionId && targetCwd) {
             if (bestWithinWindow) {
-                logger.debug(`[CODEX_SESSION_SCANNER] Selected session ${bestWithinWindow.sessionId} within start window`);
+                if (candidatesWithinWindow.length > 1) {
+                    logger.warn(`[CODEX_SESSION_SCANNER] Multiple Codex sessions matched cwd ${targetCwd} within ${sessionStartWindowMs}ms; selecting the closest to startup time`, {
+                        startupTimestamp: new Date(referenceTimestampMs).toISOString(),
+                        selectedSessionId: bestWithinWindow.sessionId,
+                        candidates: candidatesWithinWindow
+                            .slice()
+                            .sort((a, b) => a.score - b.score)
+                            .map((candidate) => ({
+                                sessionId: candidate.sessionId,
+                                score: candidate.score,
+                                filePath: candidate.filePath
+                            }))
+                    });
+                } else {
+                    logger.debug(`[CODEX_SESSION_SCANNER] Selected session ${bestWithinWindow.sessionId} within start window`);
+                }
                 setActiveSessionId(bestWithinWindow.sessionId);
             } else if (Date.now() > matchDeadlineMs) {
                 matchFailed = true;
@@ -350,6 +392,12 @@ export async function createCodexSessionScanner(opts: CodexSessionScannerOptions
                 stop();
             }
             watchers.clear();
+        },
+        clearSessionCache: (sessionId: string, clearedAtMs: number = Date.now()) => {
+            sessionClearAtBySessionId.set(sessionId, clearedAtMs);
+            clearCachedSessionState(sessionId);
+            logger.debug(`[CODEX_SESSION_SCANNER] Cleared cached transcript state for session ${sessionId}`);
+            sync.invalidate();
         },
         onNewSession: (sessionId: string) => {
             if (activeSessionId === sessionId) {
@@ -388,6 +436,21 @@ function asString(value: unknown): string | null {
     return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+function extractSessionIdFromSessionMeta(payload: Record<string, unknown>): string | null {
+    return asString(payload.session_id)
+        ?? asString(payload.sessionId)
+        ?? asString(payload.id);
+}
+
+function extractSessionIdFromEventPayload(payload: Record<string, unknown> | null): string | null {
+    if (!payload) {
+        return null;
+    }
+
+    return asString(payload.session_id)
+        ?? asString(payload.sessionId);
+}
+
 function parseTimestamp(value: unknown): number | null {
     if (typeof value === 'number' && Number.isFinite(value)) {
         return value;
@@ -397,6 +460,20 @@ function parseTimestamp(value: unknown): number | null {
         return Number.isNaN(parsed) ? null : parsed;
     }
     return null;
+}
+
+function getEventTimestampMs(event: CodexSessionEvent): number | null {
+    const topLevelTimestamp = parseTimestamp(event.timestamp);
+    if (topLevelTimestamp !== null) {
+        return topLevelTimestamp;
+    }
+
+    const payload = asRecord(event.payload);
+    if (!payload) {
+        return null;
+    }
+
+    return parseTimestamp(payload.timestamp);
 }
 
 function normalizePath(value: string): string {

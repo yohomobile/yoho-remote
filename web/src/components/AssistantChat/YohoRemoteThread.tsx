@@ -69,9 +69,10 @@ export function YohoRemoteThread(props: {
     trailing?: ReactNode
 }) {
     const viewportRef = useRef<HTMLDivElement | null>(null)
+    const contentRef = useRef<HTMLDivElement | null>(null)
     const topSentinelRef = useRef<HTMLDivElement | null>(null)
     const loadLockRef = useRef(false)
-    const pendingScrollRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null)
+    const anchorRestoreRef = useRef<{ messageId: string; offsetTop: number } | null>(null)
     const prevLoadingMoreRef = useRef(false)
     const loadStartedRef = useRef(false)
     const isLoadingMoreRef = useRef(props.isLoadingMoreMessages)
@@ -162,12 +163,92 @@ export function YohoRemoteThread(props: {
         setNewMessageCount(0)
     }, [])
 
+    const captureScrollAnchor = useCallback(() => {
+        const viewport = viewportRef.current
+        const content = contentRef.current
+        if (!viewport || !content) {
+            return false
+        }
+
+        const viewportRect = viewport.getBoundingClientRect()
+        const nodes = Array.from(content.querySelectorAll<HTMLElement>('[data-message-id]'))
+        for (const node of nodes) {
+            const messageId = node.dataset.messageId
+            if (!messageId) {
+                continue
+            }
+
+            const rect = node.getBoundingClientRect()
+            if (rect.bottom > viewportRect.top + 1 && rect.top < viewportRect.bottom - 1) {
+                anchorRestoreRef.current = {
+                    messageId,
+                    offsetTop: rect.top - viewportRect.top
+                }
+                return true
+            }
+        }
+
+        const firstNode = nodes[0]
+        const firstId = firstNode?.dataset.messageId
+        if (!firstNode || !firstId) {
+            return false
+        }
+
+        const rect = firstNode.getBoundingClientRect()
+        anchorRestoreRef.current = {
+            messageId: firstId,
+            offsetTop: rect.top - viewportRect.top
+        }
+        return true
+    }, [])
+
+    const restoreScrollAnchor = useCallback((alignToStart: boolean) => {
+        const viewport = viewportRef.current
+        const content = contentRef.current
+        if (!viewport || !content) {
+            return false
+        }
+
+        if (!anchorRestoreRef.current) {
+            if (autoScrollEnabledRef.current) {
+                viewport.scrollTop = viewport.scrollHeight
+            }
+            return false
+        }
+
+        const anchor = anchorRestoreRef.current
+        const nodes = Array.from(content.querySelectorAll<HTMLElement>('[data-message-id]'))
+        const target = nodes.find((node) => node.dataset.messageId === anchor.messageId) ?? null
+        if (!target) {
+            anchorRestoreRef.current = null
+            return false
+        }
+
+        if (alignToStart) {
+            target.scrollIntoView({ block: 'start', behavior: 'auto' })
+        }
+
+        const viewportRect = viewport.getBoundingClientRect()
+        const targetRect = target.getBoundingClientRect()
+        const drift = targetRect.top - viewportRect.top - anchor.offsetTop
+        if (Math.abs(drift) > 1) {
+            viewport.scrollTop += drift
+        }
+
+        return true
+    }, [])
+
     // Reset state when session changes
     useEffect(() => {
         setAutoScrollEnabled(true)
         setNewMessageCount(0)
         prevRenderedCountRef.current = 0
         hasBootstrappedRef.current = false
+        anchorRestoreRef.current = null
+        loadLockRef.current = false
+        loadStartedRef.current = false
+        isLoadingMoreRef.current = false
+        prevLoadingMoreRef.current = false
     }, [props.sessionId])
 
     const handleLoadMore = useCallback(() => {
@@ -178,31 +259,27 @@ export function YohoRemoteThread(props: {
         if (!viewport) {
             return
         }
-        pendingScrollRef.current = {
-            scrollTop: viewport.scrollTop,
-            scrollHeight: viewport.scrollHeight
-        }
+        captureScrollAnchor()
         loadLockRef.current = true
         loadStartedRef.current = false
         let loadPromise: Promise<unknown>
         try {
             loadPromise = props.onLoadMore()
         } catch (error) {
-            pendingScrollRef.current = null
+            anchorRestoreRef.current = null
             loadLockRef.current = false
             throw error
         }
         void loadPromise.catch((error) => {
-            pendingScrollRef.current = null
+            anchorRestoreRef.current = null
             loadLockRef.current = false
             console.error('Failed to load older messages:', error)
         }).finally(() => {
-            if (!loadStartedRef.current && !isLoadingMoreRef.current && pendingScrollRef.current) {
-                pendingScrollRef.current = null
+            if (!loadStartedRef.current && !isLoadingMoreRef.current) {
                 loadLockRef.current = false
             }
         })
-    }, [props.hasMoreMessages, props.isLoadingMoreMessages, props.isLoadingMessages, props.onLoadMore])
+    }, [captureScrollAnchor, props.hasMoreMessages, props.isLoadingMoreMessages, props.isLoadingMessages, props.onLoadMore])
 
     useEffect(() => {
         const sentinel = topSentinelRef.current
@@ -232,29 +309,60 @@ export function YohoRemoteThread(props: {
         return () => observer.disconnect()
     }, [handleLoadMore, props.hasMoreMessages, props.isLoadingMessages])
 
+    // 复现：先停在中间位置，再加载更早消息；如果图片或工具卡稍后撑高，锚点消息应仍停在原位。
     useLayoutEffect(() => {
-        const pending = pendingScrollRef.current
-        const viewport = viewportRef.current
-        if (!pending || !viewport) {
+        if (anchorRestoreRef.current) {
+            restoreScrollAnchor(true)
+            loadLockRef.current = false
             return
         }
-        const delta = viewport.scrollHeight - pending.scrollHeight
-        viewport.scrollTop = pending.scrollTop + delta
-        pendingScrollRef.current = null
-        loadLockRef.current = false
-    }, [props.rawMessagesCount])
+
+        if (autoScrollEnabledRef.current) {
+            const viewport = viewportRef.current
+            if (viewport) {
+                viewport.scrollTop = viewport.scrollHeight
+            }
+        }
+    }, [props.rawMessagesCount, restoreScrollAnchor])
+
+    useEffect(() => {
+        const content = contentRef.current
+        if (!content || typeof ResizeObserver === 'undefined') {
+            return
+        }
+
+        const observer = new ResizeObserver(() => {
+            if (anchorRestoreRef.current) {
+                restoreScrollAnchor(false)
+                return
+            }
+
+            if (autoScrollEnabledRef.current) {
+                const viewport = viewportRef.current
+                if (viewport) {
+                    viewport.scrollTop = viewport.scrollHeight
+                }
+            }
+        })
+
+        observer.observe(content)
+        return () => observer.disconnect()
+    }, [restoreScrollAnchor])
 
     useEffect(() => {
         isLoadingMoreRef.current = props.isLoadingMoreMessages
         if (props.isLoadingMoreMessages) {
             loadStartedRef.current = true
         }
-        if (prevLoadingMoreRef.current && !props.isLoadingMoreMessages && pendingScrollRef.current) {
-            pendingScrollRef.current = null
+        if (prevLoadingMoreRef.current && !props.isLoadingMoreMessages) {
             loadLockRef.current = false
+            loadStartedRef.current = false
+            if (anchorRestoreRef.current) {
+                restoreScrollAnchor(true)
+            }
         }
         prevLoadingMoreRef.current = props.isLoadingMoreMessages
-    }, [props.isLoadingMoreMessages])
+    }, [props.isLoadingMoreMessages, restoreScrollAnchor])
 
     return (
         <YohoRemoteChatProvider value={{
@@ -268,7 +376,7 @@ export function YohoRemoteThread(props: {
             <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col relative">
                 <ThreadPrimitive.Viewport asChild autoScroll={autoScrollEnabled}>
                     <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-                        <div className="mx-auto w-full max-w-content min-w-0 p-3">
+                        <div ref={contentRef} className="mx-auto w-full max-w-content min-w-0 p-3">
                             <div ref={topSentinelRef} className="h-px w-full" aria-hidden="true" />
                             {props.isLoadingMessages ? (
                                 <MessageSkeleton />

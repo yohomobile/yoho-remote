@@ -20,7 +20,7 @@ export function startDaemonControlServer({
   onYohoRemoteSessionWebhook
 }: {
   getChildren: () => TrackedSession[];
-  stopSession: (sessionId: string) => boolean;
+  stopSession: (sessionId: string) => Promise<boolean>;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   requestShutdown: () => void;
   onYohoRemoteSessionWebhook: (sessionId: string, metadata: Metadata) => void;
@@ -100,7 +100,7 @@ export function startDaemonControlServer({
       const { sessionId } = request.body;
 
       logger.debug(`[CONTROL SERVER] Stop session request: ${sessionId}`);
-      const success = stopSession(sessionId);
+      const success = await stopSession(sessionId);
       return { success };
     });
 

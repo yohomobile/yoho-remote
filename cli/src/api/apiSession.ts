@@ -184,6 +184,32 @@ export class ApiSessionClient extends EventEmitter {
             this.emit('license-warning', payload)
         })
 
+        this.socket.on('session:clear-messages', (payload: { sid?: string; sessionId?: string; time?: number }) => {
+            const targetSessionId = typeof payload.sid === 'string' && payload.sid.length > 0
+                ? payload.sid
+                : typeof payload.sessionId === 'string' && payload.sessionId.length > 0
+                    ? payload.sessionId
+                    : null
+            if (targetSessionId !== this.sessionId) {
+                return
+            }
+
+            logger.info(`[API] Clearing cached messages for session ${this.sessionId}`)
+            this.pendingMessages = []
+            this.lastSeenMessageSeq = null
+            this.needsBackfill = false
+
+            const normalizedPayload = {
+                sid: this.sessionId,
+                time: typeof payload.time === 'number' && Number.isFinite(payload.time)
+                    ? payload.time
+                    : Date.now()
+            }
+
+            this.emit('session:clear-messages', normalizedPayload)
+            this.socket.emit('session:clear-ack', normalizedPayload)
+        })
+
         const handleTerminalEvent = <T extends { sessionId: string }>(
             schema: ZodType<T>,
             handler: (payload: T) => void
@@ -279,15 +305,29 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     private handleIncomingMessage(message: { seq?: number; content: unknown }): void {
+        const isAgentMessage = isObject(message.content)
+            && typeof message.content.role === 'string'
+            && message.content.role === 'agent'
+
+        const userResult = UserMessageSchema.safeParse(message.content)
+        if (!userResult.success && !isAgentMessage) {
+            logger.warn('[API] Ignoring malformed incoming message', {
+                seq: typeof message.seq === 'number' ? message.seq : null
+            })
+            this.emit('message', message.content)
+            return
+        }
+
         const seq = typeof message.seq === 'number' ? message.seq : null
         if (seq !== null) {
             if (this.lastSeenMessageSeq !== null && seq <= this.lastSeenMessageSeq) {
                 return
             }
-            this.lastSeenMessageSeq = seq
+            this.lastSeenMessageSeq = this.lastSeenMessageSeq === null
+                ? seq
+                : Math.max(this.lastSeenMessageSeq, seq)
         }
 
-        const userResult = UserMessageSchema.safeParse(message.content)
         if (userResult.success) {
             this.enqueueUserMessage(userResult.data)
             return

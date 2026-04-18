@@ -2,6 +2,7 @@ import { InvalidateSync } from "@/utils/sync";
 import { RawJSONLines, RawJSONLinesSchema } from "../types";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { logger } from "@/ui/logger";
 import { startFileWatcher } from "@/modules/watcher/startFileWatcher";
 import { getProjectPath } from "./path";
@@ -85,6 +86,7 @@ export async function createSessionScanner(opts: {
     let currentSessionId: string | null = null;
     let watchers = new Map<string, (() => void)>();
     let processedMessageKeys = new Set<string>();
+    let sessionClearAtBySessionId = new Map<string, number>();
 
     // Mark existing messages as processed and start watching the initial session
     if (opts.sessionId) {
@@ -125,6 +127,15 @@ export async function createSessionScanner(opts: {
             let skipped = 0;
             let sent = 0;
             for (let file of sessionMessages) {
+                const messageSessionId = getMessageSessionId(file);
+                const messageTimestamp = getMessageTimestampMs(file);
+                if (messageSessionId) {
+                    const clearedAt = sessionClearAtBySessionId.get(messageSessionId);
+                    if (clearedAt !== undefined && messageTimestamp !== null && messageTimestamp < clearedAt) {
+                        skipped++;
+                        continue;
+                    }
+                }
                 let key = messageKey(file);
                 if (processedMessageKeys.has(key)) {
                     skipped++;
@@ -172,6 +183,11 @@ export async function createSessionScanner(opts: {
             await sync.invalidateAndAwait();
             sync.stop();
         },
+        clearSessionCache: (sessionId: string, clearedAtMs: number = Date.now()) => {
+            sessionClearAtBySessionId.set(sessionId, clearedAtMs);
+            logger.debug(`[SESSION_SCANNER] Cleared cached transcript state for session ${sessionId}`);
+            sync.invalidate();
+        },
         onNewSession: (sessionId: string) => {
             if (currentSessionId === sessionId) {
                 logger.debug(`[SESSION_SCANNER] New session: ${sessionId} is the same as the current session, skipping`);
@@ -203,19 +219,63 @@ export type SessionScanner = ReturnType<typeof createSessionScanner>;
 //
 
 function messageKey(message: RawJSONLines): string {
-    if ('uuid' in message && typeof message.uuid === 'string') {
-        return `${message.type}:${message.uuid}`;
-    }
+    const timestamp = getMessageTimestamp(message);
+
     if (message.type === 'summary' && typeof message.leafUuid === 'string' && typeof message.summary === 'string') {
-        return 'summary: ' + message.leafUuid + ': ' + message.summary;
+        return `summary:${message.leafUuid}:${message.summary}`;
     }
-    if ('requestId' in message && typeof message.requestId === 'string') {
-        return `${message.type}:request:${message.requestId}`;
+
+    if (message.type === 'result') {
+        const requestId = getStringField(message, ['requestId', 'request_id']);
+        if (requestId) {
+            return `result:request:${requestId}`;
+        }
+        const uuid = getStringField(message, ['uuid']);
+        if (uuid) {
+            return `result:uuid:${uuid}`;
+        }
     }
-    if ('timestamp' in message && typeof message.timestamp === 'string') {
-        return `${message.type}:timestamp:${message.timestamp}`;
+
+    if (message.type === 'progress') {
+        const stepId = getStringField(message, ['step_id', 'stepId']);
+        if (stepId) {
+            return `progress:step:${stepId}:timestamp:${timestamp}`;
+        }
     }
-    return `${message.type}:${JSON.stringify(message)}`;
+
+    if (message.type === 'rate_limit_event') {
+        const limitType = getStringField(message, ['limit_type', 'limitType']);
+        if (limitType) {
+            return `rate_limit_event:limit:${limitType}:timestamp:${timestamp}`;
+        }
+    }
+
+    if (message.type === 'tool_progress') {
+        const toolUseId = getStringField(message, ['tool_use_id', 'toolUseId']);
+        const seq = getScalarField(message, ['seq', 'sequence']);
+        if (toolUseId && seq !== null) {
+            return `tool_progress:tool:${toolUseId}:seq:${seq}`;
+        }
+        if (toolUseId) {
+            return `tool_progress:tool:${toolUseId}:timestamp:${timestamp}`;
+        }
+    }
+
+    if (message.type === 'user' || message.type === 'assistant' || message.type === 'system') {
+        const uuid = getStringField(message, ['uuid']);
+        if (uuid) {
+            return `${message.type}:${uuid}`;
+        }
+        const requestId = getStringField(message, ['requestId', 'request_id']);
+        if (requestId) {
+            return `${message.type}:request:${requestId}`;
+        }
+        if (timestamp !== 'no-timestamp') {
+            return `${message.type}:timestamp:${timestamp}`;
+        }
+    }
+
+    return `${message.type}:timestamp:${timestamp}:hash:${hashNormalizedMessage(message)}`;
 }
 
 /**
@@ -259,4 +319,99 @@ async function readSessionLog(projectDir: string, sessionId: string): Promise<Ra
         }
     }
     return messages;
+}
+
+function getMessageTimestamp(message: RawJSONLines): string {
+    return 'timestamp' in message && typeof message.timestamp === 'string' && message.timestamp.length > 0
+        ? message.timestamp
+        : 'no-timestamp';
+}
+
+function getMessageTimestampMs(message: RawJSONLines): number | null {
+    if (!('timestamp' in message) || typeof message.timestamp !== 'string' || message.timestamp.length === 0) {
+        return null;
+    }
+    const parsed = Date.parse(message.timestamp);
+    return Number.isNaN(parsed) ? null : parsed;
+}
+
+function getMessageSessionId(message: RawJSONLines): string | null {
+    const record = message as Record<string, unknown>;
+    const sessionId = record.sessionId;
+    if (typeof sessionId === 'string' && sessionId.length > 0) {
+        return sessionId;
+    }
+
+    const sessionIdLower = record.session_id;
+    if (typeof sessionIdLower === 'string' && sessionIdLower.length > 0) {
+        return sessionIdLower;
+    }
+
+    return null;
+}
+
+function getStringField(message: RawJSONLines, keys: string[]): string | null {
+    const record = message as Record<string, unknown>;
+    for (const key of keys) {
+        const value = record[key];
+        if (typeof value === 'string' && value.length > 0) {
+            return value;
+        }
+    }
+    return null;
+}
+
+function getScalarField(message: RawJSONLines, keys: string[]): string | number | null {
+    const record = message as Record<string, unknown>;
+    for (const key of keys) {
+        const value = record[key];
+        if (typeof value === 'string' && value.length > 0) {
+            return value;
+        }
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            return value;
+        }
+    }
+    return null;
+}
+
+const VOLATILE_MESSAGE_KEYS = new Set([
+    'uuid',
+    'timestamp',
+    'requestId',
+    'request_id',
+    'sessionId',
+    'session_id',
+    'parentUuid',
+    'parent_uuid',
+    'toolUseResult',
+]);
+
+function hashNormalizedMessage(message: RawJSONLines): string {
+    const normalized = normalizeForHash(message);
+    return createHash('sha1').update(JSON.stringify(normalized)).digest('hex');
+}
+
+function normalizeForHash(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.map((item) => normalizeForHash(item));
+    }
+    if (!value || typeof value !== 'object') {
+        return value;
+    }
+
+    const record = value as Record<string, unknown>;
+    const normalized: Record<string, unknown> = {};
+
+    for (const key of Object.keys(record).sort()) {
+        if (VOLATILE_MESSAGE_KEYS.has(key)) {
+            continue;
+        }
+        const nested = normalizeForHash(record[key]);
+        if (nested !== undefined) {
+            normalized[key] = nested;
+        }
+    }
+
+    return normalized;
 }

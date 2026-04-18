@@ -3,6 +3,7 @@ import { getEventPresentation } from '@/chat/presentation'
 import type { YohoRemoteChatMessageMetadata } from '@/lib/assistant-runtime'
 
 export function YohoRemoteSystemMessage() {
+    const messageId = useAssistantState(({ message }) => message.id)
     const role = useAssistantState(({ message }) => message.role)
     const text = useAssistantState(({ message }) => {
         if (message.role !== 'system') return ''
@@ -21,7 +22,7 @@ export function YohoRemoteSystemMessage() {
     if (role !== 'system') return null
 
     return (
-        <div className="py-1">
+        <div className="py-1" data-message-id={messageId}>
             <div className="mx-auto w-fit max-w-[92%] px-2 text-center text-xs text-[var(--app-hint)] opacity-80">
                 <span className="inline-flex items-center gap-1">
                     {icon ? <span aria-hidden="true">{icon}</span> : null}

@@ -24,6 +24,8 @@ function createStoredSession(overrides: Partial<StoredSession>): StoredSession {
         todosUpdatedAt: null,
         active: false,
         activeAt: null,
+        thinking: false,
+        thinkingAt: null,
         seq: 0,
         advisorTaskId: null,
         creatorChatId: null,
@@ -92,6 +94,53 @@ describe('createSessionsRoutes', () => {
         ])
         expect(payload.sessions[0]?.lastMessageAt).toBe(1_700_000_000_400)
         expect(payload.sessions[1]?.lastMessageAt).toBeNull()
+    })
+
+    it('preserves mainSessionId for brain-child session summaries', async () => {
+        const storedSessions = [
+            createStoredSession({
+                id: 'brain-child-session',
+                metadata: {
+                    path: '/tmp/brain-child',
+                    source: 'brain-child',
+                    mainSessionId: 'brain-session',
+                },
+            }),
+        ]
+
+        const fakeEngine = {
+            getSessionsByNamespace: () => [],
+        }
+
+        const fakeStore = {
+            getSessionsByNamespace: async () => storedSessions,
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'ns-test')
+            c.set('role', 'developer')
+            c.set('orgs', [])
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/sessions')
+        expect(response.status).toBe(200)
+
+        const payload = await response.json() as {
+            sessions: Array<{
+                id: string
+                metadata: { source?: string; mainSessionId?: string } | null
+            }>
+        }
+        expect(payload.sessions[0]).toMatchObject({
+            id: 'brain-child-session',
+            metadata: {
+                source: 'brain-child',
+                mainSessionId: 'brain-session',
+            },
+        })
     })
 
     it('includes Claude result.result text in resume context', () => {
@@ -275,5 +324,204 @@ describe('createSessionsRoutes', () => {
 
         expect(contextMessage).toContain('当前计划文件（/tmp/demo-plan.md）')
         expect(contextMessage).toContain('# Demo Plan')
+    })
+
+    it('preserves brain metadata when resuming an existing session', async () => {
+        const session = {
+            id: 'brain-session',
+            namespace: 'default',
+            seq: 0,
+            createdAt: 0,
+            updatedAt: 0,
+            lastMessageAt: null,
+            active: false,
+            activeAt: 0,
+            createdBy: null,
+            metadata: {
+                path: '/tmp/brain',
+                machineId: 'machine-1',
+                flavor: 'claude',
+                source: 'brain',
+                brainPreferences: {
+                    machineSelection: { mode: 'manual', machineId: 'machine-1' },
+                },
+                claudeSessionId: 'claude-session-1',
+            },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            activeMonitors: [],
+            thinking: false,
+            thinkingAt: 0,
+            permissionMode: 'bypassPermissions',
+            modelMode: 'opus',
+        }
+
+        const spawnCalls: Array<Record<string, unknown> | undefined> = []
+        const fakeEngine = {
+            getSession: (id: string) => id === session.id ? session : null,
+            getOrRefreshSession: async (id: string) => id === session.id ? session : null,
+            getMachineByNamespace: () => ({ id: 'machine-1', active: true, metadata: {}, namespace: 'default' }),
+            checkPathsExist: async () => ({ '/tmp/brain': true }),
+            spawnSession: async (_machineId: string, _directory: string, _agent: string, _yolo: boolean | undefined, options?: Record<string, unknown>) => {
+                spawnCalls.push(options)
+                session.active = true
+                return { type: 'success', sessionId: session.id }
+            },
+            subscribe: () => () => {},
+        }
+
+        const fakeStore = {
+            getSession: async () => createStoredSession({
+                id: session.id,
+                namespace: session.namespace,
+                metadata: session.metadata,
+                active: false,
+            }),
+            setSessionActive: async () => true,
+            setSessionCreatedBy: async () => true,
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            c.set('role', 'developer')
+            c.set('email', 'dev@example.com')
+            c.set('name', 'Dev')
+            c.set('orgs', [])
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/sessions/brain-session/resume', { method: 'POST' })
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ type: 'resumed', sessionId: 'brain-session' })
+        expect(spawnCalls).toEqual([expect.objectContaining({
+            sessionId: 'brain-session',
+            resumeSessionId: 'claude-session-1',
+            source: 'brain',
+            brainPreferences: {
+                machineSelection: { mode: 'manual', machineId: 'machine-1' },
+            },
+        })])
+    })
+
+    it('preserves brain-child metadata when resume falls back to a new session', async () => {
+        const session = {
+            id: 'brain-child-old',
+            namespace: 'default',
+            seq: 0,
+            createdAt: 0,
+            updatedAt: 0,
+            lastMessageAt: null,
+            active: false,
+            activeAt: 0,
+            createdBy: null,
+            metadata: {
+                path: '/tmp/brain-child',
+                machineId: 'machine-1',
+                flavor: 'codex',
+                source: 'brain-child',
+                mainSessionId: 'brain-main',
+                brainPreferences: {
+                    machineSelection: { mode: 'manual', machineId: 'machine-1' },
+                },
+                codexSessionId: 'thread-brain-child',
+            },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            activeMonitors: [],
+            thinking: false,
+            thinkingAt: 0,
+            permissionMode: 'safe-yolo',
+            modelMode: 'gpt-5.4',
+            modelReasoningEffort: 'high',
+        }
+        const createdSession = {
+            ...session,
+            id: 'brain-child-new',
+            active: true,
+            metadata: {
+                ...session.metadata,
+                codexSessionId: 'thread-brain-child-new',
+            },
+        }
+
+        const spawnCalls: Array<Record<string, unknown> | undefined> = []
+        let spawnCount = 0
+        const fakeEngine = {
+            getSession: (id: string) => {
+                if (id === session.id) return session
+                if (id === createdSession.id) return createdSession
+                return null
+            },
+            getOrRefreshSession: async (id: string) => id === session.id ? session : null,
+            getMachineByNamespace: () => ({ id: 'machine-1', active: true, metadata: {}, namespace: 'default' }),
+            checkPathsExist: async () => ({ '/tmp/brain-child': true }),
+            spawnSession: async (_machineId: string, _directory: string, _agent: string, _yolo: boolean | undefined, options?: Record<string, unknown>) => {
+                spawnCalls.push(options)
+                spawnCount += 1
+                if (spawnCount === 1) {
+                    return { type: 'error', message: 'resume failed' }
+                }
+                return { type: 'success', sessionId: createdSession.id }
+            },
+            terminateSessionProcess: async () => true,
+            subscribe: () => () => {},
+            sendMessage: async () => true,
+            getMessagesPage: async () => ({ messages: [] }),
+        }
+
+        const fakeStore = {
+            getSession: async (id: string) => createStoredSession({
+                id,
+                namespace: session.namespace,
+                metadata: id === createdSession.id ? createdSession.metadata : session.metadata,
+                active: false,
+            }),
+            setSessionActive: async () => true,
+            setSessionCreatedBy: async () => true,
+            setSessionOrgId: async () => true,
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            c.set('role', 'developer')
+            c.set('email', 'dev@example.com')
+            c.set('name', 'Dev')
+            c.set('orgs', [])
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/sessions/brain-child-old/resume', { method: 'POST' })
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            type: 'created',
+            sessionId: 'brain-child-new',
+            resumedFrom: 'brain-child-old',
+            usedResume: true,
+        })
+        expect(spawnCalls).toEqual([
+            expect.objectContaining({
+                sessionId: 'brain-child-old',
+                resumeSessionId: 'thread-brain-child',
+                source: 'brain-child',
+                mainSessionId: 'brain-main',
+                brainPreferences: {
+                    machineSelection: { mode: 'manual', machineId: 'machine-1' },
+                },
+            }),
+            expect.objectContaining({
+                resumeSessionId: 'thread-brain-child',
+                source: 'brain-child',
+                mainSessionId: 'brain-main',
+                brainPreferences: {
+                    machineSelection: { mode: 'manual', machineId: 'machine-1' },
+                },
+            }),
+        ])
     })
 })

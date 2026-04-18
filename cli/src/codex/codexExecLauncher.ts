@@ -641,6 +641,7 @@ interface EventHandlerContext {
     turnPrefix: string;
     onThreadId: (id: string) => void;
     announcedToolCalls: Set<string>;
+    emittedReasoningItemIds?: Set<string>;
     lastStreamErrorMessage?: string | null;
     workspaceGitRoot?: string | null;
     patchArtifactResolvers?: PatchArtifactResolvers;
@@ -733,6 +734,14 @@ function handleExecEvent(event: ExecEvent, ctx: EventHandlerContext): void {
             });
             break;
         }
+
+        default: {
+            logger.warn('[codex-exec] Unknown event type', {
+                eventType: event.type,
+                event
+            });
+            break;
+        }
     }
 }
 
@@ -779,10 +788,6 @@ function handleItemStarted(item: ExecItem, ctx: EventHandlerContext): void {
         case 'reasoning': {
             const reasonItem = item as ExecReasoningItem;
             messageBuffer.addMessage(`[Thinking] ${reasonItem.text?.substring(0, 100) ?? ''}...`, 'system');
-            session.sendCodexMessage({
-                type: 'reasoning-delta',
-                delta: reasonItem.text ?? ''
-            });
             break;
         }
 
@@ -809,6 +814,14 @@ function handleItemStarted(item: ExecItem, ctx: EventHandlerContext): void {
             const collabItem = item as ExecCollabToolCallItem;
             messageBuffer.addMessage(`${describeCollabTool(collabItem.tool)}...`, 'tool');
             ensureToolCall(session, ctx, callId, mapCollabToolName(collabItem.tool), buildCollabToolPayload(collabItem));
+            break;
+        }
+
+        default: {
+            logger.warn('[codex-exec] Unknown item type in item.started', {
+                itemType: item.type,
+                item
+            });
             break;
         }
     }
@@ -905,6 +918,11 @@ function handleItemCompleted(item: ExecItem, ctx: EventHandlerContext): void {
 
         case 'reasoning': {
             const reasonItem = item as ExecReasoningItem;
+            const emittedReasoningItemIds = ctx.emittedReasoningItemIds ??= new Set<string>();
+            if (emittedReasoningItemIds.has(reasonItem.id)) {
+                break;
+            }
+            emittedReasoningItemIds.add(reasonItem.id);
             session.sendCodexMessage({
                 type: 'reasoning-delta',
                 delta: reasonItem.text ?? ''
@@ -963,6 +981,14 @@ function handleItemCompleted(item: ExecItem, ctx: EventHandlerContext): void {
                 source: 'item',
                 message: errorItem.message,
                 id: randomUUID()
+            });
+            break;
+        }
+
+        default: {
+            logger.warn('[codex-exec] Unknown item type in item.completed', {
+                itemType: item.type,
+                item
             });
             break;
         }

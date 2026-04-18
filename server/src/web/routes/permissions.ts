@@ -1,8 +1,9 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import type { SyncEngine } from '../../sync/syncEngine'
+import type { IStore } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
-import { requireSessionFromParam, requireSyncEngine } from './guards'
+import { requireSessionFromParamWithShareCheck, requireSyncEngine } from './guards'
 
 const decisionSchema = z.enum(['approved', 'approved_for_session', 'denied', 'abort'])
 
@@ -17,7 +18,7 @@ const denyBodySchema = z.object({
     decision: decisionSchema.optional()
 })
 
-export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null): Hono<WebAppEnv> {
+export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null, store: IStore): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
     app.post('/sessions/:id/permissions/:requestId/approve', async (c) => {
@@ -28,7 +29,7 @@ export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null):
 
         const requestId = c.req.param('requestId')
 
-        const sessionResult = requireSessionFromParam(c, engine, { requireActive: true })
+        const sessionResult = await requireSessionFromParamWithShareCheck(c, engine, store, { requireActive: true })
         if (sessionResult instanceof Response) {
             return sessionResult
         }
@@ -74,7 +75,7 @@ export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null):
 
         const requestId = c.req.param('requestId')
 
-        const sessionResult = requireSessionFromParam(c, engine, { requireActive: true })
+        const sessionResult = await requireSessionFromParamWithShareCheck(c, engine, store, { requireActive: true })
         if (sessionResult instanceof Response) {
             return sessionResult
         }

@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react'
 import type { AppendMessage, ThreadMessageLike } from '@assistant-ui/react'
 import { useExternalMessageConverter, useExternalStoreRuntime } from '@assistant-ui/react'
+import { deriveStableMessageId } from '@/chat/ids'
 import { renderEventLabel } from '@/chat/presentation'
 import type { ChatBlock, CliOutputBlock } from '@/chat/types'
 import type { AgentEvent, ToolCallBlock } from '@/chat/types'
@@ -27,6 +28,7 @@ export type YohoRemoteChatMessageMetadata = {
 }
 
 type ThreadMessageParts = Exclude<ThreadMessageLike['content'], string>
+type AssistantBlock = Extract<ChatBlock, { kind: 'agent-text' | 'agent-reasoning' | 'tool-call' }>
 
 function createUserThreadMessage(block: Extract<ChatBlock, { kind: 'user-text' }>): ThreadMessageLike {
     return {
@@ -69,18 +71,46 @@ function createCliOutputThreadMessage(block: Extract<ChatBlock, { kind: 'cli-out
     }
 }
 
-function createAssistantThreadMessage(block: Extract<ChatBlock, { kind: 'agent-text' | 'agent-reasoning' | 'tool-call' }>): ThreadMessageLike {
+function getBlockParentToolUseId(block: AssistantBlock): string | null {
+    if (block.kind === 'tool-call') {
+        const parentUUID = block.tool.parentUUID
+        return typeof parentUUID === 'string' && parentUUID.length > 0 ? parentUUID : null
+    }
+
+    return typeof block.parentUUID === 'string' && block.parentUUID.length > 0 ? block.parentUUID : null
+}
+
+export function deriveTurnId(blocks: readonly ChatBlock[]): string {
+    const assistantBlocks = blocks as readonly AssistantBlock[]
+    if (assistantBlocks.length === 0) {
+        return 'assistant'
+    }
+
+    const firstParentToolUseId = getBlockParentToolUseId(assistantBlocks[0]!)
+    if (
+        firstParentToolUseId
+        && assistantBlocks.every((block) => getBlockParentToolUseId(block) === firstParentToolUseId)
+    ) {
+        return firstParentToolUseId
+    }
+
+    return deriveStableMessageId(assistantBlocks[0]!)
+}
+
+function createAssistantThreadMessage(blocks: readonly AssistantBlock[]): ThreadMessageLike {
     const message: ThreadMessageLike = {
         role: 'assistant',
-        id: `assistant:${block.id}`,
-        createdAt: new Date(block.createdAt),
+        id: `assistant:${deriveTurnId(blocks)}`,
+        createdAt: new Date(blocks[0]!.createdAt),
         content: [] as ThreadMessageParts,
         metadata: {
             custom: { kind: 'assistant' } satisfies YohoRemoteChatMessageMetadata
         }
     }
 
-    appendAssistantBlock(message, block)
+    for (const block of blocks) {
+        appendAssistantBlock(message, block)
+    }
     return message
 }
 
@@ -120,23 +150,19 @@ function appendAssistantBlock(
 
 export function convertBlocksToThreadMessages(blocks: readonly ChatBlock[]): ThreadMessageLike[] {
     const messages: ThreadMessageLike[] = []
-    let pendingAssistant: ThreadMessageLike | null = null
+    let pendingAssistantBlocks: AssistantBlock[] = []
 
     const flushAssistant = () => {
-        if (!pendingAssistant) {
+        if (pendingAssistantBlocks.length === 0) {
             return
         }
-        messages.push(pendingAssistant)
-        pendingAssistant = null
+        messages.push(createAssistantThreadMessage(pendingAssistantBlocks))
+        pendingAssistantBlocks = []
     }
 
     for (const block of blocks) {
         if (block.kind === 'agent-text' || block.kind === 'agent-reasoning' || block.kind === 'tool-call') {
-            if (!pendingAssistant) {
-                pendingAssistant = createAssistantThreadMessage(block)
-            } else {
-                appendAssistantBlock(pendingAssistant, block)
-            }
+            pendingAssistantBlocks.push(block)
             continue
         }
 

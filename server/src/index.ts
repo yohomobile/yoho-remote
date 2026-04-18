@@ -21,6 +21,11 @@ import { SSEManager } from './sse/sseManager'
 import { initWebPushService } from './services/webPush'
 import { createLicenseService } from './license/licenseService'
 import { emailService } from './services/emailService'
+import { loadRequiredPgConfig } from './pgConfig'
+import {
+    createSummarizeTurnQueuePublisher,
+    type SummarizeTurnQueuePublisher
+} from './sync/summarizeTurnQueue'
 import type { Server as BunServer } from 'bun'
 import type { WebSocketData } from '@socket.io/bun-engine'
 
@@ -43,6 +48,7 @@ let bot: YohoRemoteBot | null = null
 let brainBridge: BrainBridge | null = null
 let webServer: BunServer<WebSocketData> | null = null
 let sseManager: SSEManager | null = null
+let summarizeTurnQueue: SummarizeTurnQueuePublisher | null = null
 
 async function main() {
     console.log('YR Server starting...')
@@ -87,16 +93,19 @@ async function main() {
     }
 
     // Initialize PostgreSQL store
+    const pgEnvConfig = loadRequiredPgConfig()
     const pgConfig = {
-        host: process.env.PG_HOST || 'localhost',
-        port: parseInt(process.env.PG_PORT || '5432', 10),
-        user: process.env.PG_USER || 'postgres',
-        password: process.env.PG_PASSWORD || '',
-        database: process.env.PG_DATABASE || 'yoho_remote',
-        ssl: process.env.PG_SSL === 'true'
+        host: pgEnvConfig.host,
+        port: pgEnvConfig.port,
+        user: pgEnvConfig.user,
+        password: pgEnvConfig.password,
+        database: pgEnvConfig.database,
+        ssl: pgEnvConfig.sslEnabled,
+        bossSchema: pgEnvConfig.bossSchema,
     }
     console.log(`[Server] Store: PostgreSQL (${pgConfig.host}/${pgConfig.database})`)
     const store = await PostgresStore.create(pgConfig)
+    summarizeTurnQueue = await createSummarizeTurnQueuePublisher(pgConfig)
 
     // Initialize License service
     const adminOrgId = process.env.ADMIN_ORG_ID || null
@@ -192,7 +201,13 @@ async function main() {
         },
     })
 
-    syncEngine = new SyncEngine(store, socketServer.io, socketServer.rpcRegistry, sseManager)
+    syncEngine = new SyncEngine(
+        store,
+        socketServer.io,
+        socketServer.rpcRegistry,
+        sseManager,
+        summarizeTurnQueue ?? undefined
+    )
 
     // Initialize Telegram bot (optional)
     if (config.telegramEnabled && config.telegramBotToken) {
@@ -255,6 +270,7 @@ async function main() {
         sseManager?.stop()
         socketServer?.io?.close()
         webServer?.stop()
+        await summarizeTurnQueue?.stop()
         await store.close()
         process.exit(0)
     }

@@ -185,4 +185,100 @@ describe('reduceChatBlocks duplicate handling', () => {
         expect(agentBlocks).toHaveLength(1)
         expect(agentBlocks[0]?.kind === 'agent-text' ? agentBlocks[0].text : '').toBe('Done')
     })
+
+    test('orders reasoning deltas by seq and drops duplicates for the same reasoning id', () => {
+        const reduced = reduceChatBlocks([
+            {
+                id: 'reasoning-late',
+                seq: 2,
+                localId: null,
+                createdAt: 2,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'reasoning',
+                    text: 'Hello world',
+                    uuid: 'reasoning-1',
+                    parentUUID: 'parent-1'
+                }],
+                meta: { sentFrom: 'cli' }
+            },
+            {
+                id: 'reasoning-early',
+                seq: 1,
+                localId: null,
+                createdAt: 1,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'reasoning',
+                    text: 'Hello',
+                    uuid: 'reasoning-1',
+                    parentUUID: 'parent-1',
+                    isDelta: true
+                }],
+                meta: { sentFrom: 'cli' }
+            },
+            {
+                id: 'reasoning-dup',
+                seq: 1,
+                localId: null,
+                createdAt: 3,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'reasoning',
+                    text: 'Hello',
+                    uuid: 'reasoning-1',
+                    parentUUID: 'parent-1',
+                    isDelta: true
+                }],
+                meta: { sentFrom: 'cli' }
+            }
+        ] satisfies NormalizedMessage[], null)
+
+        const reasoningBlocks = reduced.blocks.filter((block) => block.kind === 'agent-reasoning')
+        expect(reasoningBlocks).toHaveLength(1)
+        expect(reasoningBlocks[0]?.kind === 'agent-reasoning' ? reasoningBlocks[0].text : '').toBe('Hello world')
+        expect(reasoningBlocks[0]?.kind === 'agent-reasoning' ? reasoningBlocks[0].isDelta : null).toBe(false)
+    })
+
+    test('merges assistant text blocks when the base id contains colons', () => {
+        const reduced = reduceChatBlocks([
+            {
+                id: 'turn:foo:0',
+                seq: 1,
+                localId: null,
+                createdAt: 1,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'text',
+                    text: 'Hello',
+                    uuid: 'turn-foo',
+                    parentUUID: null
+                }],
+                meta: { sentFrom: 'cli' }
+            },
+            {
+                id: 'turn:foo:1',
+                seq: 2,
+                localId: null,
+                createdAt: 2,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'text',
+                    text: 'Hello world',
+                    uuid: 'turn-foo',
+                    parentUUID: null
+                }],
+                meta: { sentFrom: 'cli' }
+            }
+        ] satisfies NormalizedMessage[], null)
+
+        const agentBlocks = reduced.blocks.filter((block) => block.kind === 'agent-text')
+        expect(agentBlocks).toHaveLength(1)
+        expect(agentBlocks[0]?.kind === 'agent-text' ? agentBlocks[0].text : '').toBe('Hello world')
+    })
 })

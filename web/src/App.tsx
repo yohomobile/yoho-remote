@@ -229,16 +229,7 @@ export function App() {
     const handleSseConnect = useCallback(() => {
         const now = Date.now()
         const timeSinceLastConnect = now - lastSseConnectRef.current
-
-        if (timeSinceLastConnect < sseConnectDebounceMs && !isFirstConnectRef.current) {
-            if (import.meta.env.DEV) {
-                console.log('[sse] skipping invalidation - reconnected too quickly', {
-                    timeSinceLastConnect,
-                    debounceMs: sseConnectDebounceMs
-                })
-            }
-            return
-        }
+        const shouldDebounceSyncUi = timeSinceLastConnect < sseConnectDebounceMs && !isFirstConnectRef.current
 
         lastSseConnectRef.current = now
 
@@ -247,16 +238,19 @@ export function App() {
         if (isFirstConnectRef.current) {
             isFirstConnectRef.current = false
             startSync({ force: true })
-        } else {
+        } else if (!shouldDebounceSyncUi) {
             startSync()
         }
         if (import.meta.env.DEV) {
             console.log('[sse] connect', {
                 selectedSessionId,
-                invalidateSession: Boolean(selectedSessionId)
+                invalidateSession: Boolean(selectedSessionId),
+                shouldDebounceSyncUi,
             })
         }
 
+        // EventSource reconnects can miss messages even when the outage is very short.
+        // Always backfill queries on every successful open; only debounce the syncing UI.
         const invalidations = [
             queryClient.invalidateQueries({ queryKey: queryKeys.sessions }),
             ...(selectedSessionId ? [
@@ -269,7 +263,7 @@ export function App() {
                 console.error('Failed to invalidate queries on SSE connect:', error)
             })
             .finally(() => {
-                if (syncTokenRef.current === token) {
+                if (!shouldDebounceSyncUi && syncTokenRef.current === token) {
                     endSync()
                 }
             })

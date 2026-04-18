@@ -360,6 +360,7 @@ export type SocketErrorReason = 'namespace-missing' | 'access-denied' | 'not-fou
 
 export interface ServerToClientEvents {
     update: (data: Update) => void
+    'session:clear-messages': (data: { sid?: string; sessionId?: string; time?: number }) => void
     'rpc-request': (data: { method: string; params: string }, callback: (response: string) => void) => void
     'terminal:open': (data: TerminalOpenPayload) => void
     'terminal:write': (data: TerminalWritePayload) => void
@@ -371,6 +372,7 @@ export interface ServerToClientEvents {
 
 export interface ClientToServerEvents {
     message: (data: { sid: string; message: unknown; localId?: string }) => void
+    'session:clear-ack': (data: { sid: string; time: number }) => void
     'session-alive': (data: {
         sid: string
         time: number

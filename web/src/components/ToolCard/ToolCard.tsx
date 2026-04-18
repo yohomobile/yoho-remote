@@ -1,7 +1,7 @@
 import type { ToolCallBlock } from '@/chat/types'
 import type { ApiClient } from '@/api/client'
 import type { SessionMetadataSummary } from '@/types/api'
-import { memo, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { CodeBlock } from '@/components/CodeBlock'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
@@ -32,6 +32,132 @@ function safeStringify(value: unknown): string {
     } catch {
         return String(value)
     }
+}
+
+const MAX_RENDER_LEN = 200 * 1024
+const JSON_CHUNK_SIZE = 2 * 1024
+const CHUNK_LOAD_THRESHOLD = 96
+
+function downloadTextFile(filename: string, content: string): void {
+    const blob = new Blob([content], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    link.rel = 'noopener'
+    link.style.display = 'none'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+function LargeJsonPreview(props: { text: string }) {
+    const [expanded, setExpanded] = useState(false)
+    const [visibleChunkCount, setVisibleChunkCount] = useState(1)
+    const scrollRef = useRef<HTMLDivElement | null>(null)
+
+    const chunks = useMemo(() => {
+        const parts: string[] = []
+        for (let index = 0; index < props.text.length; index += JSON_CHUNK_SIZE) {
+            parts.push(props.text.slice(index, index + JSON_CHUNK_SIZE))
+        }
+        return parts
+    }, [props.text])
+
+    useEffect(() => {
+        setExpanded(false)
+        setVisibleChunkCount(1)
+        if (scrollRef.current) {
+            scrollRef.current.scrollTop = 0
+        }
+    }, [props.text])
+
+    useEffect(() => {
+        if (!expanded) {
+            setVisibleChunkCount(1)
+            if (scrollRef.current) {
+                scrollRef.current.scrollTop = 0
+            }
+        }
+    }, [expanded])
+
+    const handleDownload = useCallback(() => {
+        downloadTextFile('tool-json.json', props.text)
+    }, [props.text])
+
+    const handleScroll = useCallback(() => {
+        const element = scrollRef.current
+        if (!element) {
+            return
+        }
+
+        const distanceToBottom = element.scrollHeight - element.scrollTop - element.clientHeight
+        if (distanceToBottom > CHUNK_LOAD_THRESHOLD) {
+            return
+        }
+
+        setVisibleChunkCount((current) => Math.min(chunks.length, current + 1))
+    }, [chunks.length])
+
+    const canExpandMore = visibleChunkCount < chunks.length
+
+    return (
+        <div className="rounded-md border border-[var(--app-divider)] bg-[var(--app-secondary-bg)]">
+            <div className="flex items-center justify-between gap-3 border-b border-[var(--app-divider)] px-3 py-2">
+                <div className="min-w-0">
+                    <div className="text-xs font-medium text-[var(--app-fg)]">JSON 预览</div>
+                    <div className="text-[11px] text-[var(--app-hint)]">
+                        内容过大，默认折叠为分块视图
+                    </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                    <button
+                        type="button"
+                        className="rounded-md border border-[var(--app-divider)] px-2 py-1 text-xs text-[var(--app-fg)] hover:bg-[var(--app-hover-bg)]"
+                        onClick={() => setExpanded((current) => !current)}
+                    >
+                        {expanded ? '收起' : '展开全部'}
+                    </button>
+                    <button
+                        type="button"
+                        className="rounded-md border border-[var(--app-divider)] px-2 py-1 text-xs text-[var(--app-fg)] hover:bg-[var(--app-hover-bg)]"
+                        onClick={handleDownload}
+                    >
+                        下载 JSON
+                    </button>
+                </div>
+            </div>
+
+            {expanded ? (
+                <div
+                    ref={scrollRef}
+                    className="max-h-[28rem] overflow-auto px-3 py-2"
+                    onScroll={handleScroll}
+                >
+                    <div className="space-y-2">
+                        {chunks.slice(0, visibleChunkCount).map((chunk, index) => (
+                            <pre
+                                key={`json-chunk-${index}`}
+                                className="whitespace-pre-wrap break-words font-mono text-xs leading-5 text-[var(--app-fg)]"
+                            >
+                                {chunk}
+                            </pre>
+                        ))}
+                        {canExpandMore ? (
+                            <div className="text-[11px] text-[var(--app-hint)]">
+                                向下滚动继续加载下一块
+                            </div>
+                        ) : null}
+                    </div>
+                </div>
+            ) : (
+                <div className="px-3 py-2 text-xs text-[var(--app-hint)]">
+                    原始 JSON 共 {props.text.length.toLocaleString()} 个字符，展开后按 2KB 分块渲染。
+                </div>
+            )}
+        </div>
+    )
 }
 
 function getInputString(input: unknown, key: string): string | null {
@@ -255,7 +381,12 @@ function renderToolInput(block: ToolCallBlock): ReactNode {
         }
     }
 
-    return <CodeBlock code={safeStringify(input)} language="json" />
+    const renderedJson = safeStringify(input)
+    if (renderedJson.length > MAX_RENDER_LEN) {
+        return <LargeJsonPreview text={renderedJson} />
+    }
+
+    return <CodeBlock code={renderedJson} language="json" />
 }
 
 function StatusIcon(props: { state: ToolCallBlock['tool']['state'] }) {

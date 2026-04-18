@@ -17,6 +17,8 @@ export type StoredSession = {
     todosUpdatedAt: number | null
     active: boolean
     activeAt: number | null
+    thinking: boolean
+    thinkingAt: number | null
     seq: number
     advisorTaskId: string | null
     creatorChatId: string | null

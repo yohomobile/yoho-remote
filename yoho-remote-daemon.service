@@ -6,9 +6,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=yoho
-WorkingDirectory=/var/lib/yoho-remote
-EnvironmentFile=/etc/yoho-remote/daemon.env
-ExecStart=/opt/yoho-remote/yoho-remote daemon start-sync
+WorkingDirectory=/home/yoho/.yoho-remote
+EnvironmentFile=/home/yoho/.yoho-remote/daemon.systemd.env
+ExecStart=/opt/yoho-remote/yoho-remote-daemon
 Restart=always
 RestartSec=10
 

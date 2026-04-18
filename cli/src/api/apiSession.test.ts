@@ -165,3 +165,37 @@ describe('ApiSessionClient.sendClaudeSessionMessage', () => {
         })
     })
 })
+
+describe('ApiSessionClient.handleIncomingMessage', () => {
+    it('keeps the last seen sequence unchanged for malformed messages', () => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const emitSpy = vi.fn()
+        const client = Object.create(ApiSessionClient.prototype) as any
+
+        try {
+            client.lastSeenMessageSeq = 41
+            client.enqueueUserMessage = vi.fn()
+            client.emit = emitSpy
+
+            client.handleIncomingMessage({
+                seq: 42,
+                content: {
+                    role: 'assistant',
+                    content: 'not-a-user-message'
+                }
+            })
+
+            expect(warnSpy).toHaveBeenCalledWith('[API] Ignoring malformed incoming message', {
+                seq: 42
+            })
+            expect(client.lastSeenMessageSeq).toBe(41)
+            expect(client.enqueueUserMessage).not.toHaveBeenCalled()
+            expect(emitSpy).toHaveBeenCalledWith('message', {
+                role: 'assistant',
+                content: 'not-a-user-message'
+            })
+        } finally {
+            warnSpy.mockRestore()
+        }
+    })
+})

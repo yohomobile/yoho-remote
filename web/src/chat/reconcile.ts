@@ -9,6 +9,7 @@ import type {
     ToolPermission,
     UserTextBlock,
 } from '@/chat/types'
+import { hashStableValueSync, stableStringify } from '@/lib/hash'
 
 export type ChatBlocksById = Map<string, ChatBlock>
 
@@ -65,6 +66,18 @@ function arePermissionsEqual(left?: ToolPermission, right?: ToolPermission): boo
         && areAnswersEqual(left.answers, right.answers)
 }
 
+function hasSameStructuralHash(left: unknown, right: unknown): boolean {
+    if (left === right) {
+        return true
+    }
+
+    try {
+        return hashStableValueSync(left) === hashStableValueSync(right)
+    } catch {
+        return false
+    }
+}
+
 function getEventKey(event: AgentEvent): string {
     switch (event.type) {
         case 'switch':
@@ -79,7 +92,7 @@ function getEventKey(event: AgentEvent): string {
             return 'ready'
         default:
             try {
-                return JSON.stringify(event)
+                return stableStringify(event)
             } catch {
                 return event.type
             }
@@ -97,21 +110,26 @@ function areUserTextBlocksEqual(left: UserTextBlock, right: UserTextBlock): bool
         && left.originalText === right.originalText
         && left.localId === right.localId
         && left.createdAt === right.createdAt
-        && left.meta === right.meta
+        && hasSameStructuralHash(left.meta, right.meta)
 }
 
 function areAgentTextBlocksEqual(left: AgentTextBlock, right: AgentTextBlock): boolean {
     return left.text === right.text
         && left.localId === right.localId
         && left.createdAt === right.createdAt
-        && left.meta === right.meta
+        && left.seq === right.seq
+        && left.parentUUID === right.parentUUID
+        && hasSameStructuralHash(left.meta, right.meta)
 }
 
 function areAgentReasoningBlocksEqual(left: AgentReasoningBlock, right: AgentReasoningBlock): boolean {
     return left.text === right.text
         && left.localId === right.localId
         && left.createdAt === right.createdAt
-        && left.meta === right.meta
+        && left.seq === right.seq
+        && left.reasoningId === right.reasoningId
+        && left.parentUUID === right.parentUUID
+        && hasSameStructuralHash(left.meta, right.meta)
         && left.isDelta === right.isDelta
 }
 
@@ -120,12 +138,12 @@ function areCliOutputBlocksEqual(left: CliOutputBlock, right: CliOutputBlock): b
         && left.localId === right.localId
         && left.createdAt === right.createdAt
         && left.source === right.source
-        && left.meta === right.meta
+        && hasSameStructuralHash(left.meta, right.meta)
 }
 
 function areAgentEventBlocksEqual(left: AgentEventBlock, right: AgentEventBlock): boolean {
     return left.createdAt === right.createdAt
-        && left.meta === right.meta
+        && hasSameStructuralHash(left.meta, right.meta)
         && areAgentEventsEqual(left.event, right.event)
 }
 
@@ -133,12 +151,14 @@ function areToolCallsEqual(left: ToolCallBlock, right: ToolCallBlock, childrenSa
     if (!childrenSame) return false
     return left.localId === right.localId
         && left.createdAt === right.createdAt
-        && left.meta === right.meta
+        && left.seq === right.seq
+        && left.tool.parentUUID === right.tool.parentUUID
+        && hasSameStructuralHash(left.meta, right.meta)
         && left.tool.id === right.tool.id
         && left.tool.name === right.tool.name
         && left.tool.state === right.tool.state
-        && left.tool.input === right.tool.input
-        && left.tool.result === right.tool.result
+        && hasSameStructuralHash(left.tool.input, right.tool.input)
+        && hasSameStructuralHash(left.tool.result, right.tool.result)
         && left.tool.description === right.tool.description
         && left.tool.createdAt === right.tool.createdAt
         && left.tool.startedAt === right.tool.startedAt

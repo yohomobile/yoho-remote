@@ -1,7 +1,13 @@
 import type { ChildProcess } from 'node:child_process';
 import spawn from 'cross-spawn';
+import { delay } from '@/utils/time';
 
 export const isWindows = (): boolean => process.platform === 'win32';
+
+export type KillProcessOptions = {
+  timeout?: number;
+  force?: boolean;
+};
 
 export function getCurrentProcessStartedAtMs(): number {
   const startedAt = Date.now() - Math.round(process.uptime() * 1000);
@@ -67,40 +73,107 @@ function killProcessWindows(pid: number, force: boolean): boolean {
   }
 }
 
-export async function killProcess(pid: number, force: boolean = false): Promise<boolean> {
-  if (!Number.isFinite(pid) || pid <= 0) {
+function normalizeKillOptions(optionsOrForce?: boolean | KillProcessOptions): KillProcessOptions {
+  if (typeof optionsOrForce === 'boolean') {
+    return { force: optionsOrForce };
+  }
+  return optionsOrForce ?? {};
+}
+
+async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
+  if (timeoutMs <= 0) {
+    return !isProcessAlive(pid);
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) {
+      return true;
+    }
+    await delay(Math.min(100, deadline - Date.now()));
+  }
+
+  return !isProcessAlive(pid);
+}
+
+export async function killProcess(
+  target: number | ChildProcess,
+  optionsOrForce: boolean | KillProcessOptions = false
+): Promise<boolean> {
+  const options = normalizeKillOptions(optionsOrForce);
+  const force = options.force === true;
+  const timeoutMs = options.timeout ?? 0;
+  const pid = typeof target === 'number' ? target : target.pid;
+
+  if (pid === null || pid === undefined || !Number.isFinite(pid) || pid <= 0) {
     return false;
   }
+  const numericPid = pid;
 
   if (isWindows()) {
-    return killProcessWindows(pid, force);
+    if (force) {
+      const killed = killProcessWindows(numericPid, true);
+      if (!killed) {
+        return false;
+      }
+      await waitForProcessExit(numericPid, Math.min(250, Math.max(0, timeoutMs)));
+      return !isProcessAlive(numericPid);
+    }
+    const terminated = killProcessWindows(numericPid, false);
+    if (!terminated) {
+      return false;
+    }
+    if (timeoutMs > 0 && await waitForProcessExit(numericPid, timeoutMs)) {
+      return true;
+    }
+    if (isProcessAlive(numericPid)) {
+      killProcessWindows(numericPid, true);
+      await waitForProcessExit(numericPid, Math.min(250, Math.max(0, timeoutMs)));
+    }
+    return !isProcessAlive(numericPid);
   }
 
-  try {
-    process.kill(pid, force ? 'SIGKILL' : 'SIGTERM');
-    return true;
-  } catch {
+  const sendSignal = (signal: 'SIGTERM' | 'SIGKILL'): boolean => {
+    try {
+      if (typeof target === 'number') {
+        process.kill(numericPid, signal);
+      } else {
+        target.kill(signal);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  if (force) {
+    const killed = sendSignal('SIGKILL');
+    if (!killed) {
+      return false;
+    }
+    await waitForProcessExit(numericPid, Math.min(250, Math.max(0, timeoutMs)));
+    return !isProcessAlive(numericPid);
+  }
+
+  if (!sendSignal('SIGTERM')) {
     return false;
   }
+
+  if (timeoutMs > 0 && await waitForProcessExit(numericPid, timeoutMs)) {
+    return true;
+  }
+
+  if (isProcessAlive(numericPid)) {
+    sendSignal('SIGKILL');
+    await waitForProcessExit(numericPid, Math.min(250, Math.max(0, timeoutMs)));
+  }
+
+  return !isProcessAlive(numericPid);
 }
 
 export async function killProcessByChildProcess(
   child: ChildProcess,
-  force: boolean = false
+  optionsOrForce: boolean | KillProcessOptions = false
 ): Promise<boolean> {
-  const pid = child.pid;
-  if (!pid) {
-    return false;
-  }
-
-  if (isWindows()) {
-    return killProcess(pid, force);
-  }
-
-  try {
-    child.kill(force ? 'SIGKILL' : 'SIGTERM');
-    return true;
-  } catch {
-    return false;
-  }
+  return killProcess(child, optionsOrForce);
 }

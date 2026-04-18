@@ -16,24 +16,54 @@ function isUserMessage(msg: DecryptedMessage): boolean {
     return false
 }
 
-function compareMessages(a: DecryptedMessage, b: DecryptedMessage): number {
+function getStableOrderIndex(messages: readonly DecryptedMessage[]): Map<string, number> {
+    const order = new Map<string, number>()
+    messages.forEach((message, index) => {
+        if (!order.has(message.id)) {
+            order.set(message.id, index)
+        }
+    })
+    return order
+}
+
+function getLocalId(msg: DecryptedMessage): string | null {
+    return typeof msg.localId === 'string' && msg.localId.length > 0 ? msg.localId : null
+}
+
+function compareMessages(a: DecryptedMessage, b: DecryptedMessage, orderById: Map<string, number>): number {
     const aSeq = typeof a.seq === 'number' ? a.seq : null
     const bSeq = typeof b.seq === 'number' ? b.seq : null
-    if (aSeq !== null && bSeq !== null && aSeq !== bSeq) {
-        return aSeq - bSeq
+    if (aSeq !== null || bSeq !== null) {
+        if (aSeq === null) return 1
+        if (bSeq === null) return -1
+        if (aSeq !== bSeq) {
+            return aSeq - bSeq
+        }
     }
-    if (a.createdAt !== b.createdAt) {
-        return a.createdAt - b.createdAt
+
+    const aLocalId = getLocalId(a)
+    const bLocalId = getLocalId(b)
+    if (aLocalId !== null && bLocalId !== null && aLocalId !== bLocalId) {
+        return aLocalId.localeCompare(bLocalId)
     }
-    return a.id.localeCompare(b.id)
+
+    return (orderById.get(a.id) ?? 0) - (orderById.get(b.id) ?? 0)
+}
+
+function sortMessages(messages: DecryptedMessage[]): DecryptedMessage[] {
+    if (messages.length <= 1) {
+        return messages
+    }
+    const orderById = getStableOrderIndex(messages)
+    return [...messages].sort((a, b) => compareMessages(a, b, orderById))
 }
 
 export function mergeMessages(existing: DecryptedMessage[], incoming: DecryptedMessage[]): DecryptedMessage[] {
     if (existing.length === 0) {
-        return [...incoming].sort(compareMessages)
+        return sortMessages([...incoming])
     }
     if (incoming.length === 0) {
-        return [...existing].sort(compareMessages)
+        return sortMessages([...existing])
     }
 
     const byId = new Map<string, DecryptedMessage>()
@@ -83,8 +113,7 @@ export function mergeMessages(existing: DecryptedMessage[], incoming: DecryptedM
         result.push(optimistic)
     }
 
-    result.sort(compareMessages)
-    return result
+    return sortMessages(result)
 }
 
 export function upsertMessagesInCache(

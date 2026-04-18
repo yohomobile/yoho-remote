@@ -62,9 +62,6 @@ export function useSSE(options: {
     const onDisconnectRef = useRef(options.onDisconnect)
     const onErrorRef = useRef(options.onError)
     const eventSourceRef = useRef<EventSource | null>(null)
-    // 防止快速重连时的重复 onConnect 调用
-    const lastConnectTimeRef = useRef(0)
-    const connectDebounceMs = 1500  // 1.5 秒内的重连不触发 onConnect
 
     useEffect(() => {
         onEventRef.current = options.onEvent
@@ -112,6 +109,12 @@ export function useSSE(options: {
                 void queryClient.invalidateQueries({
                     queryKey: queryKeys.messages(event.sessionId),
                     refetchType: 'none'
+                })
+            }
+
+            if (event.type === 'messages-cleared') {
+                void queryClient.invalidateQueries({
+                    queryKey: queryKeys.messages(event.sessionId)
                 })
             }
 
@@ -304,22 +307,6 @@ export function useSSE(options: {
 
         eventSource.onmessage = handleMessage
         eventSource.onopen = () => {
-            const now = Date.now()
-            const timeSinceLastConnect = now - lastConnectTimeRef.current
-
-            // 防止快速重连导致的重复 onConnect 回调
-            // 这在移动端网络波动时尤其重要
-            if (timeSinceLastConnect < connectDebounceMs && lastConnectTimeRef.current > 0) {
-                if (import.meta.env.DEV) {
-                    console.log('[sse] onopen debounced - reconnected too quickly', {
-                        timeSinceLastConnect,
-                        debounceMs: connectDebounceMs
-                    })
-                }
-                return
-            }
-
-            lastConnectTimeRef.current = now
             onConnectRef.current?.()
         }
         eventSource.onerror = (error) => {

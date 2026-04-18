@@ -73,6 +73,8 @@ export interface IStore {
     setSessionCreatedBy(id: string, email: string, namespace: string): Promise<boolean>
     setSessionOrgId(id: string, orgId: string, namespace: string): Promise<boolean>
     setSessionActive(id: string, active: boolean, activeAt: number, namespace: string, terminationReason?: string | null): Promise<boolean>
+    setSessionThinking(id: string, thinking: boolean, namespace: string): Promise<void>
+    getTurnBoundary(sessionId: string): Promise<{ turnStartSeq: number; turnEndSeq: number } | null>
     setSessionModelConfig(id: string, config: {
         permissionMode?: string
         modelMode?: string

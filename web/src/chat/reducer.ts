@@ -1,10 +1,15 @@
 import type { AgentState } from '@/types/api'
 import type { AgentEvent, ChatBlock, ChatToolCall, CliOutputBlock, NormalizedMessage, ToolCallBlock, ToolPermission, UsageData } from '@/chat/types'
+import { parseLocalIdPrefix } from '@/chat/ids'
 import { traceMessages, type TracedMessage } from '@/chat/tracer'
 
 const CLI_TAG_REGEX = /<(?:local-command-[a-z-]+|command-(?:name|message|args))>/i
 const CLI_COMMAND_NAME_REGEX = /<command-name>/i
-const CLI_COMMAND_STDOUT_REGEX = /<local-command-stdout>/i
+const CLI_COMMAND_OUTPUT_REGEX = /<local-command-(?:stdout|stderr)>/i
+
+const logger = {
+    debug: (...args: unknown[]) => console.debug(...args)
+}
 
 // Calculate context size from usage data
 // NOTE: Context size = input_tokens + cache_creation + cache_read
@@ -65,20 +70,10 @@ function collectTitleChanges(messages: NormalizedMessage[]): Map<string, string>
  * Remove result-text blocks when the same turn already has agent-text blocks.
  *
  * normalize.ts extracts result.result text as an extra agent-text message
- * (id ending with ":result-text:0") so OpenAI-style split responses stay visible even
- * when the separate assistant message was lost.  For claude sessions the
- * assistant text message already exists, so we need to strip the duplicate.
- *
- * Strategy: walk backwards from each result-text block; if we find an
- * agent-text block before hitting a user-text block (turn boundary), the
- * result-text is redundant and can be removed.
- */
-/**
- * Remove result-text blocks when the same turn already has agent-text blocks.
- *
- * normalize.ts extracts result.result text as an extra agent-text message
- * (id containing ":result-text:") so that codex responses are visible even
- * when the separate assistant message was lost.  For claude sessions the
+ * (message id ending with ":result-text") so that codex responses are visible
+ * even when the separate assistant message was lost.  The reducer appends the
+ * content index (":0") when turning that message into a ChatBlock, so we strip
+ * the last segment before checking the suffix.  For claude sessions the
  * assistant text message already exists, so we need to strip the duplicate.
  *
  * Strategy: group blocks by turn (between user-text boundaries).  Within each
@@ -86,6 +81,11 @@ function collectTitleChanges(messages: NormalizedMessage[]): Map<string, string>
  * the result-text blocks.  This handles both orderings (result before or after
  * assistant) since the CLI can deliver them in either order.
  */
+function isResultTextBlockId(id: string): boolean {
+    const messageId = id.includes(':') ? id.slice(0, id.lastIndexOf(':')) : id
+    return messageId.endsWith(':result-text')
+}
+
 function dedupeResultTextBlocks(blocks: ChatBlock[]): ChatBlock[] {
     // Identify result-text block IDs to remove
     const removeIds = new Set<string>()
@@ -100,7 +100,7 @@ function dedupeResultTextBlocks(blocks: ChatBlock[]): ChatBlock[] {
             for (let j = turnStart; j < i; j++) {
                 const b = blocks[j]
                 if (b.kind === 'agent-text') {
-                    if (b.id.includes(':result-text:')) {
+                    if (isResultTextBlockId(b.id)) {
                         resultTextIds.push(b.id)
                     } else {
                         hasNonResultAgentText = true
@@ -298,8 +298,12 @@ function hasCommandNameTag(text: string): boolean {
     return CLI_COMMAND_NAME_REGEX.test(text)
 }
 
-function hasLocalCommandStdoutTag(text: string): boolean {
-    return CLI_COMMAND_STDOUT_REGEX.test(text)
+function hasLocalCommandOutputTag(text: string): boolean {
+    return CLI_COMMAND_OUTPUT_REGEX.test(text)
+}
+
+function isCliCommandHeader(text: string): boolean {
+    return hasCommandNameTag(text)
 }
 
 function isCliOutputText(text: string, meta: unknown): boolean {
@@ -327,21 +331,28 @@ function createCliOutputBlock(props: {
 
 function mergeCliOutputBlocks(blocks: ChatBlock[]): ChatBlock[] {
     const merged: ChatBlock[] = []
+    let activeCommandId: string | null = null
+    let activeCommandSource: CliOutputBlock['source'] | null = null
 
     for (const block of blocks) {
         if (block.kind !== 'cli-output') {
             merged.push(block)
+            activeCommandId = null
+            activeCommandSource = null
             continue
         }
 
         const prev = merged[merged.length - 1]
+        const hasCommandHeader = isCliCommandHeader(block.text)
+        const hasCommandOutput = hasLocalCommandOutputTag(block.text)
         if (
-            prev
+            !hasCommandHeader
+            && activeCommandId !== null
+            && activeCommandSource === block.source
+            && hasCommandOutput
+            && prev
             && prev.kind === 'cli-output'
             && prev.source === block.source
-            && hasCommandNameTag(prev.text)
-            && !hasLocalCommandStdoutTag(prev.text)
-            && hasLocalCommandStdoutTag(block.text)
         ) {
             const separator = prev.text.endsWith('\n') || block.text.startsWith('\n') ? '' : '\n'
             merged[merged.length - 1] = { ...prev, text: `${prev.text}${separator}${block.text}` }
@@ -349,6 +360,19 @@ function mergeCliOutputBlocks(blocks: ChatBlock[]): ChatBlock[] {
         }
 
         merged.push(block)
+
+        if (hasCommandHeader) {
+            activeCommandId = block.id
+            activeCommandSource = block.source
+            continue
+        }
+
+        if (hasCommandOutput && activeCommandId !== null && activeCommandSource === block.source) {
+            continue
+        }
+
+        activeCommandId = null
+        activeCommandSource = null
     }
 
     return merged
@@ -438,8 +462,8 @@ function mergeAgentTextBlocks(blocks: ChatBlock[]): ChatBlock[] {
         if (prev) {
             // Check if they belong to the same message (same base id before the index suffix)
             // IDs are like "msg-123:0", "msg-123:1" - same message has same base id
-            const prevBaseId = prev.id.split(':')[0]
-            const currBaseId = block.id.split(':')[0]
+            const prevBaseId = parseLocalIdPrefix(prev.id)
+            const currBaseId = parseLocalIdPrefix(block.id)
             if (prevBaseId === currBaseId) {
                 if (block.text === prev.text) {
                     removeBlockById(merged, prev.id)
@@ -491,8 +515,97 @@ function mergeAgentTextBlocks(blocks: ChatBlock[]): ChatBlock[] {
     return merged
 }
 
+function getReasoningGroupKey(block: Extract<ChatBlock, { kind: 'agent-reasoning' }>): string {
+    return block.reasoningId ?? block.id
+}
+
+function getReasoningSeq(block: Extract<ChatBlock, { kind: 'agent-reasoning' }>): number {
+    return typeof block.seq === 'number' && Number.isFinite(block.seq) ? block.seq : Number.MAX_SAFE_INTEGER
+}
+
+function mergeReasoningGroup(blocks: Extract<ChatBlock, { kind: 'agent-reasoning' }>[]): Extract<ChatBlock, { kind: 'agent-reasoning' }>[] {
+    if (blocks.length <= 1) {
+        return blocks
+    }
+
+    const sorted = [...blocks].sort((a, b) => {
+        const seqDiff = getReasoningSeq(a) - getReasoningSeq(b)
+        if (seqDiff !== 0) return seqDiff
+        if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt
+        return a.id.localeCompare(b.id)
+    })
+
+    const merged: Extract<ChatBlock, { kind: 'agent-reasoning' }>[] = []
+    let committedSeq = Number.NEGATIVE_INFINITY
+
+    for (const block of sorted) {
+        const seq = typeof block.seq === 'number' && Number.isFinite(block.seq) ? block.seq : null
+        const reasoningId = getReasoningGroupKey(block)
+
+        if (seq !== null && seq <= committedSeq) {
+            logger.debug('reasoning dup dropped', {
+                reasoningId,
+                seq,
+                committedSeq,
+                blockId: block.id
+            })
+            continue
+        }
+
+        const prev = merged[merged.length - 1]
+        if (!prev) {
+            merged.push({ ...block, isDelta: Boolean(block.isDelta) })
+            if (seq !== null) {
+                committedSeq = seq
+            }
+            continue
+        }
+
+        if (block.text === prev.text) {
+            merged[merged.length - 1] = {
+                ...block,
+                isDelta: Boolean(block.isDelta)
+            }
+            if (seq !== null) {
+                committedSeq = seq
+            }
+            continue
+        }
+
+        if (block.text.startsWith(prev.text)) {
+            merged[merged.length - 1] = {
+                ...block,
+                isDelta: Boolean(block.isDelta)
+            }
+            if (seq !== null) {
+                committedSeq = seq
+            }
+            continue
+        }
+
+        if (prev.text.startsWith(block.text)) {
+            if (seq !== null) {
+                committedSeq = seq
+            }
+            continue
+        }
+
+        merged[merged.length - 1] = {
+            ...prev,
+            text: `${prev.text}${block.text}`,
+            isDelta: Boolean(prev.isDelta || block.isDelta)
+        }
+        if (seq !== null) {
+            committedSeq = seq
+        }
+    }
+
+    return merged
+}
+
 function mergeAgentReasoningBlocks(blocks: ChatBlock[]): ChatBlock[] {
     const merged: ChatBlock[] = []
+    const reasoningGroups = new Map<string, { firstIndex: number; blocks: Extract<ChatBlock, { kind: 'agent-reasoning' }>[] }>()
 
     for (const block of blocks) {
         if (block.kind !== 'agent-reasoning') {
@@ -500,35 +613,45 @@ function mergeAgentReasoningBlocks(blocks: ChatBlock[]): ChatBlock[] {
             continue
         }
 
-        const prev = merged[merged.length - 1]
-        if (prev && prev.kind === 'agent-reasoning' && (prev.isDelta || block.isDelta)) {
-            if (prev.isDelta && !block.isDelta) {
-                if (block.text.startsWith(prev.text)) {
-                    merged[merged.length - 1] = {
-                        ...prev,
-                        text: block.text,
-                        meta: block.meta,
-                        localId: block.localId,
-                        isDelta: false
-                    }
-                } else {
-                    merged.push(block)
-                }
-                continue
-            }
-
-            merged[merged.length - 1] = {
-                ...prev,
-                text: prev.text + block.text,
-                isDelta: prev.isDelta || block.isDelta
-            }
-            continue
+        const key = getReasoningGroupKey(block)
+        const group = reasoningGroups.get(key)
+        if (group) {
+            group.blocks.push(block)
+        } else {
+            reasoningGroups.set(key, {
+                firstIndex: merged.length,
+                blocks: [block]
+            })
         }
-
-        merged.push(block)
     }
 
-    return merged
+    if (reasoningGroups.size === 0) {
+        return merged
+    }
+
+    const groupedReasoning = Array.from(reasoningGroups.entries())
+        .sort((left, right) => left[1].firstIndex - right[1].firstIndex || left[0].localeCompare(right[0]))
+
+    const result: ChatBlock[] = []
+    let groupIndex = 0
+
+    for (let index = 0; index <= merged.length; index += 1) {
+        while (groupIndex < groupedReasoning.length && groupedReasoning[groupIndex]![1].firstIndex === index) {
+            result.push(...mergeReasoningGroup(groupedReasoning[groupIndex]![1].blocks))
+            groupIndex += 1
+        }
+
+        if (index < merged.length) {
+            result.push(merged[index]!)
+        }
+    }
+
+    while (groupIndex < groupedReasoning.length) {
+        result.push(...mergeReasoningGroup(groupedReasoning[groupIndex]![1].blocks))
+        groupIndex += 1
+    }
+
+    return result
 }
 
 function mergeAgentBrowserBlocks(blocks: ChatBlock[]): ChatBlock[] {
@@ -613,7 +736,9 @@ function ensureToolBlock(
     id: string,
     seed: {
         createdAt: number
+        seq?: number | null
         localId: string | null
+        parentUUID?: string | null
         meta?: unknown
         name: string
         input: unknown
@@ -632,6 +757,14 @@ function ensureToolBlock(
         if (seed.createdAt < existing.createdAt) {
             existing.createdAt = seed.createdAt
             existing.tool.createdAt = seed.createdAt
+        }
+        if (typeof seed.seq === 'number' && Number.isFinite(seed.seq)) {
+            if (typeof existing.seq !== 'number' || seed.seq < existing.seq) {
+                existing.seq = seed.seq
+            }
+        }
+        if (typeof seed.parentUUID === 'string' && seed.parentUUID.length > 0 && !existing.tool.parentUUID) {
+            existing.tool.parentUUID = seed.parentUUID
         }
         if (seed.permission) {
             existing.tool.permission = { ...existing.tool.permission, ...seed.permission }
@@ -666,6 +799,7 @@ function ensureToolBlock(
         startedAt: initialState === 'running' ? seed.createdAt : null,
         completedAt: null,
         description: seed.description,
+        parentUUID: seed.parentUUID,
         permission: seed.permission
     }
 
@@ -674,6 +808,7 @@ function ensureToolBlock(
         id,
         localId: seed.localId,
         createdAt: seed.createdAt,
+        seq: typeof seed.seq === 'number' && Number.isFinite(seed.seq) ? seed.seq : null,
         tool,
         children: [],
         meta: seed.meta
@@ -789,7 +924,9 @@ function reduceTimeline(
                         id: `${msg.id}:${idx}`,
                         localId: msg.localId,
                         createdAt: msg.createdAt,
+                        seq: msg.seq ?? null,
                         text: c.text,
+                        parentUUID: c.parentUUID,
                         meta: msg.meta
                     })
                     continue
@@ -801,7 +938,10 @@ function reduceTimeline(
                         id: `${msg.id}:${idx}`,
                         localId: msg.localId,
                         createdAt: msg.createdAt,
+                        seq: msg.seq ?? null,
                         text: c.text,
+                        reasoningId: c.uuid,
+                        parentUUID: c.parentUUID,
                         meta: msg.meta,
                         isDelta: c.isDelta
                     })
@@ -847,7 +987,9 @@ function reduceTimeline(
 
                     const block = ensureToolBlock(blocks, toolBlocksById, c.id, {
                         createdAt: msg.createdAt,
+                        seq: msg.seq ?? null,
                         localId: msg.localId,
+                        parentUUID: c.parentUUID,
                         meta: msg.meta,
                         name: c.name,
                         input: c.input,
@@ -912,7 +1054,9 @@ function reduceTimeline(
 
                     const block = ensureToolBlock(blocks, toolBlocksById, c.tool_use_id, {
                         createdAt: msg.createdAt,
+                        seq: msg.seq ?? null,
                         localId: msg.localId,
+                        parentUUID: c.parentUUID,
                         meta: msg.meta,
                         name: permissionEntry?.toolName ?? 'Tool',
                         input: permissionEntry?.input ?? null,

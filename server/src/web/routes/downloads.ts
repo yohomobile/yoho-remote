@@ -24,6 +24,43 @@ const uploadSchema = z.object({
 
 type CliEnv = { Variables: { namespace: string } }
 
+async function requireDownloadSessionAccess(
+    c: { get: (key: string) => unknown; json: (data: unknown, status?: number) => Response },
+    store: IStore,
+    sessionId: string,
+): Promise<Response | null> {
+    const namespace = c.get('namespace') as string | undefined
+    const session = await store.getSession(sessionId)
+    if (!session) {
+        return c.json({ error: 'Session not found' }, 404)
+    }
+
+    if (session.namespace !== namespace) {
+        return c.json({ error: 'Session access denied' }, 403)
+    }
+
+    const email = c.get('email') as string | undefined
+    if (!email || namespace !== 'default') {
+        return null
+    }
+
+    if (!session.createdBy || session.createdBy === email) {
+        return null
+    }
+
+    const isShared = await store.isSessionSharedWith(sessionId, email)
+    if (isShared) {
+        return null
+    }
+
+    const ownerShareAll = await store.getShareAllSessions(session.createdBy)
+    if (ownerShareAll) {
+        return null
+    }
+
+    return c.json({ error: 'Session access denied' }, 403)
+}
+
 export function createDownloadCliRoutes(
     getSseManager: () => SSEManager | null,
     store: IStore,
@@ -50,6 +87,11 @@ export function createDownloadCliRoutes(
         if (!parsed.success) return c.json({ error: 'Invalid body' }, 400)
 
         const { sessionId, filename, content, mimeType } = parsed.data
+
+        const access = await requireDownloadSessionAccess(c, store, sessionId)
+        if (access) {
+            return access
+        }
 
         let buf: Buffer
         try {
@@ -98,6 +140,10 @@ export function createDownloadApiRoutes(
     // GET /api/sessions/:sessionId/downloads - list download files for a session
     app.get('/sessions/:sessionId/downloads', async (c) => {
         const sessionId = c.req.param('sessionId')
+        const access = await requireDownloadSessionAccess(c, store, sessionId)
+        if (access) {
+            return access
+        }
         const files = await store.listDownloadFiles(sessionId)
         return c.json({ files })
     })
@@ -105,6 +151,10 @@ export function createDownloadApiRoutes(
     // DELETE /api/sessions/:sessionId/downloads - clear download files for a session
     app.delete('/sessions/:sessionId/downloads', async (c) => {
         const sessionId = c.req.param('sessionId')
+        const access = await requireDownloadSessionAccess(c, store, sessionId)
+        if (access) {
+            return access
+        }
         const cleared = await store.clearDownloadFiles(sessionId)
         return c.json({ cleared })
     })
@@ -114,6 +164,11 @@ export function createDownloadApiRoutes(
         const id = c.req.param('id')
         const result = await store.getDownloadFile(id)
         if (!result) return c.json({ error: 'File not found' }, 404)
+
+        const access = await requireDownloadSessionAccess(c, store, result.meta.sessionId)
+        if (access) {
+            return access
+        }
 
         const { meta, content } = result
         return new Response(content, {

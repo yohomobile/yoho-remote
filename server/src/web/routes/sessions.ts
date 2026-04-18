@@ -20,6 +20,7 @@ import {
     extractBrainSessionPreferencesFromMetadata,
 } from '../../brain/brainSessionPreferences'
 import { getUnsupportedSessionSourceError, isSupportedSessionSource } from '../../sessionSourcePolicy'
+import { extractResumeSpawnMetadata } from '../../resumeSpawnMetadata'
 
 /**
  * License 检查：如果指定了 orgId，校验是否可创建会话
@@ -41,6 +42,7 @@ type SessionSummaryMetadata = {
     name?: string
     path: string
     machineId?: string
+    mainSessionId?: string
     source?: string
     summary?: { text: string }
     flavor?: string | null
@@ -91,6 +93,17 @@ function getStoredActiveMonitorCount(stored: StoredSession): number | undefined 
     return parsed.data.length
 }
 
+function getMainSessionId(metadata: unknown | null | undefined): string | undefined {
+    if (!metadata || typeof metadata !== 'object') {
+        return undefined
+    }
+
+    const mainSessionId = (metadata as { mainSessionId?: unknown }).mainSessionId
+    return typeof mainSessionId === 'string' && mainSessionId.trim().length > 0
+        ? mainSessionId
+        : undefined
+}
+
 function toSessionSummary(session: Session): SessionSummary {
     const pendingRequestsCount = session.agentState?.requests ? Object.keys(session.agentState.requests).length : 0
 
@@ -98,6 +111,7 @@ function toSessionSummary(session: Session): SessionSummary {
         name: session.metadata.name,
         path: session.metadata.path,
         machineId: session.metadata.machineId ?? undefined,
+        mainSessionId: getMainSessionId(session.metadata),
         source: session.metadata.source,
         summary: session.metadata.summary ? { text: session.metadata.summary.text } : undefined,
         flavor: session.metadata.flavor ?? null,
@@ -149,7 +163,10 @@ function storedSessionToSummary(stored: StoredSession): SessionSummary {
         updatedAt: stored.updatedAt,
         lastMessageAt: stored.lastMessageAt,
         createdBy: stored.createdBy ?? undefined,
-        metadata: meta,
+        metadata: meta ? {
+            ...meta,
+            mainSessionId: getMainSessionId(meta),
+        } : null,
         todoProgress,
         pendingRequestsCount: 0,  // Offline sessions have no pending requests
         thinking: false,
@@ -1389,6 +1406,7 @@ export function createSessionsRoutes(
             modelMode: session.modelMode,
             modelReasoningEffort: session.modelReasoningEffort
         }
+        const resumeMetadata = extractResumeSpawnMetadata(session.metadata)
 
         // Extract native session ID for Claude/Codex resume
         const resumeSessionId = (() => {
@@ -1420,7 +1438,7 @@ export function createSessionsRoutes(
             spawnTarget.directory,
             flavor,
             undefined,
-            { sessionId, resumeSessionId, ...modeSettings }
+            { sessionId, resumeSessionId, ...modeSettings, ...resumeMetadata }
         )
 
         if (resumeAttempt.type === 'success') {
@@ -1452,7 +1470,7 @@ export function createSessionsRoutes(
             spawnTarget.directory,
             flavor,
             undefined,
-            { resumeSessionId, ...modeSettings }
+            { resumeSessionId, ...modeSettings, ...resumeMetadata }
         )
 
         if (fallbackResult.type !== 'success') {
@@ -1543,6 +1561,7 @@ export function createSessionsRoutes(
             modelMode: session.modelMode,
             modelReasoningEffort: session.modelReasoningEffort
         }
+        const resumeMetadata = extractResumeSpawnMetadata(session.metadata)
 
         // Kill the old Claude process (fire-and-forget, tolerate failure)
         if (session.active) {
@@ -1576,7 +1595,7 @@ export function createSessionsRoutes(
             spawnTarget.directory,
             flavor,
             undefined,
-            { sessionId, resumeSessionId, ...modeSettings }
+            { sessionId, resumeSessionId, ...modeSettings, ...resumeMetadata }
         )
 
         if (spawnResult.type !== 'success') {

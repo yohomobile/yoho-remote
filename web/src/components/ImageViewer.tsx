@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useYohoRemoteChatContextSafe } from '@/components/AssistantChat/context'
 
@@ -13,8 +13,14 @@ export function ImageViewer({ src, alt = 'Image', className = '' }: ImageViewerP
     const [isLoading, setIsLoading] = useState(true)
     const [hasError, setHasError] = useState(false)
     const context = useYohoRemoteChatContextSafe()
+    const modalRef = useRef<HTMLDivElement | null>(null)
+    const closeButtonRef = useRef<HTMLButtonElement | null>(null)
+    const previousActiveElementRef = useRef<HTMLElement | null>(null)
+    const previousOverflowRef = useRef<string>('')
 
     const handleOpen = useCallback(() => {
+        previousActiveElementRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+        previousOverflowRef.current = document.body.style.overflow
         setIsOpen(true)
     }, [])
 
@@ -25,6 +31,51 @@ export function ImageViewer({ src, alt = 'Image', className = '' }: ImageViewerP
     const handleKeyDown = useCallback((e: KeyboardEvent) => {
         if (e.key === 'Escape') {
             handleClose()
+        }
+    }, [handleClose])
+
+    // 复现：打开大图后按 Tab / Shift+Tab，焦点不应离开弹层；Esc 关闭后焦点要回到触发按钮。
+    const handleModalKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+        if (event.key === 'Escape') {
+            event.preventDefault()
+            event.stopPropagation()
+            handleClose()
+            return
+        }
+
+        if (event.key !== 'Tab') {
+            return
+        }
+
+        const root = modalRef.current
+        if (!root) {
+            return
+        }
+
+        const focusable = Array.from(root.querySelectorAll<HTMLElement>(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        )).filter((element) => element.tabIndex >= 0 && !element.hasAttribute('disabled'))
+
+        if (focusable.length === 0) {
+            event.preventDefault()
+            root.focus()
+            return
+        }
+
+        const active = document.activeElement
+        const currentIndex = focusable.findIndex((element) => element === active)
+
+        if (event.shiftKey) {
+            if (currentIndex <= 0) {
+                event.preventDefault()
+                focusable[focusable.length - 1]?.focus()
+            }
+            return
+        }
+
+        if (currentIndex === -1 || currentIndex === focusable.length - 1) {
+            event.preventDefault()
+            focusable[0]?.focus()
         }
     }, [handleClose])
 
@@ -58,9 +109,13 @@ export function ImageViewer({ src, alt = 'Image', className = '' }: ImageViewerP
 
         document.addEventListener('keydown', handleKeyDown)
         document.body.style.overflow = 'hidden'
+        closeButtonRef.current?.focus()
         return () => {
             document.removeEventListener('keydown', handleKeyDown)
-            document.body.style.overflow = ''
+            document.body.style.overflow = previousOverflowRef.current
+            if (previousActiveElementRef.current?.isConnected) {
+                previousActiveElementRef.current.focus({ preventScroll: true })
+            }
         }
     }, [isOpen, handleKeyDown])
 
@@ -136,10 +191,21 @@ export function ImageViewer({ src, alt = 'Image', className = '' }: ImageViewerP
 
             {isOpen && createPortal(
                 <div
+                    ref={modalRef}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label={alt}
+                    tabIndex={-1}
                     className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-                    onClick={handleClose}
+                    onClick={(event) => {
+                        if (event.target === event.currentTarget) {
+                            handleClose()
+                        }
+                    }}
+                    onKeyDown={handleModalKeyDown}
                 >
                     <button
+                        ref={closeButtonRef}
                         type="button"
                         onClick={handleClose}
                         className="absolute top-4 right-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"

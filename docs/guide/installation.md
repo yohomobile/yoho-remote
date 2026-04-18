@@ -109,6 +109,7 @@ Browser and PWA access use Keycloak SSO. `CLI_API_TOKEN` is still required for C
 | `WEB_URL` | - | Public web origin used in invitation emails |
 | `YOHO_REMOTE_HOME` | `~/.yoho-remote` | Config directory path |
 | `PG_HOST` / `PG_PORT` / `PG_USER` / `PG_PASSWORD` / `PG_DATABASE` | - | PostgreSQL connection settings |
+| `PG_BOSS_SCHEMA` | - | Required pg-boss schema name shared by server and worker |
 | `PG_SSL` | `false` | Enable PostgreSQL SSL |
 | `CORS_ORIGINS` | - | Allowed browser origins |
 | `KEYCLOAK_URL` | `https://auth.yohomobile.dev` | Public Keycloak base URL |

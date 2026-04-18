@@ -23,11 +23,39 @@ function hasTreeStructure(text: string): boolean {
     return TREE_CHAR_REGEX.test(text)
 }
 
-// Check if code blocks are balanced (even number of ``` markers)
-function isCodeBlockBalanced(text: string): boolean {
-    const markers = text.match(/```/g)
-    if (!markers) return true
-    return markers.length % 2 === 0
+type FenceMarker = '`' | '~'
+
+type OpenFence = {
+    marker: FenceMarker
+    length: number
+}
+
+function getUnclosedFence(text: string): OpenFence | null {
+    let openFence: OpenFence | null = null
+
+    for (const line of text.split('\n')) {
+        const match = line.match(/^\s{0,3}([`~]{3,})(.*)$/)
+        if (!match) continue
+
+        const fence = match[1]
+        const marker = fence[0] as FenceMarker
+        const rest = match[2] ?? ''
+        const isCloser = rest.trim().length === 0
+
+        if (openFence) {
+            if (marker === openFence.marker && fence.length >= openFence.length && isCloser) {
+                openFence = null
+            }
+            continue
+        }
+
+        openFence = {
+            marker,
+            length: fence.length
+        }
+    }
+
+    return openFence
 }
 
 // Preprocess markdown to handle incomplete code blocks and protect tree structures
@@ -62,15 +90,16 @@ export function preprocessMarkdown(text: string): string {
         })
     }
 
-    // If text has tree structure characters and code blocks are not balanced,
-    // close the unclosed code block
-    if (hasTreeStructure(text) && !isCodeBlockBalanced(text)) {
-        return text + '\n```'
+    // If a fenced code block was opened but not closed, append the matching fence.
+    // This intentionally ignores inline code spans (single backticks).
+    const openFence = getUnclosedFence(text)
+    if (openFence) {
+        return `${text}\n${openFence.marker.repeat(openFence.length)}`
     }
 
-    // If text has tree structure but is not inside any code block,
-    // and the lines look like tree output, wrap them in a code block
-    if (hasTreeStructure(text) && !text.includes('```')) {
+    // If text has tree structure but is not inside any fenced code block,
+    // and the lines look like tree output, wrap them in a code block.
+    if (hasTreeStructure(text) && !/^\s{0,3}([`~]{3,})/m.test(text)) {
         const lines = text.split('\n')
         const result: string[] = []
         let inTreeSection = false
@@ -141,9 +170,12 @@ function isRelativePath(text: string): boolean {
     return RELATIVE_PATH_REGEX.test(text.trim())
 }
 
-// 判断是否是文件夹（以 / 结尾或没有扩展名）
-function isFolderPath(path: string): boolean {
-    return path.endsWith('/') || !/\.[a-zA-Z0-9]+$/.test(path)
+// 判断是否是文件夹（只以 / 结尾；如有后端状态则优先信任）
+export function isFolderPath(path: string, status?: 'folder' | 'file' | null): boolean {
+    if (status) {
+        return status === 'folder'
+    }
+    return path.endsWith('/')
 }
 
 function isPath(text: string): boolean {

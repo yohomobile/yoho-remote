@@ -106,6 +106,7 @@ export type NormalizedMessage = ({
     content: AgentEvent
 }) & {
     id: string
+    seq?: number | null
     localId: string | null
     createdAt: number
     isSidechain: boolean
@@ -137,6 +138,7 @@ export type ChatToolCall = {
     startedAt: number | null
     completedAt: number | null
     description: string | null
+    parentUUID?: string | null
     result?: unknown
     permission?: ToolPermission
 }
@@ -157,7 +159,9 @@ export type AgentTextBlock = {
     id: string
     localId: string | null
     createdAt: number
+    seq?: number | null
     text: string
+    parentUUID?: string | null
     meta?: unknown
 }
 
@@ -166,7 +170,10 @@ export type AgentReasoningBlock = {
     id: string
     localId: string | null
     createdAt: number
+    seq?: number | null
     text: string
+    reasoningId?: string | null
+    parentUUID?: string | null
     meta?: unknown
     isDelta?: boolean
 }
@@ -194,6 +201,7 @@ export type ToolCallBlock = {
     id: string
     localId: string | null
     createdAt: number
+    seq?: number | null
     tool: ChatToolCall
     children: ChatBlock[]
     meta?: unknown

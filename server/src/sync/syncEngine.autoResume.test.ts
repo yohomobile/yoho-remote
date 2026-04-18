@@ -166,6 +166,76 @@ describe('SyncEngine auto-resume', () => {
         expect((engine as any)._dbActiveSessionIds.has(session.id)).toBe(false)
     })
 
+    test('preserves brain metadata when auto-resuming an existing session', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActive: async () => true,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const rpcRegistry = {
+            getSocketIdForMethod: () => 'socket-1',
+        } as any
+
+        const engine = new SyncEngine(store, io, rpcRegistry, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const machine = createMachine('machine-1')
+        const session = createSession('session-brain-child', {
+            machineId: machine.id,
+            path: '/tmp/project-brain',
+            flavor: 'codex',
+            codexSessionId: 'thread-brain',
+            startedFromDaemon: true,
+            source: 'brain-child',
+            mainSessionId: 'brain-session-1',
+            brainPreferences: {
+                machineSelection: { mode: 'manual', machineId: machine.id },
+            },
+        })
+
+        ;(engine as any).machines.set(machine.id, machine)
+        ;(engine as any).sessions.set(session.id, session)
+        ;(engine as any)._dbActiveSessionIds = new Set([session.id])
+
+        const spawnCalls: Array<Record<string, unknown> | undefined> = []
+        ;(engine as any).spawnSession = async (
+            _machineId: string,
+            _directory: string,
+            _agent: string,
+            _yolo: boolean | undefined,
+            options?: Record<string, unknown>
+        ) => {
+            spawnCalls.push(options)
+            return { type: 'success', sessionId: options?.sessionId ?? 'unknown' }
+        }
+        ;(engine as any).waitForAutoResumeGrace = async () => {}
+        ;(engine as any).waitForSessionHeartbeatAfter = async () => true
+
+        await (engine as any).autoResumeSessions(machine.id, machine.namespace)
+
+        expect(spawnCalls).toEqual([expect.objectContaining({
+            sessionId: session.id,
+            resumeSessionId: 'thread-brain',
+            source: 'brain-child',
+            mainSessionId: 'brain-session-1',
+            brainPreferences: {
+                machineSelection: { mode: 'manual', machineId: machine.id },
+            },
+        })])
+    })
+
     test('waits through reconnect grace before auto-resuming replacement sessions', async () => {
         const store = {
             getSessions: async () => [],

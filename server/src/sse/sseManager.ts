@@ -137,7 +137,10 @@ export class SSEManager {
             }
         }
 
-        if (event.type === 'message-received') {
+        if (event.type === 'message-received' || event.type === 'messages-cleared') {
+            if (connection.all && !connection.sessionId) {
+                return true
+            }
             return Boolean(event.sessionId && connection.sessionId === event.sessionId)
         }
 

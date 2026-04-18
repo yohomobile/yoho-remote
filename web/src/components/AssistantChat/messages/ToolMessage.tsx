@@ -58,6 +58,10 @@ function splitTaskChildren(block: ToolCallBlock): { pending: ChatBlock[]; rest: 
     return { pending, rest }
 }
 
+function getTaskDetailsLabel(toolName: string): string {
+    return toolName === 'Agent' ? 'Agent details' : 'Task details'
+}
+
 function todoStatusTone(status: PlanTodoReminderItem['status']): string {
     if (status === 'completed') return 'text-emerald-600'
     if (status === 'in_progress') return 'text-[var(--app-link)]'
@@ -258,7 +262,7 @@ function YohoRemoteNestedBlockList(props: {
                                         {taskChildren && taskChildren.rest.length > 0 ? (
                                             <details className="mt-2">
                                                 <summary className="cursor-pointer text-xs text-[var(--app-hint)]">
-                                                    Task details ({taskChildren.rest.length})
+                                                    {getTaskDetailsLabel(block.tool.name)} ({taskChildren.rest.length})
                                                 </summary>
                                                 <div className="mt-2 pl-3">
                                                     <YohoRemoteNestedBlockList blocks={taskChildren.rest} />
@@ -348,7 +352,7 @@ export function YohoRemoteToolMessage(props: ToolCallMessagePartProps) {
                         {taskChildren && taskChildren.rest.length > 0 ? (
                             <details className="mt-2">
                                 <summary className="cursor-pointer text-xs text-[var(--app-hint)]">
-                                    Task details ({taskChildren.rest.length})
+                                    {getTaskDetailsLabel(block.tool.name)} ({taskChildren.rest.length})
                                 </summary>
                                 <div className="mt-2 pl-3">
                                     <YohoRemoteNestedBlockList blocks={taskChildren.rest} />

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { logger } from '@/ui/logger';
 import { MessageBuffer } from '../ui/ink/messageBuffer';
 import type { CodexSession } from './session';
 import { __testOnly } from './codexExecLauncher';
@@ -110,6 +111,25 @@ describe('codexExecLauncher event bridge', () => {
                 query: 'codex exec json event types',
                 action: { kind: 'search' },
             },
+        });
+    });
+
+    it('emits reasoning only once on completion', () => {
+        const { ctx, sent } = createHarness();
+        const item = {
+            id: 'reasoning-1',
+            type: 'reasoning',
+            text: 'thinking',
+        };
+
+        __testOnly.handleExecEvent({ type: 'item.started', item }, ctx);
+        __testOnly.handleExecEvent({ type: 'item.completed', item }, ctx);
+        __testOnly.handleExecEvent({ type: 'item.completed', item }, ctx);
+
+        expect(sent).toHaveLength(1);
+        expect(sent[0]).toMatchObject({
+            type: 'reasoning-delta',
+            delta: 'thinking',
         });
     });
 
@@ -306,5 +326,31 @@ describe('codexExecLauncher event bridge', () => {
                 message: 'model rerouted: gpt-5 -> gpt-5-mini',
             }),
         ]);
+    });
+
+    it('warns on unknown event and item types', () => {
+        const { ctx, sent } = createHarness();
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+        __testOnly.handleExecEvent({ type: 'new.event', payload: { hello: 'world' } } as never, ctx);
+        __testOnly.handleExecEvent({
+            type: 'item.started',
+            item: {
+                id: 'unknown-1',
+                type: 'new_item_type',
+            },
+        } as never, ctx);
+        __testOnly.handleExecEvent({
+            type: 'item.completed',
+            item: {
+                id: 'unknown-2',
+                type: 'new_item_type',
+            },
+        } as never, ctx);
+
+        expect(warnSpy).toHaveBeenCalledTimes(3);
+        expect(sent).toHaveLength(0);
+
+        warnSpy.mockRestore();
     });
 });

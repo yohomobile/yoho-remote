@@ -3,8 +3,9 @@ import { z } from 'zod'
 import { basename, join, resolve, dirname } from 'node:path'
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import type { SyncEngine } from '../../sync/syncEngine'
+import type { IStore } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
-import { requireSession, requireSessionFromParam, requireSyncEngine } from './guards'
+import { requireSession, requireSessionFromParam, requireSessionFromParamWithShareCheck, requireSyncEngine } from './guards'
 import { getConfiguration } from '../../configuration'
 
 const fileSearchSchema = z.object({
@@ -64,7 +65,7 @@ async function runRpc<T>(fn: () => Promise<T>): Promise<T | { success: false; er
     }
 }
 
-export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<WebAppEnv> {
+export function createGitRoutes(getSyncEngine: () => SyncEngine | null, store: IStore): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
     app.get('/sessions/:id/git-status', async (c) => {
@@ -73,7 +74,7 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
             return engine
         }
 
-        const sessionResult = requireSessionFromParam(c, engine)
+        const sessionResult = await requireSessionFromParamWithShareCheck(c, engine, store)
         if (sessionResult instanceof Response) {
             return sessionResult
         }
@@ -93,7 +94,7 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
             return engine
         }
 
-        const sessionResult = requireSessionFromParam(c, engine)
+        const sessionResult = await requireSessionFromParamWithShareCheck(c, engine, store)
         if (sessionResult instanceof Response) {
             return sessionResult
         }
@@ -114,7 +115,7 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
             return engine
         }
 
-        const sessionResult = requireSessionFromParam(c, engine)
+        const sessionResult = await requireSessionFromParamWithShareCheck(c, engine, store)
         if (sessionResult instanceof Response) {
             return sessionResult
         }
@@ -144,7 +145,7 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
             return engine
         }
 
-        const sessionResult = requireSessionFromParam(c, engine)
+        const sessionResult = await requireSessionFromParamWithShareCheck(c, engine, store)
         if (sessionResult instanceof Response) {
             return sessionResult
         }

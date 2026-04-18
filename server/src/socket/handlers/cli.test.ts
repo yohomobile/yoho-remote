@@ -157,4 +157,85 @@ describe('registerCliHandlers', () => {
 
         expect(addMessageCalls).toBe(0)
     })
+
+    test('derives a stable localId from agent payloads when the client omits one', async () => {
+        const handlers = new Map<string, (...args: any[]) => unknown>()
+        const addMessageCalls: Array<{ sessionId: string; localId: string | null | undefined }> = []
+
+        const socket = {
+            id: 'socket-local-id',
+            data: { namespace: 'default' },
+            handshake: { auth: {} },
+            join: () => undefined,
+            on: (event: string, handler: (...args: any[]) => unknown) => {
+                handlers.set(event, handler)
+            },
+            emit: () => {},
+            to: () => ({ emit: () => {} }),
+            disconnect: () => {},
+        }
+
+        const store = {
+            getSessionByNamespace: async (id: string, namespace: string) => (
+                id === 'session-local-id' && namespace === 'default'
+                    ? { id, namespace }
+                    : null
+            ),
+            getSession: async () => null,
+            getMachineByNamespace: async () => null,
+            getMachine: async () => null,
+            addMessage: async (sessionId: string, _content: unknown, localId?: string) => {
+                addMessageCalls.push({ sessionId, localId })
+                return {
+                    id: 'msg-local-id',
+                    sessionId,
+                    seq: 1,
+                    localId: localId ?? null,
+                    content: {},
+                    createdAt: 1
+                }
+            }
+        }
+
+        const io = {
+            of: () => ({
+                sockets: new Map<string, { disconnect: (close?: boolean) => void }>(),
+            }),
+        }
+
+        registerCliHandlers(socket as any, {
+            io: io as any,
+            store: store as any,
+            rpcRegistry: new RpcRegistry(),
+        })
+
+        const messageHandler = handlers.get('message')
+        expect(messageHandler).toBeDefined()
+
+        await messageHandler!({
+            sid: 'session-local-id',
+            message: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        uuid: 'claude-msg-uuid',
+                        timestamp: '2026-04-17T00:00:00.000Z',
+                        type: 'message',
+                        message: 'hello'
+                    }
+                },
+                meta: {
+                    sentFrom: 'cli'
+                }
+            }
+        })
+
+        expect(addMessageCalls).toEqual([
+            {
+                sessionId: 'session-local-id',
+                localId: 'claude-msg-uuid'
+            }
+        ])
+    })
 })

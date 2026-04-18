@@ -18,7 +18,7 @@ See `src/configuration.ts` for all options.
 ### Required
 
 - `CLI_API_TOKEN` - Shared secret used by CLI and daemon connections.
-- `PG_HOST`/`PG_PORT`/`PG_USER`/`PG_PASSWORD`/`PG_DATABASE` - PostgreSQL connection settings.
+- `PG_HOST`/`PG_PORT`/`PG_USER`/`PG_PASSWORD`/`PG_DATABASE`/`PG_BOSS_SCHEMA` - PostgreSQL connection settings and pg-boss schema. These must now be set explicitly; the server no longer falls back to localhost/postgres/yoho_remote/pgboss.
 - `KEYCLOAK_URL`/`KEYCLOAK_REALM`/`KEYCLOAK_CLIENT_ID`/`KEYCLOAK_CLIENT_SECRET` - Browser/PWA SSO settings.
 
 ### Optional (Telegram)
@@ -55,6 +55,7 @@ export PG_PORT="5432"
 export PG_USER="yoho_remote"
 export PG_PASSWORD="..."
 export PG_DATABASE="yoho_remote"
+export PG_BOSS_SCHEMA="pgboss"
 export KEYCLOAK_URL="https://sso.example.com"
 export KEYCLOAK_REALM="yoho"
 export KEYCLOAK_CLIENT_ID="yoho-remote"

@@ -32,6 +32,22 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
     };
     session.addSessionFoundCallback(handleSessionFound);
 
+    const handleSessionClearMessages = (payload: { sid?: string; sessionId?: string; time?: number }) => {
+        const targetSessionId = typeof payload.sid === 'string' && payload.sid.length > 0
+            ? payload.sid
+            : typeof payload.sessionId === 'string' && payload.sessionId.length > 0
+                ? payload.sessionId
+                : session.client.sessionId;
+        if (targetSessionId !== session.client.sessionId) {
+            return;
+        }
+        scanner.clearSessionCache(
+            targetSessionId,
+            typeof payload.time === 'number' && Number.isFinite(payload.time) ? payload.time : Date.now()
+        );
+    };
+    session.client.on('session:clear-messages', handleSessionClearMessages);
+
 
     // Handle abort and interrupt
     let exitReason: 'switch' | 'exit' | null = null;
@@ -161,6 +177,7 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
 
         // Cleanup
         session.removeSessionFoundCallback(handleSessionFound);
+        session.client.off('session:clear-messages', handleSessionClearMessages);
         await scanner.cleanup();
     }
 

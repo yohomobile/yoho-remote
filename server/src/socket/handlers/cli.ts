@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import type { IStore, StoredMachine, StoredSession } from '../../store'
 import { RpcRegistry } from '../rpcRegistry'
 import type { SyncEvent } from '../../sync/syncEngine'
@@ -72,6 +72,16 @@ const machineUpdateStateSchema = z.object({
     daemonState: z.unknown().nullable()
 })
 
+export const sessionClearMessagesUpdateBodySchema = z.object({
+    t: z.literal('session:clear-messages'),
+    sid: z.string(),
+    keepCount: z.number().int().min(0),
+    deleted: z.number().int().nonnegative(),
+    remaining: z.number().int().nonnegative(),
+}).passthrough()
+
+export type SessionClearMessagesUpdateBody = z.infer<typeof sessionClearMessagesUpdateBodySchema>
+
 export type CliHandlersDeps = {
     io: SocketServer
     store: IStore
@@ -119,6 +129,116 @@ function extractPlainUserTextMessage(content: unknown): { text: string; sentFrom
     const sentFrom = typeof meta?.sentFrom === 'string' ? meta.sentFrom : null
 
     return { text, sentFrom }
+}
+
+function parseCliMessageRecord(content: unknown): Record<string, unknown> | null {
+    if (!isObject(content)) {
+        return null
+    }
+    return content
+}
+
+function generateUlid(timestamp = Date.now()): string {
+    const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+    let timeValue = BigInt(Math.max(0, Math.floor(timestamp)))
+    const timeChars = Array<string>(10)
+    for (let index = 9; index >= 0; index -= 1) {
+        timeChars[index] = ULID_ALPHABET[Number(timeValue % 32n)]
+        timeValue /= 32n
+    }
+
+    const random = randomBytes(10)
+    let randomValue = 0n
+    for (const byte of random) {
+        randomValue = (randomValue << 8n) | BigInt(byte)
+    }
+    const randomChars = Array<string>(16)
+    for (let index = 15; index >= 0; index -= 1) {
+        randomChars[index] = ULID_ALPHABET[Number(randomValue % 32n)]
+        randomValue /= 32n
+    }
+
+    return `${timeChars.join('')}${randomChars.join('')}`
+}
+
+function extractStableCliLocalId(content: unknown): string | null {
+    const record = parseCliMessageRecord(content)
+    if (!record) {
+        return null
+    }
+
+    const directCandidates = ['localId', 'local_id']
+    for (const key of directCandidates) {
+        const value = record[key]
+        if (typeof value === 'string' && value.trim()) {
+            return value.trim()
+        }
+    }
+
+    const body = isObject(record.content) ? record.content as Record<string, unknown> : null
+    if (!body) {
+        return null
+    }
+
+    const candidateLists = [
+        [body, ['uuid', 'id', 'requestId', 'request_id', 'callId', 'call_id', 'leafUuid', 'leaf_uuid']],
+        [isObject(body.data) ? body.data as Record<string, unknown> : null, ['uuid', 'id', 'requestId', 'request_id', 'callId', 'call_id', 'leafUuid', 'leaf_uuid']],
+        [isObject(body.message) ? body.message as Record<string, unknown> : null, ['uuid', 'id', 'requestId', 'request_id']],
+    ] as const
+
+    for (const [candidateRecord, keys] of candidateLists) {
+        if (!candidateRecord) {
+            continue
+        }
+        for (const key of keys) {
+            const value = candidateRecord[key]
+            if (typeof value === 'string' && value.trim()) {
+                return value.trim()
+            }
+        }
+    }
+
+    return null
+}
+
+function resolveCliLocalId(content: unknown, providedLocalId?: string): string {
+    const trimmed = providedLocalId?.trim()
+    if (trimmed) {
+        return trimmed
+    }
+
+    const stableId = extractStableCliLocalId(content)
+    if (stableId) {
+        return stableId
+    }
+
+    return generateUlid()
+}
+
+export function buildSessionClearMessagesUpdate(input: {
+    sessionId: string
+    keepCount: number
+    deleted: number
+    remaining: number
+}): {
+    id: string
+    seq: number
+    createdAt: number
+    body: SessionClearMessagesUpdateBody
+} {
+    const now = Date.now()
+    return {
+        id: randomUUID(),
+        seq: now,
+        createdAt: now,
+        body: sessionClearMessagesUpdateBodySchema.parse({
+            t: 'session:clear-messages',
+            sid: input.sessionId,
+            keepCount: input.keepCount,
+            deleted: input.deleted,
+            remaining: input.remaining,
+        })
+    }
 }
 
 async function shouldSuppressCliUserEcho(
@@ -321,7 +441,8 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
                 return
             }
 
-            const msg = await store.addMessage(sid, content, localId)
+            const resolvedLocalId = resolveCliLocalId(content, localId)
+            const msg = await store.addMessage(sid, content, resolvedLocalId)
 
             const todos = extractTodoWriteTodosFromMessageContent(content)
             if (todos) {

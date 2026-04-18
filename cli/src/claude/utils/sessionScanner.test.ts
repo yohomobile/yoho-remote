@@ -248,4 +248,146 @@ describe('sessionScanner', () => {
     expect(collectedMessages).toHaveLength(2)
     expect(collectedMessages.map((msg) => msg.type)).toEqual(['attachment', 'attachment'])
   })
+
+  it('keeps same-timestamp Claude semantic events distinct without uuid', async () => {
+    scanner = await createSessionScanner({
+      sessionId: null,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg)
+    })
+
+    const sessionId = 'semantic-key-session'
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+    const timestamp = '2026-04-17T00:00:00.000Z'
+    const lines = [
+      JSON.stringify({ type: 'result', request_id: 'req-1', session_id: sessionId, result: 'done-1', timestamp }),
+      JSON.stringify({ type: 'result', request_id: 'req-2', session_id: sessionId, result: 'done-2', timestamp }),
+      JSON.stringify({ type: 'progress', step_id: 'step-1', progress: 10, timestamp }),
+      JSON.stringify({ type: 'progress', step_id: 'step-2', progress: 20, timestamp }),
+      JSON.stringify({ type: 'rate_limit_event', limit_type: 'requests', remaining: 3, timestamp }),
+      JSON.stringify({ type: 'rate_limit_event', limit_type: 'tokens', remaining: 2, timestamp }),
+      JSON.stringify({ type: 'tool_progress', tool_use_id: 'tool-1', seq: 1, timestamp }),
+      JSON.stringify({ type: 'tool_progress', tool_use_id: 'tool-1', seq: 2, timestamp })
+    ].join('\n') + '\n'
+
+    await writeFile(sessionFile, lines)
+    scanner.onNewSession(sessionId)
+    await new Promise(resolve => setTimeout(resolve, 150))
+
+    expect(collectedMessages).toHaveLength(8)
+    expect(collectedMessages.map((msg) => msg.type)).toEqual([
+      'result',
+      'result',
+      'progress',
+      'progress',
+      'rate_limit_event',
+      'rate_limit_event',
+      'tool_progress',
+      'tool_progress'
+    ])
+  })
+
+  it('keeps distinct unknown Claude payloads with identical timestamps from collapsing', async () => {
+    scanner = await createSessionScanner({
+      sessionId: null,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg)
+    })
+
+    const sessionId = 'unknown-hash-session'
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+    const timestamp = '2026-04-17T00:00:00.000Z'
+    const lines = [
+      JSON.stringify({
+        type: 'custom_event',
+        request_id: 'req-a',
+        timestamp,
+        detail: { step: 'one', status: 'running' }
+      }),
+      JSON.stringify({
+        type: 'custom_event',
+        request_id: 'req-b',
+        timestamp,
+        detail: { step: 'two', status: 'running' }
+      })
+    ].join('\n') + '\n'
+
+    await writeFile(sessionFile, lines)
+    scanner.onNewSession(sessionId)
+    await new Promise(resolve => setTimeout(resolve, 150))
+
+    expect(collectedMessages).toHaveLength(2)
+    expect(collectedMessages.map((msg) => msg.type)).toEqual(['custom_event', 'custom_event'])
+  })
+
+  it('skips pre-clear messages after a session clear signal but still emits newer ones', async () => {
+    const sessionId = 'session-clear-cache'
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+    const oldTimestamp = '2026-04-17T00:00:00.000Z'
+
+    await writeFile(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: 'user',
+          sessionId,
+          uuid: 'user-before-clear',
+          timestamp: oldTimestamp,
+          message: {
+            role: 'user',
+            content: 'before clear'
+          }
+        })
+      ].join('\n') + '\n'
+    )
+
+    scanner = await createSessionScanner({
+      sessionId,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg)
+    })
+
+    await new Promise(resolve => setTimeout(resolve, 150))
+    expect(collectedMessages).toHaveLength(0)
+
+    scanner.clearSessionCache(sessionId, Date.parse('2026-04-17T00:00:02.000Z'))
+
+    await appendFile(
+      sessionFile,
+      JSON.stringify({
+        type: 'user',
+        sessionId,
+        uuid: 'user-after-clear-old',
+        timestamp: oldTimestamp,
+        message: {
+          role: 'user',
+          content: 'after clear but old timestamp'
+        }
+      }) + '\n'
+    )
+    await appendFile(
+      sessionFile,
+      JSON.stringify({
+        type: 'user',
+        sessionId,
+        uuid: 'user-after-clear-new',
+        timestamp: '2026-04-17T00:00:05.000Z',
+        message: {
+          role: 'user',
+          content: 'after clear and new timestamp'
+        }
+      }) + '\n'
+    )
+
+    await new Promise(resolve => setTimeout(resolve, 250))
+
+    expect(collectedMessages).toHaveLength(1)
+    expect(collectedMessages[0]).toMatchObject({
+      uuid: 'user-after-clear-new',
+      message: {
+        role: 'user',
+        content: 'after clear and new timestamp'
+      }
+    })
+  })
 })

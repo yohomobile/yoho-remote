@@ -2,6 +2,22 @@ import { describe, expect, it } from 'bun:test'
 import { SSEManager } from './sseManager'
 import type { SyncEvent } from '../sync/syncEngine'
 
+function createMessage(seq: number): SyncEvent['message'] {
+    return {
+        id: `msg-${seq}`,
+        seq,
+        localId: null,
+        content: {
+            role: 'user',
+            content: {
+                type: 'text',
+                text: `message-${seq}`
+            }
+        },
+        createdAt: 1_700_000_000_000 + seq
+    }
+}
+
 describe('SSEManager namespace filtering', () => {
     it('routes events to matching namespace', () => {
         const manager = new SSEManager(0)
@@ -113,5 +129,102 @@ describe('SSEManager namespace filtering', () => {
 
         expect(receivedAll).toHaveLength(0)
         expect(receivedDetail).toHaveLength(1)
+    })
+
+    it('lets all-sessions subscribers receive message-received while preserving session filtering', () => {
+        const manager = new SSEManager(0)
+        const receivedAll: string[] = []
+        const receivedDetail: string[] = []
+
+        manager.subscribe({
+            id: 'all',
+            namespace: 'alpha',
+            all: true,
+            send: (event) => {
+                if (event.type === 'message-received') {
+                    receivedAll.push(event.sessionId as string)
+                }
+            },
+            sendHeartbeat: () => {}
+        })
+
+        manager.subscribe({
+            id: 'detail',
+            namespace: 'alpha',
+            all: true,
+            sessionId: 's1',
+            send: (event) => {
+                if (event.type === 'message-received') {
+                    receivedDetail.push(event.sessionId as string)
+                }
+            },
+            sendHeartbeat: () => {}
+        })
+
+        receivedAll.length = 0
+        receivedDetail.length = 0
+
+        manager.broadcast({
+            type: 'message-received',
+            namespace: 'alpha',
+            sessionId: 's1',
+            message: createMessage(1)
+        })
+        manager.broadcast({
+            type: 'message-received',
+            namespace: 'alpha',
+            sessionId: 's2',
+            message: createMessage(2)
+        })
+
+        expect(receivedAll).toEqual(['s1', 's2'])
+        expect(receivedDetail).toEqual(['s1'])
+    })
+
+    it('lets all-sessions subscribers receive messages-cleared while preserving session filtering', () => {
+        const manager = new SSEManager(0)
+        const receivedAll: string[] = []
+        const receivedDetail: string[] = []
+
+        manager.subscribe({
+            id: 'all',
+            namespace: 'alpha',
+            all: true,
+            send: (event) => {
+                if (event.type === 'messages-cleared') {
+                    receivedAll.push(event.sessionId as string)
+                }
+            },
+            sendHeartbeat: () => {}
+        })
+
+        manager.subscribe({
+            id: 'detail',
+            namespace: 'alpha',
+            sessionId: 's1',
+            send: (event) => {
+                if (event.type === 'messages-cleared') {
+                    receivedDetail.push(event.sessionId as string)
+                }
+            },
+            sendHeartbeat: () => {}
+        })
+
+        receivedAll.length = 0
+        receivedDetail.length = 0
+
+        manager.broadcast({
+            type: 'messages-cleared',
+            namespace: 'alpha',
+            sessionId: 's1'
+        })
+        manager.broadcast({
+            type: 'messages-cleared',
+            namespace: 'alpha',
+            sessionId: 's2'
+        })
+
+        expect(receivedAll).toEqual(['s1', 's2'])
+        expect(receivedDetail).toEqual(['s1'])
     })
 })

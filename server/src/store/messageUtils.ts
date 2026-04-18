@@ -1,3 +1,42 @@
+function asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object') return null
+    return value as Record<string, unknown>
+}
+
+function asNonEmptyString(value: unknown): string | null {
+    if (typeof value !== 'string') return null
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : null
+}
+
+export function isTurnStartUserMessage(content: unknown): boolean {
+    const record = asRecord(content)
+    if (!record || record.role !== 'user') {
+        return false
+    }
+
+    if (typeof record.content === 'string') {
+        return asNonEmptyString(record.content) !== null
+    }
+
+    const contentRecord = asRecord(record.content)
+    if (contentRecord?.type === 'text') {
+        return asNonEmptyString(contentRecord.text) !== null
+    }
+
+    if (!Array.isArray(record.content)) {
+        return false
+    }
+
+    return record.content.some((block) => {
+        const blockRecord = asRecord(block)
+        if (!blockRecord || typeof blockRecord.type !== 'string') {
+            return false
+        }
+        return blockRecord.type === 'text' || blockRecord.type === 'image' || blockRecord.type === 'document'
+    })
+}
+
 export function isRealActivityMessage(content: unknown): boolean {
     function hasVisibleClaudeAttachment(data: Record<string, unknown>): boolean {
         if (data.type !== 'attachment') return false

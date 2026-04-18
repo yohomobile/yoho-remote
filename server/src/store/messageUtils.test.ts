@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { isRealActivityMessage } from './messageUtils'
+import { isRealActivityMessage, isTurnStartUserMessage } from './messageUtils'
 
 describe('isRealActivityMessage', () => {
     test('treats Claude result text as real activity', () => {
@@ -78,5 +78,45 @@ describe('isRealActivityMessage', () => {
                 }
             }
         })).toBe(true)
+    })
+})
+
+describe('isTurnStartUserMessage', () => {
+    test('accepts direct text user messages', () => {
+        expect(isTurnStartUserMessage({
+            role: 'user',
+            content: {
+                type: 'text',
+                text: '继续'
+            }
+        })).toBe(true)
+    })
+
+    test('accepts user content arrays', () => {
+        expect(isTurnStartUserMessage({
+            role: 'user',
+            content: [
+                { type: 'text', text: 'say lol' }
+            ]
+        })).toBe(true)
+    })
+
+    test('accepts non-text user blocks that still start a turn', () => {
+        expect(isTurnStartUserMessage({
+            role: 'user',
+            content: [
+                { type: 'image' }
+            ]
+        })).toBe(true)
+    })
+
+    test('rejects empty user text payloads', () => {
+        expect(isTurnStartUserMessage({
+            role: 'user',
+            content: {
+                type: 'text',
+                text: '   '
+            }
+        })).toBe(false)
     })
 })

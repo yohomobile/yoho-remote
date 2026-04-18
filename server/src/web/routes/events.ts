@@ -3,7 +3,9 @@ import { streamSSE } from 'hono/streaming'
 import { randomUUID } from 'node:crypto'
 import type { SSEManager } from '../../sse/sseManager'
 import type { SyncEngine } from '../../sync/syncEngine'
+import type { IStore } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
+import { requireSessionWithShareCheck } from './guards'
 
 function parseOptionalId(value: string | undefined): string | null {
     if (!value) {
@@ -21,7 +23,8 @@ function parseBoolean(value: string | undefined): boolean {
 
 export function createEventsRoutes(
     getSseManager: () => SSEManager | null,
-    getSyncEngine: () => SyncEngine | null
+    getSyncEngine: () => SyncEngine | null,
+    store: IStore
 ): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
@@ -48,13 +51,9 @@ export function createEventsRoutes(
                 return c.json({ error: 'Not connected' }, 503)
             }
             if (sessionId) {
-                // Try memory first, then fallback to database (handles sessions not yet loaded into memory)
-                const session = await engine.getOrRefreshSession(sessionId)
-                if (!session) {
-                    return c.json({ error: 'Session not found' }, 404)
-                }
-                if (session.namespace !== namespace) {
-                    return c.json({ error: 'Session access denied' }, 403)
+                const sessionResult = await requireSessionWithShareCheck(c, engine, store, sessionId)
+                if (sessionResult instanceof Response) {
+                    return sessionResult
                 }
             }
             if (machineId) {

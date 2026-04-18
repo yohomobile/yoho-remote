@@ -19,6 +19,7 @@ export default defineConfig({
     sidebar: [
       { text: 'Quick Start', link: '/guide/quick-start' },
       { text: 'Installation', link: '/guide/installation' },
+      { text: '部署 Runbook', link: '/guide/deployment-runbook' },
       { text: 'PWA', link: '/guide/pwa' },
       { text: 'How it Works', link: '/guide/how-it-works' },
       { text: '外部接入', link: '/guide/external-api' },

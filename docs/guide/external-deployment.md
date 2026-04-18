@@ -7,6 +7,8 @@ This guide covers the split deployment model:
 - Browser/PWA access uses Keycloak SSO
 - CLI/daemon access still uses `CLI_API_TOKEN`
 
+Before any production rollout, execute the pre-deploy checklist in [Deployment Runbook](./deployment-runbook.md).
+
 ## Build artifacts
 
 From the repo root:
@@ -17,6 +19,8 @@ bun run build
 cd cli
 bun run build:exe:server
 bun run build:exe:daemon
+cd ../worker
+bun run build:exe
 ```
 
 This produces:
@@ -24,6 +28,7 @@ This produces:
 - `cli/dist-exe/.../yoho-remote`
 - `cli/dist-exe/.../yoho-remote-server`
 - `cli/dist-exe/.../yoho-remote-daemon`
+- `worker/dist-exe/yoho-remote-worker`
 - `server/dist/index.js`
 - `web/dist/`
 
@@ -44,6 +49,7 @@ PG_USER=yoho_remote
 PG_PASSWORD=replace-me
 PG_DATABASE=yoho_remote
 PG_SSL=false
+PG_BOSS_SCHEMA=pgboss
 
 KEYCLOAK_URL=https://sso.example.com
 KEYCLOAK_INTERNAL_URL=https://sso.example.com
@@ -65,19 +71,65 @@ Notes:
 - Browser/PWA login uses Keycloak SSO.
 - `WEB_URL` is used in invitation emails.
 - `SMTP_*` is optional but required for email invitations.
+- `PG_*` 与 `PG_BOSS_SCHEMA` 必须显式提供；server/worker 不再回落到本地默认 PostgreSQL 配置。
+
+## Worker environment
+
+Example `worker.env`:
+
+```bash
+PG_HOST=127.0.0.1
+PG_PORT=5432
+PG_USER=yoho_remote
+PG_PASSWORD=replace-me
+PG_DATABASE=yoho_remote
+PG_SSL=false
+PG_BOSS_SCHEMA=pgboss
+
+DEEPSEEK_API_KEY=replace-me
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_TIMEOUT_MS=60000
+WORKER_CONCURRENCY=1
+SUMMARIZATION_RUN_RETENTION_DAYS=30
+```
+
+Notes:
+
+- `DEEPSEEK_API_KEY` is required; without it the worker exits during startup.
+- `PG_BOSS_SCHEMA` must match `server.env` exactly.
 
 ## Server systemd
 
 Use the template in repo root as a starting point:
 
 - `yoho-remote-server.service`
+- `yoho-remote-worker.service`
 - `yoho-remote-daemon.service`
+- `yoho-remote-server.env.example`
+- `yoho-remote-worker.env.example`
+- `yoho-remote-daemon.systemd.env.example`
 
 Recommended layout:
 
-- binaries in `/opt/yoho-remote/`
-- env files in `/etc/yoho-remote/`
+- server/worker binaries in `/opt/yoho-remote/`
+- server/worker env files in `/etc/yoho-remote/`
 - runtime state in `/var/lib/yoho-remote/`
+- daemon env file in `~/.yoho-remote/daemon.systemd.env`
+
+Recommended central-node install commands:
+
+```bash
+sudo install -d -m 0755 /opt/yoho-remote /etc/yoho-remote /var/lib/yoho-remote
+sudo install -m 0755 cli/dist-exe/<target>/yoho-remote-server /opt/yoho-remote/yoho-remote-server
+sudo install -m 0755 worker/dist-exe/yoho-remote-worker /opt/yoho-remote/yoho-remote-worker
+sudo install -m 0644 yoho-remote-server.service /etc/systemd/system/yoho-remote-server.service
+sudo install -m 0644 yoho-remote-worker.service /etc/systemd/system/yoho-remote-worker.service
+sudo install -m 0600 yoho-remote-server.env.example /etc/yoho-remote/server.env
+sudo install -m 0600 yoho-remote-worker.env.example /etc/yoho-remote/worker.env
+```
+
+Then edit `/etc/yoho-remote/server.env` and `/etc/yoho-remote/worker.env` with real secrets before starting the services.
 
 ## Daemon machines
 
@@ -94,6 +146,8 @@ On Linux, `hapi daemon install` writes:
 
 - systemd unit: `/etc/systemd/system/yoho-remote-daemon.service`
 - env file: `~/.yoho-remote/daemon.systemd.env`
+
+If you manage the daemon service manually instead of `hapi daemon install`, keep the same env file path and update the repo-root `yoho-remote-daemon.service` template to the actual service user home directory.
 
 Check status:
 

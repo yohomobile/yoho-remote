@@ -97,8 +97,11 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null, sto
 
         const body = await c.req.json().catch(() => ({}))
         const parsed = clearMessagesBodySchema.safeParse(body)
-        const keepCount = parsed.success ? (parsed.data.keepCount ?? 30) : 30
-        const shouldCompact = parsed.success ? (parsed.data.compact ?? false) : false
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+        const keepCount = parsed.data.keepCount ?? 30
+        const shouldCompact = parsed.data.compact ?? false
 
         // If compact requested and session is active, send /compact command first
         if (shouldCompact) {
@@ -111,7 +114,7 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null, sto
             }
         }
 
-        const result = engine.clearSessionMessages(sessionResult.sessionId, keepCount)
+        const result = await engine.clearSessionMessages(sessionResult.sessionId, keepCount)
         return c.json({ ok: true, ...result, compacted: shouldCompact })
     })
 
