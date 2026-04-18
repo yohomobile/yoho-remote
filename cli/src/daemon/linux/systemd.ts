@@ -7,11 +7,20 @@ import { configuration } from '@/configuration';
 export const SYSTEMD_SERVICE_NAME = 'yoho-remote-daemon.service';
 export const SYSTEMD_SERVICE_PATH = `/etc/systemd/system/${SYSTEMD_SERVICE_NAME}`;
 
-type InstallContext = {
+export type InstallContext = {
     envFilePath: string
     execParts: string[]
     serviceUser: string
     workingDirectory: string
+}
+
+export type SystemdFileWriteResult = {
+    changed: boolean
+    existed: boolean
+}
+
+export type PreparedSystemdInstall = InstallContext & {
+    envFileChanged: boolean
 }
 
 function quoteSystemdValue(value: string): string {
@@ -116,16 +125,30 @@ function collectEnvEntries(serviceUser: string): Array<[string, string]> {
     return Array.from(entries.entries()).sort(([a], [b]) => a.localeCompare(b));
 }
 
-function writeEnvFile(envFilePath: string, entries: Array<[string, string]>): void {
+function buildEnvFile(entries: Array<[string, string]>): string {
+    return `${entries.map(([key, value]) => `${key}=${quoteSystemdValue(value)}`).join('\n')}\n`;
+}
+
+function writeTextFileIfChanged(path: string, content: string, mode: number): SystemdFileWriteResult {
+    const existed = existsSync(path);
+    const previous = existed ? readFileSync(path, 'utf8') : null;
+    if (previous === content) {
+        return { existed, changed: false };
+    }
+
+    writeFileSync(path, content, { mode });
+    return { existed, changed: true };
+}
+
+function writeEnvFile(envFilePath: string, entries: Array<[string, string]>): SystemdFileWriteResult {
     const dir = dirname(envFilePath);
     if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true });
     }
-    const content = `${entries.map(([key, value]) => `${key}=${quoteSystemdValue(value)}`).join('\n')}\n`;
-    writeFileSync(envFilePath, content, { mode: 0o600 });
+    return writeTextFileIfChanged(envFilePath, buildEnvFile(entries), 0o600);
 }
 
-function buildServiceFile(context: InstallContext): string {
+export function buildSystemdServiceFile(context: InstallContext): string {
     return `[Unit]
 Description=Yoho Remote Daemon
 After=network-online.target
@@ -139,6 +162,7 @@ EnvironmentFile=${context.envFilePath}
 Environment=YR_DAEMON_UNDER_SYSTEMD=1
 ExecStart=${formatExecStart(context.execParts)}
 Restart=always
+KillMode=control-group
 RestartSec=10
 
 [Install]
@@ -146,25 +170,26 @@ WantedBy=multi-user.target
 `;
 }
 
-export async function prepareSystemdInstall(): Promise<InstallContext> {
+export async function prepareSystemdInstall(): Promise<PreparedSystemdInstall> {
     ensureSystemctlAvailable();
 
     const serviceUser = getServiceUser();
     const yohoHomeDir = getServiceYohoHomeDir(serviceUser);
     const envFilePath = getSystemdEnvFilePath(serviceUser);
     const entries = collectEnvEntries(serviceUser);
-    writeEnvFile(envFilePath, entries);
+    const envFileResult = writeEnvFile(envFilePath, entries);
 
     return {
         envFilePath,
+        envFileChanged: envFileResult.changed,
         execParts: getExecParts(),
         serviceUser,
         workingDirectory: yohoHomeDir,
     };
 }
 
-export function writeSystemdServiceFile(context: InstallContext): void {
-    writeFileSync(SYSTEMD_SERVICE_PATH, buildServiceFile(context), { mode: 0o644 });
+export function writeSystemdServiceFile(context: InstallContext): SystemdFileWriteResult {
+    return writeTextFileIfChanged(SYSTEMD_SERVICE_PATH, buildSystemdServiceFile(context), 0o644);
 }
 
 export function runSystemctl(args: string[]): void {

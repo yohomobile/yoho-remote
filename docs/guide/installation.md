@@ -221,7 +221,7 @@ With the daemon running:
 - You can spawn sessions remotely from the web app
 - Sessions persist even when the terminal is closed
 
-On Linux, `hapi daemon install` creates a systemd service and persists the current daemon environment to `~/.yoho-remote/daemon.systemd.env`.
+On Linux, `hapi daemon install` creates or updates the managed systemd service, persists the current daemon environment to `~/.yoho-remote/daemon.systemd.env`, and restarts the service when the unit or daemon environment changes.
 
 ### Security notes
 

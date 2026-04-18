@@ -35,4 +35,18 @@ describe('brainSessionPreferences', () => {
 
         expect(getAllowedBrainChildAgents(preferences)).toEqual(['codex'])
     })
+
+    it('accepts opus-4-7 from web-created brain preferences', () => {
+        const preferences = parseBrainSessionPreferences({
+            machineSelection: { mode: 'manual', machineId: 'machine-3' },
+            childModels: {
+                claude: { allowed: ['opus-4-7'], defaultModel: 'opus-4-7' },
+                codex: { allowed: ['gpt-5.4'], defaultModel: 'gpt-5.4' },
+            },
+        })
+
+        expect(preferences?.childModels.claude.allowed).toEqual(['opus-4-7'])
+        expect(preferences?.childModels.claude.defaultModel).toBe('opus-4-7')
+        expect(getAllowedBrainChildAgents(preferences)).toEqual(['claude', 'codex'])
+    })
 })

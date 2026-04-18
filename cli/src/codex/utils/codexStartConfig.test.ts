@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildCodexStartConfig } from './codexStartConfig';
 
 describe('buildCodexStartConfig', () => {
-    const mcpServers = { 'yoho-remote': { command: 'node', args: ['mcp'] } };
+    const mcpServers = { yoho_remote: { command: 'node', args: ['mcp'] } };
 
     it('applies CLI overrides when permission mode is default', () => {
         const config = buildCodexStartConfig({
@@ -77,5 +77,43 @@ describe('buildCodexStartConfig', () => {
         expect(config.prompt).toContain('functions.yoho_remote__project_list');
         expect(config.prompt).toContain('functions.yoho_memory__recall');
         expect(config.prompt).toContain('functions.yoho_credentials__get_credential');
+    });
+
+    it('merges extra config overrides into the exec config payload', () => {
+        const config = buildCodexStartConfig({
+            message: 'hello',
+            mode: { permissionMode: 'yolo' },
+            first: false,
+            mcpServers,
+            developerInstructions: 'Brain session only',
+            configOverrides: {
+                features: {
+                    multi_agent: false,
+                    shell_tool: false,
+                },
+                mcp_servers: {
+                    yoho_remote: {
+                        required: true,
+                    },
+                },
+                web_search: 'live',
+            },
+        });
+
+        expect(config.config).toEqual({
+            mcp_servers: {
+                yoho_remote: {
+                    command: 'node',
+                    args: ['mcp'],
+                    required: true,
+                },
+            },
+            developer_instructions: 'Brain session only',
+            features: {
+                multi_agent: false,
+                shell_tool: false,
+            },
+            web_search: 'live',
+        });
     });
 });

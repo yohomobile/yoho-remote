@@ -1049,6 +1049,7 @@ export const toolResultViewRegistry: Record<string, ToolViewComponent> = {
     Grep: LineListResultView,
     LS: LineListResultView,
     Read: ReadResultView,
+    ClaudeEditedTextFile: MutationResultView,
     Edit: MutationResultView,
     MultiEdit: MutationResultView,
     Write: MutationResultView,

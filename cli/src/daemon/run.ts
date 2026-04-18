@@ -19,8 +19,8 @@ import { resolveClaudeModelArg } from '@/utils/claudeModelArg';
 
 import { cleanupDaemonState, getInstalledCliMtimeMs, isDaemonRunningCurrentlyInstalledVersion, stopDaemon } from './controlClient';
 import { startDaemonControlServer } from './controlServer';
-import { EXTERNAL_TRACKED_SESSION_LABEL, recoverTrackedSessionsFromServer } from './recoverTrackedSessions';
-import { isSessionProcessIdentityCurrent, isTrackedSessionProcessCurrent } from './trackedSessionIdentity';
+import { EXTERNAL_TRACKED_SESSION_LABEL, getTrackedSessionStartedBy, recoverTrackedSessionsFromServer } from './recoverTrackedSessions';
+import { normalizeSessionProcessIdentity, isTrackedSessionProcessCurrent } from './trackedSessionIdentity';
 import { buildClaudeTokenSourceEnv } from './tokenSourceEnv';
 import { createWorktree, removeWorktree, type WorktreeInfo } from './worktree';
 import { join } from 'path';
@@ -204,12 +204,16 @@ export async function startDaemon(): Promise<void> {
         logger.debug(`[DAEMON RUN] Session webhook missing hostPid for sessionId: ${sessionId}`);
         return;
       }
-      if (!isSessionProcessIdentityCurrent(sessionMetadata)) {
+      const normalizedSessionMetadata = normalizeSessionProcessIdentity(sessionMetadata, {
+        expectedSessionId: sessionId,
+        trust: 'webhook',
+      });
+      if (!normalizedSessionMetadata) {
         logger.debug(`[DAEMON RUN] Session webhook rejected for ${sessionId}: process identity no longer matches PID ${pid}`);
         return;
       }
 
-      logger.debug(`[DAEMON RUN] Session webhook: ${sessionId}, PID: ${pid}, started by: ${sessionMetadata.startedBy || 'unknown'}`);
+      logger.debug(`[DAEMON RUN] Session webhook: ${sessionId}, PID: ${pid}, started by: ${normalizedSessionMetadata.startedBy || 'unknown'}`);
       logger.debug(`[DAEMON RUN] Current tracked sessions before webhook: ${Array.from(pidToTrackedSession.keys()).join(', ')}`);
 
       // Check if we already have this PID (daemon-spawned)
@@ -218,7 +222,7 @@ export async function startDaemon(): Promise<void> {
       if (existingSession && existingSession.startedBy === 'daemon') {
         // Update daemon-spawned session with reported data
         existingSession.yohoRemoteSessionId = sessionId;
-        existingSession.yohoRemoteSessionMetadataFromLocalWebhook = sessionMetadata;
+        existingSession.yohoRemoteSessionMetadataFromLocalWebhook = normalizedSessionMetadata;
         logger.debug(`[DAEMON RUN] Updated daemon-spawned session ${sessionId} with metadata`);
 
         // Resolve any awaiter for this PID
@@ -231,9 +235,9 @@ export async function startDaemon(): Promise<void> {
       } else if (!existingSession) {
         // New session started externally
         const trackedSession: TrackedSession = {
-          startedBy: EXTERNAL_TRACKED_SESSION_LABEL,
+          startedBy: getTrackedSessionStartedBy(normalizedSessionMetadata),
           yohoRemoteSessionId: sessionId,
-          yohoRemoteSessionMetadataFromLocalWebhook: sessionMetadata,
+          yohoRemoteSessionMetadataFromLocalWebhook: normalizedSessionMetadata,
           pid
         };
         pidToTrackedSession.set(pid, trackedSession);

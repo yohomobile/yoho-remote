@@ -79,6 +79,40 @@ describe('isRealActivityMessage', () => {
             }
         })).toBe(true)
     })
+
+    test('treats valid Claude edited_text_file attachments as real activity', () => {
+        expect(isRealActivityMessage({
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'attachment',
+                    attachment: {
+                        type: 'edited_text_file',
+                        filename: '/tmp/demo.ts',
+                        snippet: '12\tconst nextValue = 2'
+                    }
+                }
+            }
+        })).toBe(true)
+    })
+
+    test('does not treat invalid Claude edited_text_file attachments as real activity', () => {
+        expect(isRealActivityMessage({
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'attachment',
+                    attachment: {
+                        type: 'edited_text_file',
+                        filename: '   ',
+                        snippet: '   \n'
+                    }
+                }
+            }
+        })).toBe(false)
+    })
 })
 
 describe('isTurnStartUserMessage', () => {

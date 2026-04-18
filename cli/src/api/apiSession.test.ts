@@ -164,6 +164,48 @@ describe('ApiSessionClient.sendClaudeSessionMessage', () => {
             }
         })
     })
+
+    it('forwards edited_text_file attachments so the frontend can render changed code snippets', () => {
+        const emit = vi.fn()
+        const client = Object.create(ApiSessionClient.prototype) as any
+
+        client.sessionId = 'session-4b'
+        client.socket = { emit }
+        client.updateMetadata = vi.fn()
+
+        client.sendClaudeSessionMessage({
+            type: 'attachment',
+            uuid: 'attachment-edited-text',
+            timestamp: '2026-04-17T00:00:00.000Z',
+            attachment: {
+                type: 'edited_text_file',
+                filename: '/tmp/demo.ts',
+                snippet: '12\tconst nextValue = 2'
+            }
+        } as any)
+
+        expect(emit).toHaveBeenCalledTimes(1)
+        expect(emit).toHaveBeenCalledWith('message', {
+            sid: 'session-4b',
+            message: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: expect.objectContaining({
+                        type: 'attachment',
+                        attachment: expect.objectContaining({
+                            type: 'edited_text_file',
+                            filename: '/tmp/demo.ts',
+                            snippet: '12\tconst nextValue = 2'
+                        })
+                    })
+                },
+                meta: {
+                    sentFrom: 'cli'
+                }
+            }
+        })
+    })
 })
 
 describe('ApiSessionClient.handleIncomingMessage', () => {

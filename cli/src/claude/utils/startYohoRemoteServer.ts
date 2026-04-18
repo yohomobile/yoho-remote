@@ -226,6 +226,7 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
             apiClient,
             machineId: resolvedMachineId,
             brainSessionId: yohoRemoteSessionId,
+            sessionCaller: resolvedSessionCaller ?? null,
             brainPreferences,
         });
         logger.debug('[yrMCP] Brain tools registered');

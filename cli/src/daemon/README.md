@@ -619,8 +619,10 @@ ExecStart=/path/to/cli/dist-exe/bun-linux-x64/yoho-remote-server
 
 # /etc/systemd/system/yoho-remote-daemon.service
 [Service]
+Environment=YR_DAEMON_UNDER_SYSTEMD=1
 ExecStart=/path/to/cli/dist-exe/bun-linux-x64/yoho-remote-daemon
 Restart=always
+KillMode=control-group
 RestartSec=10
 ```
 

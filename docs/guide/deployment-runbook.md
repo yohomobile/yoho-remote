@@ -231,6 +231,8 @@ hapi auth login
 sudo hapi daemon install
 ```
 
+- 后续如果 daemon 的 systemd 模板、依赖顺序或 kill 语义发生变化，继续使用 `sudo hapi daemon install` 做升级；不要只做 `systemctl restart`，因为后者不会重写 unit。
+
 上线时按下面顺序执行，不要并行胡乱拉起。**推荐发布顺序明确写成：`server -> worker -> memory -> daemon`。**
 
 1. **先确认基础依赖**

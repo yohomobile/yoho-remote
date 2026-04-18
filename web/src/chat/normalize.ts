@@ -1,5 +1,6 @@
 import type { DecryptedMessage } from '@/types/api'
 import type { AgentEvent, NormalizedAgentContent, NormalizedMessage, PlanTodoReminderItem, ToolResultPermission } from '@/chat/types'
+import { parseBrainChildCallbackMessage } from '@/chat/brainChildCallback'
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object'
@@ -61,6 +62,29 @@ function createRawAgentTextMessage(
         role: 'agent',
         isSidechain: false,
         content: [{ type: 'text', text, uuid: messageId, parentUUID: null }],
+        meta
+    }
+}
+
+function createBrainChildCallbackEventMessage(
+    messageId: string,
+    localId: string | null,
+    createdAt: number,
+    text: string,
+    meta?: unknown
+): NormalizedMessage | null {
+    const event = parseBrainChildCallbackMessage(text)
+    if (!event) {
+        return null
+    }
+
+    return {
+        id: messageId,
+        localId,
+        createdAt,
+        role: 'event',
+        isSidechain: false,
+        content: event,
         meta
     }
 }
@@ -361,6 +385,10 @@ function normalizeUserOutput(
     }
 
     if (typeof messageContent === 'string') {
+        const brainChildCallback = createBrainChildCallbackEventMessage(messageId, localId, createdAt, messageContent, meta)
+        if (brainChildCallback) {
+            return brainChildCallback
+        }
         return {
             id: messageId,
             localId,
@@ -419,6 +447,13 @@ function normalizeUserOutput(
         .map((part) => part.trim())
         .filter((part) => part.length > 0)
         .join('\n')
+
+    const brainChildCallback = userText
+        ? createBrainChildCallbackEventMessage(messageId, localId, createdAt, userText, meta)
+        : null
+    if (brainChildCallback && agentBlocks.length === 0) {
+        return brainChildCallback
+    }
 
     const userMessage: NormalizedMessage | null = userText
         ? {
@@ -524,6 +559,25 @@ function normalizeQueuedCommandAttachment(
     return null
 }
 
+function getClaudeEditedTextFileAttachmentData(value: unknown): {
+    filePath: string
+    snippet: string
+} | null {
+    if (!isObject(value)) {
+        return null
+    }
+
+    const filePath = asString(value.filename)?.trim()
+    const rawSnippet = asString(value.snippet)
+    const snippet = rawSnippet?.replace(/(?:\r?\n)+$/, '') ?? null
+
+    if (!filePath || !snippet || snippet.trim().length === 0) {
+        return null
+    }
+
+    return { filePath, snippet }
+}
+
 function normalizeClaudeAttachment(
     messageId: string,
     localId: string | null,
@@ -535,6 +589,46 @@ function normalizeClaudeAttachment(
     if (!attachment) return null
 
     const attachmentType = asString(attachment.type)
+
+    if (attachmentType === 'edited_text_file') {
+        const editedFile = getClaudeEditedTextFileAttachmentData(attachment)
+        if (!editedFile) {
+            return null
+        }
+
+        const toolId = `${messageId}:edited-text-file`
+
+        return {
+            id: messageId,
+            localId,
+            createdAt,
+            role: 'agent',
+            isSidechain: false,
+            content: [
+                {
+                    type: 'tool-call',
+                    id: toolId,
+                    name: 'ClaudeEditedTextFile',
+                    input: {
+                        file_path: editedFile.filePath,
+                        snippet: editedFile.snippet
+                    },
+                    description: 'Changed snippet',
+                    uuid: toolId,
+                    parentUUID: null
+                },
+                {
+                    type: 'tool-result',
+                    tool_use_id: toolId,
+                    content: null,
+                    is_error: false,
+                    uuid: toolId,
+                    parentUUID: null
+                }
+            ],
+            meta
+        }
+    }
 
     if (attachmentType === 'plan_mode') {
         return {
@@ -1346,6 +1440,10 @@ function normalizeUserRecord(
     meta?: unknown
 ): NormalizedMessage | null {
     if (typeof content === 'string') {
+        const brainChildCallback = createBrainChildCallbackEventMessage(messageId, localId, createdAt, content, meta)
+        if (brainChildCallback) {
+            return brainChildCallback
+        }
         return {
             id: messageId,
             localId,
@@ -1358,6 +1456,10 @@ function normalizeUserRecord(
     }
 
     if (isObject(content) && content.type === 'text' && typeof content.text === 'string') {
+        const brainChildCallback = createBrainChildCallbackEventMessage(messageId, localId, createdAt, content.text, meta)
+        if (brainChildCallback) {
+            return brainChildCallback
+        }
         return {
             id: messageId,
             localId,
@@ -1392,7 +1494,6 @@ const SUPPRESSED_CLAUDE_ATTACHMENT_TYPES = new Set([
     'date_change',
     'file',
     'directory',
-    'edited_text_file',
     'invoked_skills'
 ])
 
@@ -1418,6 +1519,9 @@ function shouldSuppressKnownAgentContent(content: unknown): boolean {
     if (data.type === 'attachment') {
         const attachment = isObject(data.attachment) ? data.attachment : null
         const attachmentType = asString(attachment?.type)
+        if (attachmentType === 'edited_text_file') {
+            return getClaudeEditedTextFileAttachmentData(attachment) === null
+        }
         if (attachmentType === 'todo_reminder') {
             return normalizePlanTodoReminderItems(attachment?.content).length === 0
         }

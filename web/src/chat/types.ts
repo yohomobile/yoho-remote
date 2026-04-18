@@ -46,6 +46,14 @@ export type AgentEvent =
         planFilePath?: string
         planContent?: string
     }
+    | {
+        type: 'brain-child-callback'
+        sessionId?: string
+        title?: string
+        previousSummary?: string
+        details: string[]
+        report?: string
+    }
     | ({ type: string } & Record<string, unknown>)
 
 export type ToolResultPermission = {

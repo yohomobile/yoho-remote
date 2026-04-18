@@ -5,8 +5,16 @@ import { initializeTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/providers/KeycloakAuthProvider'
 import { useServerUrl } from '@/hooks/useServerUrl'
 import { useSSE } from '@/hooks/useSSE'
+import {
+    getSessionCompletionNotificationKind,
+    mergeSessionNotificationState,
+    shouldSuppressNotificationWithoutPreviousState,
+    toSessionNotificationState,
+    type SessionNotificationState,
+    type SessionStatusUpdateData,
+} from '@/hooks/useSSE.utils'
 import { useSyncingState } from '@/hooks/useSyncingState'
-import type { SyncEvent, SessionSummary, Project } from '@/types/api'
+import type { Project, SessionResponse, SessionSummary, SyncEvent } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 import { AppContextProvider, useAppContext, getStoredOrgId, setStoredOrgId } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
@@ -24,6 +32,30 @@ import { OrgSetup } from '@/components/OrgSetup'
 import { shouldBypassOrgGate } from '@/lib/org-gate'
 import { isLicenseTermination, getLicenseTerminationLabel } from '@/lib/license'
 import { useFlutterBridge } from '@/hooks/useFlutterBridge'
+
+function matchesQueryKey(queryKey: readonly unknown[], expected: readonly unknown[]): boolean {
+    return queryKey.length === expected.length
+        && queryKey.every((value, index) => value === expected[index])
+}
+
+function isAutomaticSuccessfulQueryUpdate(event: unknown): event is {
+    type: 'updated'
+    query: { queryKey: readonly unknown[] }
+    action: { type: 'success'; manual?: boolean }
+} {
+    if (!event || typeof event !== 'object') {
+        return false
+    }
+    const queryEvent = event as {
+        type?: unknown
+        query?: { queryKey?: unknown }
+        action?: { type?: unknown; manual?: unknown }
+    }
+    return queryEvent.type === 'updated'
+        && Array.isArray(queryEvent.query?.queryKey)
+        && queryEvent.action?.type === 'success'
+        && queryEvent.action.manual !== true
+}
 
 export function App() {
     const { baseUrl } = useServerUrl()
@@ -214,7 +246,14 @@ export function App() {
     const isFirstConnectRef = useRef(true)
     const baseUrlRef = useRef(baseUrl)
     const lastSseConnectRef = useRef(0)
+    const sessionNotificationStateRef = useRef<Map<string, SessionNotificationState>>(new Map())
+    const notificationBaselineReadyRef = useRef(false)
     const sseConnectDebounceMs = 2000
+    const completionReplayGuardMs = 5000
+    const sessionsListQueryKey = useMemo(() => [...queryKeys.sessions, currentOrgId ?? 'all'] as const, [currentOrgId])
+    const selectedSessionQueryKey = useMemo(() => (
+        selectedSessionId ? queryKeys.session(selectedSessionId) : null
+    ), [selectedSessionId])
 
     useEffect(() => {
         if (baseUrlRef.current === baseUrl) {
@@ -223,10 +262,65 @@ export function App() {
         baseUrlRef.current = baseUrl
         isFirstConnectRef.current = true
         syncTokenRef.current = 0
+        sessionNotificationStateRef.current = new Map()
+        notificationBaselineReadyRef.current = false
         queryClient.clear()
     }, [baseUrl, queryClient])
 
+    const syncSessionNotificationStateFromCache = useCallback(() => {
+        const nextState = new Map(sessionNotificationStateRef.current)
+        const sessionsData = queryClient.getQueryData<{ sessions: SessionSummary[] }>(sessionsListQueryKey)
+        for (const session of sessionsData?.sessions ?? []) {
+            nextState.set(session.id, toSessionNotificationState(session)!)
+        }
+
+        if (selectedSessionQueryKey) {
+            const sessionData = queryClient.getQueryData<SessionResponse>(selectedSessionQueryKey)
+            if (sessionData?.session) {
+                nextState.set(sessionData.session.id, toSessionNotificationState(sessionData.session)!)
+            }
+        }
+
+        sessionNotificationStateRef.current = nextState
+    }, [queryClient, selectedSessionQueryKey, sessionsListQueryKey])
+
+    const refreshNotificationBaselineReady = useCallback(() => {
+        const sessionsQueryState = queryClient.getQueryState<{ sessions: SessionSummary[] }>(sessionsListQueryKey)
+        const selectedSessionState = selectedSessionQueryKey
+            ? queryClient.getQueryState<SessionResponse>(selectedSessionQueryKey)
+            : undefined
+        notificationBaselineReadyRef.current = sessionsQueryState?.status === 'success'
+            || selectedSessionState?.status === 'success'
+    }, [queryClient, selectedSessionQueryKey, sessionsListQueryKey])
+
+    useEffect(() => {
+        syncSessionNotificationStateFromCache()
+        refreshNotificationBaselineReady()
+    }, [refreshNotificationBaselineReady, syncSessionNotificationStateFromCache])
+
+    useEffect(() => {
+        const queryCache = queryClient.getQueryCache()
+        return queryCache.subscribe((event) => {
+            if (!isAutomaticSuccessfulQueryUpdate(event)) {
+                return
+            }
+            const isSessionsBaselineUpdate = matchesQueryKey(event.query.queryKey, sessionsListQueryKey)
+            const isSelectedSessionBaselineUpdate = selectedSessionQueryKey
+                ? matchesQueryKey(event.query.queryKey, selectedSessionQueryKey)
+                : false
+            if (!isSessionsBaselineUpdate && !isSelectedSessionBaselineUpdate) {
+                return
+            }
+
+            syncSessionNotificationStateFromCache()
+            refreshNotificationBaselineReady()
+        })
+    }, [queryClient, refreshNotificationBaselineReady, selectedSessionQueryKey, sessionsListQueryKey, syncSessionNotificationStateFromCache])
+
     const handleSseConnect = useCallback(() => {
+        notificationBaselineReadyRef.current = false
+        syncSessionNotificationStateFromCache()
+        refreshNotificationBaselineReady()
         const now = Date.now()
         const timeSinceLastConnect = now - lastSseConnectRef.current
         const shouldDebounceSyncUi = timeSinceLastConnect < sseConnectDebounceMs && !isFirstConnectRef.current
@@ -267,7 +361,7 @@ export function App() {
                     endSync()
                 }
             })
-    }, [queryClient, selectedSessionId, startSync, endSync])
+    }, [endSync, queryClient, refreshNotificationBaselineReady, selectedSessionId, startSync, syncSessionNotificationStateFromCache])
 
     const handleSseEvent = useCallback((event: SyncEvent) => {
         if (event.type === 'online-users-changed') {
@@ -277,10 +371,25 @@ export function App() {
         }
 
         if (event.type === 'session-updated') {
-            const data = ('data' in event ? event.data : null) as { active?: boolean; thinking?: boolean; wasThinking?: boolean; terminationReason?: string } | null
+            const data = ('data' in event ? event.data : null) as SessionStatusUpdateData | null
+            const previousState = sessionNotificationStateRef.current.get(event.sessionId)
+            const notificationKind = getSessionCompletionNotificationKind({
+                previousState,
+                data,
+                suppressWithoutPreviousState: shouldSuppressNotificationWithoutPreviousState({
+                    previousState,
+                    baselineReady: notificationBaselineReadyRef.current,
+                    lastConnectAt: lastSseConnectRef.current,
+                    replayGuardMs: completionReplayGuardMs,
+                }),
+            })
+            const nextState = mergeSessionNotificationState(previousState, data)
+            if (nextState) {
+                sessionNotificationStateRef.current.set(event.sessionId, nextState)
+            }
 
             // License kill notification
-            if (data?.active === false && isLicenseTermination(data.terminationReason)) {
+            if (notificationKind === 'license-terminated' && data?.active === false && isLicenseTermination(data.terminationReason)) {
                 const sessionsData = queryClient.getQueryData<{ sessions: SessionSummary[] }>([...queryKeys.sessions, currentOrgId ?? 'all'])
                 const killedSession = sessionsData?.sessions.find(s => s.id === event.sessionId)
                 const label = killedSession?.metadata?.summary?.text || killedSession?.metadata?.name || 'A session'
@@ -294,7 +403,7 @@ export function App() {
                 return
             }
 
-            if (data?.wasThinking && data.thinking === false) {
+            if (notificationKind === 'task-completed') {
                 const isCurrentSession = event.sessionId === selectedSessionId
                 const isAppVisible = document.visibilityState === 'visible'
                 console.log('[notification] task complete detected', { isCurrentSession, isAppVisible, selectedSessionId })
@@ -340,11 +449,12 @@ export function App() {
         if (event.type !== 'session-removed') {
             return
         }
+        sessionNotificationStateRef.current.delete(event.sessionId)
         if (!selectedSessionId || event.sessionId !== selectedSessionId) {
             return
         }
         navigate({ to: '/sessions', replace: true })
-    }, [navigate, selectedSessionId, queryClient])
+    }, [completionReplayGuardMs, currentOrgId, navigate, queryClient, selectedSessionId])
 
     const eventSubscription = useMemo(() => {
         if (selectedSessionId && selectedSessionId !== 'new') {

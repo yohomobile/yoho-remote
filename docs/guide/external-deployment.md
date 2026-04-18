@@ -147,6 +147,8 @@ On Linux, `hapi daemon install` writes:
 - systemd unit: `/etc/systemd/system/yoho-remote-daemon.service`
 - env file: `~/.yoho-remote/daemon.systemd.env`
 
+Re-running `sudo hapi daemon install` is the supported upgrade path for daemon systemd changes: it rewrites the managed unit, refreshes the persisted daemon environment, and restarts the service when either one changes.
+
 If you manage the daemon service manually instead of `hapi daemon install`, keep the same env file path and update the repo-root `yoho-remote-daemon.service` template to the actual service user home directory.
 
 Check status:

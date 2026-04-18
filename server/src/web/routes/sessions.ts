@@ -244,8 +244,8 @@ function resolveRequestedModelMode(options: {
     return undefined
 }
 
-const RESUME_TIMEOUT_MS = 60_000
-const RESUME_CONTEXT_MAX_LINES = 60
+export const RESUME_TIMEOUT_MS = 60_000
+export const RESUME_CONTEXT_MAX_LINES = 60
 const RESUME_CONTEXT_MAX_CHARS = 16_000
 const RESUME_VERIFY_TIMEOUT_MS = 5_000
 
@@ -319,7 +319,7 @@ async function waitForBackendSessionIdMismatch(
 // Note: Role is now extracted from Keycloak token in auth middleware
 // Use c.get('role') directly instead of the old resolveUserRole function
 
-async function waitForSessionOnline(engine: SyncEngine, sessionId: string, timeoutMs: number): Promise<boolean> {
+export async function waitForSessionOnline(engine: SyncEngine, sessionId: string, timeoutMs: number): Promise<boolean> {
     const existing = engine.getSession(sessionId)
     if (existing?.active) {
         return true
@@ -445,7 +445,7 @@ async function sendInitPromptAfterOnline(engine: SyncEngine, sessionId: string, 
     await sendInitPrompt(engine, sessionId, role, userName)
 }
 
-async function resolveSpawnTarget(
+export async function resolveSpawnTarget(
     engine: SyncEngine,
     machineId: string,
     session: Session
@@ -1257,18 +1257,19 @@ export function createSessionsRoutes(
             return summary
         })
 
-        // Sort: active first, then by pending requests, then by lastMessageAt (fallback updatedAt)
+        // Sort: active first, then by recent activity, and only use pending requests as a tie-breaker.
         const allSessions = sessionSummaries.sort((a, b) => {
             // Active sessions first
             if (a.active !== b.active) {
                 return a.active ? -1 : 1
             }
-            // Within active sessions, sort by pending requests count
-            if (a.active && a.pendingRequestsCount !== b.pendingRequestsCount) {
-                return b.pendingRequestsCount - a.pendingRequestsCount
+            // Prefer the most recently active session within the same active bucket.
+            const activityDiff = (b.lastMessageAt ?? b.updatedAt) - (a.lastMessageAt ?? a.updatedAt)
+            if (activityDiff !== 0) {
+                return activityDiff
             }
-            // Then by lastMessageAt (fallback updatedAt for sessions with no real messages yet)
-            return (b.lastMessageAt ?? b.updatedAt) - (a.lastMessageAt ?? a.updatedAt)
+            // Pending requests still matter, but should not permanently pin stale sessions to the top.
+            return b.pendingRequestsCount - a.pendingRequestsCount
         })
 
         return c.json({ sessions: allSessions })
@@ -1493,6 +1494,21 @@ export function createSessionsRoutes(
         const originalStored = await store.getSession(sessionId)
         if (originalStored?.orgId) {
             void store.setSessionOrgId(newSessionId, originalStored.orgId, namespace)
+        }
+
+        const resumedSource = session.metadata?.source
+        if (resumedSource === 'brain' && newSessionId !== sessionId) {
+            const childSessions = engine.getSessionsByNamespace(namespace).filter((candidate) => {
+                const metadata = candidate.metadata as { source?: unknown; mainSessionId?: unknown } | null | undefined
+                return metadata?.source === 'brain-child' && metadata?.mainSessionId === sessionId
+            })
+
+            for (const child of childSessions) {
+                const patchResult = await engine.patchSessionMetadata(child.id, { mainSessionId: newSessionId })
+                if (!patchResult.ok) {
+                    console.warn(`[resume] Failed to rebind brain-child ${child.id} to resumed brain session ${newSessionId}: ${patchResult.error}`)
+                }
+            }
         }
 
         const role = c.get('role')  // Role from Keycloak token

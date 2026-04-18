@@ -7,6 +7,21 @@ import { resolveCodexServiceTier } from './codexServiceTier';
 
 export const TITLE_INSTRUCTION = trimIdent(`If tool functions.yoho_remote__change_title is available in this session, call it to set a chat title that represents the current task. If the chat idea changes dramatically, call it again to update the title. If the tool is unavailable in this session, skip title updates.`);
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function mergeConfig(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
+    for (const [key, value] of Object.entries(source)) {
+        if (isRecord(value) && isRecord(target[key])) {
+            target[key] = mergeConfig({ ...(target[key] as Record<string, unknown>) }, value);
+            continue;
+        }
+        target[key] = value;
+    }
+    return target;
+}
+
 function resolveApprovalPolicy(mode: EnhancedMode): CodexSessionConfig['approval-policy'] {
     switch (mode.permissionMode) {
         case 'default': return 'untrusted';
@@ -44,6 +59,7 @@ export function buildCodexStartConfig(args: {
     cliOverrides?: CodexCliOverrides;
     developerInstructions?: string;
     includeTitleInstruction?: boolean;
+    configOverrides?: Record<string, unknown>;
 }): CodexSessionConfig {
     const approvalPolicy = resolveApprovalPolicy(args.mode);
     const sandbox = resolveSandbox(args.mode);
@@ -56,7 +72,10 @@ export function buildCodexStartConfig(args: {
     const shouldAddTitleInstruction = args.first && (args.includeTitleInstruction ?? true);
     const normalizedMessage = normalizeCodexToolReferences(args.message);
     const prompt = shouldAddTitleInstruction ? `${normalizedMessage}\n\n${TITLE_INSTRUCTION}` : normalizedMessage;
-    const config: Record<string, unknown> = { mcp_servers: args.mcpServers };
+    const config = mergeConfig(
+        { mcp_servers: args.mcpServers },
+        args.configOverrides ? { ...args.configOverrides } : {}
+    );
     if (args.developerInstructions) {
         config.developer_instructions = args.developerInstructions;
     }

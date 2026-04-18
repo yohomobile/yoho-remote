@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildCodexExecArgs } from './codexExecArgs';
+import { buildCodexExecArgs, buildMcpConfigFlags } from './codexExecArgs';
 
 describe('buildCodexExecArgs', () => {
     const baseOptions = {
@@ -41,5 +41,56 @@ describe('buildCodexExecArgs', () => {
 
         expect(args).toEqual(expect.arrayContaining(['exec', 'resume', 'thread-123', '--json']));
         expect(args).not.toContain('--skip-git-repo-check');
+    });
+
+    it('serializes config overrides for exec sessions', () => {
+        const args = buildCodexExecArgs({
+            ...baseOptions,
+            threadId: null,
+            startConfig: {
+                ...baseOptions.startConfig,
+                config: {
+                    developer_instructions: 'Brain only\nUse runtime tools.',
+                    features: {
+                        multi_agent: false,
+                        shell_tool: false,
+                    },
+                    mcp_servers: {
+                        yoho_remote: {
+                            required: true,
+                        },
+                    },
+                    web_search: 'live',
+                },
+            },
+        });
+
+        expect(args).toEqual(expect.arrayContaining([
+            '-c', 'developer_instructions="Brain only\\nUse runtime tools."',
+            '-c', 'features.multi_agent=false',
+            '-c', 'features.shell_tool=false',
+            '-c', 'mcp_servers.yoho_remote.required=true',
+            '-c', 'web_search="live"',
+        ]));
+    });
+
+    it('escapes MCP command, args, cwd, and env values safely', () => {
+        const flags = buildMcpConfigFlags({
+            yoho_remote: {
+                command: 'C:\\Program Files\\Codex\\codex.exe',
+                args: ['mcp', '--url', 'http://127.0.0.1:3000/mcp?note="quoted"\nnext'],
+                cwd: 'C:\\Users\\brain workspace',
+                env: {
+                    JSON_PAYLOAD: '{"ok":true}',
+                },
+            },
+        });
+
+        expect(flags).toEqual(expect.arrayContaining([
+            '-c', 'mcp_servers.yoho_remote.command="C:\\\\Program Files\\\\Codex\\\\codex.exe"',
+            '-c', 'mcp_servers.yoho_remote.args=["mcp", "--url", "http://127.0.0.1:3000/mcp?note=\\"quoted\\"\\nnext"]',
+            '-c', 'mcp_servers.yoho_remote.cwd="C:\\\\Users\\\\brain workspace"',
+            '-c', 'mcp_servers.yoho_remote.env.JSON_PAYLOAD="{\\"ok\\":true}"',
+        ]));
     });
 });

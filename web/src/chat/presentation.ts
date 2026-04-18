@@ -75,6 +75,12 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
         return { icon: '📄', text: path ? `Saved plan · ${path}` : 'Saved plan' }
     }
 
+    if (event.type === 'brain-child-callback') {
+        const title = typeof event.title === 'string' ? event.title : null
+        const sessionId = typeof event.sessionId === 'string' ? event.sessionId : null
+        return { icon: '🧠', text: title ? `子任务回传 · ${title}` : sessionId ? `子任务回传 · ${sessionId}` : '子任务回传' }
+    }
+
     // --- New SDK event types ---
 
     if (event.type === 'rate-limit') {

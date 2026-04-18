@@ -3,6 +3,18 @@ import { CodeBlock } from '@/components/CodeBlock'
 import { getCodexPatchEntries, truncatePreview } from '@/components/ToolCard/codexArtifacts'
 import { basename, resolveDisplayPath } from '@/components/ToolCard/path'
 
+export function shouldRenderCodexPatchEntryTitle(preview: boolean, entryCount: number, hasCode: boolean): boolean {
+    if (preview) {
+        return false
+    }
+
+    if (!hasCode) {
+        return true
+    }
+
+    return entryCount > 1
+}
+
 function renderEntries(props: ToolViewProps, preview: boolean) {
     const entries = getCodexPatchEntries(props.block.tool.input, props.block.tool.result)
     if (entries.length === 0) return null
@@ -15,10 +27,11 @@ function renderEntries(props: ToolViewProps, preview: boolean) {
                 const display = entry.filePath ? resolveDisplayPath(entry.filePath, props.metadata) : null
                 const title = display ? basename(display) : null
                 const code = preview && entry.text ? truncatePreview(entry.text) : entry.text
+                const showTitle = title && shouldRenderCodexPatchEntryTitle(preview, entries.length, Boolean(code))
 
                 return (
                     <div key={`${entry.filePath ?? 'unknown'}:${index}`} className="flex flex-col gap-2">
-                        {title ? (
+                        {showTitle ? (
                             <div className="text-sm text-[var(--app-fg)] font-mono break-all">
                                 {title}
                             </div>

@@ -292,6 +292,124 @@ describe('SyncEngine auto-resume', () => {
         expect(spawnCalled).toBe(false)
     })
 
+    test('extends auto-resume grace past the base timeout when a slow reconnect still arrives', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActive: async () => true,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const rpcRegistry = {
+            getSocketIdForMethod: () => 'socket-1',
+        } as any
+
+        const engine = new SyncEngine(store, io, rpcRegistry, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const machine = createMachine('machine-1')
+        const session = createSession('session-slow-reconnect', {
+            machineId: machine.id,
+            path: '/tmp/project-slow-reconnect',
+            flavor: 'codex',
+            codexSessionId: 'thread-slow-reconnect',
+            startedFromDaemon: true,
+        })
+
+        ;(engine as any).machines.set(machine.id, machine)
+        ;(engine as any).sessions.set(session.id, session)
+        ;(engine as any)._dbActiveSessionIds = new Set([session.id])
+        ;(engine as any).autoResumeBaseGraceMs = 20
+        ;(engine as any).autoResumeGraceQuietWindowMs = 20
+        ;(engine as any).autoResumeMaxGraceMs = 80
+        ;(engine as any).autoResumeGraceCheckIntervalMs = 5
+
+        let spawnCalled = false
+        ;(engine as any).spawnSession = async () => {
+            spawnCalled = true
+            return { type: 'success', sessionId: session.id }
+        }
+        ;(engine as any).waitForSessionHeartbeatAfter = async () => true
+
+        const reconnectTimer = setTimeout(() => {
+            session.active = true
+            session.activeAt = Date.now()
+        }, 35)
+
+        const startedAt = Date.now()
+        await (engine as any).autoResumeSessions(machine.id, machine.namespace)
+        clearTimeout(reconnectTimer)
+
+        expect(spawnCalled).toBe(false)
+        expect(Date.now() - startedAt).toBeGreaterThanOrEqual(30)
+    })
+
+    test('settles auto-resume grace after a quiet window when no reconnect arrives', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActive: async () => true,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const rpcRegistry = {
+            getSocketIdForMethod: () => 'socket-1',
+        } as any
+
+        const engine = new SyncEngine(store, io, rpcRegistry, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const machine = createMachine('machine-1')
+        const session = createSession('session-grace-quiet-window', {
+            machineId: machine.id,
+            path: '/tmp/project-grace-quiet-window',
+            flavor: 'codex',
+            codexSessionId: 'thread-grace-quiet-window',
+            startedFromDaemon: true,
+        })
+
+        ;(engine as any).machines.set(machine.id, machine)
+        ;(engine as any).sessions.set(session.id, session)
+        ;(engine as any)._dbActiveSessionIds = new Set([session.id])
+        ;(engine as any).autoResumeBaseGraceMs = 20
+        ;(engine as any).autoResumeGraceQuietWindowMs = 20
+        ;(engine as any).autoResumeMaxGraceMs = 80
+        ;(engine as any).autoResumeGraceCheckIntervalMs = 5
+
+        let spawnAt: number | null = null
+        ;(engine as any).spawnSession = async () => {
+            spawnAt = Date.now()
+            return { type: 'success', sessionId: session.id }
+        }
+        ;(engine as any).waitForSessionHeartbeatAfter = async () => true
+
+        const startedAt = Date.now()
+        await (engine as any).autoResumeSessions(machine.id, machine.namespace)
+
+        expect(spawnAt).not.toBeNull()
+        expect((spawnAt ?? 0) - startedAt).toBeGreaterThanOrEqual(35)
+    })
+
     test('does not auto-resume terminal-started sessions through the daemon', async () => {
         const store = {
             getSessions: async () => [],

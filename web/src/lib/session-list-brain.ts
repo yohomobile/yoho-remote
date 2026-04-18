@@ -43,15 +43,32 @@ function getSessionTimestamp(session: SessionSummary): number {
     return session.lastMessageAt ?? session.updatedAt
 }
 
-function getSessionRank(session: SessionSummary): number {
-    if (!session.active) return 2
-    return session.pendingRequestsCount > 0 ? 0 : 1
+function getEntryRank(active: boolean): number {
+    return active ? 0 : 1
+}
+
+function compareActivityAndPending(
+    left: { pendingRequestsCount: number; timestamp: number },
+    right: { pendingRequestsCount: number; timestamp: number }
+): number {
+    const timestampDiff = right.timestamp - left.timestamp
+    if (timestampDiff !== 0) return timestampDiff
+    return right.pendingRequestsCount - left.pendingRequestsCount
 }
 
 function compareSessions(left: SessionSummary, right: SessionSummary): number {
-    const rankDiff = getSessionRank(left) - getSessionRank(right)
+    const rankDiff = getEntryRank(left.active) - getEntryRank(right.active)
     if (rankDiff !== 0) return rankDiff
-    return getSessionTimestamp(right) - getSessionTimestamp(left)
+    return compareActivityAndPending(
+        {
+            pendingRequestsCount: left.pendingRequestsCount,
+            timestamp: getSessionTimestamp(left),
+        },
+        {
+            pendingRequestsCount: right.pendingRequestsCount,
+            timestamp: getSessionTimestamp(right),
+        }
+    )
 }
 
 function buildBrainGroupStatusSummary(
@@ -70,16 +87,27 @@ function buildBrainGroupStatusSummary(
 
 function compareEntries(left: SessionListEntry, right: SessionListEntry): number {
     const leftRank = left.kind === 'brain-group'
-        ? (left.statusSummary.active ? (left.statusSummary.pendingRequestsCount > 0 ? 0 : 1) : 2)
-        : getSessionRank(left.session)
+        ? getEntryRank(left.statusSummary.active)
+        : getEntryRank(left.session.active)
     const rightRank = right.kind === 'brain-group'
-        ? (right.statusSummary.active ? (right.statusSummary.pendingRequestsCount > 0 ? 0 : 1) : 2)
-        : getSessionRank(right.session)
+        ? getEntryRank(right.statusSummary.active)
+        : getEntryRank(right.session.active)
     if (leftRank !== rightRank) return leftRank - rightRank
 
-    const leftTimestamp = left.kind === 'brain-group' ? left.statusSummary.timestamp : getSessionTimestamp(left.session)
-    const rightTimestamp = right.kind === 'brain-group' ? right.statusSummary.timestamp : getSessionTimestamp(right.session)
-    return rightTimestamp - leftTimestamp
+    return compareActivityAndPending(
+        left.kind === 'brain-group'
+            ? left.statusSummary
+            : {
+                pendingRequestsCount: left.session.pendingRequestsCount,
+                timestamp: getSessionTimestamp(left.session),
+            },
+        right.kind === 'brain-group'
+            ? right.statusSummary
+            : {
+                pendingRequestsCount: right.session.pendingRequestsCount,
+                timestamp: getSessionTimestamp(right.session),
+            }
+    )
 }
 
 export function buildSessionListEntries(sessions: SessionSummary[]): SessionListEntry[] {

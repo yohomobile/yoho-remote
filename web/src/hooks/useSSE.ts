@@ -5,6 +5,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { upsertMessagesInCache } from '@/lib/messages'
 import { getClientId, getDeviceType } from '@/lib/client-identity'
 import {
+    applySessionSummaryStatusUpdate,
     hasSessionStatusFields,
     isFullSessionPayload,
     isSidOnlySessionRefreshHint,
@@ -205,38 +206,7 @@ export function useSSE(options: {
                             queryClient.setQueriesData<SessionsResponse>(
                                 { queryKey: queryKeys.sessions },
                                 (prev) => {
-                                    if (!prev?.sessions) return prev
-                                    const target = prev.sessions.find(s => s.id === event.sessionId)
-                                    if (!target) return prev
-                                    // Check if any value actually changed
-                                    const hasChange =
-                                        (statusData.active !== undefined && statusData.active !== target.active) ||
-                                        (statusData.activeAt !== undefined && statusData.activeAt !== target.activeAt) ||
-                                        (statusData.thinking !== undefined && statusData.thinking !== target.thinking) ||
-                                        (statusData.modelMode !== undefined && statusData.modelMode !== target.modelMode) ||
-                                        (statusData.modelReasoningEffort !== undefined && statusData.modelReasoningEffort !== target.modelReasoningEffort) ||
-                                        (statusData.fastMode !== undefined && statusData.fastMode !== target.fastMode) ||
-                                        (statusData.activeMonitorCount !== undefined && statusData.activeMonitorCount !== target.activeMonitorCount) ||
-                                        (statusData.terminationReason !== undefined && statusData.terminationReason !== target.terminationReason)
-                                    if (!hasChange) return prev
-                                    return {
-                                        ...prev,
-                                        sessions: prev.sessions.map((s) =>
-                                            s.id === event.sessionId
-                                                ? {
-                                                    ...s,
-                                                    ...(statusData.active !== undefined && { active: statusData.active }),
-                                                    ...(statusData.activeAt !== undefined && { activeAt: statusData.activeAt }),
-                                                    ...(statusData.thinking !== undefined && { thinking: statusData.thinking }),
-                                                    ...(statusData.modelMode !== undefined && { modelMode: statusData.modelMode as SessionSummary['modelMode'] }),
-                                                    ...(statusData.modelReasoningEffort !== undefined && { modelReasoningEffort: statusData.modelReasoningEffort as SessionSummary['modelReasoningEffort'] }),
-                                                    ...(statusData.fastMode !== undefined && { fastMode: statusData.fastMode }),
-                                                    ...(statusData.activeMonitorCount !== undefined && { activeMonitorCount: statusData.activeMonitorCount }),
-                                                    ...(statusData.terminationReason !== undefined && { terminationReason: statusData.terminationReason }),
-                                                }
-                                                : s
-                                        )
-                                    }
+                                    return applySessionSummaryStatusUpdate(prev, event.sessionId, statusData)
                                 }
                             )
                         } else if (isSidOnlyUpdate) {

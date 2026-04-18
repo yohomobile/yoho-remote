@@ -559,6 +559,151 @@ describe('Codex frontend support', () => {
         })
     })
 
+    test('renders Claude edited_text_file attachments as structured code-change cards', () => {
+        const normalized = normalize(makeMessage({
+            id: 'claude-edited-text-file',
+            createdAt: 3,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'attachment',
+                        attachment: {
+                            type: 'edited_text_file',
+                            filename: '/tmp/demo.ts',
+                            snippet: '12\tconst nextValue = 2\n13\treturn nextValue'
+                        }
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(1)
+        expect(normalized[0]).toMatchObject({
+            role: 'agent',
+            content: [
+                {
+                    type: 'tool-call',
+                    name: 'ClaudeEditedTextFile',
+                    input: {
+                        file_path: '/tmp/demo.ts',
+                        snippet: '12\tconst nextValue = 2\n13\treturn nextValue'
+                    }
+                },
+                {
+                    type: 'tool-result',
+                    is_error: false
+                }
+            ]
+        })
+
+        const reduced = reduceChatBlocks(normalized, null)
+        expect(reduced.blocks).toHaveLength(1)
+        expect(reduced.blocks[0]).toMatchObject({
+            kind: 'tool-call',
+            tool: {
+                name: 'ClaudeEditedTextFile',
+                state: 'completed',
+                input: {
+                    file_path: '/tmp/demo.ts',
+                    snippet: '12\tconst nextValue = 2\n13\treturn nextValue'
+                },
+                result: null
+            }
+        })
+
+        const presentation = getToolPresentation({
+            toolName: 'ClaudeEditedTextFile',
+            input: {
+                file_path: '/tmp/demo.ts',
+                snippet: '12\tconst nextValue = 2\n13\treturn nextValue'
+            },
+            result: null,
+            childrenCount: 0,
+            description: 'Changed snippet',
+            metadata: null
+        })
+
+        expect(presentation.title).toBe('/tmp/demo.ts')
+    })
+
+    test('suppresses invalid Claude edited_text_file attachments instead of falling back to raw JSON', () => {
+        const missingFilename = normalize(makeMessage({
+            id: 'claude-edited-text-file-missing-filename',
+            createdAt: 3,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'attachment',
+                        attachment: {
+                            type: 'edited_text_file',
+                            snippet: '12\tconst nextValue = 2'
+                        }
+                    }
+                }
+            }
+        }))
+
+        const emptySnippet = normalize(makeMessage({
+            id: 'claude-edited-text-file-empty-snippet',
+            createdAt: 4,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'attachment',
+                        attachment: {
+                            type: 'edited_text_file',
+                            filename: '/tmp/demo.ts',
+                            snippet: '   \n'
+                        }
+                    }
+                }
+            }
+        }))
+
+        expect(missingFilename).toHaveLength(0)
+        expect(emptySnippet).toHaveLength(0)
+    })
+
+    test('preserves trailing spaces inside Claude edited_text_file snippets', () => {
+        const normalized = normalize(makeMessage({
+            id: 'claude-edited-text-file-trailing-space',
+            createdAt: 5,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'attachment',
+                        attachment: {
+                            type: 'edited_text_file',
+                            filename: '/tmp/demo.ts',
+                            snippet: '12\tconst nextValue = 2  \n'
+                        }
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(1)
+        expect(normalized[0]?.role).toBe('agent')
+        if (!normalized[0] || normalized[0].role !== 'agent') {
+            throw new Error('Expected agent message')
+        }
+        expect(normalized[0].content[0]).toMatchObject({
+            type: 'tool-call',
+            input: {
+                file_path: '/tmp/demo.ts',
+                snippet: '12\tconst nextValue = 2  '
+            }
+        })
+    })
+
     test('renders non-empty Claude todo_reminder attachments as structured events', () => {
         const normalized = normalize(makeMessage({
             id: 'claude-todo-reminder',

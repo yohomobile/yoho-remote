@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { SessionSummary } from '@/types/api'
-import { isIdleBrainChildSession } from './sessionActivity'
+import { isIdleBrainChildSession, shouldShowSessionComposer } from './sessionActivity'
 
 function createSession(
     overrides: Partial<Pick<SessionSummary, 'active' | 'pendingRequestsCount' | 'metadata'>> = {}
@@ -16,6 +16,32 @@ function createSession(
 }
 
 describe('sessionActivity', () => {
+    test('shows composer for regular sessions', () => {
+        expect(shouldShowSessionComposer(createSession({
+            metadata: {
+                path: '/tmp/session',
+            },
+        }))).toBe(true)
+    })
+
+    test('shows composer for main brain sessions', () => {
+        expect(shouldShowSessionComposer(createSession({
+            metadata: {
+                path: '/tmp/brain',
+                source: 'brain',
+            },
+        }))).toBe(true)
+    })
+
+    test('hides composer for brain-child sessions', () => {
+        expect(shouldShowSessionComposer(createSession({
+            metadata: {
+                path: '/tmp/child',
+                source: 'brain-child',
+            },
+        }))).toBe(false)
+    })
+
     test('marks active brain-child sessions without pending work as idle', () => {
         expect(isIdleBrainChildSession(createSession({
             metadata: {

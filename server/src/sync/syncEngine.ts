@@ -273,6 +273,13 @@ export interface SyncEvent {
 
 export type SyncEventListener = (event: SyncEvent) => void
 
+type AutoResumeGraceOptions = {
+    baseTimeoutMs?: number
+    maxTimeoutMs?: number
+    quietWindowMs?: number
+    checkIntervalMs?: number
+}
+
 function clampAliveTime(t: number): number | null {
     if (!Number.isFinite(t)) return null
     const now = Date.now()
@@ -581,11 +588,18 @@ export class SyncEngine {
     // task-complete 通知冷却：同一 session 60 秒内只发一次完整通知（toast + push）
     // 防止 Monitor/loop 等高频 thinking→done 转换导致通知轰炸
     private readonly lastTaskCompleteAt: Map<string, number> = new Map()
+    // 启动 hydrate 出来的历史状态只应被静默消化一次，不能在 server 重启后再次触发 toast。
+    private readonly startupSuppressedTaskCompleteSessionIds: Set<string> = new Set()
+    private readonly startupSuppressedTerminationReplaySessionIds: Set<string> = new Set()
     private missingSummarizeTurnQueueLogged = false
     private readonly TASK_COMPLETE_COOLDOWN_MS = 60_000
     private static readonly TASK_MESSAGE_SETTLE_POLL_MS = 50
     private static readonly TASK_MESSAGE_SETTLE_WINDOW_MS = 200
     private static readonly TASK_MESSAGE_SETTLE_MAX_WAIT_MS = 3_000
+    private autoResumeBaseGraceMs = 10_000
+    private autoResumeMaxGraceMs = 30_000
+    private autoResumeGraceQuietWindowMs = 5_000
+    private autoResumeGraceCheckIntervalMs = 1_000
 
     // Server 启动静默窗口：启动后 30 秒内
     // - reloadAllAsync hydrate session 时不广播 session-added/session-updated
@@ -631,6 +645,50 @@ export class SyncEngine {
      */
     private inStartupQuietWindow(): boolean {
         return Date.now() - this.serverStartedAt < SyncEngine.STARTUP_QUIET_WINDOW_MS
+    }
+
+    private markStartupNotificationSuppression(session: Session): void {
+        if (session.thinking) {
+            this.startupSuppressedTaskCompleteSessionIds.add(session.id)
+        }
+        if (session.terminationReason) {
+            this.startupSuppressedTerminationReplaySessionIds.add(session.id)
+        }
+    }
+
+    private clearStartupTaskCompleteSuppression(sessionId: string): void {
+        this.startupSuppressedTaskCompleteSessionIds.delete(sessionId)
+    }
+
+    private consumeStartupTaskCompleteSuppression(sessionId: string): boolean {
+        const suppressed = this.startupSuppressedTaskCompleteSessionIds.has(sessionId)
+        if (suppressed) {
+            this.startupSuppressedTaskCompleteSessionIds.delete(sessionId)
+        }
+        return suppressed
+    }
+
+    private clearStartupTerminationReplaySuppression(sessionId: string): boolean {
+        const suppressed = this.startupSuppressedTerminationReplaySessionIds.has(sessionId)
+        if (suppressed) {
+            this.startupSuppressedTerminationReplaySessionIds.delete(sessionId)
+        }
+        return suppressed
+    }
+
+    private consumeStartupTerminationReplaySuppression(session: Session): boolean {
+        const suppressed = this.clearStartupTerminationReplaySuppression(session.id)
+        if (suppressed) {
+            session.terminationReason = undefined
+        }
+        return suppressed
+    }
+
+    private getEventTerminationReason(session: Session): string | undefined {
+        if (this.startupSuppressedTerminationReplaySessionIds.has(session.id)) {
+            return undefined
+        }
+        return session.terminationReason
     }
 
     emit(event: SyncEvent): void {
@@ -851,7 +909,7 @@ export class SyncEngine {
             modelMode: session.modelMode,
             modelReasoningEffort: session.modelReasoningEffort,
             fastMode: session.fastMode,
-            terminationReason: session.terminationReason
+            terminationReason: this.getEventTerminationReason(session)
         }
     }
 
@@ -1323,10 +1381,15 @@ export class SyncEngine {
         const previousModelMode = session.modelMode
         const previousReasoningEffort = session.modelReasoningEffort
         const previousFastMode = session.fastMode
+        const hadTerminationReason = Boolean(session.terminationReason)
 
         session.active = true
         session.activeAt = Math.max(session.activeAt, t)
         this._dbActiveSessionIds.add(session.id)
+        if (hadTerminationReason) {
+            session.terminationReason = undefined
+        }
+        this.clearStartupTerminationReplaySuppression(session.id)
         // Resume guard fulfilled — new CLI is alive, clear the guard
         if (session.resumingUntil) {
             session.resumingUntil = undefined
@@ -1352,6 +1415,9 @@ export class SyncEngine {
             // 仍然更新 thinkingAt 以反映最近一次心跳时间（但不改变 thinking 状态）
             session.thinkingAt = t
         }
+        if (payload.thinking === true) {
+            this.clearStartupTaskCompleteSuppression(session.id)
+        }
         // Only update mode values from CLI heartbeat if server doesn't have authoritative values
         // This prevents CLI heartbeats with stale values from overwriting server-set values
         // (e.g., when Web UI just set a new mode via applySessionConfig but CLI hasn't synced yet)
@@ -1374,8 +1440,14 @@ export class SyncEngine {
         }
 
         // If session just became active, persist to database
-        if (!wasActive) {
-            this.store.setSessionActive(session.id, true, session.activeAt, session.namespace).catch(err => {
+        if (!wasActive || hadTerminationReason) {
+            this.store.setSessionActive(
+                session.id,
+                true,
+                session.activeAt,
+                session.namespace,
+                hadTerminationReason ? null : undefined
+            ).catch(err => {
                 console.error(`[handleSessionAlive] Failed to persist active=true for session ${session.id}:`, err)
             })
         }
@@ -1435,8 +1507,11 @@ export class SyncEngine {
             const lastCompleteAt = this.lastTaskCompleteAt.get(session.id) ?? 0
             const inCooldown = taskJustCompleted && (now - lastCompleteAt < this.TASK_COMPLETE_COOLDOWN_MS)
             const inQuietWindow = this.inStartupQuietWindow()
+            const suppressStartupReplay = taskJustCompleted
+                ? this.consumeStartupTaskCompleteSuppression(session.id)
+                : false
 
-            if (taskJustCompleted && !inCooldown && !inQuietWindow) {
+            if (taskJustCompleted && !inCooldown && !inQuietWindow && !suppressStartupReplay) {
                 this.lastTaskCompleteAt.set(session.id, now)
                 this.emitTaskCompleteEvent(session)
             } else {
@@ -1740,9 +1815,13 @@ export class SyncEngine {
 
             const sessionTitle = session.metadata?.summary?.text || session.metadata?.path || session.id
             const brainSummary = (session.metadata as any)?.brainSummary
-            const truncatedResult = resultText
-                ? resultText.length > 4000 ? resultText.slice(0, 4000) + '\n...(truncated)' : resultText
+            const callbackResult = resultText
+                ? resultText
                 : '（无文本输出）'
+
+            const preview = callbackResult.length > 120
+                ? `${callbackResult.slice(0, 120)}...`
+                : callbackResult
 
             const tailSummary = messages.slice(-5).map(message => {
                 const content = message.content as any
@@ -1751,8 +1830,8 @@ export class SyncEngine {
             }).join(',')
             console.log(
                 `[brain-callback] Extracted sid=${shortId(session.id)} main=${shortId(mainSessionId)} ` +
-                `source=${resultSource} seq=${resultSeq ?? 'n/a'} len=${truncatedResult.length} ` +
-                `messages=${messages.length} tail=[${tailSummary}] preview=${JSON.stringify(truncatedResult.slice(0, 120))}`
+                `source=${resultSource} seq=${resultSeq ?? 'n/a'} len=${callbackResult.length} ` +
+                `messages=${messages.length} tail=[${tailSummary}] preview=${JSON.stringify(preview)}`
             )
 
             // Build token stats line (contextSize formula matches frontend: cache_creation + cache_read + input_tokens)
@@ -1771,10 +1850,10 @@ export class SyncEngine {
                 brainSummary ? `上次总结: ${brainSummary}` : null,
                 statsLine,
                 ``,
-                truncatedResult
+                callbackResult
             ].filter(Boolean).join('\n')
 
-            console.log(`[brain-callback] Pushing result from child ${shortId(session.id)} to brain ${shortId(mainSessionId)} (${truncatedResult.length} chars)`)
+            console.log(`[brain-callback] Pushing result from child ${shortId(session.id)} to brain ${shortId(mainSessionId)} (${callbackResult.length} chars)`)
 
             // Retry sendMessage up to 3 times with exponential backoff
             let lastError: Error | null = null
@@ -1917,6 +1996,10 @@ export class SyncEngine {
         if (wasThinking !== session.thinking) {
             this.persistSessionThinking(session)
         }
+        const suppressStartupTaskComplete = wasThinking
+            ? this.consumeStartupTaskCompleteSuppression(session.id)
+            : false
+        this.consumeStartupTerminationReplaySuppression(session)
         const clearedActiveMonitors = await this.clearSessionActiveMonitors(session)
         this.pendingMonitorCallsBySessionId.delete(session.id)
 
@@ -1929,7 +2012,7 @@ export class SyncEngine {
         // 避免 server 重启后前端弹出 "Task completed" 或 "License expired" 风暴。
         const lastCompleteAt = this.lastTaskCompleteAt.get(session.id) ?? 0
         const inQuietWindow = this.inStartupQuietWindow()
-        if (wasThinking && (t - lastCompleteAt >= this.TASK_COMPLETE_COOLDOWN_MS) && !inQuietWindow) {
+        if (wasThinking && (t - lastCompleteAt >= this.TASK_COMPLETE_COOLDOWN_MS) && !inQuietWindow && !suppressStartupTaskComplete) {
             this.lastTaskCompleteAt.set(session.id, t)
             this.emitTaskCompleteEvent(session)
         } else {
@@ -1941,7 +2024,9 @@ export class SyncEngine {
                     thinking: false,
                     wasThinking: false,
                     ...(clearedActiveMonitors ? { activeMonitorCount: 0 } : {}),
-                    ...(session.terminationReason && !inQuietWindow ? { terminationReason: session.terminationReason } : {})
+                    ...(this.getEventTerminationReason(session) && !inQuietWindow
+                        ? { terminationReason: this.getEventTerminationReason(session) }
+                        : {})
                 }
             })
         }
@@ -2097,6 +2182,48 @@ export class SyncEngine {
     private _autoResumeInProgress = new Set<string>()
     private _autoResumePending = new Map<string, string>()
 
+    private getAutoResumeSkipReasons(
+        session: Session,
+        machineId: string,
+        namespace: string,
+        machineSupportedAgents: SpawnAgentType[] | null | undefined,
+        now: number
+    ): string[] {
+        const reasons: string[] = []
+        const cliArchived = session.metadata?.archivedBy === 'cli'
+        const flavor = session.metadata?.flavor
+        const RESUME_WINDOW_MS = 24 * 60 * 60 * 1000
+        const CLI_ARCHIVE_RESUME_WINDOW_MS = 2 * 60 * 60 * 1000
+
+        if (session.active) reasons.push('already-active')
+        if (!this._dbActiveSessionIds.has(session.id) && !cliArchived) reasons.push('not-in-dbActive')
+        if (session.terminationReason) reasons.push(`terminated:${session.terminationReason}`)
+        if (session.metadata?.archivedBy && !cliArchived) reasons.push(`archived:${session.metadata.archivedBy}`)
+        if (session.metadata?.startedFromDaemon !== true && session.metadata?.startedBy !== 'daemon') reasons.push('not-daemon-started')
+        const maxAge = cliArchived ? CLI_ARCHIVE_RESUME_WINDOW_MS : RESUME_WINDOW_MS
+        if (now - session.activeAt > maxAge) reasons.push('too-old')
+        if (session.metadata?.machineId !== machineId) reasons.push('wrong-machine')
+        if (session.namespace !== namespace) reasons.push('wrong-namespace')
+        if (!session.metadata?.path) reasons.push('no-path')
+        if (flavor !== 'claude' && flavor !== 'codex') reasons.push(`bad-flavor:${flavor}`)
+        if (typeof session.metadata?.claudeSessionId !== 'string' && typeof session.metadata?.codexSessionId !== 'string') reasons.push('no-native-session-id')
+        if (machineSupportedAgents && machineSupportedAgents.length > 0 && (flavor === 'claude' || flavor === 'codex') && !machineSupportedAgents.includes(flavor)) {
+            reasons.push('unsupported-agent')
+        }
+        return reasons
+    }
+
+    private getAutoResumeCandidates(
+        machineId: string,
+        namespace: string,
+        machineSupportedAgents: SpawnAgentType[] | null | undefined,
+        now: number
+    ): Session[] {
+        return Array.from(this.sessions.values()).filter(session =>
+            this.getAutoResumeSkipReasons(session, machineId, namespace, machineSupportedAgents, now).length === 0
+        )
+    }
+
     private async autoResumeSessions(machineId: string, namespace: string): Promise<void> {
         console.log(`[auto-resume] Triggered for machine ${machineId.slice(0, 8)}, namespace=${namespace}`)
         if (this._autoResumeInProgress.has(machineId)) {
@@ -2124,7 +2251,7 @@ export class SyncEngine {
                 return
             }
 
-            await this.waitForAutoResumeGrace(machineId, namespace, 10_000)
+            await this.waitForAutoResumeGrace(machineId, namespace, machine.supportedAgents)
 
             if (!this.machines.get(machineId)?.active) {
                 console.log(`[auto-resume] Machine ${machineId.slice(0, 8)} went inactive during grace, aborting`)
@@ -2132,7 +2259,6 @@ export class SyncEngine {
             }
 
             const machineSupportedAgents = machine.supportedAgents
-            const RESUME_WINDOW_MS = 24 * 60 * 60 * 1000
             const RESUME_TIMEOUT_MS = 60_000
 
             const allSessions = Array.from(this.sessions.values())
@@ -2144,45 +2270,16 @@ export class SyncEngine {
 
             if (inactiveForMachine.length > 0 && inactiveForMachine.length <= 20) {
                 for (const s of inactiveForMachine) {
-                    const reasons: string[] = []
-                    const isCli = s.metadata?.archivedBy === 'cli'
-                    if (!this._dbActiveSessionIds.has(s.id) && !isCli) reasons.push('not-in-dbActive')
-                    if (s.terminationReason) reasons.push(`terminated:${s.terminationReason}`)
-                    if (s.metadata?.archivedBy && !isCli) reasons.push(`archived:${s.metadata.archivedBy}`)
-                    if (isCli) reasons.push('cli-archived(ok)')
-                    if (s.metadata?.startedFromDaemon !== true && s.metadata?.startedBy !== 'daemon') reasons.push('not-daemon-started')
-                    if (Date.now() - s.activeAt > RESUME_WINDOW_MS) reasons.push('too-old')
-                    if (!s.metadata?.path) reasons.push('no-path')
-                    const flavor = s.metadata?.flavor
-                    if (flavor !== 'claude' && flavor !== 'codex') reasons.push(`bad-flavor:${flavor}`)
-                    if (typeof s.metadata?.claudeSessionId !== 'string' && typeof s.metadata?.codexSessionId !== 'string') reasons.push('no-native-session-id')
+                    const reasons = this.getAutoResumeSkipReasons(s, machineId, namespace, machineSupportedAgents, Date.now())
+                        .filter(reason => reason !== 'already-active' && reason !== 'wrong-machine' && reason !== 'wrong-namespace')
+                    if (s.metadata?.archivedBy === 'cli') reasons.unshift('cli-archived(ok)')
                     if (reasons.length > 0) {
                         console.log(`[auto-resume] Skip ${s.id.slice(0, 8)}: ${reasons.join(', ')}`)
                     }
                 }
             }
 
-            const CLI_ARCHIVE_RESUME_WINDOW_MS = 2 * 60 * 60 * 1000 // 2 hours for cli-archived sessions
-            const candidates = allSessions.filter(s => {
-                if (s.active) return false
-                // archivedBy='cli' means CLI cleanup on signal (e.g. deploy kill) — still eligible for auto-resume,
-                // but use a tighter time window (2h) to avoid resuming old sessions from previous deploys.
-                const cliArchived = s.metadata?.archivedBy === 'cli'
-                if (!this._dbActiveSessionIds.has(s.id) && !cliArchived) return false
-                if (s.terminationReason) return false
-                if (s.metadata?.archivedBy && !cliArchived) return false
-                if (s.metadata?.startedFromDaemon !== true && s.metadata?.startedBy !== 'daemon') return false
-                const maxAge = cliArchived ? CLI_ARCHIVE_RESUME_WINDOW_MS : RESUME_WINDOW_MS
-                if (Date.now() - s.activeAt > maxAge) return false
-                if (s.metadata?.machineId !== machineId) return false
-                if (s.namespace !== namespace) return false
-                if (!s.metadata?.path) return false
-                const flavor = s.metadata?.flavor
-                if (flavor !== 'claude' && flavor !== 'codex') return false
-                if (typeof s.metadata?.claudeSessionId !== 'string' && typeof s.metadata?.codexSessionId !== 'string') return false
-                if (machineSupportedAgents && machineSupportedAgents.length > 0 && !machineSupportedAgents.includes(flavor as SpawnAgentType)) return false
-                return true
-            })
+            const candidates = this.getAutoResumeCandidates(machineId, namespace, machineSupportedAgents, Date.now())
 
             if (candidates.length === 0) {
                 console.log(`[auto-resume] No candidates found for machine ${machineId.slice(0, 8)}`)
@@ -2323,21 +2420,50 @@ export class SyncEngine {
         })
     }
 
-    private async waitForAutoResumeGrace(machineId: string, namespace: string, timeoutMs: number): Promise<void> {
-        if (timeoutMs <= 0) return
-        const CHECK_INTERVAL = 1_000
+    private async waitForAutoResumeGrace(
+        machineId: string,
+        namespace: string,
+        machineSupportedAgents: SpawnAgentType[] | null | undefined,
+        options: AutoResumeGraceOptions = {}
+    ): Promise<void> {
+        const baseTimeoutMs = options.baseTimeoutMs ?? this.autoResumeBaseGraceMs
+        const maxTimeoutMs = Math.max(baseTimeoutMs, options.maxTimeoutMs ?? this.autoResumeMaxGraceMs)
+        const quietWindowMs = options.quietWindowMs ?? this.autoResumeGraceQuietWindowMs
+        const checkIntervalMs = options.checkIntervalMs ?? this.autoResumeGraceCheckIntervalMs
+
+        if (maxTimeoutMs <= 0) return
+
         const start = Date.now()
-        while (Date.now() - start < timeoutMs) {
-            const hasInactive = Array.from(this.sessions.values()).some(s =>
-                !s.active
-                && (this._dbActiveSessionIds.has(s.id) || s.metadata?.archivedBy === 'cli')
-                && s.metadata?.machineId === machineId
-                && s.namespace === namespace
-                && !s.terminationReason
-                && (!s.metadata?.archivedBy || s.metadata.archivedBy === 'cli')
-            )
-            if (!hasInactive) return
-            await new Promise(r => setTimeout(r, CHECK_INTERVAL))
+        // Always wait through the base grace, then require a short quiet window
+        // with no candidate-set changes before we trigger replacement resumes.
+        let quietReferenceAt = start + baseTimeoutMs
+        let previousPendingKey = this.getAutoResumeCandidates(machineId, namespace, machineSupportedAgents, start)
+            .map(session => session.id)
+            .sort()
+            .join(',')
+
+        if (!previousPendingKey) return
+
+        while (Date.now() - start < maxTimeoutMs) {
+            const now = Date.now()
+            if (now - start >= baseTimeoutMs && now - quietReferenceAt >= quietWindowMs) {
+                return
+            }
+            await new Promise(r => setTimeout(r, checkIntervalMs))
+            if (!this.machines.get(machineId)?.active) {
+                return
+            }
+            const pendingKey = this.getAutoResumeCandidates(machineId, namespace, machineSupportedAgents, Date.now())
+                .map(session => session.id)
+                .sort()
+                .join(',')
+            if (!pendingKey) {
+                return
+            }
+            if (pendingKey !== previousPendingKey) {
+                quietReferenceAt = Math.max(start + baseTimeoutMs, Date.now())
+                previousPendingKey = pendingKey
+            }
         }
     }
 
@@ -2508,6 +2634,11 @@ export class SyncEngine {
                 .filter(s => s.active)
                 .map(s => s.id)
         )
+        this.startupSuppressedTaskCompleteSessionIds.clear()
+        this.startupSuppressedTerminationReplaySessionIds.clear()
+        for (const session of this.sessions.values()) {
+            this.markStartupNotificationSuppression(session)
+        }
         for (const machine of this.machines.values()) {
             machine.active = false
         }
@@ -2689,6 +2820,22 @@ export class SyncEngine {
         const session = this.sessions.get(sessionId)
         if (session?.abortedAt) {
             session.abortedAt = undefined
+        }
+        if (session) {
+            const consumedStartupThinking = this.consumeStartupTaskCompleteSuppression(sessionId)
+            if (consumedStartupThinking) {
+                session.thinking = false
+                session.thinkingAt = Date.now()
+                await this.store.setSessionThinking(session.id, false, session.namespace).catch(error => {
+                    console.error(`[sendMessage] Failed to clear stale thinking for session ${session.id}:`, error)
+                })
+            }
+            if (this.clearStartupTerminationReplaySuppression(sessionId)) {
+                session.terminationReason = undefined
+                await this.store.setSessionActive(session.id, session.active, session.activeAt, session.namespace, null).catch(error => {
+                    console.error(`[sendMessage] Failed to clear stale termination for session ${session.id}:`, error)
+                })
+            }
         }
 
         const sentFrom = payload.sentFrom ?? 'webapp'

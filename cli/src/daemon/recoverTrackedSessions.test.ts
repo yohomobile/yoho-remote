@@ -2,13 +2,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ApiClient } from '@/api/api';
 import type { Metadata, Session } from '@/api/types';
-import { recoverTrackedSessionsFromServer, EXTERNAL_TRACKED_SESSION_LABEL } from './recoverTrackedSessions';
+import spawn from 'cross-spawn';
+import {
+    recoverTrackedSessionsFromServer,
+    EXTERNAL_TRACKED_SESSION_LABEL,
+    getTrackedSessionStartedBy,
+} from './recoverTrackedSessions';
 import type { TrackedSession } from './types';
 import { getProcessStartedAtMs, isProcessAlive } from '@/utils/process';
 
 vi.mock('@/utils/process', () => ({
     isProcessAlive: vi.fn(),
     getProcessStartedAtMs: vi.fn(),
+}));
+
+vi.mock('cross-spawn', () => ({
+    default: {
+        sync: vi.fn(),
+    },
 }));
 
 vi.mock('@/ui/logger', () => ({
@@ -36,6 +47,20 @@ describe('recoverTrackedSessionsFromServer', () => {
     beforeEach(() => {
         (isProcessAlive as unknown as { mockReset: () => void }).mockReset();
         (getProcessStartedAtMs as unknown as { mockReset: () => void }).mockReset();
+        (spawn.sync as unknown as { mockReset: () => void }).mockReset();
+    });
+
+    it('classifies daemon-owned metadata using startedFromDaemon as well as startedBy', () => {
+        expect(getTrackedSessionStartedBy({
+            path: '/tmp/daemon',
+            host: 'host-daemon',
+            homeDir: '/tmp',
+            yohoRemoteHomeDir: '/tmp/.yr',
+            yohoRemoteLibDir: '/tmp/.yr/lib',
+            yohoRemoteToolsDir: '/tmp/.yr/tools',
+            startedFromDaemon: true,
+            startedBy: 'terminal',
+        })).toBe('daemon');
     });
 
     it('rehydrates live sessions for the current machine only', async () => {
@@ -139,6 +164,91 @@ describe('recoverTrackedSessionsFromServer', () => {
         });
     });
 
+    it('rehydrates daemon-owned sessions with coarse start time drift and normalizes metadata', async () => {
+        const api = {
+            listSessions: vi.fn().mockResolvedValue({
+                sessions: [
+                    { id: 'session-daemon', active: true, metadata: { machineId: 'machine-1' } },
+                ],
+            }),
+            getSession: vi.fn().mockResolvedValue(createSession('session-daemon', {
+                path: '/tmp/daemon',
+                host: 'host-daemon',
+                homeDir: '/tmp',
+                yohoRemoteHomeDir: '/tmp/.yr',
+                yohoRemoteLibDir: '/tmp/.yr/lib',
+                yohoRemoteToolsDir: '/tmp/.yr/tools',
+                machineId: 'machine-1',
+                hostPid: 454,
+                hostProcessStartedAt: 10_000,
+                startedBy: 'daemon',
+            })),
+        } satisfies Pick<ApiClient, 'listSessions' | 'getSession'>;
+
+        (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
+        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(28_000);
+        (spawn.sync as unknown as { mockReturnValue: (value: unknown) => void }).mockReturnValue({
+            status: 0,
+            stdout: 'yoho-remote claude --started-by daemon --yoho-remote-session-id session-daemon',
+        });
+
+        const tracked = new Map<number, TrackedSession>();
+        const recovered = await recoverTrackedSessionsFromServer({
+            api,
+            machineId: 'machine-1',
+            pidToTrackedSession: tracked,
+        });
+
+        expect(recovered).toBe(1);
+        expect(tracked.get(454)).toMatchObject({
+            pid: 454,
+            startedBy: 'daemon',
+            yohoRemoteSessionId: 'session-daemon',
+            yohoRemoteSessionMetadataFromLocalWebhook: {
+                hostProcessStartedAt: 28_000,
+            },
+        });
+    });
+
+    it('skips daemon-owned coarse drift during passive recovery when daemon fingerprint is missing', async () => {
+        const api = {
+            listSessions: vi.fn().mockResolvedValue({
+                sessions: [
+                    { id: 'session-daemon', active: true, metadata: { machineId: 'machine-1' } },
+                ],
+            }),
+            getSession: vi.fn().mockResolvedValue(createSession('session-daemon', {
+                path: '/tmp/daemon',
+                host: 'host-daemon',
+                homeDir: '/tmp',
+                yohoRemoteHomeDir: '/tmp/.yr',
+                yohoRemoteLibDir: '/tmp/.yr/lib',
+                yohoRemoteToolsDir: '/tmp/.yr/tools',
+                machineId: 'machine-1',
+                hostPid: 454,
+                hostProcessStartedAt: 10_000,
+                startedBy: 'daemon',
+            })),
+        } satisfies Pick<ApiClient, 'listSessions' | 'getSession'>;
+
+        (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
+        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(28_000);
+        (spawn.sync as unknown as { mockReturnValue: (value: unknown) => void }).mockReturnValue({
+            status: 0,
+            stdout: 'python worker.py',
+        });
+
+        const tracked = new Map<number, TrackedSession>();
+        const recovered = await recoverTrackedSessionsFromServer({
+            api,
+            machineId: 'machine-1',
+            pidToTrackedSession: tracked,
+        });
+
+        expect(recovered).toBe(0);
+        expect(tracked.size).toBe(0);
+    });
+
     it('skips sessions whose pid has been reused by another process', async () => {
         const api = {
             listSessions: vi.fn().mockResolvedValue({
@@ -161,7 +271,7 @@ describe('recoverTrackedSessionsFromServer', () => {
         } satisfies Pick<ApiClient, 'listSessions' | 'getSession'>;
 
         (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
-        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(20_000);
+        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(40_000);
 
         const tracked = new Map<number, TrackedSession>();
         const recovered = await recoverTrackedSessionsFromServer({

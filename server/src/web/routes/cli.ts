@@ -11,6 +11,14 @@ import { serializeMachine, sortMachinesForDisplay } from './machinePayload'
 import { getLicenseService } from '../../license/licenseService'
 import { buildInitPrompt } from '../prompts/initPrompt'
 import {
+    buildResumeContextMessage,
+    RESUME_CONTEXT_MAX_LINES,
+    RESUME_TIMEOUT_MS,
+    resolveSpawnTarget,
+    waitForSessionOnline,
+} from './sessions'
+import { extractResumeSpawnMetadata } from '../../resumeSpawnMetadata'
+import {
     getUnsupportedSessionSourceError,
     getSessionSourceFromMetadata,
     isSupportedSessionSource,
@@ -48,6 +56,10 @@ const getMessagesQuerySchema = z.object({
     limit: z.coerce.number().int().min(1).max(200).optional()
 })
 
+const tailQuerySchema = z.object({
+    limit: z.coerce.number().int().min(1).max(20).optional()
+})
+
 const brainSpawnSchema = z.object({
     machineId: z.string().min(1),
     directory: z.string().min(1),
@@ -55,13 +67,802 @@ const brainSpawnSchema = z.object({
     modelMode: z.enum(['default', 'sonnet', 'opus', 'opus-4-7']).optional(),
     codexModel: z.string().min(1).optional(),
     source: z.string().default('brain-child'),
-    mainSessionId: z.string().optional(),
+    mainSessionId: z.string().min(1).optional(),
+    caller: z.string().min(1).optional(),
+    brainPreferences: z.record(z.string(), z.unknown()).optional(),
+}).superRefine((data, ctx) => {
+    if (data.source === 'brain-child' && !data.mainSessionId) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['mainSessionId'],
+            message: 'mainSessionId is required for brain-child sessions',
+        })
+    }
 })
 
 
 type CliEnv = {
     Variables: {
         namespace: string
+    }
+}
+
+const cliSessionConfigSchema = z.object({
+    permissionMode: z.enum(['bypassPermissions', 'read-only', 'safe-yolo', 'yolo']).optional(),
+    model: z.string().min(1).optional(),
+    reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
+    fastMode: z.boolean().optional(),
+}).refine((value) =>
+    value.permissionMode !== undefined
+    || value.model !== undefined
+    || value.reasoningEffort !== undefined
+    || value.fastMode !== undefined,
+{
+    message: 'At least one config field is required',
+})
+
+type BrainSessionInspectPayload = {
+    sessionId: string
+    status: 'offline' | 'running' | 'idle'
+    active: boolean
+    thinking: boolean
+    initDone: boolean
+    activeAt: number
+    updatedAt: number
+    thinkingAt: number | null
+    lastMessageAt: number | null
+    messageCount: number
+    pendingRequestsCount: number
+    pendingRequests: Array<{
+        id: string
+        tool: string
+        createdAt: number | null
+    }>
+    permissionMode?: Session['permissionMode']
+    modelMode?: Session['modelMode']
+    modelReasoningEffort?: Session['modelReasoningEffort']
+    runtimeAgent: string | null
+    runtimeModel: string | null
+    runtimeModelReasoningEffort: string | null
+    fastMode: boolean | null
+    todoProgress: { completed: number; total: number } | null
+    todos: Session['todos'] | null
+    activeMonitors: Session['activeMonitors']
+    terminationReason: string | null
+    lastUsage: {
+        input_tokens: number
+        output_tokens: number
+        cache_read_input_tokens?: number
+        cache_creation_input_tokens?: number
+        contextSize: number
+    } | null
+    contextWindow: {
+        budgetTokens: number
+        usedTokens: number
+        remainingTokens: number
+        remainingPercent: number
+    } | null
+    metadata: {
+        path: string | null
+        summary: { text: string; updatedAt: number } | null
+        brainSummary: string | null
+        source: string | null
+        caller: string | null
+        machineId: string | null
+        flavor: string | null
+        mainSessionId: string | null
+    }
+}
+
+type BrainSessionTailItem = {
+    seq: number
+    createdAt: number
+    role: 'user' | 'assistant' | 'agent'
+    kind: 'user' | 'assistant' | 'result' | 'tool-call' | 'tool-result' | 'tool-summary' | 'todo' | 'plan' | 'reasoning' | 'system' | 'message' | 'raw'
+    subtype: string | null
+    sentFrom: string | null
+    snippet: string
+}
+
+function getContextBudget(modelMode?: string): number {
+    const HEADROOM = 10_000
+    const windows: Record<string, number> = {
+        default: 1_000_000,
+        sonnet: 1_000_000,
+        opus: 1_000_000,
+        'gpt-5.4': 1_047_576,
+        'gpt-5.4-mini': 1_047_576,
+        'gpt-5.3-codex': 524_288,
+        'gpt-5.3-codex-spark': 524_288,
+    }
+    return (windows[modelMode ?? 'default'] ?? 1_000_000) - HEADROOM
+}
+
+function asNonEmptyString(value: unknown): string | undefined {
+    if (typeof value !== 'string') {
+        return undefined
+    }
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : undefined
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return undefined
+    }
+    return { ...(value as Record<string, unknown>) }
+}
+
+function clipText(value: string, maxChars: number = 600): string {
+    const normalized = value.replace(/\r\n?/g, '\n').trim()
+    if (normalized.length <= maxChars) {
+        return normalized
+    }
+    return `${normalized.slice(0, maxChars - 1).trimEnd()}…`
+}
+
+function stringifyPreview(value: unknown, maxChars: number = 220): string | null {
+    if (typeof value === 'string') {
+        const trimmed = value.trim()
+        return trimmed ? clipText(trimmed, maxChars) : null
+    }
+    try {
+        return clipText(JSON.stringify(value), maxChars)
+    } catch {
+        return null
+    }
+}
+
+function getMessageSentFrom(content: unknown): string | null {
+    const record = asRecord(content)
+    const meta = asRecord(record?.meta)
+    return asNonEmptyString(meta?.sentFrom) ?? null
+}
+
+function summarizeTodoProgress(todos: Session['todos'] | undefined): { completed: number; total: number } | null {
+    if (!todos?.length) {
+        return null
+    }
+    return {
+        completed: todos.filter((todo) => todo.status === 'completed').length,
+        total: todos.length,
+    }
+}
+
+function summarizePendingRequests(agentState: Session['agentState'] | null | undefined): Array<{ id: string; tool: string; createdAt: number | null }> {
+    const requests = agentState?.requests
+    if (!requests) {
+        return []
+    }
+
+    return Object.entries(requests).map(([id, request]) => ({
+        id,
+        tool: request.tool,
+        createdAt: typeof request.createdAt === 'number' ? request.createdAt : null,
+    }))
+}
+
+function extractAssistantTextBlocks(value: unknown): string | null {
+    if (!Array.isArray(value)) {
+        return null
+    }
+    const texts = value
+        .map((item) => {
+            const record = asRecord(item)
+            if (record?.type === 'text') {
+                return asNonEmptyString(record.text) ?? null
+            }
+            return null
+        })
+        .filter((text): text is string => Boolean(text))
+
+    if (texts.length === 0) {
+        return null
+    }
+    return texts.join('\n')
+}
+
+function summarizeToolUseBlocks(value: unknown): string | null {
+    if (!Array.isArray(value)) {
+        return null
+    }
+
+    const parts = value
+        .map((item) => {
+            const record = asRecord(item)
+            if (!record) {
+                return null
+            }
+            if (record.type !== 'tool_use' && record.type !== 'server_tool_use') {
+                return null
+            }
+            const name = asNonEmptyString(record.name)
+            if (!name) {
+                return null
+            }
+            const input = asRecord(record.input)
+            const command = asNonEmptyString(input?.command)
+            if (command) {
+                return `${name}: ${command}`
+            }
+            const todos = Array.isArray(input?.todos) ? input.todos.length : null
+            if (todos !== null) {
+                return `${name}: ${todos} todos`
+            }
+            const path = asNonEmptyString(input?.path) ?? asNonEmptyString(input?.file_path)
+            if (path) {
+                return `${name}: ${path}`
+            }
+            return name
+        })
+        .filter((part): part is string => Boolean(part))
+
+    if (parts.length === 0) {
+        return null
+    }
+
+    return `工具调用：${parts.join(' | ')}`
+}
+
+function summarizeToolResultBlocks(value: unknown): string | null {
+    if (!Array.isArray(value)) {
+        return null
+    }
+
+    const parts = value
+        .map((item) => {
+            const record = asRecord(item)
+            if (!record || record.type !== 'tool_result') {
+                return null
+            }
+            const prefix = Boolean(record.is_error) ? '工具结果错误' : '工具结果'
+            const contentPreview = stringifyPreview(record.content)
+            const toolUseId = asNonEmptyString(record.tool_use_id)
+            if (contentPreview) {
+                return toolUseId
+                    ? `${prefix}(${toolUseId}): ${contentPreview}`
+                    : `${prefix}: ${contentPreview}`
+            }
+            return toolUseId ? `${prefix}(${toolUseId})` : prefix
+        })
+        .filter((part): part is string => Boolean(part))
+
+    if (parts.length === 0) {
+        return null
+    }
+
+    return parts.join('\n')
+}
+
+function extractTodoReminderSummary(content: unknown): string | null {
+    if (!Array.isArray(content)) {
+        return null
+    }
+
+    const lines = content
+        .map((item) => {
+            const record = asRecord(item)
+            const text = asNonEmptyString(record?.content)
+            const status = asNonEmptyString(record?.status) ?? 'pending'
+            return text ? `- [${status}] ${text}` : null
+        })
+        .filter((line): line is string => Boolean(line))
+
+    if (lines.length === 0) {
+        return null
+    }
+    return `当前待办：\n${lines.join('\n')}`
+}
+
+function extractAttachmentSummary(dataRecord: Record<string, unknown>): { kind: BrainSessionTailItem['kind']; subtype: string | null; snippet: string } | null {
+    if (dataRecord.type !== 'attachment') {
+        return null
+    }
+
+    const attachment = asRecord(dataRecord.attachment)
+    const attachmentType = asNonEmptyString(attachment?.type) ?? null
+    if (!attachment || !attachmentType) {
+        return null
+    }
+
+    if (attachmentType === 'todo_reminder') {
+        const snippet = extractTodoReminderSummary(attachment.content)
+        return snippet ? { kind: 'todo', subtype: attachmentType, snippet } : null
+    }
+
+    if (attachmentType === 'plan_mode') {
+        const planFilePath = asNonEmptyString(attachment.planFilePath)
+        return {
+            kind: 'plan',
+            subtype: attachmentType,
+            snippet: planFilePath ? `当前处于计划模式（计划文件：${planFilePath}）` : '当前处于计划模式',
+        }
+    }
+
+    if (attachmentType === 'plan_file_reference') {
+        const planFilePath = asNonEmptyString(attachment.planFilePath)
+        const planContent = asNonEmptyString(attachment.planContent)
+        if (planContent) {
+            return {
+                kind: 'plan',
+                subtype: attachmentType,
+                snippet: planFilePath ? `当前计划文件（${planFilePath}）：\n${planContent}` : `当前计划文件：\n${planContent}`,
+            }
+        }
+        if (planFilePath) {
+            return {
+                kind: 'plan',
+                subtype: attachmentType,
+                snippet: `当前计划文件：${planFilePath}`,
+            }
+        }
+        return null
+    }
+
+    if (attachmentType === 'queued_command') {
+        const prompt = asNonEmptyString(attachment.prompt)
+        if (!prompt) {
+            return null
+        }
+        return {
+            kind: 'system',
+            subtype: attachmentType,
+            snippet: attachment.commandMode === 'prompt' ? `排队命令：${prompt}` : prompt,
+        }
+    }
+
+    if (attachmentType === 'edited_text_file') {
+        const filename = asNonEmptyString(attachment.filename)
+        const snippet = asNonEmptyString(attachment.snippet)
+        if (!filename || !snippet) {
+            return null
+        }
+        return {
+            kind: 'tool-result',
+            subtype: attachmentType,
+            snippet: `已编辑文件 ${filename}：\n${snippet}`,
+        }
+    }
+
+    return null
+}
+
+function extractTailItem(content: unknown): Omit<BrainSessionTailItem, 'seq' | 'createdAt'> | null {
+    const record = asRecord(content)
+    if (!record) {
+        return null
+    }
+
+    const role = asNonEmptyString(record.role)
+    if (role === 'user') {
+        const body = record.content
+        if (typeof body === 'string') {
+            return {
+                role: 'user',
+                kind: 'user',
+                subtype: 'text',
+                sentFrom: getMessageSentFrom(content),
+                snippet: clipText(body),
+            }
+        }
+        const bodyRecord = asRecord(body)
+        if (bodyRecord?.type === 'text') {
+            const text = asNonEmptyString(bodyRecord.text)
+            if (!text) {
+                return null
+            }
+            return {
+                role: 'user',
+                kind: 'user',
+                subtype: 'text',
+                sentFrom: getMessageSentFrom(content),
+                snippet: clipText(text),
+            }
+        }
+    }
+
+    if (role === 'assistant') {
+        const body = asRecord(record.content)
+        const text = asNonEmptyString(body?.text) ?? (typeof record.content === 'string' ? asNonEmptyString(record.content) : undefined)
+        if (!text) {
+            return null
+        }
+        return {
+            role: 'assistant',
+            kind: 'assistant',
+            subtype: body?.type === 'text' ? 'text' : null,
+            sentFrom: getMessageSentFrom(content),
+            snippet: clipText(text),
+        }
+    }
+
+    if (role !== 'agent') {
+        return null
+    }
+
+    const payload = asRecord(record.content)
+    if (!payload) {
+        return null
+    }
+
+    if (payload.type === 'codex') {
+        const data = asRecord(payload.data)
+        const dataType = asNonEmptyString(data?.type)
+        if (!data || !dataType) {
+            return null
+        }
+
+        if (dataType === 'message') {
+            const message = asNonEmptyString(data.message)
+            return message ? {
+                role: 'agent',
+                kind: 'message',
+                subtype: dataType,
+                sentFrom: getMessageSentFrom(content),
+                snippet: clipText(message),
+            } : null
+        }
+
+        if (dataType === 'reasoning') {
+            const message = asNonEmptyString(data.message)
+            return message ? {
+                role: 'agent',
+                kind: 'reasoning',
+                subtype: dataType,
+                sentFrom: getMessageSentFrom(content),
+                snippet: clipText(message),
+            } : null
+        }
+
+        if (dataType === 'tool-call') {
+            const name = asNonEmptyString(data.name) ?? 'unknown'
+            const inputPreview = stringifyPreview(data.input)
+            return {
+                role: 'agent',
+                kind: 'tool-call',
+                subtype: dataType,
+                sentFrom: getMessageSentFrom(content),
+                snippet: clipText(inputPreview ? `工具调用 ${name}: ${inputPreview}` : `工具调用 ${name}`),
+            }
+        }
+
+        if (dataType === 'tool-call-result') {
+            const outputPreview = stringifyPreview(data.output)
+            if (!outputPreview) {
+                return null
+            }
+            return {
+                role: 'agent',
+                kind: 'tool-result',
+                subtype: dataType,
+                sentFrom: getMessageSentFrom(content),
+                snippet: clipText(`工具结果: ${outputPreview}`),
+            }
+        }
+
+        return null
+    }
+
+    if (payload.type === 'event') {
+        const event = asNonEmptyString(payload.event)
+        return event ? {
+            role: 'agent',
+            kind: 'system',
+            subtype: 'event',
+            sentFrom: getMessageSentFrom(content),
+            snippet: `事件：${event}`,
+        } : null
+    }
+
+    if (payload.type !== 'output') {
+        return null
+    }
+
+    const data = payload.data
+    if (typeof data === 'string') {
+        const text = asNonEmptyString(data)
+        return text ? {
+            role: 'agent',
+            kind: 'message',
+            subtype: 'raw-string',
+            sentFrom: getMessageSentFrom(content),
+            snippet: clipText(text),
+        } : null
+    }
+
+    const dataRecord = asRecord(data)
+    const dataType = asNonEmptyString(dataRecord?.type) ?? null
+    if (!dataRecord || !dataType) {
+        return null
+    }
+
+    if (dataType === 'result') {
+        const resultText = asNonEmptyString(dataRecord.result)
+        return resultText ? {
+            role: 'agent',
+            kind: 'result',
+            subtype: dataType,
+            sentFrom: getMessageSentFrom(content),
+            snippet: clipText(resultText),
+        } : null
+    }
+
+    if (dataType === 'tool_use_summary') {
+        const summary = asNonEmptyString(dataRecord.summary)
+        return summary ? {
+            role: 'agent',
+            kind: 'tool-summary',
+            subtype: dataType,
+            sentFrom: getMessageSentFrom(content),
+            snippet: clipText(summary),
+        } : null
+    }
+
+    if (dataType === 'message') {
+        const message = asNonEmptyString(dataRecord.message)
+        return message ? {
+            role: 'agent',
+            kind: 'message',
+            subtype: dataType,
+            sentFrom: getMessageSentFrom(content),
+            snippet: clipText(message),
+        } : null
+    }
+
+    if (dataType === 'assistant') {
+        const message = asRecord(dataRecord.message)
+        const blockText = extractAssistantTextBlocks(message?.content)
+        if (blockText) {
+            return {
+                role: 'agent',
+                kind: 'assistant',
+                subtype: dataType,
+                sentFrom: getMessageSentFrom(content),
+                snippet: clipText(blockText),
+            }
+        }
+        const toolSummary = summarizeToolUseBlocks(message?.content)
+        if (toolSummary) {
+            return {
+                role: 'agent',
+                kind: 'tool-call',
+                subtype: dataType,
+                sentFrom: getMessageSentFrom(content),
+                snippet: clipText(toolSummary),
+            }
+        }
+        return null
+    }
+
+    if (dataType === 'user') {
+        const message = asRecord(dataRecord.message)
+        const toolResultSummary = summarizeToolResultBlocks(message?.content)
+        if (toolResultSummary) {
+            return {
+                role: 'agent',
+                kind: 'tool-result',
+                subtype: dataType,
+                sentFrom: getMessageSentFrom(content),
+                snippet: clipText(toolResultSummary),
+            }
+        }
+        const blockText = extractAssistantTextBlocks(message?.content)
+        if (blockText) {
+            return {
+                role: 'agent',
+                kind: 'user',
+                subtype: dataType,
+                sentFrom: getMessageSentFrom(content),
+                snippet: clipText(blockText),
+            }
+        }
+        return null
+    }
+
+    if (dataType === 'system') {
+        const subtype = asNonEmptyString(dataRecord.subtype) ?? 'system'
+        const toolUseId = asNonEmptyString(dataRecord.tool_use_id)
+        const status = asNonEmptyString(dataRecord.status)
+        const taskId = asNonEmptyString(dataRecord.task_id)
+        const parts = [subtype]
+        if (status) parts.push(`status=${status}`)
+        if (taskId) parts.push(`taskId=${taskId}`)
+        if (toolUseId) parts.push(`toolUseId=${toolUseId}`)
+        return {
+            role: 'agent',
+            kind: 'system',
+            subtype,
+            sentFrom: getMessageSentFrom(content),
+            snippet: `系统事件：${parts.join(' ')}`,
+        }
+    }
+
+    const attachmentSummary = extractAttachmentSummary(dataRecord)
+    if (attachmentSummary) {
+        return {
+            role: 'agent',
+            kind: attachmentSummary.kind,
+            subtype: attachmentSummary.subtype,
+            sentFrom: getMessageSentFrom(content),
+            snippet: clipText(attachmentSummary.snippet),
+        }
+    }
+
+    const rawPreview = stringifyPreview(dataRecord)
+    if (!rawPreview) {
+        return null
+    }
+
+    return {
+        role: 'agent',
+        kind: 'raw',
+        subtype: dataType,
+        sentFrom: getMessageSentFrom(content),
+        snippet: clipText(rawPreview),
+    }
+}
+
+async function buildBrainSessionInspectPayload(engine: SyncEngine, session: Session): Promise<BrainSessionInspectPayload> {
+    const messageCount = await engine.getMessageCount(session.id)
+    const lastUsage = await engine.getLastUsageForSession(session.id)
+    const pendingRequests = summarizePendingRequests(session.agentState)
+    const contextBudget = lastUsage ? getContextBudget(session.modelMode) : null
+    const contextWindow = lastUsage && contextBudget
+        ? {
+            budgetTokens: contextBudget,
+            usedTokens: lastUsage.contextSize,
+            remainingTokens: Math.max(0, contextBudget - lastUsage.contextSize),
+            remainingPercent: Math.max(0, Math.round((1 - lastUsage.contextSize / contextBudget) * 100)),
+        }
+        : null
+
+    return {
+        sessionId: session.id,
+        status: !session.active ? 'offline' : session.thinking ? 'running' : 'idle',
+        active: session.active,
+        thinking: session.thinking ?? false,
+        initDone: engine.isBrainChildInitDone(session.id),
+        activeAt: session.activeAt,
+        updatedAt: session.updatedAt,
+        thinkingAt: typeof session.thinkingAt === 'number' ? session.thinkingAt : null,
+        lastMessageAt: session.lastMessageAt,
+        messageCount,
+        pendingRequestsCount: pendingRequests.length,
+        pendingRequests,
+        permissionMode: session.permissionMode,
+        modelMode: session.modelMode,
+        modelReasoningEffort: session.modelReasoningEffort,
+        runtimeAgent: asNonEmptyString(session.metadata?.runtimeAgent) ?? asNonEmptyString(session.metadata?.flavor) ?? null,
+        runtimeModel: asNonEmptyString(session.metadata?.runtimeModel) ?? null,
+        runtimeModelReasoningEffort: asNonEmptyString(session.metadata?.runtimeModelReasoningEffort) ?? null,
+        fastMode: typeof session.fastMode === 'boolean' ? session.fastMode : null,
+        todoProgress: summarizeTodoProgress(session.todos),
+        todos: session.todos ?? null,
+        activeMonitors: session.activeMonitors,
+        terminationReason: session.terminationReason ?? null,
+        lastUsage,
+        contextWindow,
+        metadata: {
+            path: asNonEmptyString(session.metadata?.path) ?? null,
+            summary: session.metadata?.summary ?? null,
+            brainSummary: asNonEmptyString(asRecord(session.metadata)?.brainSummary) ?? null,
+            source: asNonEmptyString(session.metadata?.source) ?? null,
+            caller: asNonEmptyString(asRecord(session.metadata)?.caller) ?? null,
+            machineId: asNonEmptyString(session.metadata?.machineId) ?? null,
+            flavor: asNonEmptyString(session.metadata?.flavor) ?? null,
+            mainSessionId: asNonEmptyString(asRecord(session.metadata)?.mainSessionId) ?? null,
+        },
+    }
+}
+
+async function checkCliSessionLicense(c: { json: (data: any, status: number) => any }, orgId: string | null | undefined): Promise<Response | null> {
+    if (!orgId) return null
+    try {
+        const licenseService = getLicenseService()
+        const licenseCheck = await licenseService.canCreateSession(orgId)
+        if (!licenseCheck.valid) {
+            return c.json({ type: 'error', message: licenseCheck.message, code: licenseCheck.code }, 403)
+        }
+    } catch { /* LicenseService not initialized */ }
+    return null
+}
+
+type CliSessionConfigInput = z.infer<typeof cliSessionConfigSchema>
+
+type CliSessionConfig = {
+    permissionMode?: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
+    modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'glm-5.1' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.2' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini'
+    modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
+    fastMode?: boolean
+}
+
+const CLAUDE_CONFIG_MODELS = new Set(['sonnet', 'opus', 'opus-4-7', 'glm-5.1'])
+const CODEX_CONFIG_MODELS = new Set(['default', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2-codex', 'gpt-5.2', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini'])
+
+function validateCliSessionConfig(
+    session: Session,
+    input: CliSessionConfigInput
+): { ok: true; config: CliSessionConfig } | { ok: false; error: string } {
+    const flavor = session.metadata?.flavor ?? 'claude'
+    const config: CliSessionConfig = {}
+
+    if (flavor === 'claude') {
+        if (input.permissionMode !== undefined) {
+            if (input.permissionMode !== 'bypassPermissions') {
+                return { ok: false, error: 'Claude sessions only support permissionMode=bypassPermissions' }
+            }
+            config.permissionMode = input.permissionMode
+        }
+        if (input.model !== undefined) {
+            if (!CLAUDE_CONFIG_MODELS.has(input.model)) {
+                return { ok: false, error: 'Invalid model for Claude sessions' }
+            }
+            config.modelMode = input.model as CliSessionConfig['modelMode']
+        }
+        if (input.reasoningEffort !== undefined) {
+            return { ok: false, error: 'Claude sessions do not support reasoningEffort runtime steering' }
+        }
+        if (input.fastMode !== undefined) {
+            config.fastMode = input.fastMode
+        }
+        return { ok: true, config }
+    }
+
+    if (flavor === 'codex') {
+        if (input.permissionMode !== undefined) {
+            if (input.permissionMode === 'bypassPermissions') {
+                return { ok: false, error: 'Codex sessions do not support permissionMode=bypassPermissions' }
+            }
+            config.permissionMode = input.permissionMode
+        }
+        if (input.model !== undefined) {
+            if (!CODEX_CONFIG_MODELS.has(input.model)) {
+                return { ok: false, error: 'Invalid model for Codex sessions' }
+            }
+            config.modelMode = input.model as CliSessionConfig['modelMode']
+        }
+        if (input.reasoningEffort !== undefined) {
+            config.modelReasoningEffort = input.reasoningEffort
+        }
+        if (input.fastMode !== undefined) {
+            return { ok: false, error: 'Codex sessions do not support fastMode' }
+        }
+        return { ok: true, config }
+    }
+
+    return { ok: false, error: `Session config currently only supports Claude/Codex sessions; current flavor is ${flavor}` }
+}
+
+async function applyCliSessionConfig(
+    c: { json: (data: any, status?: number) => Response },
+    engine: SyncEngine,
+    sessionId: string,
+    session: Session,
+    input: CliSessionConfigInput,
+): Promise<Response> {
+    if (!session.active) {
+        return c.json({ error: 'Session is offline; resume it before changing runtime config' }, 409)
+    }
+
+    const validated = validateCliSessionConfig(session, input)
+    if (!validated.ok) {
+        return c.json({ error: validated.error }, 400)
+    }
+
+    try {
+        const applied = await engine.applySessionConfig(sessionId, validated.config)
+        return c.json({
+            ok: true,
+            applied: {
+                ...(applied.permissionMode !== undefined ? { permissionMode: applied.permissionMode } : {}),
+                ...(applied.modelMode !== undefined ? { model: applied.modelMode } : {}),
+                ...(applied.modelReasoningEffort !== undefined ? { reasoningEffort: applied.modelReasoningEffort } : {}),
+                ...(applied.fastMode !== undefined ? { fastMode: applied.fastMode } : {}),
+            },
+        })
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to apply session config'
+        return c.json({ error: message }, 409)
     }
 }
 
@@ -206,6 +1007,194 @@ export function createCliRoutes(
         return c.json({ ok: true })
     })
 
+    app.post('/sessions/:id/abort', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not ready' }, 503)
+        }
+        const sessionId = c.req.param('id')
+        const namespace = c.get('namespace')
+        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        if (!resolved.ok) {
+            return c.json({ error: resolved.error }, resolved.status)
+        }
+
+        await engine.abortSession(sessionId)
+        return c.json({ ok: true })
+    })
+
+    app.post('/sessions/:id/resume', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not ready' }, 503)
+        }
+        if (!store) {
+            return c.json({ error: 'Store not available' }, 503)
+        }
+
+        const sessionId = c.req.param('id')
+        const namespace = c.get('namespace')
+        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        if (!resolved.ok) {
+            return c.json({ error: resolved.error }, resolved.status)
+        }
+
+        const session = resolved.session
+        if (session.active) {
+            return c.json({ type: 'already-active', sessionId })
+        }
+
+        const storedSession = await store.getSessionByNamespace(sessionId, namespace)
+        const licenseError = await checkCliSessionLicense(c, storedSession?.orgId)
+        if (licenseError) {
+            return licenseError
+        }
+
+        const flavor = session.metadata?.flavor ?? 'claude'
+        if (flavor !== 'claude' && flavor !== 'codex') {
+            return c.json({ error: 'Resume not supported for this session flavor' }, 400)
+        }
+
+        const machineId = session.metadata?.machineId?.trim()
+        if (!machineId) {
+            return c.json({ error: 'Session machine not found' }, 409)
+        }
+
+        const machineResolved = resolveMachineForNamespace(engine, machineId, namespace)
+        if (!machineResolved.ok) {
+            return c.json({ error: machineResolved.error }, machineResolved.status)
+        }
+        if (!machineResolved.machine.active) {
+            return c.json({ error: 'Machine is offline' }, 409)
+        }
+
+        const spawnTarget = await resolveSpawnTarget(engine, machineId, session)
+        if (!spawnTarget.ok) {
+            return c.json({ error: spawnTarget.error }, 409)
+        }
+
+        const modeSettings = {
+            permissionMode: session.permissionMode,
+            modelMode: session.modelMode,
+            modelReasoningEffort: session.modelReasoningEffort,
+        }
+        const resumeMetadata = extractResumeSpawnMetadata(session.metadata)
+        const resumeSessionId = (() => {
+            const value = flavor === 'claude'
+                ? session.metadata?.claudeSessionId
+                : session.metadata?.codexSessionId
+            return typeof value === 'string' && value.trim() ? value : undefined
+        })()
+
+        const now = Date.now()
+        await store.setSessionActive(sessionId, true, now, namespace)
+        session.active = true
+        session.activeAt = now
+        session.thinking = false
+        session.resumingUntil = now + RESUME_TIMEOUT_MS
+
+        const resumeAttempt = await engine.spawnSession(
+            machineId,
+            spawnTarget.directory,
+            flavor,
+            undefined,
+            { sessionId, resumeSessionId, ...modeSettings, ...resumeMetadata }
+        )
+
+        if (resumeAttempt.type === 'success') {
+            const online = await waitForSessionOnline(engine, sessionId, RESUME_TIMEOUT_MS)
+            if (online) {
+                return c.json({ type: 'resumed', sessionId })
+            }
+        }
+
+        await engine.terminateSessionProcess(sessionId)
+        session.active = false
+        session.thinking = false
+        session.resumingUntil = undefined
+        await store.setSessionActive(sessionId, false, Date.now(), namespace)
+
+        const fallbackResult = await engine.spawnSession(
+            machineId,
+            spawnTarget.directory,
+            flavor,
+            undefined,
+            { resumeSessionId, ...modeSettings, ...resumeMetadata }
+        )
+
+        if (fallbackResult.type !== 'success') {
+            return c.json({ error: fallbackResult.message }, 409)
+        }
+
+        const newSessionId = fallbackResult.sessionId
+        const online = await waitForSessionOnline(engine, newSessionId, RESUME_TIMEOUT_MS)
+        if (!online) {
+            return c.json({ error: 'Session resume timed out' }, 409)
+        }
+
+        if (storedSession?.orgId) {
+            await store.setSessionOrgId(newSessionId, storedSession.orgId, namespace).catch(() => {})
+        }
+
+        const resumedSource = session.metadata?.source
+        if (resumedSource === 'brain' && newSessionId !== sessionId) {
+            const childSessions = engine.getSessionsByNamespace(namespace).filter((candidate) => {
+                const metadata = candidate.metadata as { source?: unknown; mainSessionId?: unknown } | null | undefined
+                return metadata?.source === 'brain-child' && metadata?.mainSessionId === sessionId
+            })
+
+            for (const child of childSessions) {
+                const patchResult = await engine.patchSessionMetadata(child.id, { mainSessionId: newSessionId })
+                if (!patchResult.ok) {
+                    console.warn(`[cli/resume] Failed to rebind brain-child ${child.id} to resumed brain session ${newSessionId}: ${patchResult.error}`)
+                }
+            }
+        }
+
+        const resumedSession = engine.getSession(newSessionId)
+        const projectRoot = resumedSession?.metadata?.path?.trim() || null
+        const initPrompt = await buildInitPrompt('developer', { projectRoot })
+        if (initPrompt.trim()) {
+            await engine.sendMessage(newSessionId, { text: initPrompt, sentFrom: 'webapp' })
+        }
+
+        if (!resumeSessionId) {
+            const page = await engine.getMessagesPage(sessionId, { limit: RESUME_CONTEXT_MAX_LINES * 2, beforeSeq: null })
+            const contextMessage = buildResumeContextMessage(session, page.messages)
+            if (contextMessage) {
+                await engine.sendMessage(newSessionId, { text: contextMessage, sentFrom: 'webapp' })
+            }
+        }
+
+        return c.json({
+            type: 'created',
+            sessionId: newSessionId,
+            resumedFrom: sessionId,
+            usedResume: Boolean(resumeSessionId),
+        })
+    })
+
+    app.post('/sessions/:id/config', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not ready' }, 503)
+        }
+        const sessionId = c.req.param('id')
+        const namespace = c.get('namespace')
+        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        if (!resolved.ok) {
+            return c.json({ error: resolved.error }, resolved.status)
+        }
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = cliSessionConfigSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        return await applyCliSessionConfig(c, engine, sessionId, resolved.session, parsed.data)
+    })
+
     // List online machines
     app.get('/machines', (c) => {
         const engine = getSyncEngine()
@@ -340,6 +1329,8 @@ export function createCliRoutes(
         }
 
         const namespace = c.get('namespace')
+        let mainSession: Awaited<ReturnType<NonNullable<typeof store>['getSessionByNamespace']>> | null = null
+        let liveMainSession: Session | null = null
         const machineResolved = resolveMachineForNamespace(engine, parsed.data.machineId, namespace)
         if (!machineResolved.ok) {
             return c.json({ error: machineResolved.error }, machineResolved.status)
@@ -348,9 +1339,24 @@ export function createCliRoutes(
             return c.json({ error: 'Machine is offline' }, 503)
         }
 
+        if (parsed.data.source === 'brain-child') {
+            const mainSessionId = parsed.data.mainSessionId
+            if (!mainSessionId) {
+                return c.json({ error: 'mainSessionId is required for brain-child sessions' }, 400)
+            }
+            const mainResolved = resolveSessionForNamespace(engine, mainSessionId, namespace)
+            if (!mainResolved.ok) {
+                return c.json({ error: mainResolved.error }, mainResolved.status)
+            }
+            if (getSessionSourceFromMetadata(mainResolved.session.metadata) !== 'brain') {
+                return c.json({ error: 'mainSessionId must reference a brain session' }, 400)
+            }
+            liveMainSession = mainResolved.session
+        }
+
         // License check: 从 mainSession 继承 orgId 进行校验
         if (parsed.data.mainSessionId && store) {
-            const mainSession = await store.getSessionByNamespace(parsed.data.mainSessionId, namespace)
+            mainSession = await store.getSessionByNamespace(parsed.data.mainSessionId, namespace)
             const brainOrgId = mainSession?.orgId || machineResolved.machine.orgId
             if (brainOrgId) {
                 try {
@@ -371,6 +1377,9 @@ export function createCliRoutes(
         if (!isSupportedSessionSource(parsed.data.source)) {
             return c.json({ error: getUnsupportedSessionSourceError(parsed.data.source) }, 400)
         }
+        const mainSessionMetadata = asRecord(mainSession?.metadata) ?? asRecord(liveMainSession?.metadata)
+        const effectiveCaller = asNonEmptyString(parsed.data.caller) ?? asNonEmptyString(mainSessionMetadata?.caller)
+        const effectiveBrainPreferences = asRecord(parsed.data.brainPreferences) ?? asRecord(mainSessionMetadata?.brainPreferences)
 
         const result = await engine.spawnSession(
             parsed.data.machineId,
@@ -380,6 +1389,8 @@ export function createCliRoutes(
             {
                 source: parsed.data.source,
                 mainSessionId: parsed.data.mainSessionId,
+                caller: effectiveCaller,
+                brainPreferences: effectiveBrainPreferences,
                 permissionMode: 'bypassPermissions',
                 modelMode: effectiveModelMode as any,
                 codexModel: parsed.data.codexModel,
@@ -388,7 +1399,7 @@ export function createCliRoutes(
 
         // Inherit org_id from main (brain) session
         if (result.type === 'success' && parsed.data.mainSessionId && store) {
-            const mainSession = await store.getSessionByNamespace(parsed.data.mainSessionId, namespace)
+            mainSession = mainSession ?? await store.getSessionByNamespace(parsed.data.mainSessionId, namespace)
             if (mainSession?.orgId) {
                 await store.setSessionOrgId(result.sessionId, mainSession.orgId, namespace)
             }
@@ -416,19 +1427,6 @@ export function createCliRoutes(
                     if (!isOnline) {
                         console.warn(`[brain/spawn] Session ${result.sessionId} did not come online within 60s, skipping init prompt`)
                         return
-                    }
-                    const metadataPatch: Record<string, unknown> = {}
-                    if (parsed.data.source) {
-                        metadataPatch.source = parsed.data.source
-                    }
-                    if (parsed.data.mainSessionId) {
-                        metadataPatch.mainSessionId = parsed.data.mainSessionId
-                    }
-                    if (Object.keys(metadataPatch).length > 0) {
-                        const patched = await engine.patchSessionMetadata(result.sessionId, metadataPatch)
-                        if (!patched.ok) {
-                            console.warn(`[brain/spawn] Failed to patch child session metadata for ${result.sessionId}: ${patched.error}`)
-                        }
                     }
                     // Wait for socket to join room
                     await engine.waitForSocketInRoom(result.sessionId, 5000)
@@ -530,9 +1528,9 @@ export function createCliRoutes(
         return c.json({ ok: true })
     })
 
-    // Brain: set session modelMode
+    // Brain: legacy model-only alias for shared session config
     const setModelModeSchema = z.object({
-        modelMode: z.enum(['default', 'sonnet', 'opus', 'opus-4-7']),
+        modelMode: z.string().min(1),
     })
 
     app.patch('/sessions/:id/model-mode', async (c) => {
@@ -553,8 +1551,78 @@ export function createCliRoutes(
             return c.json({ error: 'Invalid body' }, 400)
         }
 
-        await engine.setModelMode(sessionId, parsed.data.modelMode as any)
-        return c.json({ ok: true })
+        return await applyCliSessionConfig(c, engine, sessionId, resolved.session, {
+            model: parsed.data.modelMode,
+        })
+    })
+
+    // Brain: inspect a session with orchestration-focused diagnostics
+    app.get('/sessions/:id/inspect', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not ready' }, 503)
+        }
+        const sessionId = c.req.param('id')
+        const namespace = c.get('namespace')
+        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        if (!resolved.ok) {
+            return c.json({ error: resolved.error }, resolved.status)
+        }
+
+        return c.json(await buildBrainSessionInspectPayload(engine, resolved.session))
+    })
+
+    // Brain: return recent meaningful output/event fragments instead of weak counters
+    app.get('/sessions/:id/tail', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) {
+            return c.json({ error: 'Not ready' }, 503)
+        }
+        const sessionId = c.req.param('id')
+        const namespace = c.get('namespace')
+        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        if (!resolved.ok) {
+            return c.json({ error: resolved.error }, resolved.status)
+        }
+
+        const parsed = tailQuerySchema.safeParse(c.req.query())
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid query' }, 400)
+        }
+
+        const limit = parsed.data.limit ?? 6
+        const inspectLimit = Math.min(Math.max(limit * 8, 24), 120)
+        const page = await engine.getMessagesPage(sessionId, { limit: inspectLimit, beforeSeq: null })
+        const selected: BrainSessionTailItem[] = []
+
+        for (let index = page.messages.length - 1; index >= 0 && selected.length < limit; index -= 1) {
+            const message = page.messages[index]
+            const item = extractTailItem(message?.content)
+            if (!item) {
+                continue
+            }
+            selected.push({
+                seq: message.seq,
+                createdAt: message.createdAt,
+                role: item.role,
+                kind: item.kind,
+                subtype: item.subtype,
+                sentFrom: item.sentFrom,
+                snippet: item.snippet,
+            })
+        }
+
+        selected.reverse()
+
+        return c.json({
+            sessionId,
+            items: selected,
+            returned: selected.length,
+            inspectedMessages: page.messages.length,
+            newestSeq: page.messages.length > 0 ? page.messages[page.messages.length - 1]?.seq ?? null : null,
+            oldestSeq: page.messages.length > 0 ? page.messages[0]?.seq ?? null : null,
+            hasMoreHistory: page.page.hasMore,
+        })
     })
 
     // ==================== Project CRUD ====================
@@ -733,22 +1801,23 @@ export function createCliRoutes(
             return c.json({ error: resolved.error }, resolved.status)
         }
 
-        const session = resolved.session
-        const messageCount = await engine.getMessageCount(sessionId)
-        const lastUsage = await engine.getLastUsageForSession(sessionId)
+        const inspect = await buildBrainSessionInspectPayload(engine, resolved.session)
+        const metadata = inspect.metadata.path || inspect.metadata.summary || inspect.metadata.brainSummary
+            ? {
+                path: inspect.metadata.path ?? undefined,
+                summary: inspect.metadata.summary ?? undefined,
+                brainSummary: inspect.metadata.brainSummary ?? undefined,
+            }
+            : null
 
         return c.json({
-            active: session.active,
-            thinking: session.thinking ?? false,
-            initDone: engine.isBrainChildInitDone(sessionId),
-            messageCount,
-            lastUsage,
-            modelMode: session.modelMode ?? 'default',
-            metadata: session.metadata ? {
-                path: session.metadata.path,
-                summary: session.metadata.summary,
-                brainSummary: (session.metadata as any).brainSummary,
-            } : null,
+            active: inspect.active,
+            thinking: inspect.thinking,
+            initDone: inspect.initDone,
+            messageCount: inspect.messageCount,
+            lastUsage: inspect.lastUsage,
+            modelMode: inspect.modelMode ?? 'default',
+            metadata,
         })
     })
 

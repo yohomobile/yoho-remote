@@ -1,8 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import {
+    applySessionSummaryStatusUpdate,
+    getSessionCompletionNotificationKind,
     hasSessionStatusFields,
     isFullSessionPayload,
     isSidOnlySessionRefreshHint,
+    mergeSessionNotificationState,
+    shouldSuppressNotificationWithoutPreviousState,
+    toSessionNotificationState,
     toSessionFromSsePayload,
 } from './useSSE.utils'
 
@@ -110,5 +115,190 @@ describe('useSSE utils', () => {
             taskId: 'task-1',
             state: 'running',
         }])
+    })
+
+    test('applies lastMessageAt-only status updates to session summaries', () => {
+        const previous = {
+            sessions: [{
+                id: 'session-1',
+                active: true,
+                activeAt: 10,
+                updatedAt: 20,
+                lastMessageAt: 30,
+                todoProgress: null,
+                pendingRequestsCount: 0,
+                thinking: false,
+                metadata: { path: '/tmp/project' },
+            }]
+        }
+
+        const next = applySessionSummaryStatusUpdate(previous, 'session-1', {
+            lastMessageAt: 99,
+        })
+
+        expect(next).toEqual({
+            sessions: [{
+                ...previous.sessions[0],
+                lastMessageAt: 99,
+            }]
+        })
+    })
+
+    test('keeps cache reference when status update does not change any session summary field', () => {
+        const previous = {
+            sessions: [{
+                id: 'session-1',
+                active: true,
+                activeAt: 10,
+                updatedAt: 20,
+                lastMessageAt: 30,
+                todoProgress: null,
+                pendingRequestsCount: 0,
+                thinking: false,
+                metadata: { path: '/tmp/project' },
+            }]
+        }
+
+        const next = applySessionSummaryStatusUpdate(previous, 'session-1', {
+            lastMessageAt: 30,
+        })
+
+        expect(next).toBe(previous)
+    })
+
+    test('extracts notification state from session summaries', () => {
+        expect(toSessionNotificationState({
+            active: true,
+            thinking: false,
+            terminationReason: 'LICENSE_EXPIRED',
+        })).toEqual({
+            active: true,
+            thinking: false,
+            terminationReason: 'LICENSE_EXPIRED',
+        })
+    })
+
+    test('merges notification state with partial status updates', () => {
+        expect(mergeSessionNotificationState({
+            active: true,
+            thinking: true,
+            terminationReason: null,
+        }, {
+            thinking: false,
+        })).toEqual({
+            active: true,
+            thinking: false,
+            terminationReason: null,
+        })
+    })
+
+    test('emits a license notification only on a new license termination edge', () => {
+        expect(getSessionCompletionNotificationKind({
+            previousState: {
+                active: true,
+                thinking: false,
+                terminationReason: null,
+            },
+            data: {
+                active: false,
+                terminationReason: 'LICENSE_EXPIRED',
+            },
+        })).toBe('license-terminated')
+
+        expect(getSessionCompletionNotificationKind({
+            previousState: {
+                active: false,
+                thinking: false,
+                terminationReason: 'LICENSE_EXPIRED',
+            },
+            data: {
+                active: false,
+                terminationReason: 'LICENSE_EXPIRED',
+            },
+        })).toBeNull()
+    })
+
+    test('emits task-complete notification only when thinking actually flips to false', () => {
+        expect(getSessionCompletionNotificationKind({
+            previousState: {
+                active: true,
+                thinking: true,
+                terminationReason: null,
+            },
+            data: {
+                wasThinking: true,
+                thinking: false,
+            },
+        })).toBe('task-completed')
+
+        expect(getSessionCompletionNotificationKind({
+            previousState: {
+                active: true,
+                thinking: false,
+                terminationReason: null,
+            },
+            data: {
+                wasThinking: true,
+                thinking: false,
+            },
+        })).toBeNull()
+    })
+
+    test('suppresses first completion-style event after reconnect when no prior state exists', () => {
+        expect(getSessionCompletionNotificationKind({
+            previousState: null,
+            data: {
+                active: false,
+                terminationReason: 'LICENSE_EXPIRED',
+            },
+            suppressWithoutPreviousState: true,
+        })).toBeNull()
+
+        expect(getSessionCompletionNotificationKind({
+            previousState: null,
+            data: {
+                wasThinking: true,
+                thinking: false,
+            },
+            suppressWithoutPreviousState: true,
+        })).toBeNull()
+    })
+
+    test('keeps suppressing no-prior-state notifications until a reliable baseline is ready', () => {
+        expect(shouldSuppressNotificationWithoutPreviousState({
+            previousState: null,
+            baselineReady: false,
+            lastConnectAt: 1_000,
+            replayGuardMs: 5_000,
+            now: 20_000,
+        })).toBe(true)
+
+        expect(shouldSuppressNotificationWithoutPreviousState({
+            previousState: null,
+            baselineReady: true,
+            lastConnectAt: 10_000,
+            replayGuardMs: 5_000,
+            now: 12_000,
+        })).toBe(true)
+
+        expect(shouldSuppressNotificationWithoutPreviousState({
+            previousState: null,
+            baselineReady: true,
+            lastConnectAt: 10_000,
+            replayGuardMs: 5_000,
+            now: 20_000,
+        })).toBe(false)
+
+        expect(shouldSuppressNotificationWithoutPreviousState({
+            previousState: {
+                active: true,
+                thinking: true,
+                terminationReason: null,
+            },
+            baselineReady: false,
+            lastConnectAt: 1_000,
+            replayGuardMs: 5_000,
+            now: 20_000,
+        })).toBe(false)
     })
 })

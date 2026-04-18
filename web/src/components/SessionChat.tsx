@@ -17,6 +17,7 @@ import { SessionHeader } from '@/components/SessionHeader'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
+import { shouldShowSessionComposer } from '@/lib/sessionActivity'
 import { queryKeys } from '@/lib/query-keys'
 import { isLicenseTermination, getLicenseTerminationLabel } from '@/lib/license'
 import { isFlutterApp } from '@/hooks/useFlutterApp'
@@ -108,6 +109,7 @@ export function SessionChat(props: {
     const navigate = useNavigate()
     const queryClient = useQueryClient()
     const controlsDisabled = !props.session.active
+    const showComposer = shouldShowSessionComposer(props.session)
 
     const { data: privacyData } = useQuery({
         queryKey: ['session-privacy-mode', props.session.id],
@@ -409,9 +411,13 @@ export function SessionChat(props: {
     const availableModels = useMemo(() => getAvailableModels(props.session), [props.session])
 
     const handleBridgeSendMessage = useCallback((text: string) => {
+        if (!showComposer) {
+            pushComposerReset(props.session.id)
+            return
+        }
         handleSendMessage(text)
         pushComposerReset(props.session.id)
-    }, [handleSendMessage, props.session.id])
+    }, [handleSendMessage, props.session.id, showComposer])
 
     const handleBridgeSetModel = useCallback((model: string) => {
         const coerced = coerceModelMode(model) ?? 'default'
@@ -440,6 +446,7 @@ export function SessionChat(props: {
     }, [props.api, props.session.id, privacyMode, queryClient])
 
     const handleBridgeUploadImages = useCallback(async (images: string[]) => {
+        if (!showComposer) return
         for (const image of images) {
             try {
                 const mimeType = image.startsWith('data:image/png') ? 'image/png' : 'image/jpeg'
@@ -450,9 +457,10 @@ export function SessionChat(props: {
                 console.error('Failed to upload image:', e)
             }
         }
-    }, [props.api, props.session.id])
+    }, [props.api, props.session.id, showComposer])
 
     const handleBridgeUploadFiles = useCallback(async (files: { name: string; data: string }[]) => {
+        if (!showComposer) return
         for (const file of files) {
             try {
                 const mimeType = 'application/octet-stream'
@@ -462,21 +470,22 @@ export function SessionChat(props: {
                 console.error('Failed to upload file:', e)
             }
         }
-    }, [props.api, props.session.id])
+    }, [props.api, props.session.id, showComposer])
 
     const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     const handleBridgeTyping = useCallback(() => {
+        if (!showComposer) return
         if (typingTimeoutRef.current) {
             clearTimeout(typingTimeoutRef.current)
         }
         typingTimeoutRef.current = setTimeout(() => {
             props.api.sendTyping(props.session.id, '').catch(() => {})
         }, 300)
-    }, [props.api, props.session.id])
+    }, [props.api, props.session.id, showComposer])
 
     const handleBridgeRequestAutocomplete = useCallback(async (prefix: string) => {
-        if (!props.autocompleteSuggestions) return
+        if (!showComposer || !props.autocompleteSuggestions) return
         const suggestions = await props.autocompleteSuggestions(prefix)
         pushAutocompleteSuggestions(suggestions.map(s => ({
             type: s.text.startsWith('@') ? 'file' : 'command',
@@ -484,7 +493,13 @@ export function SessionChat(props: {
             value: s.text,
             description: s.description,
         })))
-    }, [props.autocompleteSuggestions])
+    }, [props.autocompleteSuggestions, showComposer])
+
+    useEffect(() => {
+        if (!showComposer) {
+            pushComposerReset(props.session.id)
+        }
+    }, [props.session.id, showComposer])
 
     useEffect(() => {
         return () => {
@@ -549,7 +564,7 @@ export function SessionChat(props: {
             selectedModel: resolvedModelMode ?? 'default',
             fastMode: props.session.fastMode ?? false,
             reasoningLevel: resolvedReasoningEffort ?? 'medium',
-            canSend: !props.isSending && !isResuming && props.session.active,
+            canSend: showComposer && !props.isSending && !isResuming && props.session.active,
             isGenerating: props.session.thinking ?? false,
             availableModels,
         })
@@ -560,6 +575,7 @@ export function SessionChat(props: {
         isResuming,
         resolvedModelMode,
         resolvedReasoningEffort,
+        showComposer,
         availableModels,
         reduced.latestUsage?.contextSize,
         reduced.latestUsage?.modelContextWindow,
@@ -622,10 +638,14 @@ export function SessionChat(props: {
                             {isResuming
                                 ? 'Resuming session...'
                                 : resumeError
-                                    ? 'Resume failed. Tap the composer to retry.'
+                                    ? showComposer
+                                        ? 'Resume failed. Tap the composer to retry.'
+                                        : 'Resume failed. Brain subtask pages do not accept manual input.'
                                     : props.messages.length === 0
                                         ? 'Starting session...'
-                                        : 'Session is inactive. Tap the composer to resume.'}
+                                        : showComposer
+                                            ? 'Session is inactive. Tap the composer to resume.'
+                                            : 'Session is inactive. Brain subtask pages do not accept manual input.'}
                         </div>
                     )}
                 </div>
@@ -650,35 +670,37 @@ export function SessionChat(props: {
                         renderedMessagesCount={reconciled.blocks.length}
                     />
 
-                    <YohoRemoteComposer
-                        apiClient={props.api}
-                        sessionId={props.session.id}
-                        disabled={props.isSending || isResuming || controlsDisabled}
-                        modelMode={resolvedModelMode}
-                        modelReasoningEffort={resolvedReasoningEffort}
-                        fastMode={props.session.fastMode}
-                        agentFlavor={props.session.metadata?.flavor ?? 'claude'}
-                        active={props.session.active}
-                        thinking={props.session.thinking}
-                        agentState={props.session.agentState}
-                        contextSize={reduced.latestUsage?.contextSize}
-                        outputTokens={reduced.latestUsage?.outputTokens}
-                        modelContextWindow={reduced.latestUsage?.modelContextWindow}
-                        reasoningOutputTokens={reduced.latestUsage?.reasoningOutputTokens}
-                        rateLimitUsedPercent={reduced.latestUsage?.rateLimitUsedPercent}
-                        runtimeModel={props.session.metadata?.runtimeModel}
-                        controlledByUser={props.session.agentState?.controlledByUser === true}
-                        onRequestResume={handleResumeRequest}
-                        resumePending={isResuming}
-                        resumeError={resumeError}
-                        onModelModeChange={handleModelModeChange}
-                        onFastModeChange={handleFastModeChange}
-                        onSwitchToRemote={handleSwitchToRemote}
-                        autocompleteSuggestions={props.autocompleteSuggestions}
-                        otherUserTyping={props.otherUserTyping}
-                        setTextRef={composerSetTextRef}
-                        activeMonitors={activeMonitors}
-                    />
+                    {showComposer ? (
+                        <YohoRemoteComposer
+                            apiClient={props.api}
+                            sessionId={props.session.id}
+                            disabled={props.isSending || isResuming || controlsDisabled}
+                            modelMode={resolvedModelMode}
+                            modelReasoningEffort={resolvedReasoningEffort}
+                            fastMode={props.session.fastMode}
+                            agentFlavor={props.session.metadata?.flavor ?? 'claude'}
+                            active={props.session.active}
+                            thinking={props.session.thinking}
+                            agentState={props.session.agentState}
+                            contextSize={reduced.latestUsage?.contextSize}
+                            outputTokens={reduced.latestUsage?.outputTokens}
+                            modelContextWindow={reduced.latestUsage?.modelContextWindow}
+                            reasoningOutputTokens={reduced.latestUsage?.reasoningOutputTokens}
+                            rateLimitUsedPercent={reduced.latestUsage?.rateLimitUsedPercent}
+                            runtimeModel={props.session.metadata?.runtimeModel}
+                            controlledByUser={props.session.agentState?.controlledByUser === true}
+                            onRequestResume={handleResumeRequest}
+                            resumePending={isResuming}
+                            resumeError={resumeError}
+                            onModelModeChange={handleModelModeChange}
+                            onFastModeChange={handleFastModeChange}
+                            onSwitchToRemote={handleSwitchToRemote}
+                            autocompleteSuggestions={props.autocompleteSuggestions}
+                            otherUserTyping={props.otherUserTyping}
+                            setTextRef={composerSetTextRef}
+                            activeMonitors={activeMonitors}
+                        />
+                    ) : null}
                 </div>
             </AssistantRuntimeProvider>
             </div>

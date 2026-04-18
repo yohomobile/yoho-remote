@@ -331,6 +331,56 @@ describe('SyncEngine', () => {
         expect(sent[0]?.payload.text).not.toContain('让我汇总关键数据并生成执行报告')
     })
 
+    test('forwards full brain-child result back to the main brain session without truncation', async () => {
+        const sent: Array<{ sessionId: string; payload: { text: string } }> = []
+        const fullResult = `开始\n${'A'.repeat(4_500)}\n结束标记`
+        const childMessages = [
+            createAgentResultMessage(1, fullResult),
+        ]
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getMessages: async () => childMessages,
+            getMessageCount: async () => childMessages.length,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const childSession = createSession('child-session', {
+            source: 'brain-child',
+            mainSessionId: 'main-session',
+            summary: { text: 'Child', updatedAt: 0 },
+        })
+
+        ;(engine as any).sessions.set(mainSession.id, mainSession)
+        ;(engine as any).sessions.set(childSession.id, childSession)
+        ;(engine as any).sessionMessages.set(childSession.id, childMessages)
+        ;(engine as any).sendMessage = async (sessionId: string, payload: { text: string }) => {
+            sent.push({ sessionId, payload })
+        }
+
+        await (engine as any).sendBrainCallbackIfNeeded(childSession)
+
+        expect(sent).toHaveLength(1)
+        expect(sent[0]?.payload.text).toContain(fullResult)
+        expect(sent[0]?.payload.text).toContain('结束标记')
+        expect(sent[0]?.payload.text).not.toContain('...(truncated)')
+    })
+
     test('skips init prompt completion before forwarding real brain-child task results', async () => {
         const sent: Array<{ sessionId: string; payload: { text: string } }> = []
         const childMessages = [
@@ -487,6 +537,405 @@ describe('SyncEngine', () => {
             activeAt: session.activeAt,
             namespace: session.namespace,
         })
+    })
+
+    test('suppresses startup-replayed completion and clears stale termination on first reconnect', async () => {
+        const storedSession = createSession('session-startup-reconnect', {
+            machineId: 'machine-1',
+            path: '/tmp/project',
+            flavor: 'codex',
+            codexSessionId: 'thread-1',
+        })
+        storedSession.active = true
+        storedSession.activeAt = 1_700_000_000_100
+        storedSession.thinking = true
+        storedSession.thinkingAt = 1_700_000_000_050
+        storedSession.terminationReason = 'license-expired'
+
+        const setSessionActiveCalls: Array<{ id: string; active: boolean; activeAt: number; namespace: string; terminationReason?: string | null }> = []
+        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> = []
+        const store = {
+            getSessions: async () => [storedSession],
+            getSession: async () => storedSession,
+            getMachines: async () => [],
+            setSessionActive: async (id: string, active: boolean, activeAt: number, namespace: string, terminationReason?: string | null) => {
+                setSessionActiveCalls.push({ id, active, activeAt, namespace, terminationReason })
+                return true
+            },
+            setSessionThinking: async () => {},
+            setSessionModelConfig: async () => {},
+            getSessionNotificationRecipients: async () => [],
+            getSessionNotificationRecipientClientIds: async () => [],
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+        ;(engine as any).serverStartedAt = Date.now() - 60_000
+
+        const unsubscribe = engine.subscribe((event) => {
+            if (event.type === 'session-updated') {
+                sessionUpdatedEvents.push(event as any)
+            }
+        })
+
+        await engine.handleSessionAlive({
+            sid: storedSession.id,
+            time: Date.now(),
+            thinking: false,
+        })
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        expect(setSessionActiveCalls).toHaveLength(1)
+        const reactivatedActiveAt = engine.getSession(storedSession.id)?.activeAt
+        expect(reactivatedActiveAt).toBeDefined()
+        expect(setSessionActiveCalls[0]?.id).toBe(storedSession.id)
+        expect(setSessionActiveCalls[0]?.active).toBe(true)
+        expect(setSessionActiveCalls[0]?.activeAt).toBe(reactivatedActiveAt as number)
+        expect(setSessionActiveCalls[0]?.namespace).toBe(storedSession.namespace)
+        expect(setSessionActiveCalls[0]?.terminationReason).toBeNull()
+        expect(engine.getSession(storedSession.id)?.terminationReason).toBeUndefined()
+        expect(sessionUpdatedEvents).toHaveLength(1)
+        expect(sessionUpdatedEvents[0]?.sessionId).toBe(storedSession.id)
+        expect(sessionUpdatedEvents[0]?.data?.wasThinking).toBe(false)
+        expect(sessionUpdatedEvents[0]?.data?.terminationReason).toBeUndefined()
+
+        unsubscribe()
+    })
+
+    test('does not replay startup termination reason in refreshed session payloads', async () => {
+        const storedSession = createSession('session-startup-terminated', {
+            machineId: 'machine-1',
+            path: '/tmp/project',
+        })
+        storedSession.active = false
+        storedSession.thinking = false
+        storedSession.terminationReason = 'license-expired'
+
+        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> = []
+        const store = {
+            getSessions: async () => [storedSession],
+            getSession: async () => storedSession,
+            getMachines: async () => [],
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const unsubscribe = engine.subscribe((event) => {
+            if (event.type === 'session-updated') {
+                sessionUpdatedEvents.push(event as any)
+            }
+        })
+
+        await (engine as any).refreshSession(storedSession.id)
+
+        expect(sessionUpdatedEvents).toHaveLength(1)
+        expect(sessionUpdatedEvents[0]?.sessionId).toBe(storedSession.id)
+        expect(sessionUpdatedEvents[0]?.data?.terminationReason).toBeUndefined()
+
+        unsubscribe()
+    })
+
+    test('emits task-complete after restarted session proves the task is still running', async () => {
+        const storedSession = createSession('session-startup-thinking', {
+            machineId: 'machine-1',
+            path: '/tmp/project',
+            flavor: 'codex',
+            codexSessionId: 'thread-1',
+        })
+        storedSession.active = true
+        storedSession.activeAt = 1_700_000_000_100
+        storedSession.thinking = true
+        storedSession.thinkingAt = 1_700_000_000_050
+
+        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> = []
+        const store = {
+            getSessions: async () => [storedSession],
+            getSession: async () => storedSession,
+            getMachines: async () => [],
+            setSessionActive: async () => true,
+            setSessionThinking: async () => {},
+            setSessionModelConfig: async () => {},
+            getSessionNotificationRecipients: async () => [],
+            getSessionNotificationRecipientClientIds: async () => [],
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+        ;(engine as any).serverStartedAt = Date.now() - 60_000
+
+        const unsubscribe = engine.subscribe((event) => {
+            if (event.type === 'session-updated') {
+                sessionUpdatedEvents.push(event as any)
+            }
+        })
+
+        await engine.handleSessionAlive({
+            sid: storedSession.id,
+            time: Date.now(),
+            thinking: true,
+        })
+        await engine.handleSessionAlive({
+            sid: storedSession.id,
+            time: Date.now() + 1_000,
+            thinking: false,
+        })
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        expect(sessionUpdatedEvents.some(event => event.data?.wasThinking === true && event.data?.thinking === false)).toBe(true)
+
+        unsubscribe()
+    })
+
+    test('sendMessage neutralizes startup stale thinking before reconnect heartbeats', async () => {
+        let seq = 0
+        const storedSession = createSession('session-send-message-alive', {
+            machineId: 'machine-1',
+            path: '/tmp/project',
+            flavor: 'codex',
+            codexSessionId: 'thread-1',
+        })
+        storedSession.active = true
+        storedSession.activeAt = 1_700_000_000_100
+        storedSession.thinking = true
+        storedSession.thinkingAt = 1_700_000_000_050
+
+        const setSessionThinkingCalls: Array<{ id: string; thinking: boolean; namespace: string }> = []
+        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> = []
+        const store = {
+            getSessions: async () => [storedSession],
+            getSession: async () => storedSession,
+            getMachines: async () => [],
+            addMessage: async (sessionId: string, content: unknown) => {
+                seq += 1
+                return {
+                    id: `m-${seq}`,
+                    sessionId,
+                    content,
+                    createdAt: 1_700_000_000_000 + seq,
+                    seq,
+                    localId: null,
+                }
+            },
+            setSessionThinking: async (id: string, thinking: boolean, namespace: string) => {
+                setSessionThinkingCalls.push({ id, thinking, namespace })
+                storedSession.thinking = thinking
+            },
+            setSessionActive: async () => true,
+            setSessionModelConfig: async () => {},
+            getSessionNotificationRecipients: async () => [],
+            getSessionNotificationRecipientClientIds: async () => [],
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+        ;(engine as any).serverStartedAt = Date.now() - 60_000
+
+        const unsubscribe = engine.subscribe((event) => {
+            if (event.type === 'session-updated') {
+                sessionUpdatedEvents.push(event as any)
+            }
+        })
+
+        await engine.sendMessage(storedSession.id, { text: 'retry after restart' })
+        await engine.handleSessionAlive({
+            sid: storedSession.id,
+            time: Date.now(),
+            thinking: false,
+        })
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        expect(setSessionThinkingCalls).toContainEqual({
+            id: storedSession.id,
+            thinking: false,
+            namespace: storedSession.namespace,
+        })
+        expect(engine.getSession(storedSession.id)?.thinking).toBe(false)
+        expect(sessionUpdatedEvents.some(event => event.data?.wasThinking === true)).toBe(false)
+
+        unsubscribe()
+    })
+
+    test('sendMessage neutralizes startup stale thinking before old session-end arrives', async () => {
+        let seq = 0
+        const storedSession = createSession('session-send-message-end', {
+            machineId: 'machine-1',
+            path: '/tmp/project',
+            flavor: 'codex',
+            codexSessionId: 'thread-1',
+        })
+        storedSession.active = true
+        storedSession.activeAt = 1_700_000_000_100
+        storedSession.thinking = true
+        storedSession.thinkingAt = 1_700_000_000_050
+
+        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> = []
+        const store = {
+            getSessions: async () => [storedSession],
+            getSession: async () => storedSession,
+            getMachines: async () => [],
+            addMessage: async (sessionId: string, content: unknown) => {
+                seq += 1
+                return {
+                    id: `m-${seq}`,
+                    sessionId,
+                    content,
+                    createdAt: 1_700_000_000_000 + seq,
+                    seq,
+                    localId: null,
+                }
+            },
+            setSessionThinking: async (_id: string, thinking: boolean) => {
+                storedSession.thinking = thinking
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+        ;(engine as any).serverStartedAt = Date.now() - 60_000
+
+        const unsubscribe = engine.subscribe((event) => {
+            if (event.type === 'session-updated') {
+                sessionUpdatedEvents.push(event as any)
+            }
+        })
+
+        await engine.sendMessage(storedSession.id, { text: 'retry after restart' })
+        await engine.handleSessionEnd({
+            sid: storedSession.id,
+            time: Date.now(),
+        })
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        expect(sessionUpdatedEvents).toHaveLength(1)
+        expect(sessionUpdatedEvents[0]?.sessionId).toBe(storedSession.id)
+        expect(sessionUpdatedEvents[0]?.data?.wasThinking).toBeUndefined()
+        expect(engine.getSession(storedSession.id)?.thinking).toBe(false)
+
+        unsubscribe()
+    })
+
+    test('sendMessage clears stale termination in DB before refreshSession', async () => {
+        let seq = 0
+        const storedSession = createSession('session-send-message-refresh', {
+            machineId: 'machine-1',
+            path: '/tmp/project',
+        })
+        storedSession.active = false
+        storedSession.thinking = false
+        storedSession.terminationReason = 'license-expired'
+
+        const setSessionActiveCalls: Array<{ id: string; active: boolean; activeAt: number; namespace: string; terminationReason?: string | null }> = []
+        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> = []
+        const store = {
+            getSessions: async () => [storedSession],
+            getSession: async () => storedSession,
+            getMachines: async () => [],
+            addMessage: async (sessionId: string, content: unknown) => {
+                seq += 1
+                return {
+                    id: `m-${seq}`,
+                    sessionId,
+                    content,
+                    createdAt: 1_700_000_000_000 + seq,
+                    seq,
+                    localId: null,
+                }
+            },
+            setSessionThinking: async () => {},
+            setSessionActive: async (id: string, active: boolean, activeAt: number, namespace: string, terminationReason?: string | null) => {
+                setSessionActiveCalls.push({ id, active, activeAt, namespace, terminationReason })
+                storedSession.active = active
+                storedSession.activeAt = activeAt
+                storedSession.terminationReason = terminationReason ?? undefined
+                return true
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const unsubscribe = engine.subscribe((event) => {
+            if (event.type === 'session-updated') {
+                sessionUpdatedEvents.push(event as any)
+            }
+        })
+
+        await engine.sendMessage(storedSession.id, { text: 'retry after restart' })
+        await (engine as any).refreshSession(storedSession.id)
+
+        expect(setSessionActiveCalls).toHaveLength(1)
+        expect(setSessionActiveCalls[0]?.terminationReason).toBeNull()
+        expect(engine.getSession(storedSession.id)?.terminationReason).toBeUndefined()
+        expect(sessionUpdatedEvents.some(event => event.data?.terminationReason !== undefined)).toBe(false)
+
+        unsubscribe()
     })
 
     test('advances lastMessageAt only for real activity messages', async () => {

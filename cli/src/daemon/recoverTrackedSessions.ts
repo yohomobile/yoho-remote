@@ -2,12 +2,12 @@ import type { ApiClient } from '@/api/api';
 import type { Metadata } from '@/api/types';
 import { logger } from '@/ui/logger';
 import type { TrackedSession } from './types';
-import { isSessionProcessIdentityCurrent } from './trackedSessionIdentity';
+import { isDaemonOwnedSession, normalizeSessionProcessIdentity } from './trackedSessionIdentity';
 
 export const EXTERNAL_TRACKED_SESSION_LABEL = 'yr directly - likely by user from terminal';
 
-function getTrackedSessionStartedBy(metadata: Metadata): TrackedSession['startedBy'] {
-    return metadata.startedBy === 'daemon'
+export function getTrackedSessionStartedBy(metadata: Metadata): TrackedSession['startedBy'] {
+    return isDaemonOwnedSession(metadata)
         ? 'daemon'
         : EXTERNAL_TRACKED_SESSION_LABEL;
 }
@@ -48,25 +48,29 @@ export async function recoverTrackedSessionsFromServer({
             continue;
         }
 
-        if (!isSessionProcessIdentityCurrent(metadata)) {
+        const normalizedMetadata = normalizeSessionProcessIdentity(metadata, {
+            expectedSessionId: session.id,
+            trust: 'passive',
+        });
+        if (!normalizedMetadata) {
             logger.debug(`[DAEMON RUN] Skipping recovered session ${sessionId}: process identity no longer matches PID ${pid}`);
             continue;
         }
 
         const existing = pidToTrackedSession.get(pid);
         if (existing) {
-            existing.startedBy = existing.startedBy === 'daemon' || metadata.startedBy === 'daemon'
+            existing.startedBy = existing.startedBy === 'daemon' || isDaemonOwnedSession(metadata)
                 ? 'daemon'
                 : EXTERNAL_TRACKED_SESSION_LABEL;
             existing.yohoRemoteSessionId = session.id;
-            existing.yohoRemoteSessionMetadataFromLocalWebhook = metadata;
+            existing.yohoRemoteSessionMetadataFromLocalWebhook = normalizedMetadata;
             continue;
         }
 
         pidToTrackedSession.set(pid, {
             startedBy: getTrackedSessionStartedBy(metadata),
             yohoRemoteSessionId: session.id,
-            yohoRemoteSessionMetadataFromLocalWebhook: metadata,
+            yohoRemoteSessionMetadataFromLocalWebhook: normalizedMetadata,
             pid
         });
         recovered++;

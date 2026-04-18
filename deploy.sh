@@ -19,8 +19,10 @@ MACBOOK_SSH="guang@100.106.84.90"  # Tailscale IP
 
 INSTALL_DIR="/opt/yoho-remote"
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3"
+LOCAL_REINSTALL_DAEMON_SCRIPT="$(pwd)/scripts/reinstall-daemon-systemd.sh"
 
 SELF_HOSTNAME=$(hostname)
+SELF_USER=$(id -un)
 SELF_DEPLOY_TARGET=""
 
 # ==================== Helpers ====================
@@ -356,43 +358,12 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
             continue
         fi
 
-        # Stop old daemon and detached session children (处理假死/僵尸 — 远程机器，无需排除本机进程)
-        # 这里不能用 pkill -f，因为远程 shell 的 argv 会带上匹配串，导致把当前 ssh 会话自己杀掉。
-        ncu_exec "ssh $SSH_OPTS $SSH_TARGET 'sudo systemctl stop yoho-remote-daemon.service 2>/dev/null || true'"
-        sleep 2
-        ncu_exec "ssh $SSH_OPTS $SSH_TARGET '
-            list_pids() {
-                { pgrep -x yoho-remote-daemon 2>/dev/null || true; pgrep -x yoho-remote 2>/dev/null || true; } | sort -u
-            }
-            for p in \$(list_pids); do sudo kill -TERM \$p 2>/dev/null || true; done
-            sleep 3
-            R=\$(list_pids)
-            if [ -n \"\$R\" ]; then
-                echo \"  ⚠ SIGTERM failed, SIGKILL...\"
-                for p in \$R; do sudo kill -9 \$p 2>/dev/null || true; done
-                sleep 2
-            fi
-            R=\$(list_pids)
-            if [ -n \"\$R\" ]; then
-                for p in \$R; do sudo kill -9 \$p 2>/dev/null || true; done
-                sleep 1
-            fi
-            R=\$(list_pids)
-            [ -n \"\$R\" ] && echo \"  ✗ WARNING: yoho-remote processes still alive\" || echo \"  ✓ Fully stopped\"
-        '"
-
         # Copy new binaries
         ncu_exec "scp $SSH_OPTS $NCU_EXE_DIR/bun-linux-x64/yoho-remote-daemon $SSH_TARGET:$INSTALL_DIR/ && scp $SSH_OPTS $NCU_EXE_DIR/bun-linux-x64/yoho-remote $SSH_TARGET:$INSTALL_DIR/"
 
-        # Start daemon
-        ncu_exec "ssh $SSH_OPTS $SSH_TARGET 'sudo systemctl start yoho-remote-daemon.service'"
-        sleep 3
-        ACTIVE=$(ncu_exec "ssh $SSH_OPTS $SSH_TARGET 'systemctl is-active yoho-remote-daemon.service 2>/dev/null || echo inactive'")
-        if [[ "$ACTIVE" == "active" ]]; then
-            ok "$TARGET_NAME daemon restarted"
-        else
-            fail "$TARGET_NAME daemon failed to start"
-        fi
+        # Reinstall managed systemd unit so unit changes (KillMode, env, ExecStart) are applied together
+        ncu_exec "ssh $SSH_OPTS $SSH_TARGET 'sudo bash -s -- $INSTALL_DIR/yoho-remote' < $NCU_REPO/scripts/reinstall-daemon-systemd.sh"
+        ok "$TARGET_NAME daemon unit reinstalled and restarted"
     done
 
     # 6b-2: Deploy to macmini
@@ -489,40 +460,9 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
 
     # 6b-3: Deploy daemon to ncu (从 VM 远程操作时，无需排除本机进程)
     if should_deploy_daemon ncu && ! is_ncu; then
-        log "Restarting daemon on ncu..."
-        # Stop daemon and detached session children (处理假死/僵尸)
-        ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl stop yoho-remote-daemon.service 2>/dev/null || true"
-        sleep 2
-        ncu_exec "
-            list_pids() {
-                { pgrep -x yoho-remote-daemon 2>/dev/null || true; pgrep -x yoho-remote 2>/dev/null || true; } | sort -u
-            }
-            S='echo $NCU_SUDO_PASS | sudo -S'
-            for p in \$(list_pids); do \$S kill -TERM \$p 2>/dev/null || true; done
-            sleep 3
-            R=\$(list_pids)
-            if [ -n \"\$R\" ]; then
-                echo '  ⚠ SIGTERM failed, SIGKILL...'
-                for p in \$R; do \$S kill -9 \$p 2>/dev/null || true; done
-                sleep 2
-            fi
-            R=\$(list_pids)
-            if [ -n \"\$R\" ]; then
-                for p in \$R; do \$S kill -9 \$p 2>/dev/null || true; done
-                sleep 1
-            fi
-            R=\$(list_pids)
-            [ -n \"\$R\" ] && echo '  ✗ WARNING: yoho-remote processes still alive' || echo '  ✓ Fully stopped'
-        "
-        # Start
-        ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl start yoho-remote-daemon.service"
-        sleep 3
-        ACTIVE=$(ncu_exec "systemctl is-active yoho-remote-daemon.service 2>/dev/null || echo inactive")
-        if [[ "$ACTIVE" == "active" ]]; then
-            ok "ncu daemon restarted"
-        else
-            fail "ncu daemon failed to start"
-        fi
+        log "Reinstalling daemon on ncu..."
+        ncu_exec "echo $NCU_SUDO_PASS | sudo -SE bash $NCU_REPO/scripts/reinstall-daemon-systemd.sh $NCU_EXE_DIR/bun-linux-x64/yoho-remote"
+        ok "ncu daemon unit reinstalled and restarted"
     fi
 
     # 6b-4: Deploy self (LAST — this will kill current session)
@@ -539,62 +479,13 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
             && chmod +x "$INSTALL_DIR/yoho-remote"
         ok "Binaries updated"
 
-        # Restart via systemd-run to survive daemon shutdown
-        # 传入当前进程链的 PID，restart 脚本在独立 cgroup 中运行时排除这些 PID
+        # Restart via systemd-run to survive daemon shutdown while still going through the managed install path
         RESTART_SCRIPT=$(mktemp /tmp/yr-restart-XXXXXX.sh)
         cat > "$RESTART_SCRIPT" << RESTART_EOF
 #!/bin/bash
 exec > /tmp/yr-restart.log 2>&1
-SKIP_PIDS="$SELF_ANCESTORS"
-list_pids() {
-    { pgrep -x yoho-remote-daemon 2>/dev/null || true; pgrep -x yoho-remote 2>/dev/null || true; } | sort -u
-}
-
-echo "\$(date): Stopping daemon..."
-sudo systemctl stop yoho-remote-daemon.service 2>/dev/null || true
-sleep 2
-
-# SIGTERM（排除当前会话的进程链）
-echo "\$(date): Sending SIGTERM..."
-for pid in \$(list_pids); do
-    if echo " \$SKIP_PIDS " | grep -q " \$pid "; then
-        echo "\$(date): Skipping PID \$pid (deploy session ancestor)"
-        continue
-    fi
-    sudo kill -TERM "\$pid" 2>/dev/null || true
-    echo "\$(date): Sent SIGTERM to PID \$pid"
-done
-sleep 3
-
-# 假死 → SIGKILL（同样排除当前进程链）
-for pid in \$(list_pids); do
-    if echo " \$SKIP_PIDS " | grep -q " \$pid "; then continue; fi
-    echo "\$(date): WARNING — PID \$pid did not exit, sending SIGKILL..."
-    sudo kill -9 "\$pid" 2>/dev/null || true
-done
-sleep 2
-
-# 最终确认（排除后）
-REMAIN=""
-for pid in \$(list_pids); do
-    echo " \$SKIP_PIDS " | grep -q " \$pid " || REMAIN="\$REMAIN \$pid"
-done
-if [ -n "\$REMAIN" ]; then
-    echo "\$(date): CRITICAL — still alive: \$REMAIN"
-else
-    echo "\$(date): ✓ yoho-remote processes fully stopped"
-fi
-
-# Start
-echo "\$(date): Starting daemon..."
-sudo systemctl start yoho-remote-daemon.service
-sleep 3
-if systemctl is-active --quiet yoho-remote-daemon.service; then
-    echo "\$(date): ✓ Daemon restarted successfully"
-else
-    echo "\$(date): ERROR — daemon failed to start"
-    sudo journalctl -u yoho-remote-daemon.service -n 20 --no-pager
-fi
+echo "\$(date): Reinstalling managed daemon unit..."
+DAEMON_SERVICE_USER="$SELF_USER" bash "$LOCAL_REINSTALL_DAEMON_SCRIPT" "$INSTALL_DIR/yoho-remote"
 rm -f "\$0"
 RESTART_EOF
         chmod +x "$RESTART_SCRIPT"
@@ -612,58 +503,8 @@ RESTART_EOF
         cat > "$RESTART_SCRIPT" << RESTART_EOF
 #!/bin/bash
 exec > /tmp/yr-restart.log 2>&1
-SUDO_PASS="guang"
-SKIP_PIDS="$SELF_ANCESTORS"
-list_pids() {
-    { pgrep -x yoho-remote-daemon 2>/dev/null || true; pgrep -x yoho-remote 2>/dev/null || true; } | sort -u
-}
-S() { echo "\$SUDO_PASS" | sudo -S "\$@"; }
-
-echo "\$(date): Stopping ncu daemon..."
-S systemctl stop yoho-remote-daemon.service 2>/dev/null || true
-sleep 2
-
-# SIGTERM（排除当前会话的进程链）
-echo "\$(date): Sending SIGTERM..."
-for pid in \$(list_pids); do
-    if echo " \$SKIP_PIDS " | grep -q " \$pid "; then
-        echo "\$(date): Skipping PID \$pid (deploy session ancestor)"
-        continue
-    fi
-    S kill -TERM "\$pid" 2>/dev/null || true
-    echo "\$(date): Sent SIGTERM to PID \$pid"
-done
-sleep 3
-
-# 假死 → SIGKILL（同样排除）
-for pid in \$(list_pids); do
-    if echo " \$SKIP_PIDS " | grep -q " \$pid "; then continue; fi
-    echo "\$(date): WARNING — PID \$pid did not exit, sending SIGKILL..."
-    S kill -9 "\$pid" 2>/dev/null || true
-done
-sleep 2
-
-# 最终确认（排除后）
-REMAIN=""
-for pid in \$(list_pids); do
-    echo " \$SKIP_PIDS " | grep -q " \$pid " || REMAIN="\$REMAIN \$pid"
-done
-if [ -n "\$REMAIN" ]; then
-    echo "\$(date): CRITICAL — still alive: \$REMAIN"
-else
-    echo "\$(date): ✓ yoho-remote processes fully stopped"
-fi
-
-# Start
-echo "\$(date): Starting ncu daemon..."
-S systemctl start yoho-remote-daemon.service
-sleep 3
-if systemctl is-active --quiet yoho-remote-daemon.service; then
-    echo "\$(date): ✓ Daemon restarted successfully"
-else
-    echo "\$(date): ERROR — daemon failed to start"
-    S journalctl -u yoho-remote-daemon.service -n 20 --no-pager
-fi
+echo "\$(date): Reinstalling managed ncu daemon unit..."
+DAEMON_SERVICE_USER="$SELF_USER" bash "$LOCAL_REINSTALL_DAEMON_SCRIPT" "$NCU_EXE_DIR/bun-linux-x64/yoho-remote"
 rm -f "\$0"
 RESTART_EOF
         chmod +x "$RESTART_SCRIPT"

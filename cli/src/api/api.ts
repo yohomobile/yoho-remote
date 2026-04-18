@@ -1,6 +1,18 @@
 import axios from 'axios'
 import { randomBytes } from 'node:crypto'
-import type { AgentState, CliMessagesResponse, CreateMachineResponse, CreateSessionResponse, DaemonState, Machine, MachineMetadata, Metadata, Project, Session } from '@/api/types'
+import type {
+    AgentState,
+    CliMessagesResponse,
+    CreateMachineResponse,
+    CreateSessionResponse,
+    DaemonState,
+    Machine,
+    MachineMetadata,
+    Metadata,
+    Project,
+    Session,
+    SessionModelReasoningEffort,
+} from '@/api/types'
 import { AgentStateSchema, CliMessagesResponseSchema, CreateMachineResponseSchema, CreateSessionResponseSchema, DaemonStateSchema, MachineMetadataSchema, MetadataSchema } from '@/api/types'
 import { configuration } from '@/configuration'
 import { getAuthToken } from '@/api/auth'
@@ -264,6 +276,8 @@ export class ApiClient {
         codexModel?: string
         source?: string
         mainSessionId?: string
+        caller?: string
+        brainPreferences?: Record<string, unknown>
     }): Promise<{ type: 'success'; sessionId: string; logs?: unknown[] } | { type: 'error'; message: string; logs?: unknown[] }> {
         const response = await axios.post(
             `${configuration.serverUrl}/cli/brain/spawn`,
@@ -275,6 +289,8 @@ export class ApiClient {
                 codexModel: opts.codexModel,
                 source: opts.source ?? 'brain-child',
                 mainSessionId: opts.mainSessionId,
+                caller: opts.caller,
+                brainPreferences: opts.brainPreferences,
             },
             {
                 headers: {
@@ -334,6 +350,41 @@ export class ApiClient {
         return response.data
     }
 
+    async abortSession(sessionId: string): Promise<{ ok: boolean }> {
+        const response = await axios.post(
+            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/abort`,
+            {},
+            {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 30_000
+            }
+        )
+        return response.data
+    }
+
+    async resumeSession(sessionId: string): Promise<{
+        type: 'already-active' | 'resumed' | 'created'
+        sessionId: string
+        resumedFrom?: string
+        usedResume?: boolean
+    }> {
+        const response = await axios.post(
+            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/resume`,
+            {},
+            {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 120_000
+            }
+        )
+        return response.data
+    }
+
     async patchSessionMetadata(sessionId: string, patch: Record<string, unknown>): Promise<void> {
         await axios.patch(
             `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/metadata`,
@@ -349,17 +400,37 @@ export class ApiClient {
     }
 
     async setSessionModelMode(sessionId: string, modelMode: 'default' | 'sonnet' | 'opus' | 'opus-4-7'): Promise<void> {
-        await axios.patch(
-            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/model-mode`,
-            { modelMode },
+        await this.setSessionConfig(sessionId, {
+            model: modelMode,
+        })
+    }
+
+    async setSessionConfig(sessionId: string, config: {
+        permissionMode?: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
+        model?: string
+        reasoningEffort?: SessionModelReasoningEffort
+        fastMode?: boolean
+    }): Promise<{
+        ok: boolean
+        applied?: {
+            permissionMode?: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
+            model?: string
+            reasoningEffort?: SessionModelReasoningEffort
+            fastMode?: boolean
+        }
+    }> {
+        const response = await axios.post(
+            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/config`,
+            config,
             {
                 headers: {
                     Authorization: `Bearer ${this.token}`,
                     'Content-Type': 'application/json'
                 },
-                timeout: 15_000
+                timeout: 30_000
             }
         )
+        return response.data
     }
 
     async getSessionStatus(sessionId: string): Promise<{
@@ -373,6 +444,120 @@ export class ApiClient {
     }> {
         const response = await axios.get(
             `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/status`,
+            {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 15_000
+            }
+        )
+        return response.data
+    }
+
+    async getSessionInspect(sessionId: string): Promise<{
+        sessionId: string
+        status: 'offline' | 'running' | 'idle'
+        active: boolean
+        thinking: boolean
+        initDone: boolean
+        activeAt: number
+        updatedAt: number
+        thinkingAt: number | null
+        lastMessageAt: number | null
+        messageCount: number
+        pendingRequestsCount: number
+        pendingRequests: Array<{
+            id: string
+            tool: string
+            createdAt: number | null
+        }>
+        permissionMode?: string
+        modelMode?: string
+        modelReasoningEffort?: string
+        runtimeAgent: string | null
+        runtimeModel: string | null
+        runtimeModelReasoningEffort: string | null
+        fastMode: boolean | null
+        todoProgress: { completed: number; total: number } | null
+        todos: Array<{
+            content: string
+            status: 'pending' | 'in_progress' | 'completed'
+            priority: 'high' | 'medium' | 'low'
+            id: string
+        }> | null
+        activeMonitors: Array<{
+            id: string
+            description: string
+            command: string
+            persistent: boolean
+            timeoutMs: number | null
+            startedAt: number
+            taskId: string | null
+            state: 'running' | 'unknown'
+        }>
+        terminationReason: string | null
+        lastUsage: {
+            input_tokens: number
+            output_tokens: number
+            cache_read_input_tokens?: number
+            cache_creation_input_tokens?: number
+            contextSize: number
+        } | null
+        contextWindow: {
+            budgetTokens: number
+            usedTokens: number
+            remainingTokens: number
+            remainingPercent: number
+        } | null
+        metadata: {
+            path: string | null
+            summary: { text: string; updatedAt: number } | null
+            brainSummary: string | null
+            source: string | null
+            caller: string | null
+            machineId: string | null
+            flavor: string | null
+            mainSessionId: string | null
+        }
+    }> {
+        const response = await axios.get(
+            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/inspect`,
+            {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 15_000
+            }
+        )
+        return response.data
+    }
+
+    async getSessionTail(sessionId: string, opts?: { limit?: number }): Promise<{
+        sessionId: string
+        items: Array<{
+            seq: number
+            createdAt: number
+            role: 'user' | 'assistant' | 'agent'
+            kind: 'user' | 'assistant' | 'result' | 'tool-call' | 'tool-result' | 'tool-summary' | 'todo' | 'plan' | 'reasoning' | 'system' | 'message' | 'raw'
+            subtype: string | null
+            sentFrom: string | null
+            snippet: string
+        }>
+        returned: number
+        inspectedMessages: number
+        newestSeq: number | null
+        oldestSeq: number | null
+        hasMoreHistory: boolean
+    }> {
+        const params = new URLSearchParams()
+        if (opts?.limit !== undefined) {
+            params.set('limit', String(opts.limit))
+        }
+        const query = params.toString()
+        const response = await axios.get(
+            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/tail${query ? `?${query}` : ''}`,
             {
                 headers: {
                     Authorization: `Bearer ${this.token}`,

@@ -8,8 +8,10 @@ Type=simple
 User=yoho
 WorkingDirectory=/home/yoho/.yoho-remote
 EnvironmentFile=/home/yoho/.yoho-remote/daemon.systemd.env
+Environment=YR_DAEMON_UNDER_SYSTEMD=1
 ExecStart=/opt/yoho-remote/yoho-remote-daemon
 Restart=always
+KillMode=control-group
 RestartSec=10
 
 [Install]

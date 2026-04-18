@@ -264,6 +264,15 @@ export const knownTools: Record<string, {
         },
         minimal: true
     },
+    ClaudeEditedTextFile: {
+        icon: () => <FileDiffIcon className={DEFAULT_ICON_CLASS} />,
+        title: (opts) => {
+            const file = getInputStringAny(opts.input, ['file_path', 'path', 'file'])
+            return file ? resolveDisplayPath(file, opts.metadata) : 'Changed file'
+        },
+        subtitle: () => 'Changed snippet',
+        minimal: false
+    },
     Edit: {
         icon: () => <FileDiffIcon className={DEFAULT_ICON_CLASS} />,
         title: (opts) => {

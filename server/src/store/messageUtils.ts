@@ -43,6 +43,11 @@ export function isRealActivityMessage(content: unknown): boolean {
         const attachment = data.attachment
         if (!attachment || typeof attachment !== 'object') return false
         const attachmentObj = attachment as Record<string, unknown>
+        if (attachmentObj.type === 'edited_text_file') {
+            const filename = asNonEmptyString(attachmentObj.filename)
+            const snippet = typeof attachmentObj.snippet === 'string' ? attachmentObj.snippet : null
+            return filename !== null && typeof snippet === 'string' && snippet.trim().length > 0
+        }
         if (
             attachmentObj.type === 'plan_file_reference'
             || attachmentObj.type === 'plan_mode'

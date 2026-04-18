@@ -249,6 +249,36 @@ describe('sessionScanner', () => {
     expect(collectedMessages.map((msg) => msg.type)).toEqual(['attachment', 'attachment'])
   })
 
+  it('keeps edited_text_file attachments in the scanned message stream', async () => {
+    scanner = await createSessionScanner({
+      sessionId: null,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg)
+    })
+
+    const sessionId = 'edited-text-file-session'
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+    const lines = [
+      JSON.stringify({
+        type: 'attachment',
+        uuid: 'attachment-edited-text',
+        timestamp: '2026-04-17T00:00:00.000Z',
+        attachment: {
+          type: 'edited_text_file',
+          filename: '/tmp/demo.ts',
+          snippet: '12\tconst nextValue = 2'
+        }
+      })
+    ].join('\n') + '\n'
+
+    await writeFile(sessionFile, lines)
+    scanner.onNewSession(sessionId)
+    await new Promise(resolve => setTimeout(resolve, 150))
+
+    expect(collectedMessages).toHaveLength(1)
+    expect(collectedMessages[0]?.type).toBe('attachment')
+  })
+
   it('keeps same-timestamp Claude semantic events distinct without uuid', async () => {
     scanner = await createSessionScanner({
       sessionId: null,

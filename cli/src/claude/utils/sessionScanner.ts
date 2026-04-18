@@ -37,7 +37,6 @@ const INTERNAL_CLAUDE_ATTACHMENT_TYPES = new Set([
     'date_change',
     'file',
     'directory',
-    'edited_text_file',
     'invoked_skills',
 ]);
 

@@ -39,15 +39,36 @@ interface BrainToolsOptions {
     apiClient: ApiClient
     machineId: string
     brainSessionId: string
+    sessionCaller?: string | null
     brainPreferences?: BrainSessionPreferences | null
 }
+
+export function buildBrainCreateDescription(modelSelectionGuide: string): string {
+    return `强制创建新的工作 session。仅在确实需要真正并行或上下文隔离时使用；如果目标是延续同一任务线，优先使用 session_find_or_create 来复用空闲 session。碰到需要判断、定位、方案选择、复杂问题时，可以把它作为第二路或更多独立调研/验证的一路；但简单明确任务不要为了凑两路机械双开。\n\n${modelSelectionGuide}`
+}
+
+export function buildBrainFindOrCreateDescription(modelSelectionGuide: string): string {
+    return `智能查找可复用的空闲子 session。默认只在当前 Brain 的默认机器上搜索匹配 directory + 属于当前 Brain + agent 的空闲 session；显式传 machineId 时只搜索那台机器。找不到则在对应机器上创建新 session。这是默认入口。\n\n${modelSelectionGuide}\n\n复用逻辑：优先匹配相同 agent + modelMode 的 session，把同一任务线持续交给同一个 session；只有需要真正并行或上下文隔离时，才退回到 session_create。碰到需要判断、定位、方案选择、复杂问题时，默认至少组织两路独立调研/验证后再汇总决策；简单明确任务不要机械双开。`
+}
+
+export const BRAIN_SESSION_SEND_DESCRIPTION = '向指定 session 发送消息/任务。非阻塞：立即返回，子 session 完成后结果会自动推送到你的对话中。发送后默认结束当前轮，不要为了等结果轮询 session_list/session_status；只有超时排障、/compact 判断、监督分工进度、或需要重调度/纠偏时才查状态。'
+export const BRAIN_SESSION_LIST_DESCRIPTION = '列出 session 及其状态。用于盘点分工、复用选择、监督哪些 session 正在做什么、重调度和排障；不要把它当成等待结果的轮询循环。默认只返回在线 session，传 includeOffline=true 可包含离线 session。'
+export const BRAIN_SESSION_ABORT_DESCRIPTION = '停止指定 session 当前正在执行的任务，但保留 session 本身，便于立即发送新内容纠偏或切换到新方向。发现子 session 跑偏、任务定义变化、或用户改变方向时，先用它 stop 旧任务，再 session_send 新任务。'
+export const BRAIN_SESSION_STOP_DESCRIPTION = '中止指定 session 当前正在执行的任务，但保留 session 本身，便于立刻 session_send 新任务纠偏或切换方向。这是 Brain 正式使用的 stop 能力；不要用 session_close 代替 stop。'
+export const BRAIN_SESSION_RESUME_DESCRIPTION = '恢复一个已离线/已归档但上下文仍值得复用的 session。恢复成功后可继续 session_send；如果底层恢复时回退创建了新 session，会返回新的 sessionId，后续必须改用新的 sessionId。'
+export const BRAIN_SESSION_UPDATE_DESCRIPTION = '更新子 session 的元信息。子任务完成后必须写入一行 brainSummary（任务总结），方便后续复用时快速识别 session 做过什么。'
+export const BRAIN_SESSION_STATUS_DESCRIPTION = '查询 session 的详细状态：在线/执行中/消息数/token 用量/context 使用率。仅用于超时排障、/compact 判断、监督子 session 是否跑偏、或重调度/纠偏，不要持续轮询。'
+export const BRAIN_SESSION_INSPECT_DESCRIPTION = '一次返回适合编排/排障的 session 诊断快照：lastMessageAt、todoProgress、activeMonitors、terminationReason、runtimeModel、fastMode、pendingRequests、context 信息等。用于判断卡在哪、是否要 stop/纠偏/重调度；不要持续轮询。'
+export const BRAIN_SESSION_TAIL_DESCRIPTION = '查看 session 最近几条真实输出/事件片段（assistant/result/tool/todo/user turn 等），用于排障和调度判断。它返回的是最近的实际内容片段，不是 messageCount 这类弱摘要；不要持续轮询。'
+export const BRAIN_SESSION_SET_CONFIG_DESCRIPTION = '统一调整子 session 的运行时 steering。优先用它设置 model / reasoningEffort / fastMode，以及当前架构支持的 permissionMode；新代码不要再拆成多个零散配置接口。'
 
 export function registerBrainTools(
     mcp: McpServer,
     toolNames: string[],
     options: BrainToolsOptions
 ): void {
-    const { apiClient: api, machineId, brainSessionId } = options
+    const initialToolCount = toolNames.length
+    const { apiClient: api, machineId, brainSessionId, sessionCaller } = options
     const brainPreferences = options.brainPreferences ?? null
     const allowedChildAgents = getAllowedBrainChildAgents(brainPreferences)
     const defaultChildAgent: BrainChildAgent = allowedChildAgents.includes('claude')
@@ -265,6 +286,8 @@ export function registerBrainTools(
                     codexModel: opts.codexModel,
                     source: 'brain-child',
                     mainSessionId: brainSessionId,
+                    caller: sessionCaller ?? undefined,
+                    brainPreferences: brainPreferences ?? undefined,
                 })
                 if (result.type === 'success') {
                     return { type: 'success', sessionId: result.sessionId, machineId: candidate.id, skippedLog }
@@ -290,7 +313,7 @@ export function registerBrainTools(
 
     mcp.registerTool<any, any>('session_create', {
         title: 'Create Session',
-        description: `强制创建新的工作 session。如果只想发任务到已有目录，优先使用 session_find_or_create 来复用空闲 session。\n\n${MODEL_SELECTION_GUIDE}`,
+        description: buildBrainCreateDescription(MODEL_SELECTION_GUIDE),
         inputSchema: createSchema,
     }, async (args: { directory: string; machineId?: string; agent?: string; modelMode?: string; codexModel?: string }) => {
         try {
@@ -351,7 +374,7 @@ export function registerBrainTools(
 
     mcp.registerTool<any, any>('session_find_or_create', {
         title: 'Find or Create Session',
-        description: `智能查找可复用的空闲子 session。默认只在当前 Brain 的默认机器上搜索匹配 directory + 属于当前 Brain + agent 的空闲 session；显式传 machineId 时只搜索那台机器。找不到则在对应机器上创建新 session。推荐优先使用此工具。\n\n${MODEL_SELECTION_GUIDE}\n\n复用逻辑：优先匹配相同 agent + modelMode 的 session。`,
+        description: buildBrainFindOrCreateDescription(MODEL_SELECTION_GUIDE),
         inputSchema: findOrCreateSchema,
     }, async (args: { directory: string; hint?: string; machineId?: string; agent?: string; modelMode?: string; codexModel?: string }) => {
         try {
@@ -487,7 +510,7 @@ export function registerBrainTools(
 
     mcp.registerTool<any, any>('session_send', {
         title: 'Send to Session',
-        description: '向指定 session 发送消息/任务。非阻塞：立即返回，子 session 完成后结果会自动推送到你的对话中。你可以继续处理其他任务。',
+        description: BRAIN_SESSION_SEND_DESCRIPTION,
         inputSchema: sendSchema,
     }, async (args: { sessionId: string; message: string }) => {
         try {
@@ -523,9 +546,21 @@ export function registerBrainTools(
                 }
             }
 
-            if (session.metadata?.source === 'brain-child' && !session.metadata?.mainSessionId) {
-                await api.patchSessionMetadata(args.sessionId, { mainSessionId: brainSessionId })
-                logger.debug(`[brain] Repaired missing mainSessionId for child session ${args.sessionId}`)
+            const metadataPatch: Record<string, unknown> = {}
+            if (session.metadata?.source === 'brain-child') {
+                if (!session.metadata?.mainSessionId) {
+                    metadataPatch.mainSessionId = brainSessionId
+                }
+                if (!session.metadata?.caller && sessionCaller) {
+                    metadataPatch.caller = sessionCaller
+                }
+                if (!session.metadata?.brainPreferences && brainPreferences) {
+                    metadataPatch.brainPreferences = brainPreferences
+                }
+            }
+            if (Object.keys(metadataPatch).length > 0) {
+                await api.patchSessionMetadata(args.sessionId, metadataPatch)
+                logger.debug(`[brain] Repaired missing brain metadata for child session ${args.sessionId}`)
             }
 
             // Send message - fire and forget
@@ -557,7 +592,7 @@ export function registerBrainTools(
 
     mcp.registerTool<any, any>('session_list', {
         title: 'List Sessions',
-        description: '列出 session 及其状态。默认只返回在线 session，传 includeOffline=true 可包含离线 session。',
+        description: BRAIN_SESSION_LIST_DESCRIPTION,
         inputSchema: listSchema,
     }, async (args: { includeOffline?: boolean }) => {
         try {
@@ -604,14 +639,126 @@ export function registerBrainTools(
         }
     })
 
-    // ===== 5. session_close =====
+    // ===== 5. session_stop / session_abort =====
+    const stopSchema: z.ZodTypeAny = z.object({
+        sessionId: z.string().describe('要停止当前任务的 session ID'),
+    })
+
+    const handleStopSession = async (args: { sessionId: string }) => {
+        try {
+            const status = await api.getSessionStatus(args.sessionId)
+            if (!status.active) {
+                return {
+                    content: [{
+                        type: 'text' as const,
+                        text: `Session ${args.sessionId} 当前不在线，无需 stop。如果还想复用上下文，请先调用 session_resume。`,
+                    }],
+                }
+            }
+
+            if (!status.thinking) {
+                return {
+                    content: [{
+                        type: 'text' as const,
+                        text: `Session ${args.sessionId} 当前是空闲状态，无需 stop。可以直接调用 session_send 发送新的纠偏任务。`,
+                    }],
+                }
+            }
+
+            const result = await api.abortSession(args.sessionId)
+            if (result.ok) {
+                return {
+                    content: [{
+                        type: 'text' as const,
+                        text: `Session ${args.sessionId} 的当前任务已停止。该 session 会被保留，现在可以继续 session_send 新任务做纠偏或改派。`,
+                    }],
+                }
+            }
+            return {
+                content: [{
+                    type: 'text' as const,
+                    text: '停止失败: 操作未成功。',
+                }],
+                isError: true,
+            }
+        } catch (err: any) {
+            return {
+                content: [{
+                    type: 'text' as const,
+                    text: `停止失败: ${err.message || String(err)}`,
+                }],
+                isError: true,
+            }
+        }
+    }
+
+    mcp.registerTool<any, any>('session_stop', {
+        title: 'Stop Session Task',
+        description: BRAIN_SESSION_STOP_DESCRIPTION,
+        inputSchema: stopSchema,
+    }, handleStopSession)
+
+    mcp.registerTool<any, any>('session_abort', {
+        title: 'Abort Session Task',
+        description: `${BRAIN_SESSION_ABORT_DESCRIPTION} 这是 session_stop 的兼容别名。`,
+        inputSchema: stopSchema,
+    }, handleStopSession)
+
+    // ===== 6. session_resume =====
+    const resumeSchema: z.ZodTypeAny = z.object({
+        sessionId: z.string().describe('要恢复的 session ID'),
+    })
+
+    mcp.registerTool<any, any>('session_resume', {
+        title: 'Resume Session',
+        description: BRAIN_SESSION_RESUME_DESCRIPTION,
+        inputSchema: resumeSchema,
+    }, async (args: { sessionId: string }) => {
+        try {
+            const result = await api.resumeSession(args.sessionId)
+            if (result.type === 'already-active') {
+                return {
+                    content: [{
+                        type: 'text' as const,
+                        text: `Session ${result.sessionId} 已经在线，无需恢复。可以直接 session_send 新任务。`,
+                    }],
+                }
+            }
+
+            if (result.type === 'resumed') {
+                return {
+                    content: [{
+                        type: 'text' as const,
+                        text: `Session ${result.sessionId} 已恢复上线，可以继续 session_send 新任务。`,
+                    }],
+                }
+            }
+
+            return {
+                content: [{
+                    type: 'text' as const,
+                    text: `原 session ${args.sessionId} 无法原地恢复，已改为创建新的恢复 session ${result.sessionId}。\n后续请改用新的 sessionId 继续 session_send。`,
+                }],
+            }
+        } catch (err: any) {
+            return {
+                content: [{
+                    type: 'text' as const,
+                    text: `恢复失败: ${err.message || String(err)}`,
+                }],
+                isError: true,
+            }
+        }
+    })
+
+    // ===== 7. session_close =====
     const closeSchema: z.ZodTypeAny = z.object({
         sessionId: z.string().describe('要关闭的 session ID'),
     })
 
     mcp.registerTool<any, any>('session_close', {
         title: 'Close Session',
-        description: '关闭指定 session。',
+        description: '关闭指定 session。仅在这个子 session 不再需要时使用；如果只是要停止当前任务并继续复用同一 session，请改用 session_stop。',
         inputSchema: closeSchema,
     }, async (args: { sessionId: string }) => {
         try {
@@ -642,7 +789,7 @@ export function registerBrainTools(
         }
     })
 
-    // ===== 6. session_update =====
+    // ===== 8. session_update =====
     const updateSchema: z.ZodTypeAny = z.object({
         sessionId: z.string().describe('目标 session ID'),
         brainSummary: z.string().describe('Brain 写入的任务总结（持久化到 session metadata）'),
@@ -650,7 +797,7 @@ export function registerBrainTools(
 
     mcp.registerTool<any, any>('session_update', {
         title: 'Update Session',
-        description: '更新子 session 的元信息。用于写入 brainSummary（任务总结），方便后续复用时识别 session 做过什么。',
+        description: BRAIN_SESSION_UPDATE_DESCRIPTION,
         inputSchema: updateSchema,
     }, async (args: { sessionId: string; brainSummary: string }) => {
         try {
@@ -674,14 +821,14 @@ export function registerBrainTools(
         }
     })
 
-    // ===== 7. session_status =====
+    // ===== 9. session_status =====
     const statusSchema: z.ZodTypeAny = z.object({
         sessionId: z.string().describe('要查询的 session ID'),
     })
 
     mcp.registerTool<any, any>('session_status', {
         title: 'Session Status',
-        description: '查询 session 的详细状态：在线/执行中/消息数/token 用量/context 使用率。用于判断是否需要 compact。',
+        description: BRAIN_SESSION_STATUS_DESCRIPTION,
         inputSchema: statusSchema,
     }, async (args: { sessionId: string }) => {
         try {
@@ -725,37 +872,155 @@ export function registerBrainTools(
         }
     })
 
-    // ===== 8. session_set_model_mode =====
-    const setModelModeSchema: z.ZodTypeAny = z.object({
-        sessionId: z.string().describe('目标 session ID'),
-        modelMode: z.enum(['default', 'sonnet', 'opus', 'opus-4-7']).describe('要切换到的模型。sonnet 适合日常任务，opus / opus-4-7 适合复杂推理任务（opus-4-7 为 Claude Opus 4.7 最新版）。'),
+    // ===== 10. session_inspect =====
+    const inspectSchema: z.ZodTypeAny = z.object({
+        sessionId: z.string().describe('要检查的 session ID'),
     })
 
-    mcp.registerTool<any, any>('session_set_model_mode', {
-        title: 'Set Session Model Mode',
-        description: '切换指定 session 的模型。适用场景：当任务复杂度发生变化时，可以从 sonnet 切换到 opus（或反之）。注意：切换模型不会影响已有的对话历史，但会影响后续的推理能力和成本。',
-        inputSchema: setModelModeSchema,
-    }, async (args: { sessionId: string; modelMode: string }) => {
+    mcp.registerTool<any, any>('session_inspect', {
+        title: 'Session Inspect',
+        description: BRAIN_SESSION_INSPECT_DESCRIPTION,
+        inputSchema: inspectSchema,
+    }, async (args: { sessionId: string }) => {
         try {
-            await api.setSessionModelMode(args.sessionId, args.modelMode as any)
+            const inspect = await api.getSessionInspect(args.sessionId)
             return {
                 content: [{
                     type: 'text' as const,
-                    text: `已将 Session ${args.sessionId} 的模型切换为 ${args.modelMode}。`,
+                    text: JSON.stringify(inspect, null, 2),
                 }],
             }
         } catch (err: any) {
             return {
                 content: [{
                     type: 'text' as const,
-                    text: `切换模型失败: ${err.message || String(err)}`,
+                    text: `查询失败: ${err.message || String(err)}`,
                 }],
                 isError: true,
             }
         }
     })
 
-    // ===== 9. chat_messages =====
+    // ===== 11. session_tail =====
+    const tailSchema: z.ZodTypeAny = z.object({
+        sessionId: z.string().describe('要查看 tail 的 session ID'),
+        limit: z.number().int().min(1).max(20).optional().describe('返回多少条最近片段，默认 6，最大 20'),
+    })
+
+    mcp.registerTool<any, any>('session_tail', {
+        title: 'Session Tail',
+        description: BRAIN_SESSION_TAIL_DESCRIPTION,
+        inputSchema: tailSchema,
+    }, async (args: { sessionId: string; limit?: number }) => {
+        try {
+            const tail = await api.getSessionTail(args.sessionId, { limit: args.limit })
+            return {
+                content: [{
+                    type: 'text' as const,
+                    text: JSON.stringify(tail, null, 2),
+                }],
+            }
+        } catch (err: any) {
+            return {
+                content: [{
+                    type: 'text' as const,
+                    text: `查询失败: ${err.message || String(err)}`,
+                }],
+                isError: true,
+            }
+        }
+    })
+
+    // ===== 12. session_set_config / session_set_model_mode =====
+    const setConfigSchema: z.ZodTypeAny = z.object({
+        sessionId: z.string().describe('目标 session ID'),
+        model: z.string().optional().describe('要切换到的模型。Claude 常见值：sonnet / opus / opus-4-7 / glm-5.1；Codex 常见值：gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex / gpt-5.3-codex-spark / gpt-5.2 / gpt-5.2-codex / gpt-5.1-codex-max / gpt-5.1-codex-mini。'),
+        reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh']).optional().describe('推理强度。当前主要适用于 Codex；Claude 运行时不支持单独调整 reasoningEffort。'),
+        permissionMode: z.enum(['bypassPermissions', 'read-only', 'safe-yolo', 'yolo']).optional().describe('权限模式。当前只暴露服务器已建模的子集：Claude 仅支持 bypassPermissions，Codex 支持 read-only / safe-yolo / yolo。'),
+        fastMode: z.boolean().optional().describe('Claude Fast Mode 开关。当前仅适用于 Claude。'),
+    }).refine((value) =>
+        value.model !== undefined
+        || value.reasoningEffort !== undefined
+        || value.permissionMode !== undefined
+        || value.fastMode !== undefined,
+    {
+        message: '至少提供一个要修改的配置字段',
+    })
+
+    const handleSetSessionConfig = async (args: {
+        sessionId: string
+        model?: string
+        reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
+        permissionMode?: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
+        fastMode?: boolean
+    }) => {
+        try {
+            const status = await api.getSessionStatus(args.sessionId)
+            if (!status.active) {
+                return {
+                    content: [{
+                        type: 'text' as const,
+                        text: `Session ${args.sessionId} 当前不在线，无法调整运行时配置。请先调用 session_resume 恢复它。`,
+                    }],
+                }
+            }
+
+            const result = await api.setSessionConfig(args.sessionId, {
+                ...(args.model !== undefined ? { model: args.model } : {}),
+                ...(args.reasoningEffort !== undefined ? { reasoningEffort: args.reasoningEffort } : {}),
+                ...(args.permissionMode !== undefined ? { permissionMode: args.permissionMode } : {}),
+                ...(args.fastMode !== undefined ? { fastMode: args.fastMode } : {}),
+            })
+
+            const appliedLines = [
+                result.applied?.model !== undefined ? `model: ${result.applied.model}` : null,
+                result.applied?.reasoningEffort !== undefined ? `reasoningEffort: ${result.applied.reasoningEffort}` : null,
+                result.applied?.permissionMode !== undefined ? `permissionMode: ${result.applied.permissionMode}` : null,
+                result.applied?.fastMode !== undefined ? `fastMode: ${result.applied.fastMode ? 'on' : 'off'}` : null,
+            ].filter((line): line is string => Boolean(line))
+
+            return {
+                content: [{
+                    type: 'text' as const,
+                    text: appliedLines.length > 0
+                        ? `已更新 Session ${args.sessionId} 的运行时配置：\n${appliedLines.join('\n')}`
+                        : `已更新 Session ${args.sessionId} 的运行时配置。`,
+                }],
+            }
+        } catch (err: any) {
+            return {
+                content: [{
+                    type: 'text' as const,
+                    text: `更新配置失败: ${err.message || String(err)}`,
+                }],
+                isError: true,
+            }
+        }
+    }
+
+    mcp.registerTool<any, any>('session_set_config', {
+        title: 'Set Session Config',
+        description: BRAIN_SESSION_SET_CONFIG_DESCRIPTION,
+        inputSchema: setConfigSchema,
+    }, handleSetSessionConfig)
+
+    const setModelModeSchema: z.ZodTypeAny = z.object({
+        sessionId: z.string().describe('目标 session ID'),
+        modelMode: z.string().min(1).describe('兼容旧接口：只修改 model。新代码优先用 session_set_config。'),
+    })
+
+    mcp.registerTool<any, any>('session_set_model_mode', {
+        title: 'Set Session Model Mode',
+        description: '兼容旧接口：只调整子 session 的 model。新代码优先使用 session_set_config，把 model / reasoningEffort / fastMode / permissionMode 放在同一个调用里。',
+        inputSchema: setModelModeSchema,
+    }, async (args: { sessionId: string; modelMode: string }) => {
+        return await handleSetSessionConfig({
+            sessionId: args.sessionId,
+            model: args.modelMode,
+        })
+    })
+
+    // ===== 13. chat_messages =====
     const chatMessagesSchema: z.ZodTypeAny = z.object({
         chatId: z.string().describe('飞书 chat_id（群聊或单聊）'),
         limit: z.number().optional().describe('返回条数，默认 50，最大 200'),
@@ -799,12 +1064,18 @@ export function registerBrainTools(
         'session_find_or_create',
         'session_send',
         'session_list',
+        'session_stop',
+        'session_abort',
+        'session_resume',
         'session_close',
         'session_update',
         'session_status',
+        'session_inspect',
+        'session_tail',
+        'session_set_config',
         'session_set_model_mode',
         'chat_messages',
     )
 
-    logger.debug(`[brain] Registered 9 brain tools (async mode) for session ${brainSessionId}`)
+    logger.debug(`[brain] Registered ${toolNames.length - initialToolCount} brain tools (async mode) for session ${brainSessionId}`)
 }

@@ -28,9 +28,14 @@ import { hasCodexCliOverrides } from './utils/codexCliOverrides';
 import { buildCodexStartConfig, TITLE_INSTRUCTION } from './utils/codexStartConfig';
 import { buildCommandExecutionResult, getCommandExecutionPreview } from './utils/commandExecutionResult';
 import { normalizeCodexToolReferences } from './utils/normalizeCodexToolReferences';
-import { buildCodexExecArgs } from './utils/codexExecArgs';
+import { buildCodexExecArgs, type CodexExecStartConfig } from './utils/codexExecArgs';
 import { resolveCodexBinary } from './codexBinary';
 import { getYohoAuxMcpServers, VAULT_HTTP_PORT } from '@/utils/yohoMcpServers';
+import {
+    buildCodexConfigOverrides,
+    buildCodexDeveloperInstructions,
+    buildCodexRuntimeFunctionTools,
+} from './utils/codexDeveloperInstructions';
 import type { CodexSession } from './session';
 import type { EnhancedMode, PermissionMode } from './loop';
 
@@ -255,6 +260,30 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
         )
     });
 
+    const isBrainSession = session.sessionSource === 'brain';
+    const runtimeFunctionTools = isBrainSession
+        ? buildCodexRuntimeFunctionTools({
+            yohoRemoteToolNames: yohoRemoteServer.toolNames,
+            auxServerNames: Object.keys(mcpServers),
+        })
+        : [];
+    if (runtimeFunctionTools.length > 0) {
+        session.client.updateMetadata((metadata) => ({
+            ...metadata,
+            tools: runtimeFunctionTools,
+        }));
+    }
+
+    const developerInstructions = isBrainSession
+        ? buildCodexDeveloperInstructions({
+            sessionSource: session.sessionSource,
+            runtimeFunctionTools,
+        })
+        : undefined;
+    const configOverrides = buildCodexConfigOverrides({
+        sessionSource: session.sessionSource,
+    });
+
     // ----- Resolve codex binary -----
     const codexBin = resolveCodexBinary();
     logger.debug(`[codex-exec] Resolved codex binary: ${codexBin.command} (version=${codexBin.version})`);
@@ -346,7 +375,9 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
                     first,
                     mcpServers,
                     cliOverrides: session.codexCliOverrides,
-                    includeTitleInstruction: false
+                    developerInstructions,
+                    includeTitleInstruction: false,
+                    configOverrides,
                 });
 
                 // Spawn codex exec process
@@ -429,12 +460,7 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
 
 interface SpawnCodexExecOptions {
     codexBin: { command: string; version: string | null; env: NodeJS.ProcessEnv };
-    startConfig: {
-        prompt: string;
-        model?: string;
-        model_reasoning_effort?: string;
-        service_tier?: 'fast' | 'flex';
-    };
+    startConfig: CodexExecStartConfig;
     permissionMode: PermissionMode;
     mcpServers: Record<string, { command: string; args: string[]; cwd?: string; env?: Record<string, string> }>;
     threadId: string | null;

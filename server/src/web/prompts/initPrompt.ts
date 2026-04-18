@@ -1,5 +1,11 @@
 import type { UserRole } from '../../store'
-import type { BrainSessionPreferences } from '../../brain/brainSessionPreferences'
+import {
+    BRAIN_CLAUDE_CHILD_MODELS,
+    BRAIN_CODEX_CHILD_MODELS,
+    type BrainClaudeChildModel,
+    type BrainCodexChildModel,
+    type BrainSessionPreferences,
+} from '../../brain/brainSessionPreferences'
 
 type InitPromptOptions = {
     projectRoot?: string | null
@@ -27,14 +33,88 @@ ${projectRoot ? `\n- 当前会话工作目录：${projectRoot}` : ''}
 - \`project_create\` / \`project_update\` / \`project_delete\` 管理 Project 列表`
 }
 
-function renderChildModelLine(agent: 'claude' | 'codex', preferences: BrainSessionPreferences | null): string {
-    if (!preferences) {
-        return agent === 'claude'
-            ? '- Claude 子 session 可用模型：sonnet（默认）、opus'
-            : '- Codex 子 session 可用模型：gpt-5.4（默认）、gpt-5.4-mini、gpt-5.3-codex、gpt-5.3-codex-spark、gpt-5.2-codex、gpt-5.2、gpt-5.1-codex-max、gpt-5.1-codex-mini'
-    }
+const CLAUDE_MODEL_GUIDES: Record<BrainClaudeChildModel, { scenario: string; note: string }> = {
+    sonnet: {
+        scenario: '90% 日常任务：开发、bug 修复、测试、文档',
+        note: '速度快，性价比最高',
+    },
+    opus: {
+        scenario: '大规模重构、安全审计、深度架构设计、极深推理',
+        note: '更强推理，成本更高',
+    },
+    'opus-4-7': {
+        scenario: '最高复杂度重构、架构评审、难题攻坚',
+        note: 'Claude Opus 4.7，适合最重任务',
+    },
+}
 
-    const config = preferences.childModels[agent]
+const CODEX_MODEL_GUIDES: Record<BrainCodexChildModel, { scenario: string; note: string }> = {
+    'gpt-5.4': {
+        scenario: '新颖编码难题、复杂算法、跨语言、前端 UI',
+        note: '综合能力最强',
+    },
+    'gpt-5.4-mini': {
+        scenario: '子任务并行、批量编码、快速验证',
+        note: '接近 5.4，速度更快，成本更低',
+    },
+    'gpt-5.3-codex': {
+        scenario: '纯编码专精、常规实现任务',
+        note: '编码环境优化',
+    },
+    'gpt-5.3-codex-spark': {
+        scenario: '快速迭代、原型验证',
+        note: '更偏极致速度',
+    },
+    'gpt-5.2-codex': {
+        scenario: '稳定编码任务、常规工程实现',
+        note: 'Codex 优化代际模型',
+    },
+    'gpt-5.2': {
+        scenario: '通用实现、分析与编码混合任务',
+        note: '偏稳健通用',
+    },
+    'gpt-5.1-codex-max': {
+        scenario: '较深推理的编码问题、复杂修复',
+        note: '更偏深度推理',
+    },
+    'gpt-5.1-codex-mini': {
+        scenario: '轻量编码子任务、低成本并行',
+        note: '更轻更快',
+    },
+}
+
+function getClaudeChildModelConfig(preferences: BrainSessionPreferences | null): BrainSessionPreferences['childModels']['claude'] {
+    const config = preferences?.childModels.claude ?? {
+        allowed: [...BRAIN_CLAUDE_CHILD_MODELS],
+        defaultModel: 'sonnet' as const,
+    }
+    if (config.allowed.length === 0 || config.allowed.includes(config.defaultModel)) {
+        return config
+    }
+    return {
+        ...config,
+        defaultModel: config.allowed[0],
+    }
+}
+
+function getCodexChildModelConfig(preferences: BrainSessionPreferences | null): BrainSessionPreferences['childModels']['codex'] {
+    const config = preferences?.childModels.codex ?? {
+        allowed: [...BRAIN_CODEX_CHILD_MODELS],
+        defaultModel: 'gpt-5.4' as const,
+    }
+    if (config.allowed.length === 0 || config.allowed.includes(config.defaultModel)) {
+        return config
+    }
+    return {
+        ...config,
+        defaultModel: config.allowed[0],
+    }
+}
+
+function renderChildModelLine(agent: 'claude' | 'codex', preferences: BrainSessionPreferences | null): string {
+    const config = agent === 'claude'
+        ? getClaudeChildModelConfig(preferences)
+        : getCodexChildModelConfig(preferences)
     if (config.allowed.length === 0) {
         return agent === 'claude'
             ? '- Claude 子 session：禁用（当前 Brain 不允许创建 Claude 子任务）'
@@ -52,6 +132,34 @@ function renderBrainMachinePolicy(preferences: BrainSessionPreferences | null): 
     return preferences.machineSelection.mode === 'manual'
         ? '- 默认子 session 机器：当前 Brain 所在机器（由用户手动固定）；如需跨机，显式传 machineId'
         : '- 默认子 session 机器：当前 Brain 所在机器（由系统自动选择）；如需跨机，显式传 machineId'
+}
+
+function renderModelSelectionSection(preferences: BrainSessionPreferences | null): string {
+    const claudeConfig = getClaudeChildModelConfig(preferences)
+    const codexConfig = getCodexChildModelConfig(preferences)
+    const rows: string[] = []
+
+    for (const model of claudeConfig.allowed) {
+        const guide = CLAUDE_MODEL_GUIDES[model]
+        rows.push(`| claude | ${model === claudeConfig.defaultModel ? `${model}（默认）` : model} | ${guide.scenario} | ${guide.note} |`)
+    }
+
+    for (const model of codexConfig.allowed) {
+        const guide = CODEX_MODEL_GUIDES[model]
+        rows.push(`| codex | ${model === codexConfig.defaultModel ? `${model}（默认）` : model} | ${guide.scenario} | ${guide.note} |`)
+    }
+
+    if (rows.length === 0) {
+        return '当前 Brain 未开放任何子 session 模型，请先在 Brain 配置中启用至少一个模型。'
+    }
+
+    return `为子 session 选择 agent 和模型时，只在当前 Brain 真正允许的范围内选择：
+
+| Agent | 模型 | 适用场景 | 备注 |
+|-------|------|----------|------|
+${rows.join('\n')}
+
+默认优先使用标记为“默认”的模型；未出现在上表的模型当前不可用。`
 }
 
 export async function buildInitPrompt(_role: UserRole, options?: InitPromptOptions): Promise<string> {
@@ -93,27 +201,26 @@ ${workspaceBlock(projectRoot)}
 
 ## 编排机制
 
-- 发送任务后**立即返回**，子 session 后台执行，完成后结果**自动推送**（以 \`[子 session 任务完成]\` 开头，含 token 用量）
-- 可同时向多个 session 发任务，充分并行
-- **优先复用 session**: 用 find_or_create（自动匹配同目录 + 同 agent + 空闲），传 \`hint\` 参数匹配已有上下文
-- 同目录多任务尽量串行发同一 session，只有需要真正并行才创新的
-- 子 session 完成后，用 update 写 brainSummary（一两句话总结），方便后续复用
-- Context 剩余低于 20% 且 session 空闲时，发 \`/compact\` 清理上下文
+- 发送任务后**立即返回**，子 session 后台执行，完成后结果**自动推送**（以 \`[子 session 任务完成]\` 开头）
+- 分工协作、多 session 复用、密集配合是默认工作方式；实现、review、测试、部署前检查可以按角色拆给多个子 session 协同推进
+- 可同时向多个 session 发任务，充分并行；同一任务线默认持续复用已有 session，不要为同一方向反复新建子 session
+- 碰到需要判断、定位、方案选择、复杂问题时，默认至少发两路独立调研或验证，再汇总起来决策下一步；但简单实现、明确修复、纯执行任务不要为了凑两路而机械双开
+- **默认先用 \`session_find_or_create\` 复用 session**：自动匹配同目录 + 同 agent + 空闲的子 session，传 \`hint\` 匹配已有上下文；只有需要真正并行或上下文隔离时，才用 \`session_create\`
+- 同一任务线尽量复用同一 session，减少重复理解代码的成本；不同职责的工作流可以让多个 session 密集配合
+- 发完任务后默认结束当前轮，不主动轮询 \`session_list\` / \`session_status\`
+- Brain 不只是派单，还要监督每个子 session 的方向是否正确、质量是否达标
+- 只有在超时排障、判断是否需要 \`/compact\`、监督子 session 是否跑偏、或需要重调度/纠偏时，才查询 session 状态
+- 如果发现某个子 session 方向不对、跑偏、任务定义变了，**立即**先用 \`session_stop\` stop 它当前任务，再用 \`session_send\` 发新内容纠偏；不要等它做完旧方向
+- 如果用户给 Brain 的方向变了，也要先停掉仍在执行旧方向的 session，再按新方向重新分工和分配
+- 如果目标 session 已离线，但上下文仍值得复用：先用 \`session_resume\` 恢复；如果恢复返回了新的 sessionId，后续必须改用新的 sessionId 继续 \`session_send\`
+- 如果需要调整某个子 session 的运行时 steering（model / reasoningEffort / fastMode，以及当前架构支持的 permissionMode 子集），优先用 \`session_set_config\`；不要把配置拆成多个零散旧接口
+- 子 session 完成后，**必须**用 \`session_update\` 写一行可复用总结（brainSummary），方便后续继续复用
+- 收到回调后，优先判断能否直接推进下一步；能继续就继续，不要停在“观察/汇报状态”
+- Context 剩余低于 20% 且 session 空闲时，可发 \`/compact\` 清理上下文
 
 ## 模型选择
 
-为子 session 选择 agent（claude/codex）和模型，根据任务特性决策：
-
-| Agent | 模型 | 适用场景 | 备注 |
-|-------|------|----------|------|
-| claude | sonnet（默认） | 90% 日常任务：开发、bug修复、测试、文档 | 速度快，性价比最高 |
-| claude | opus | 大规模重构、安全审计、深度架构设计、极深推理 | 成本 5x sonnet |
-| codex | gpt-5.4（默认） | 新颖编码难题、复杂算法、跨语言、前端UI | 综合能力最强 |
-| codex | gpt-5.4-mini | 子任务并行、批量编码 | 接近5.4，速度2x+，成本1/6 |
-| codex | gpt-5.3-codex | 纯编码专精 | 编码环境优化 |
-| codex | gpt-5.3-codex-spark | 快速迭代、原型验证 | 1000+ tok/s |
-
-大多数任务用默认 claude+sonnet，不需显式指定。
+${renderModelSelectionSection(brainPreferences)}
 
 ## 当前 Brain 的子任务边界
 
@@ -126,8 +233,12 @@ ${renderChildModelLine('codex', brainPreferences)}
 
 **像自主的项目经理一样工作，不是等待指令的助手。**
 
-- 任务明确就直接推进，报错可修复就自动重试；方向不明/破坏性操作 → 问用户
-- 多 session 并行时，每收到回调立即输出结果，全部完成后再整体汇总
+- 任务明确就直接推进，报错可修复就自动重试；只要方向没问题、不会影响线上，就直接决策并推进
+- 用户未指定阶段时，默认持续推进到部署前准备完成：先开发，然后彻底 review 两遍，测试两遍，部署前检查两遍，再整理部署前检查与变更说明
+- review / 测试 / 部署前检查任一轮发现 bug、回归或明显可提升项，就继续派子 session 修、继续提升，再重新过后续轮次；有 bug 就一直改到没有为止，再停止
+- 子 session 回调如果说明还有 bug 或还能明显提升，默认继续复用同一 session 往下修，不要提前收工
+- 子 session 的结果不仅要看“做没做完”，还要看“方向对不对、质量够不够”；不对就立刻停旧任务、纠偏后继续
+- 不要把“代码已改完”当结束；只有大的决定、方向上的决定、权限、部署推进需要人拍板时，才问用户
 
 ## 知识与记忆
 
@@ -144,7 +255,9 @@ ${renderChildModelLine('codex', brainPreferences)}
 ${userName ? `- 称呼用户为：${userName}\n` : ''}\
 - 每个 session 专注一个任务，指令要具体清晰，让子 session 能独立完成
 - **每次发任务末尾附加：「完成后请输出执行报告：步骤、修改的文件、关键细节、结论。」**
-- **子 session 报告回来后，直接转述关键结果，不要重新概括或换种说法再说一遍**
+- **子 session 报告回来后，先用人话给判断：已完成 / 未完成 / 有风险 / 需要用户决策什么**
+- **默认 1-3 句，不机械转述，不照抄执行报告，不默认回显 sessionId、token、context 等系统字段**
+- **若回调结果还能继续自动推进下一步，先继续推进；只有需要同步关键风险、所有并行分支已收敛，或需要用户拍板时再汇报**
 - **输出顺序**：先输出主任务核心结果，再执行附加操作（remember 等）。最终回复必须是主任务结果。
 `
 }

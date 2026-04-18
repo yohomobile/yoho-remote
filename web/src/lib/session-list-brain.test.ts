@@ -103,4 +103,68 @@ describe('session-list-brain', () => {
             session: { id: 'session-1' },
         })
     })
+
+    test('prefers recent activity over pending count for top-level active entries', () => {
+        const stalePending = createSession('session-stale-pending', {
+            updatedAt: 100,
+            lastMessageAt: 100,
+            pendingRequestsCount: 3,
+        })
+        const fresh = createSession('session-fresh', {
+            updatedAt: 300,
+            lastMessageAt: 300,
+            pendingRequestsCount: 0,
+        })
+
+        const entries = buildSessionListEntries([stalePending, fresh])
+
+        expect(entries.map((entry) => entry.session.id)).toEqual([
+            'session-fresh',
+            'session-stale-pending',
+        ])
+    })
+
+    test('prefers recent activity over pending count for brain children within a group', () => {
+        const brain = createSession('brain-1', {
+            updatedAt: 50,
+            metadata: {
+                path: '/tmp/brain-1',
+                source: 'brain',
+            },
+        })
+        const stalePendingChild = createSession('child-old', {
+            updatedAt: 100,
+            lastMessageAt: 100,
+            pendingRequestsCount: 2,
+            metadata: {
+                path: '/tmp/child-old',
+                source: 'brain-child',
+                mainSessionId: 'brain-1',
+            },
+        })
+        const freshChild = createSession('child-new', {
+            updatedAt: 300,
+            lastMessageAt: 300,
+            pendingRequestsCount: 0,
+            metadata: {
+                path: '/tmp/child-new',
+                source: 'brain-child',
+                mainSessionId: 'brain-1',
+            },
+        })
+
+        const entries = buildSessionListEntries([stalePendingChild, freshChild, brain])
+        expect(entries).toHaveLength(1)
+        expect(entries[0]).toMatchObject({
+            kind: 'brain-group',
+            children: [
+                { id: 'child-new' },
+                { id: 'child-old' },
+            ],
+            statusSummary: {
+                timestamp: 300,
+                pendingRequestsCount: 2,
+            },
+        })
+    })
 })

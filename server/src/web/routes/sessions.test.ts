@@ -96,6 +96,71 @@ describe('createSessionsRoutes', () => {
         expect(payload.sessions[1]?.lastMessageAt).toBeNull()
     })
 
+    it('prefers recent activity over pending requests within active sessions', async () => {
+        const storedSessions = [
+            createStoredSession({
+                id: 'session-stale-pending',
+                active: true,
+                lastMessageAt: 1_700_000_000_100,
+                updatedAt: 1_700_000_000_100,
+                metadata: { path: '/tmp/stale-pending' },
+            }),
+            createStoredSession({
+                id: 'session-fresh',
+                active: true,
+                lastMessageAt: 1_700_000_000_400,
+                updatedAt: 1_700_000_000_400,
+                metadata: { path: '/tmp/fresh' },
+            }),
+        ]
+
+        const fakeEngine = {
+            getSessionsByNamespace: () => [{
+                id: 'session-stale-pending',
+                active: true,
+                activeAt: 1_700_000_000_100,
+                updatedAt: 1_700_000_000_100,
+                lastMessageAt: 1_700_000_000_100,
+                thinking: false,
+                metadata: { path: '/tmp/stale-pending' },
+                agentState: {
+                    requests: {
+                        req1: { tool: 'AskUserQuestion', arguments: {} },
+                        req2: { tool: 'AskUserQuestion', arguments: {} },
+                    }
+                },
+                activeMonitors: [],
+                modelMode: null,
+                modelReasoningEffort: null,
+                fastMode: null,
+                terminationReason: null,
+            }],
+        }
+
+        const fakeStore = {
+            getSessionsByNamespace: async () => storedSessions,
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'ns-test')
+            c.set('role', 'developer')
+            c.set('orgs', [])
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/sessions')
+        expect(response.status).toBe(200)
+
+        const payload = await response.json() as { sessions: Array<{ id: string; pendingRequestsCount: number }> }
+        expect(payload.sessions.map((session) => session.id)).toEqual([
+            'session-fresh',
+            'session-stale-pending',
+        ])
+        expect(payload.sessions[1]?.pendingRequestsCount).toBe(2)
+    })
+
     it('preserves mainSessionId for brain-child session summaries', async () => {
         const storedSessions = [
             createStoredSession({
@@ -408,6 +473,97 @@ describe('createSessionsRoutes', () => {
         })])
     })
 
+    it('passes selected brain creation options into spawnSession and brainPreferences', async () => {
+        const spawnCalls: Array<{
+            machineId: string
+            directory: string
+            agent: string
+            yolo: boolean | undefined
+            options: Record<string, unknown> | undefined
+        }> = []
+        let createdSession: any = null
+
+        const fakeEngine = {
+            getSession: (id: string) => id === 'brain-session-new' ? createdSession : null,
+            getMachine: (id: string) => id === 'machine-1'
+                ? { id: 'machine-1', active: true, metadata: { homeDir: '/home/dev' }, namespace: 'default' }
+                : null,
+            spawnSession: async (machineId: string, directory: string, agent: string, yolo: boolean | undefined, options?: Record<string, unknown>) => {
+                spawnCalls.push({ machineId, directory, agent, yolo, options })
+                createdSession = {
+                    id: 'brain-session-new',
+                    namespace: 'default',
+                    active: true,
+                    metadata: {
+                        path: directory,
+                        source: 'brain',
+                        machineId,
+                        brainPreferences: options?.brainPreferences,
+                    },
+                }
+                return { type: 'success', sessionId: 'brain-session-new' }
+            },
+            waitForSocketInRoom: async () => true,
+            sendMessage: async () => true,
+            subscribe: () => () => {},
+        }
+
+        const fakeStore = {
+            getBrainConfig: async () => ({
+                agent: 'claude',
+                claudeModelMode: 'sonnet',
+                codexModel: 'gpt-5.4',
+                extra: null,
+            }),
+            setSessionCreatedBy: async () => true,
+            setSessionOrgId: async () => true,
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            c.set('role', 'developer')
+            c.set('email', 'dev@example.com')
+            c.set('name', 'Dev')
+            c.set('orgs', [])
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/brain/sessions', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                agent: 'claude',
+                claudeModel: 'opus-4-7',
+                childClaudeModels: ['opus-4-7'],
+                childCodexModels: ['gpt-5.4-mini'],
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ type: 'success', sessionId: 'brain-session-new' })
+        expect(spawnCalls).toEqual([{
+            machineId: 'machine-1',
+            directory: '/home/dev/.yoho-remote/brain-workspace',
+            agent: 'claude',
+            yolo: true,
+            options: expect.objectContaining({
+                source: 'brain',
+                permissionMode: 'bypassPermissions',
+                modelMode: 'opus-4-7',
+                brainPreferences: {
+                    machineSelection: { mode: 'manual', machineId: 'machine-1' },
+                    childModels: {
+                        claude: { allowed: ['opus-4-7'], defaultModel: 'opus-4-7' },
+                        codex: { allowed: ['gpt-5.4-mini'], defaultModel: 'gpt-5.4-mini' },
+                    },
+                },
+            }),
+        }])
+    })
+
     it('preserves brain-child metadata when resume falls back to a new session', async () => {
         const session = {
             id: 'brain-child-old',
@@ -525,5 +681,125 @@ describe('createSessionsRoutes', () => {
                 },
             }),
         ])
+    })
+
+    it('rebinds brain-child sessions when a brain resume falls back to a new session id', async () => {
+        const session = {
+            id: 'brain-main-old',
+            namespace: 'default',
+            seq: 0,
+            createdAt: 0,
+            updatedAt: 0,
+            lastMessageAt: null,
+            active: false,
+            activeAt: 0,
+            createdBy: null,
+            metadata: {
+                path: '/tmp/brain-main',
+                machineId: 'machine-1',
+                flavor: 'claude',
+                source: 'brain',
+                caller: 'feishu',
+                brainPreferences: {
+                    machineSelection: { mode: 'manual', machineId: 'machine-1' },
+                },
+                claudeSessionId: 'claude-brain-main',
+            },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            activeMonitors: [],
+            thinking: false,
+            thinkingAt: 0,
+            permissionMode: 'bypassPermissions',
+            modelMode: 'opus',
+        }
+        const createdSession = {
+            ...session,
+            id: 'brain-main-new',
+            active: true,
+            metadata: {
+                ...session.metadata,
+                claudeSessionId: 'claude-brain-main-new',
+            },
+        }
+        const childSession = {
+            id: 'brain-child-1',
+            namespace: 'default',
+            metadata: {
+                path: '/tmp/brain-child',
+                source: 'brain-child',
+                mainSessionId: session.id,
+            },
+        }
+
+        const rebindCalls: Array<{ sessionId: string; patch: Record<string, unknown> }> = []
+        let spawnCount = 0
+        const fakeEngine = {
+            getSession: (id: string) => {
+                if (id === session.id) return session
+                if (id === createdSession.id) return createdSession
+                if (id === childSession.id) return childSession
+                return null
+            },
+            getOrRefreshSession: async (id: string) => id === session.id ? session : null,
+            getMachineByNamespace: () => ({ id: 'machine-1', active: true, metadata: {}, namespace: 'default' }),
+            getSessionsByNamespace: () => [session, childSession],
+            checkPathsExist: async () => ({ '/tmp/brain-main': true }),
+            spawnSession: async () => {
+                spawnCount += 1
+                if (spawnCount === 1) {
+                    return { type: 'error', message: 'resume failed' }
+                }
+                return { type: 'success', sessionId: createdSession.id }
+            },
+            patchSessionMetadata: async (sessionId: string, patch: Record<string, unknown>) => {
+                rebindCalls.push({ sessionId, patch })
+                return { ok: true }
+            },
+            terminateSessionProcess: async () => true,
+            subscribe: () => () => {},
+            sendMessage: async () => true,
+            getMessagesPage: async () => ({ messages: [] }),
+        }
+
+        const fakeStore = {
+            getSession: async (id: string) => createStoredSession({
+                id,
+                namespace: session.namespace,
+                metadata: id === createdSession.id ? createdSession.metadata : session.metadata,
+                active: false,
+                orgId: 'org-1',
+            }),
+            setSessionActive: async () => true,
+            setSessionCreatedBy: async () => true,
+            setSessionOrgId: async () => true,
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            c.set('role', 'developer')
+            c.set('email', 'dev@example.com')
+            c.set('name', 'Dev')
+            c.set('orgs', [])
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/sessions/brain-main-old/resume', { method: 'POST' })
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            type: 'created',
+            sessionId: 'brain-main-new',
+            resumedFrom: 'brain-main-old',
+            usedResume: true,
+        })
+        expect(rebindCalls).toEqual([{
+            sessionId: 'brain-child-1',
+            patch: {
+                mainSessionId: 'brain-main-new',
+            },
+        }])
     })
 })

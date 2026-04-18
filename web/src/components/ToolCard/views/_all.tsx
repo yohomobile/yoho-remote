@@ -4,6 +4,7 @@ import type { SessionMetadataSummary } from '@/types/api'
 import { CodexDiffCompactView, CodexDiffFullView } from '@/components/ToolCard/views/CodexDiffView'
 import { CodexPatchCompactView, CodexPatchView } from '@/components/ToolCard/views/CodexPatchView'
 import { CodexPlanView } from '@/components/ToolCard/views/CodexPlanView'
+import { ClaudeEditedTextFileView } from '@/components/ToolCard/views/ClaudeEditedTextFileView'
 import { EditView } from '@/components/ToolCard/views/EditView'
 import { AskUserQuestionView } from '@/components/ToolCard/views/AskUserQuestionView'
 import { ExitPlanModeView } from '@/components/ToolCard/views/ExitPlanModeView'
@@ -19,6 +20,7 @@ export type ToolViewProps = {
 export type ToolViewComponent = ComponentType<ToolViewProps>
 
 export const toolViewRegistry: Record<string, ToolViewComponent> = {
+    ClaudeEditedTextFile: ClaudeEditedTextFileView,
     Edit: EditView,
     MultiEdit: MultiEditView,
     Write: WriteView,
@@ -33,6 +35,7 @@ export const toolViewRegistry: Record<string, ToolViewComponent> = {
 }
 
 export const toolFullViewRegistry: Record<string, ToolViewComponent> = {
+    ClaudeEditedTextFile: ClaudeEditedTextFileView,
     Edit: EditView,
     MultiEdit: MultiEditFullView,
     Write: WriteView,
