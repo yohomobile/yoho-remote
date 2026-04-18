@@ -199,6 +199,7 @@ describe('SyncEngine auto-resume', () => {
             codexSessionId: 'thread-brain',
             startedFromDaemon: true,
             source: 'brain-child',
+            caller: 'feishu',
             mainSessionId: 'brain-session-1',
             brainPreferences: {
                 machineSelection: { mode: 'manual', machineId: machine.id },
@@ -229,6 +230,7 @@ describe('SyncEngine auto-resume', () => {
             sessionId: session.id,
             resumeSessionId: 'thread-brain',
             source: 'brain-child',
+            caller: 'feishu',
             mainSessionId: 'brain-session-1',
             brainPreferences: {
                 machineSelection: { mode: 'manual', machineId: machine.id },

@@ -13,6 +13,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export type ResumeSpawnMetadata = {
     source?: string
+    caller?: string
     mainSessionId?: string
     brainPreferences?: Record<string, unknown>
 }
@@ -23,6 +24,7 @@ export function extractResumeSpawnMetadata(metadata: unknown): ResumeSpawnMetada
     }
 
     const source = asNonEmptyString(metadata.source)
+    const caller = asNonEmptyString(metadata.caller)
     const mainSessionId = asNonEmptyString(metadata.mainSessionId)
     const brainPreferences = isRecord(metadata.brainPreferences)
         ? { ...metadata.brainPreferences }
@@ -30,6 +32,7 @@ export function extractResumeSpawnMetadata(metadata: unknown): ResumeSpawnMetada
 
     return {
         ...(source ? { source } : {}),
+        ...(caller ? { caller } : {}),
         ...(mainSessionId ? { mainSessionId } : {}),
         ...(brainPreferences ? { brainPreferences } : {}),
     }

@@ -127,6 +127,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         os: os.platform(),
         machineId: machineId,
         source: sessionSource || undefined,
+        caller: sessionCaller || undefined,
         mainSessionId: mainSessionId || undefined,
         homeDir: os.homedir(),
         yohoRemoteHomeDir: configuration.yohoRemoteHomeDir,

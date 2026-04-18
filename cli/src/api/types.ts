@@ -27,6 +27,7 @@ export type Metadata = {
     version?: string
     name?: string
     source?: string
+    caller?: string
     os?: string
     summary?: {
         text: string
@@ -70,6 +71,7 @@ export const MetadataSchema = z.object({
     version: z.string().optional(),
     name: z.string().optional(),
     source: z.string().optional(),
+    caller: z.string().optional(),
     os: z.string().optional(),
     summary: z.object({
         text: z.string(),

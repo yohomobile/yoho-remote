@@ -342,6 +342,7 @@ describe('createSessionsRoutes', () => {
                 machineId: 'machine-1',
                 flavor: 'claude',
                 source: 'brain',
+                caller: 'feishu',
                 brainPreferences: {
                     machineSelection: { mode: 'manual', machineId: 'machine-1' },
                 },
@@ -400,6 +401,7 @@ describe('createSessionsRoutes', () => {
             sessionId: 'brain-session',
             resumeSessionId: 'claude-session-1',
             source: 'brain',
+            caller: 'feishu',
             brainPreferences: {
                 machineSelection: { mode: 'manual', machineId: 'machine-1' },
             },

@@ -30,9 +30,16 @@ interface StartYohoRemoteServerOptions {
 }
 
 export async function startYohoRemoteServer(client: ApiSessionClient, options?: StartYohoRemoteServerOptions) {
-    logger.debug(`[yrMCP] startYohoRemoteServer: sessionSource=${options?.sessionSource}, clientSessionId=${client.sessionId}`)
+    const metadata = client.getMetadata()
+    const apiClient = options?.apiClient
+    const yohoRemoteSessionId = options?.yohoRemoteSessionId
+    const resolvedSessionSource = options?.sessionSource ?? metadata?.source
+    const resolvedSessionCaller = options?.sessionCaller ?? metadata?.caller
+    const resolvedMachineId = options?.machineId ?? metadata?.machineId
+
+    logger.debug(`[yrMCP] startYohoRemoteServer: sessionSource=${resolvedSessionSource}, sessionCaller=${resolvedSessionCaller}, clientSessionId=${client.sessionId}`)
     const workingDirectory = options?.workingDirectory ?? process.cwd()
-    const brainPreferences = options?.brainPreferences ?? getBrainSessionPreferencesFromMetadata(client.getMetadata())
+    const brainPreferences = options?.brainPreferences ?? getBrainSessionPreferencesFromMetadata(metadata)
     // Handler that sends title updates via the client
     const handler = async (title: string) => {
         logger.debug('[yrMCP] Changing title to:', title);
@@ -62,7 +69,7 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
     const toolNames: string[] = []
 
     // Feishu Brain sessions don't need change_title (title is set server-side)
-    if (options?.sessionCaller !== 'feishu') {
+    if (resolvedSessionCaller !== 'feishu') {
         const changeTitleInputSchema: z.ZodTypeAny = z.object({
             title: z.string().describe('The new title for the chat session'),
         });
@@ -101,17 +108,17 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
     }
 
     // Register Project + Session tools for all sessions with apiClient
-    if (options?.apiClient && options.yohoRemoteSessionId) {
+    if (apiClient && yohoRemoteSessionId) {
         const { registerProjectTools } = await import('./projectTools');
         registerProjectTools(mcp, toolNames, {
-            apiClient: options.apiClient,
-            sessionId: options.yohoRemoteSessionId,
+            apiClient,
+            sessionId: yohoRemoteSessionId,
         });
 
         const { registerSessionTools } = await import('./sessionTools');
         registerSessionTools(mcp, toolNames, {
-            apiClient: options.apiClient,
-            sessionId: options.yohoRemoteSessionId,
+            apiClient,
+            sessionId: yohoRemoteSessionId,
         });
 
         logger.debug('[yrMCP] Project + Session tools registered');
@@ -139,8 +146,8 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
                 cwd: workingDirectory,
                 nodeVersion: process.version,
                 cliVersion: packageJson.version,
-                sessionId: options?.yohoRemoteSessionId ?? client.sessionId ?? null,
-                sessionSource: options?.sessionSource ?? null,
+                sessionId: yohoRemoteSessionId ?? client.sessionId ?? null,
+                sessionSource: resolvedSessionSource ?? null,
             }
             return {
                 content: [{ type: 'text' as const, text: JSON.stringify(info, null, 2) }],
@@ -150,9 +157,9 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
     }
 
     // Register push_download tool when apiClient is available (not for Feishu — files go via <feishu-actions>)
-    if (options?.apiClient && options.yohoRemoteSessionId && options.sessionCaller !== 'feishu') {
-        const api = options.apiClient
-        const sessionId = options.yohoRemoteSessionId
+    if (apiClient && yohoRemoteSessionId && resolvedSessionCaller !== 'feishu') {
+        const api = apiClient
+        const sessionId = yohoRemoteSessionId
         mcp.registerTool<any, any>('push_download', {
             title: 'Push Download File',
             description: 'Push a file to the remote frontend so the user can download it. Accepts either a disk file path or text content directly.',
@@ -213,12 +220,12 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
     }
 
     // Register Brain tools when source is 'brain'
-    if (options?.sessionSource === 'brain' && options.apiClient && options.machineId && options.yohoRemoteSessionId) {
+    if (resolvedSessionSource === 'brain' && apiClient && resolvedMachineId && yohoRemoteSessionId) {
         const { registerBrainTools } = await import('./brainTools');
         registerBrainTools(mcp, toolNames, {
-            apiClient: options.apiClient,
-            machineId: options.machineId,
-            brainSessionId: options.yohoRemoteSessionId,
+            apiClient,
+            machineId: resolvedMachineId,
+            brainSessionId: yohoRemoteSessionId,
             brainPreferences,
         });
         logger.debug('[yrMCP] Brain tools registered');

@@ -30,6 +30,7 @@ export function buildCodexSessionMetadata(opts: {
     machineId: string;
     startedBy: 'daemon' | 'terminal';
     sessionSource?: string | null;
+    sessionCaller?: string | null;
     mainSessionId?: string | null;
     brainPreferences?: Record<string, unknown> | null;
 }): Metadata {
@@ -40,6 +41,7 @@ export function buildCodexSessionMetadata(opts: {
         os: os.platform(),
         machineId: opts.machineId,
         source: opts.sessionSource || undefined,
+        caller: opts.sessionCaller || undefined,
         mainSessionId: opts.mainSessionId || undefined,
         homeDir: os.homedir(),
         yohoRemoteHomeDir: configuration.yohoRemoteHomeDir,
@@ -73,10 +75,11 @@ export async function runCodex(opts: {
     const sessionTag = randomUUID();
     const startedBy = opts.startedBy ?? 'terminal';
     const sessionSource = process.env.YR_SESSION_SOURCE?.trim();
+    const sessionCaller = process.env.YR_CALLER?.trim();
     const mainSessionId = process.env.YR_MAIN_SESSION_ID?.trim();
     const brainPreferences = getBrainSessionPreferencesFromEnv();
 
-    logger.debug(`[codex] Starting with options: startedBy=${startedBy}, source=${sessionSource}, mainSessionId=${mainSessionId}`);
+    logger.debug(`[codex] Starting with options: startedBy=${startedBy}, source=${sessionSource}, caller=${sessionCaller}, mainSessionId=${mainSessionId}`);
 
     const api = await ApiClient.create();
 
@@ -102,6 +105,7 @@ export async function runCodex(opts: {
         machineId,
         startedBy,
         sessionSource,
+        sessionCaller,
         mainSessionId,
         brainPreferences,
     });

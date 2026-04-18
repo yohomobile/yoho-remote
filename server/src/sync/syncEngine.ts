@@ -587,6 +587,14 @@ export class SyncEngine {
     private static readonly TASK_MESSAGE_SETTLE_WINDOW_MS = 200
     private static readonly TASK_MESSAGE_SETTLE_MAX_WAIT_MS = 3_000
 
+    // Server 启动静默窗口：启动后 30 秒内
+    // - reloadAllAsync hydrate session 时不广播 session-added/session-updated
+    // - daemon 重连触发的 thinking→done 不发 task-complete toast
+    // - handleSessionEnd 不带上历史 terminationReason
+    // 避免 server 重启后前端出现 toast 弹窗风暴
+    private readonly serverStartedAt = Date.now()
+    private static readonly STARTUP_QUIET_WINDOW_MS = 30_000
+
     constructor(
         private readonly store: IStore,
         private readonly io: Server,
@@ -614,6 +622,15 @@ export class SyncEngine {
     subscribe(listener: SyncEventListener): () => void {
         this.listeners.add(listener)
         return () => this.listeners.delete(listener)
+    }
+
+    /**
+     * 判断当前是否处于 server 启动静默窗口内。
+     * 在此窗口内应抑制 hydrate 引起的广播、task-complete 通知与 terminationReason 回显，
+     * 避免 server 重启后前端出现 toast 风暴。
+     */
+    private inStartupQuietWindow(): boolean {
+        return Date.now() - this.serverStartedAt < SyncEngine.STARTUP_QUIET_WINDOW_MS
     }
 
     emit(event: SyncEvent): void {
@@ -1413,10 +1430,13 @@ export class SyncEngine {
 
             // 冷却期内的 thinking→done 转换：只广播状态变化，不发通知
             // 防止 Monitor/loop 等高频循环导致通知轰炸
+            // 启动静默窗口内：daemon 重连触发的 thinking→done 不发 task-complete toast
+            // 避免 server 重启后前端弹出大量 "Task completed"
             const lastCompleteAt = this.lastTaskCompleteAt.get(session.id) ?? 0
             const inCooldown = taskJustCompleted && (now - lastCompleteAt < this.TASK_COMPLETE_COOLDOWN_MS)
+            const inQuietWindow = this.inStartupQuietWindow()
 
-            if (taskJustCompleted && !inCooldown) {
+            if (taskJustCompleted && !inCooldown && !inQuietWindow) {
                 this.lastTaskCompleteAt.set(session.id, now)
                 this.emitTaskCompleteEvent(session)
             } else {
@@ -1905,8 +1925,11 @@ export class SyncEngine {
         this._dbActiveSessionIds.delete(session.id)
 
         // 如果任务刚完成，使用带订阅者过滤的事件（受 cooldown 限制）
+        // 启动静默窗口内：既不发 task-complete toast，也不回显历史 terminationReason，
+        // 避免 server 重启后前端弹出 "Task completed" 或 "License expired" 风暴。
         const lastCompleteAt = this.lastTaskCompleteAt.get(session.id) ?? 0
-        if (wasThinking && (t - lastCompleteAt >= this.TASK_COMPLETE_COOLDOWN_MS)) {
+        const inQuietWindow = this.inStartupQuietWindow()
+        if (wasThinking && (t - lastCompleteAt >= this.TASK_COMPLETE_COOLDOWN_MS) && !inQuietWindow) {
             this.lastTaskCompleteAt.set(session.id, t)
             this.emitTaskCompleteEvent(session)
         } else {
@@ -1918,7 +1941,7 @@ export class SyncEngine {
                     thinking: false,
                     wasThinking: false,
                     ...(clearedActiveMonitors ? { activeMonitorCount: 0 } : {}),
-                    ...(session.terminationReason ? { terminationReason: session.terminationReason } : {})
+                    ...(session.terminationReason && !inQuietWindow ? { terminationReason: session.terminationReason } : {})
                 }
             })
         }
@@ -2323,13 +2346,16 @@ export class SyncEngine {
         return this.refreshSession(sessionId)
     }
 
-    private async refreshSession(sessionId: string): Promise<Session | null> {
+    private async refreshSession(
+        sessionId: string,
+        opts?: { silent?: boolean }
+    ): Promise<Session | null> {
         let stored = await this.store.getSession(sessionId)
         if (!stored) {
             const existed = this.sessions.delete(sessionId)
             this.pendingMonitorCallsBySessionId.delete(sessionId)
             this.clearTodoBackfillState(sessionId)
-            if (existed) {
+            if (existed && !opts?.silent) {
                 this.emit({ type: 'session-removed', sessionId })
             }
             return null
@@ -2398,15 +2424,20 @@ export class SyncEngine {
         }
 
         this.sessions.set(sessionId, session)
-        this.emit({ type: existing ? 'session-updated' : 'session-added', sessionId, data: this.buildSessionPayload(session) })
+        if (!opts?.silent) {
+            this.emit({ type: existing ? 'session-updated' : 'session-added', sessionId, data: this.buildSessionPayload(session) })
+        }
         return session
     }
 
-    private async refreshMachine(machineId: string): Promise<Machine | null> {
+    private async refreshMachine(
+        machineId: string,
+        opts?: { silent?: boolean }
+    ): Promise<Machine | null> {
         const stored = await this.store.getMachine(machineId)
         if (!stored) {
             const existed = this.machines.delete(machineId)
-            if (existed) {
+            if (existed && !opts?.silent) {
                 this.emit({ type: 'machine-updated', machineId, data: null })
             }
             return null
@@ -2446,20 +2477,25 @@ export class SyncEngine {
         }
 
         this.machines.set(machineId, machine)
-        this.emit({ type: 'machine-updated', machineId, data: machine })
+        if (!opts?.silent) {
+            this.emit({ type: 'machine-updated', machineId, data: machine })
+        }
         return machine
     }
 
     private async reloadAllAsync(): Promise<void> {
         const sessions = await this.store.getSessions()
 
+        // silent 模式：启动 hydrate 时不广播 session-added/session-updated，
+        // 避免前端订阅者（含 SSE）在 server 重启后收到大量带历史 terminationReason
+        // 的 payload 触发 "License expired" 等 toast 风暴。
         for (const s of sessions) {
-            await this.refreshSession(s.id)
+            await this.refreshSession(s.id, { silent: true })
         }
 
         const machines = await this.store.getMachines()
         for (const m of machines) {
-            await this.refreshMachine(m.id)
+            await this.refreshMachine(m.id, { silent: true })
         }
 
         // On server startup, no daemon/CLI is connected yet.

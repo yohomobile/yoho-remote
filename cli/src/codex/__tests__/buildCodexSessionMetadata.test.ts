@@ -9,10 +9,12 @@ describe('buildCodexSessionMetadata', () => {
             machineId: 'machine-1',
             startedBy: 'daemon',
             sessionSource: 'brain-child',
+            sessionCaller: 'feishu',
             mainSessionId: 'brain-session-1',
         });
 
         expect(metadata.source).toBe('brain-child');
+        expect(metadata.caller).toBe('feishu');
         expect(metadata.mainSessionId).toBe('brain-session-1');
     });
 
