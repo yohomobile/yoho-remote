@@ -43,6 +43,10 @@ export const initialMachineMetadata: MachineMetadata = {
   ...(process.env.YOHO_MACHINE_NAME ? { displayName: process.env.YOHO_MACHINE_NAME } : {}),
 };
 
+function isManagedBySystemd(): boolean {
+  return process.env.YR_DAEMON_UNDER_SYSTEMD === '1';
+}
+
 function toTomlString(value: string): string {
   return JSON.stringify(value);
 }
@@ -149,11 +153,16 @@ export async function startDaemon(): Promise<void> {
   logger.debug('[DAEMON RUN] Starting daemon process...');
   logger.debugLargeJson('[DAEMON RUN] Environment', getEnvironmentInfo());
 
+  const managedBySystemd = isManagedBySystemd();
+
   // Check if already running
   // Check if running daemon version matches current CLI version
   const runningDaemonVersionMatches = await isDaemonRunningCurrentlyInstalledVersion();
   if (!runningDaemonVersionMatches) {
     logger.debug('[DAEMON RUN] Daemon version mismatch detected, restarting daemon with current CLI version');
+    await stopDaemon();
+  } else if (managedBySystemd) {
+    logger.debug('[DAEMON RUN] systemd-managed startup detected a matching daemon, stopping residual instance so this service can take ownership');
     await stopDaemon();
   } else {
     logger.debug('[DAEMON RUN] Daemon version matches, keeping existing daemon');
@@ -1018,6 +1027,12 @@ export async function startDaemon(): Promise<void> {
         const heartbeatInterval = restartOnStaleVersionAndHeartbeat;
         if (heartbeatInterval !== null) {
           clearInterval(heartbeatInterval);
+        }
+
+        if (managedBySystemd) {
+          logger.debug('[DAEMON RUN] Running under systemd, requesting shutdown so systemd can restart the daemon with the new version');
+          requestShutdown('exception', 'Daemon binary changed; systemd should restart the service with the new version.');
+          return;
         }
 
         // Spawn new daemon

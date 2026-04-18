@@ -136,6 +136,7 @@ Type=simple
 User=${context.serviceUser}
 WorkingDirectory=${context.workingDirectory}
 EnvironmentFile=${context.envFilePath}
+Environment=YR_DAEMON_UNDER_SYSTEMD=1
 ExecStart=${formatExecStart(context.execParts)}
 Restart=always
 RestartSec=10

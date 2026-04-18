@@ -423,7 +423,7 @@ export function SessionList(props: {
     machines: Machine[]
 }) {
     const { renderHeader = true, viewOthersSessions = false, machines } = props
-    const [expandedBrainSessionIds, setExpandedBrainSessionIds] = useState<string[]>([])
+    const [collapsedBrainSessionIds, setCollapsedBrainSessionIds] = useState<string[]>([])
 
     // Build session to project mapping (still used for display)
     const sessionProjectMap = useMemo(() => {
@@ -471,16 +471,22 @@ export function SessionList(props: {
                 .map(entry => entry.session.id)
         )
 
-        setExpandedBrainSessionIds(previous => {
+        setCollapsedBrainSessionIds(previous => {
             const next = previous.filter(id => visibleBrainSessionIds.has(id))
             return next.length === previous.length ? previous : next
         })
     }, [listEntries])
 
-    const expandedBrainSessionIdSet = useMemo(
-        () => new Set(expandedBrainSessionIds),
-        [expandedBrainSessionIds]
-    )
+    const expandedBrainSessionIdSet = useMemo(() => {
+        const collapsed = new Set(collapsedBrainSessionIds)
+        const expanded = new Set<string>()
+        listEntries.forEach(entry => {
+            if (entry.kind !== 'brain-group') return
+            if (collapsed.has(entry.session.id)) return
+            expanded.add(entry.session.id)
+        })
+        return expanded
+    }, [collapsedBrainSessionIds, listEntries])
     const collapsedBrainChildCount = useMemo(
         () => getCollapsedBrainChildCount(listEntries, expandedBrainSessionIdSet),
         [expandedBrainSessionIdSet, listEntries]
@@ -492,7 +498,7 @@ export function SessionList(props: {
     const nextArchiveFilter = props.archiveFilter === 'active' ? 'archive' : 'active'
     const nextArchiveFilterLabel = nextArchiveFilter === 'active' ? 'Active' : 'Archive'
     const toggleBrainSession = (sessionId: string) => {
-        setExpandedBrainSessionIds(previous => previous.includes(sessionId)
+        setCollapsedBrainSessionIds(previous => previous.includes(sessionId)
             ? previous.filter(id => id !== sessionId)
             : [...previous, sessionId]
         )
