@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
+import { useMemo, useState, type KeyboardEvent } from 'react'
 import type { Machine, Project, SessionSummary } from '@/types/api'
 import { ViewersBadge } from './ViewersBadge'
 import { LoadingState } from './LoadingState'
@@ -15,6 +15,28 @@ import {
 } from '@/lib/session-list-brain'
 import { normalizeOwnerFilter, type ArchiveFilter, type OwnerFilter } from '@/lib/session-filters'
 import { isLicenseTermination, getLicenseTerminationLabel } from '@/lib/license'
+
+const EXPANDED_BRAIN_SESSION_IDS_STORAGE_KEY = 'yr:expandedBrainSessionIds'
+
+function loadExpandedBrainSessionIds(): string[] {
+    try {
+        const stored = localStorage.getItem(EXPANDED_BRAIN_SESSION_IDS_STORAGE_KEY)
+        if (!stored) return []
+        const parsed = JSON.parse(stored)
+        if (!Array.isArray(parsed)) return []
+        return parsed.filter((item): item is string => typeof item === 'string')
+    } catch {
+        return []
+    }
+}
+
+function saveExpandedBrainSessionIds(ids: string[]): void {
+    try {
+        localStorage.setItem(EXPANDED_BRAIN_SESSION_IDS_STORAGE_KEY, JSON.stringify(ids))
+    } catch {
+        // Ignore storage errors
+    }
+}
 
 // Filter sessions
 function filterSessions(
@@ -423,7 +445,7 @@ export function SessionList(props: {
     machines: Machine[]
 }) {
     const { renderHeader = true, viewOthersSessions = false, machines } = props
-    const [collapsedBrainSessionIds, setCollapsedBrainSessionIds] = useState<string[]>([])
+    const [expandedBrainSessionIds, setExpandedBrainSessionIds] = useState<string[]>(loadExpandedBrainSessionIds)
 
     // Build session to project mapping (still used for display)
     const sessionProjectMap = useMemo(() => {
@@ -466,29 +488,10 @@ export function SessionList(props: {
         }),
         [effectiveOwnerFilter, filteredSessions]
     )
-    useEffect(() => {
-        const visibleBrainSessionIds = new Set(
-            listEntries
-                .filter(entry => entry.kind === 'brain-group')
-                .map(entry => entry.session.id)
-        )
-
-        setCollapsedBrainSessionIds(previous => {
-            const next = previous.filter(id => visibleBrainSessionIds.has(id))
-            return next.length === previous.length ? previous : next
-        })
-    }, [listEntries])
-
-    const expandedBrainSessionIdSet = useMemo(() => {
-        const collapsed = new Set(collapsedBrainSessionIds)
-        const expanded = new Set<string>()
-        listEntries.forEach(entry => {
-            if (entry.kind !== 'brain-group') return
-            if (collapsed.has(entry.session.id)) return
-            expanded.add(entry.session.id)
-        })
-        return expanded
-    }, [collapsedBrainSessionIds, listEntries])
+    const expandedBrainSessionIdSet = useMemo(
+        () => new Set(expandedBrainSessionIds),
+        [expandedBrainSessionIds]
+    )
     const collapsedBrainChildCount = useMemo(
         () => getCollapsedBrainChildCount(listEntries, expandedBrainSessionIdSet),
         [expandedBrainSessionIdSet, listEntries]
@@ -500,10 +503,13 @@ export function SessionList(props: {
     const nextArchiveFilter = props.archiveFilter === 'active' ? 'archive' : 'active'
     const nextArchiveFilterLabel = nextArchiveFilter === 'active' ? 'Active' : 'Archive'
     const toggleBrainSession = (sessionId: string) => {
-        setCollapsedBrainSessionIds(previous => previous.includes(sessionId)
-            ? previous.filter(id => id !== sessionId)
-            : [...previous, sessionId]
-        )
+        setExpandedBrainSessionIds(previous => {
+            const next = previous.includes(sessionId)
+                ? previous.filter(id => id !== sessionId)
+                : [...previous, sessionId]
+            saveExpandedBrainSessionIds(next)
+            return next
+        })
     }
 
     return (

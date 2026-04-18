@@ -15,15 +15,13 @@ import { getUnsupportedSessionSourceError, isSupportedSessionSource } from '../.
 
 const spawnBodySchema = z.object({
     directory: z.string().min(1),
-    agent: z.enum(['claude', 'codex', 'opencode', 'gemini', 'glm', 'minimax', 'grok', 'openrouter', 'aider-cli']).optional(),
+    agent: z.enum(['claude', 'codex', 'gemini', 'glm', 'minimax', 'grok', 'openrouter', 'aider-cli']).optional(),
     yolo: z.boolean().optional(),
     sessionType: z.enum(['simple', 'worktree']).optional(),
     worktreeName: z.string().optional(),
     tokenSourceId: z.string().min(1).optional(),
     claudeSettingsType: z.enum(['litellm', 'claude']).optional(),
     claudeAgent: z.string().min(1).optional(),
-    opencodeModel: z.string().min(1).optional(),
-    opencodeVariant: z.string().min(1).optional(),
     claudeModel: z.enum(['sonnet', 'opus', 'opus-4-7']).optional(),
     codexModel: z.string().min(1).optional(),
 
@@ -213,8 +211,6 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
                 tokenSourceApiKey: resolvedTokenSource?.tokenSource.apiKey,
                 claudeSettingsType: parsed.data.claudeSettingsType,
                 claudeAgent: parsed.data.claudeAgent,
-                opencodeModel: parsed.data.opencodeModel,
-                opencodeVariant: parsed.data.opencodeVariant,
                 codexModel: parsed.data.codexModel,
                 modelMode,
                 modelReasoningEffort: parsed.data.modelReasoningEffort,

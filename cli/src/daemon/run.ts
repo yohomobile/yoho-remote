@@ -550,6 +550,10 @@ export async function startDaemon(): Promise<void> {
         if (options.claudeSettingsType) {
           extraEnv = { ...extraEnv, YR_CLAUDE_SETTINGS_TYPE: options.claudeSettingsType };
         }
+        // Mark yolo mode so CLI can persist it in session metadata for resume backfill
+        if (yolo) {
+          extraEnv = { ...extraEnv, YR_YOLO: '1' };
+        }
 
         addLog('env', `Environment prepared successfully`, 'success');
 
@@ -557,7 +561,6 @@ export async function startDaemon(): Promise<void> {
         const agentCommand = (() => {
           switch (agent) {
             case 'codex': return 'codex';
-            case 'opencode': return 'opencode';
             default: return 'claude';
           }
         })();
@@ -619,14 +622,6 @@ export async function startDaemon(): Promise<void> {
         if (agent === 'claude' && options.modelMode) {
           const claudeModelArg = resolveClaudeModelArg(options.modelMode) ?? options.modelMode;
           args.push('--model', claudeModelArg);
-        }
-        const opencodeModel = typeof options.opencodeModel === 'string' ? options.opencodeModel.trim() : '';
-        if (agent === 'opencode' && opencodeModel) {
-          args.push('--model', opencodeModel);
-        }
-        // Always use highest reasoning effort for OpenCode
-        if (agent === 'opencode') {
-          extraEnv = { ...extraEnv, OPENCODE_VARIANT: 'max' };
         }
         if (options.sessionId) {
           args.push('--yoho-remote-session-id', options.sessionId);

@@ -71,7 +71,6 @@ POST /api/sessions
 - `sessionType`（可选）`simple | worktree`
 - `worktreeName`（可选）worktree 名称
 - `claudeAgent`（可选）Claude agent 标识
-- `openrouterModel`（可选）OpenRouter 模型名
 - `permissionMode`（可选）`default | acceptEdits | bypassPermissions | plan | read-only | safe-yolo | yolo`
 - `modelMode`（可选）`default | sonnet | opus | gpt-5.2-codex | gpt-5.1-codex-max | gpt-5.1-codex-mini | gpt-5.2`
 - `modelReasoningEffort`（可选）`low | medium | high | xhigh`

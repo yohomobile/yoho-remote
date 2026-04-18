@@ -17,7 +17,7 @@ import type { SSEManager } from '../sse/sseManager'
 import { buildSessionClearMessagesUpdate } from '../socket/handlers/cli'
 import { extractTodoWriteTodosFromMessageContent, TodosSchema, type TodoItem } from './todos'
 import { getWebPushService } from '../services/webPush'
-import { extractResumeSpawnMetadata } from '../resumeSpawnMetadata'
+import { extractResumeSpawnExtras, extractResumeSpawnMetadata, resolveResumeTokenSourceSpawnOptions } from '../resumeSpawnMetadata'
 import {
     SUMMARIZE_TURN_QUEUE_NAME,
     SUMMARIZE_TURN_JOB_VERSION,
@@ -2403,16 +2403,23 @@ export class SyncEngine {
                     }
                     session.resumingUntil = Date.now() + RESUME_TIMEOUT_MS
                     const resumeMetadata = extractResumeSpawnMetadata(session.metadata)
+                    const { yolo: resumeYolo, ...resumeExtras } = extractResumeSpawnExtras(session.metadata)
+                    const storedSession = await this.store.getSession(session.id)
+                    const tokenSourceSpawnOptions = await resolveResumeTokenSourceSpawnOptions(
+                        this.store, storedSession?.orgId ?? null, session.metadata, flavor
+                    )
 
                     const result = await this.spawnSession(
-                        machineId, directory, flavor, undefined,
+                        machineId, directory, flavor, resumeYolo,
                         {
                             sessionId: session.id,
                             resumeSessionId: rawId,
                             permissionMode: session.permissionMode,
                             modelMode: session.modelMode,
                             modelReasoningEffort: session.modelReasoningEffort,
-                            ...resumeMetadata
+                            ...resumeMetadata,
+                            ...resumeExtras,
+                            ...(tokenSourceSpawnOptions ?? {})
                         }
                     )
 
@@ -3264,9 +3271,6 @@ export class SyncEngine {
             tokenSourceApiKey?: string
             claudeSettingsType?: 'litellm' | 'claude'
             claudeAgent?: string
-            opencodeModel?: string
-            opencodeVariant?: string
-            openrouterModel?: string
             codexModel?: string
             permissionMode?: Session['permissionMode']
             modelMode?: Session['modelMode']
@@ -3312,9 +3316,6 @@ export class SyncEngine {
                     tokenSourceApiKey: options?.tokenSourceApiKey,
                     claudeSettingsType: options?.claudeSettingsType,
                     claudeAgent: options?.claudeAgent,
-                    opencodeModel: options?.opencodeModel,
-                    opencodeVariant: options?.opencodeVariant,
-                    openrouterModel: options?.openrouterModel,
                     codexModel: options?.codexModel,
                     permissionMode: options?.permissionMode,
                     modelMode: options?.modelMode,

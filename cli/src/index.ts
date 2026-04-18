@@ -350,39 +350,6 @@ import { getCliArgs } from './utils/cliArgs'
       process.exit(1)
     }
     return;
-  } else if (subcommand === 'opencode') {
-    // Handle opencode command (OpenCode AI coding agent)
-    try {
-      let startedBy: 'daemon' | 'terminal' | undefined = undefined;
-      let model: string | undefined = undefined;
-      for (let i = 1; i < args.length; i++) {
-        if (args[i] === '--started-by') {
-          startedBy = args[++i] as 'daemon' | 'terminal';
-        } else if (args[i] === '--model') {
-          model = args[++i];
-        }
-      }
-
-      // Set model via environment if provided
-      if (model) {
-        process.env.OPENCODE_MODEL = model;
-      }
-
-      const { registerOpenCodeAgent } = await import('./agent/runners/opencode');
-      const { runAgentSession } = await import('./agent/runners/runAgentSession');
-      registerOpenCodeAgent();
-
-      await initializeToken();
-      await authAndSetupMachineIfNeeded();
-      await runAgentSession({ agentType: 'opencode', startedBy });
-    } catch (error) {
-      console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error')
-      if (process.env.DEBUG) {
-        console.error(error)
-      }
-      process.exit(1)
-    }
-    return;
   } else if (subcommand === 'logout') {
     // Keep for backward compatibility - redirect to auth logout
     console.log(chalk.yellow('Note: "hapi logout" is deprecated. Use "hapi auth logout" instead.\n'));
@@ -579,7 +546,6 @@ ${chalk.bold('Usage:')}
   hapi grok              Start Grok CLI mode
   hapi cursor            Start Cursor CLI mode
   hapi aider-cli         Start Aider CLI mode (真正的 aider)
-  hapi opencode          Start OpenCode mode (20+ AI providers)
   hapi mcp               Start MCP stdio bridge
   hapi connect           (not available in direct-connect mode)
   hapi notify            (not available in direct-connect mode)

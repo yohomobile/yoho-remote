@@ -161,9 +161,6 @@ export interface SpawnSessionOptions {
     tokenSourceApiKey?: string;
     claudeSettingsType?: 'litellm' | 'claude';
     claudeAgent?: string;
-    opencodeModel?: string;
-    opencodeVariant?: string;
-    openrouterModel?: string;
     codexModel?: string;
     permissionMode?: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo';
     modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'glm-5.1' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.2' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini';

@@ -17,7 +17,7 @@ import {
     resolveSpawnTarget,
     waitForSessionOnline,
 } from './sessions'
-import { extractResumeSpawnMetadata } from '../../resumeSpawnMetadata'
+import { extractResumeSpawnExtras, extractResumeSpawnMetadata, resolveResumeTokenSourceSpawnOptions } from '../../resumeSpawnMetadata'
 import {
     getUnsupportedSessionSourceError,
     getSessionSourceFromMetadata,
@@ -1305,6 +1305,10 @@ export function createCliRoutes(
             modelReasoningEffort: session.modelReasoningEffort,
         }
         const resumeMetadata = extractResumeSpawnMetadata(session.metadata)
+        const { yolo: resumeYolo, ...resumeExtras } = extractResumeSpawnExtras(session.metadata)
+        const tokenSourceSpawnOptions = await resolveResumeTokenSourceSpawnOptions(
+            store, storedSession?.orgId ?? null, session.metadata, flavor
+        )
         const resumeSessionId = (() => {
             const value = flavor === 'claude'
                 ? session.metadata?.claudeSessionId
@@ -1323,8 +1327,8 @@ export function createCliRoutes(
             machineId,
             spawnTarget.directory,
             flavor,
-            undefined,
-            { sessionId, resumeSessionId, ...modeSettings, ...resumeMetadata }
+            resumeYolo,
+            { sessionId, resumeSessionId, ...modeSettings, ...resumeMetadata, ...resumeExtras, ...(tokenSourceSpawnOptions ?? {}) }
         )
 
         if (resumeAttempt.type === 'success') {
@@ -1344,8 +1348,8 @@ export function createCliRoutes(
             machineId,
             spawnTarget.directory,
             flavor,
-            undefined,
-            { resumeSessionId, ...modeSettings, ...resumeMetadata }
+            resumeYolo,
+            { resumeSessionId, ...modeSettings, ...resumeMetadata, ...resumeExtras, ...(tokenSourceSpawnOptions ?? {}) }
         )
 
         if (fallbackResult.type !== 'success') {

@@ -20,7 +20,7 @@ import {
     extractBrainSessionPreferencesFromMetadata,
 } from '../../brain/brainSessionPreferences'
 import { getUnsupportedSessionSourceError, isSupportedSessionSource } from '../../sessionSourcePolicy'
-import { extractResumeSpawnMetadata } from '../../resumeSpawnMetadata'
+import { extractResumeSpawnExtras, extractResumeSpawnMetadata, resolveResumeTokenSourceSpawnOptions } from '../../resumeSpawnMetadata'
 
 /**
  * License 检查：如果指定了 orgId，校验是否可创建会话
@@ -203,7 +203,6 @@ const createSessionSchema = z.object({
     tokenSourceId: z.string().min(1).optional(),
     claudeModel: z.enum(claudeModelValues).optional(),
     codexModel: z.string().min(1).optional(),
-    openrouterModel: z.string().min(1).optional(),
     permissionMode: z.enum(permissionModeValues).optional(),
     modelMode: z.enum(modelModeValues).optional(),
     modelReasoningEffort: z.enum(reasoningEffortValues).optional(),
@@ -906,7 +905,6 @@ export function createSessionsRoutes(
                         : undefined,
                 tokenSourceBaseUrl: resolvedTokenSource?.tokenSource.baseUrl,
                 tokenSourceApiKey: resolvedTokenSource?.tokenSource.apiKey,
-                openrouterModel: parsed.data.openrouterModel,
                 permissionMode: parsed.data.permissionMode,
                 modelMode: modelMode as Session['modelMode'] | undefined,
                 modelReasoningEffort: parsed.data.modelReasoningEffort,
@@ -1411,6 +1409,10 @@ export function createSessionsRoutes(
             modelReasoningEffort: session.modelReasoningEffort
         }
         const resumeMetadata = extractResumeSpawnMetadata(session.metadata)
+        const { yolo: resumeYolo, ...resumeExtras } = extractResumeSpawnExtras(session.metadata)
+        const tokenSourceSpawnOptions = await resolveResumeTokenSourceSpawnOptions(
+            store, storedForResume?.orgId ?? null, session.metadata, flavor
+        )
 
         // Extract native session ID for Claude/Codex resume
         const resumeSessionId = (() => {
@@ -1441,8 +1443,8 @@ export function createSessionsRoutes(
             machineId,
             spawnTarget.directory,
             flavor,
-            undefined,
-            { sessionId, resumeSessionId, ...modeSettings, ...resumeMetadata }
+            resumeYolo,
+            { sessionId, resumeSessionId, ...modeSettings, ...resumeMetadata, ...resumeExtras, ...(tokenSourceSpawnOptions ?? {}) }
         )
 
         if (resumeAttempt.type === 'success') {
@@ -1473,8 +1475,8 @@ export function createSessionsRoutes(
             machineId,
             spawnTarget.directory,
             flavor,
-            undefined,
-            { resumeSessionId, ...modeSettings, ...resumeMetadata }
+            resumeYolo,
+            { resumeSessionId, ...modeSettings, ...resumeMetadata, ...resumeExtras, ...(tokenSourceSpawnOptions ?? {}) }
         )
 
         if (fallbackResult.type !== 'success') {
@@ -1581,6 +1583,10 @@ export function createSessionsRoutes(
             modelReasoningEffort: session.modelReasoningEffort
         }
         const resumeMetadata = extractResumeSpawnMetadata(session.metadata)
+        const { yolo: refreshYolo, ...refreshExtras } = extractResumeSpawnExtras(session.metadata)
+        const tokenSourceSpawnOptions = await resolveResumeTokenSourceSpawnOptions(
+            store, storedForRefresh?.orgId ?? null, session.metadata, flavor
+        )
 
         // Kill the old Claude process (fire-and-forget, tolerate failure)
         if (session.active) {
@@ -1613,8 +1619,8 @@ export function createSessionsRoutes(
             machineId,
             spawnTarget.directory,
             flavor,
-            undefined,
-            { sessionId, resumeSessionId, ...modeSettings, ...resumeMetadata }
+            refreshYolo,
+            { sessionId, resumeSessionId, ...modeSettings, ...resumeMetadata, ...refreshExtras, ...(tokenSourceSpawnOptions ?? {}) }
         )
 
         if (spawnResult.type !== 'success') {

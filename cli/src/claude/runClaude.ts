@@ -86,6 +86,14 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     const mainSessionId = process.env.YR_MAIN_SESSION_ID?.trim();
     const sessionCaller = process.env.YR_CALLER?.trim();
     const brainPreferences = getBrainSessionPreferencesFromEnv();
+    const tokenSourceId = process.env.YR_TOKEN_SOURCE_ID?.trim() || undefined;
+    const rawTokenSourceType = process.env.YR_TOKEN_SOURCE_TYPE?.trim();
+    const tokenSourceType: 'claude' | 'codex' | undefined =
+        rawTokenSourceType === 'claude' || rawTokenSourceType === 'codex' ? rawTokenSourceType : undefined;
+    const yolo = process.env.YR_YOLO === '1' ? true : undefined;
+    const rawClaudeSettingsType = process.env.YR_CLAUDE_SETTINGS_TYPE?.trim();
+    const claudeSettingsTypeForMetadata: 'litellm' | 'claude' | undefined =
+        rawClaudeSettingsType === 'litellm' || rawClaudeSettingsType === 'claude' ? rawClaudeSettingsType : undefined;
     logger.debug(`[START] sessionSource=${sessionSource}, mainSessionId=${mainSessionId}, caller=${sessionCaller}`);
 
     // Log environment info at startup
@@ -144,6 +152,10 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         flavor: 'claude',
         runtimeAgent: runtimeAgent ?? undefined,
         ...(brainPreferences ? { brainPreferences } : {}),
+        ...(tokenSourceId ? { tokenSourceId } : {}),
+        ...(tokenSourceType ? { tokenSourceType } : {}),
+        ...(yolo ? { yolo: true } : {}),
+        ...(claudeSettingsTypeForMetadata ? { claudeSettingsType: claudeSettingsTypeForMetadata } : {}),
     };
     let response: Awaited<ReturnType<typeof api.getOrCreateSession>> | null = null;
     const yohoRemoteSessionId = options.yohoRemoteSessionId?.trim() || null;

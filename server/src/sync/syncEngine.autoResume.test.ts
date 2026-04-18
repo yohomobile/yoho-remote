@@ -50,6 +50,7 @@ describe('SyncEngine auto-resume', () => {
             getSessions: async () => [],
             getMachines: async () => [],
             setSessionActive: async () => true,
+            getSession: async () => null,
         } as any
 
         const io = {
@@ -115,6 +116,7 @@ describe('SyncEngine auto-resume', () => {
                 setSessionActiveCalls.push({ id, active, activeAt, namespace })
                 return true
             },
+            getSession: async () => null,
         } as any
 
         const io = {
@@ -171,6 +173,7 @@ describe('SyncEngine auto-resume', () => {
             getSessions: async () => [],
             getMachines: async () => [],
             setSessionActive: async () => true,
+            getSession: async () => null,
         } as any
 
         const io = {
@@ -243,6 +246,7 @@ describe('SyncEngine auto-resume', () => {
             getSessions: async () => [],
             getMachines: async () => [],
             setSessionActive: async () => true,
+            getSession: async () => null,
         } as any
 
         const io = {
@@ -297,6 +301,7 @@ describe('SyncEngine auto-resume', () => {
             getSessions: async () => [],
             getMachines: async () => [],
             setSessionActive: async () => true,
+            getSession: async () => null,
         } as any
 
         const io = {
@@ -359,6 +364,7 @@ describe('SyncEngine auto-resume', () => {
             getSessions: async () => [],
             getMachines: async () => [],
             setSessionActive: async () => true,
+            getSession: async () => null,
         } as any
 
         const io = {
@@ -415,6 +421,7 @@ describe('SyncEngine auto-resume', () => {
             getSessions: async () => [],
             getMachines: async () => [],
             setSessionActive: async () => true,
+            getSession: async () => null,
         } as any
 
         const io = {

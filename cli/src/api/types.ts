@@ -63,6 +63,10 @@ export type Metadata = {
     }
     mainSessionId?: string
     brainPreferences?: Record<string, unknown>
+    tokenSourceId?: string
+    tokenSourceType?: 'claude' | 'codex'
+    yolo?: boolean
+    claudeSettingsType?: 'litellm' | 'claude'
 }
 
 export const MetadataSchema = z.object({
@@ -99,6 +103,10 @@ export const MetadataSchema = z.object({
     runtimeModel: z.string().optional(),
     runtimeModelReasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
     brainPreferences: z.record(z.string(), z.unknown()).optional(),
+    tokenSourceId: z.string().optional(),
+    tokenSourceType: z.enum(['claude', 'codex']).optional(),
+    yolo: z.boolean().optional(),
+    claudeSettingsType: z.enum(['litellm', 'claude']).optional(),
     worktree: z.object({
         basePath: z.string(),
         branch: z.string(),

@@ -104,7 +104,7 @@ export class ApiMachineClient {
 
     setRPCHandlers({ spawnSession, stopSession, requestShutdown }: MachineRpcHandlers): void {
         this.rpcHandlerManager.registerHandler('spawn-yoho-remote-session', async (params: any) => {
-            const { directory, sessionId, resumeSessionId, machineId, approvedNewDirectoryCreation, agent, yolo, token, sessionType, worktreeName, reuseExistingWorktree, tokenSourceId, tokenSourceName, tokenSourceType, tokenSourceBaseUrl, tokenSourceApiKey, claudeSettingsType, claudeAgent, opencodeModel, opencodeVariant, openrouterModel, codexModel, permissionMode, modelMode, modelReasoningEffort, source, mainSessionId, caller, brainPreferences } = params || {}
+            const { directory, sessionId, resumeSessionId, machineId, approvedNewDirectoryCreation, agent, yolo, token, sessionType, worktreeName, reuseExistingWorktree, tokenSourceId, tokenSourceName, tokenSourceType, tokenSourceBaseUrl, tokenSourceApiKey, claudeSettingsType, claudeAgent, codexModel, permissionMode, modelMode, modelReasoningEffort, source, mainSessionId, caller, brainPreferences } = params || {}
 
             if (!directory) {
                 throw new Error('Directory is required')
@@ -129,9 +129,6 @@ export class ApiMachineClient {
                 tokenSourceApiKey,
                 claudeSettingsType,
                 claudeAgent,
-                opencodeModel,
-                opencodeVariant,
-                openrouterModel,
                 codexModel,
                 permissionMode,
                 modelMode,

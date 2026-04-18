@@ -33,6 +33,9 @@ export function buildCodexSessionMetadata(opts: {
     sessionCaller?: string | null;
     mainSessionId?: string | null;
     brainPreferences?: Record<string, unknown> | null;
+    tokenSourceId?: string | null;
+    tokenSourceType?: 'claude' | 'codex' | null;
+    yolo?: boolean | null;
 }): Metadata {
     return {
         path: opts.workingDirectory,
@@ -55,6 +58,9 @@ export function buildCodexSessionMetadata(opts: {
         lifecycleStateSince: Date.now(),
         flavor: 'codex',
         ...(opts.brainPreferences ? { brainPreferences: opts.brainPreferences } : {}),
+        ...(opts.tokenSourceId ? { tokenSourceId: opts.tokenSourceId } : {}),
+        ...(opts.tokenSourceType ? { tokenSourceType: opts.tokenSourceType } : {}),
+        ...(opts.yolo ? { yolo: true } : {}),
     };
 }
 
@@ -78,6 +84,11 @@ export async function runCodex(opts: {
     const sessionCaller = process.env.YR_CALLER?.trim();
     const mainSessionId = process.env.YR_MAIN_SESSION_ID?.trim();
     const brainPreferences = getBrainSessionPreferencesFromEnv();
+    const tokenSourceId = process.env.YR_TOKEN_SOURCE_ID?.trim() || undefined;
+    const rawTokenSourceType = process.env.YR_TOKEN_SOURCE_TYPE?.trim();
+    const tokenSourceType: 'claude' | 'codex' | undefined =
+        rawTokenSourceType === 'claude' || rawTokenSourceType === 'codex' ? rawTokenSourceType : undefined;
+    const yolo = process.env.YR_YOLO === '1' ? true : undefined;
 
     logger.debug(`[codex] Starting with options: startedBy=${startedBy}, source=${sessionSource}, caller=${sessionCaller}, mainSessionId=${mainSessionId}`);
 
@@ -108,6 +119,9 @@ export async function runCodex(opts: {
         sessionCaller,
         mainSessionId,
         brainPreferences,
+        tokenSourceId,
+        tokenSourceType,
+        yolo,
     });
 
     let response: Awaited<ReturnType<typeof api.getOrCreateSession>> | null = null;
