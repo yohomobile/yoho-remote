@@ -9,7 +9,7 @@ import {
 import type { SSEManager } from '../../sse/sseManager'
 import type { IStore, UserRole, StoredSession } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
-import { resolveTokenSourceForAgent } from '../tokenSources'
+import { getLocalTokenSourceEnabledForOrg, resolveTokenSourceForAgent } from '../tokenSources'
 import { requireMachine, requireSessionFromParam, requireSessionFromParamWithShareCheck, requireSyncEngine } from './guards'
 import { buildInitPrompt, buildBrainInitPrompt } from '../prompts/initPrompt'
 import { getLicenseService } from '../../license/licenseService'
@@ -213,6 +213,8 @@ const createBrainSessionSchema = z.object({
     machineId: z.string().min(1).optional(),
     agent: z.enum(['claude', 'codex']).optional(),
     tokenSourceId: z.string().min(1).optional(),
+    claudeTokenSourceId: z.string().min(1).optional(),
+    codexTokenSourceId: z.string().min(1).optional(),
     claudeSettingsType: z.enum(['litellm', 'claude']).optional(),
     claudeAgent: z.string().min(1).optional(),
     claudeModel: z.enum(claudeModelValues).optional(),
@@ -888,6 +890,11 @@ export function createSessionsRoutes(
             if ('error' in resolvedTokenSource) {
                 return c.json({ error: resolvedTokenSource.error }, resolvedTokenSource.status as 400 | 404)
             }
+        } else if (orgId) {
+            const localEnabled = await getLocalTokenSourceEnabledForOrg(store, orgId)
+            if (!localEnabled) {
+                return c.json({ error: 'Local Token Source is disabled for this organization' }, 400)
+            }
         }
 
         const result = await engine.spawnSession(
@@ -1011,19 +1018,49 @@ export function createSessionsRoutes(
                 : `No online machines support agent "${requestedAgent}"` }, 503)
         }
 
+        const brainTokenSourceIds: { claude?: string; codex?: string } = {}
+        if (parsed.data.claudeTokenSourceId) brainTokenSourceIds.claude = parsed.data.claudeTokenSourceId
+        if (parsed.data.codexTokenSourceId) brainTokenSourceIds.codex = parsed.data.codexTokenSourceId
+        if (parsed.data.tokenSourceId && !brainTokenSourceIds[requestedAgent]) {
+            brainTokenSourceIds[requestedAgent] = parsed.data.tokenSourceId
+        }
+
         let resolvedTokenSource: Awaited<ReturnType<typeof resolveTokenSourceForAgent>> | null = null
-        if (parsed.data.tokenSourceId) {
+        const ownTokenSourceId = brainTokenSourceIds[requestedAgent]
+        if (ownTokenSourceId) {
             if (!orgId) {
                 return c.json({ error: 'orgId is required when using Token Source' }, 400)
             }
             resolvedTokenSource = await resolveTokenSourceForAgent(
                 store,
                 orgId,
-                parsed.data.tokenSourceId,
+                ownTokenSourceId,
                 requestedAgent
             )
             if ('error' in resolvedTokenSource) {
                 return c.json({ error: resolvedTokenSource.error }, resolvedTokenSource.status as 400 | 404)
+            }
+        } else if (orgId) {
+            const localEnabled = await getLocalTokenSourceEnabledForOrg(store, orgId)
+            if (!localEnabled) {
+                return c.json({ error: 'Local Token Source is disabled for this organization' }, 400)
+            }
+        }
+
+        const otherAgent: 'claude' | 'codex' = requestedAgent === 'claude' ? 'codex' : 'claude'
+        const otherTokenSourceId = brainTokenSourceIds[otherAgent]
+        if (otherTokenSourceId) {
+            if (!orgId) {
+                return c.json({ error: 'orgId is required when using Token Source' }, 400)
+            }
+            const otherResolved = await resolveTokenSourceForAgent(
+                store,
+                orgId,
+                otherTokenSourceId,
+                otherAgent
+            )
+            if ('error' in otherResolved) {
+                return c.json({ error: otherResolved.error }, otherResolved.status as 400 | 404)
             }
         }
 
@@ -1077,6 +1114,12 @@ export function createSessionsRoutes(
         }
 
         if (result.type === 'success') {
+            // brainTokenSourceIds: server-owned per-agent ID map used by /cli/brain/spawn to choose a child's TS.
+            // Separate from metadata.tokenSourceId/Type, which CLI runClaude.ts writes as the *Brain process itself's*
+            // runtime snapshot. Both exist in the same session.metadata JSONB but carry different semantics.
+            if (brainTokenSourceIds.claude || brainTokenSourceIds.codex) {
+                await engine.patchSessionMetadata(result.sessionId, { brainTokenSourceIds })
+            }
             void (async () => {
                 const isOnline = await waitForSessionOnline(engine, result.sessionId, 60_000)
                 if (!isOnline) return

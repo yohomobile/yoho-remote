@@ -613,6 +613,7 @@ export class SyncEngine {
     private readonly brainChildPendingMessages: Map<string, string[]> = new Map()
     private _dbActiveSessionIds: Set<string> = new Set() // Sessions that were active in DB at startup
     private inactivityTimer: NodeJS.Timeout | null = null
+    private orphanCleanupTimer: NodeJS.Timeout | null = null
 
     // 推送频率限制：每个 session 最少间隔 30 秒才能再次发送推送
     private readonly lastPushNotificationAt: Map<string, number> = new Map()
@@ -652,12 +653,22 @@ export class SyncEngine {
             console.error('[SyncEngine] Failed to load initial state from database:', err)
         })
         this.inactivityTimer = setInterval(() => this.expireInactive(), 5_000)
+        if (process.env.BRAIN_CHILD_ORPHAN_CLEANUP_ENABLED !== 'false') {
+            this.orphanCleanupTimer = setInterval(
+                () => void this.cleanupOrphanBrainChildren(),
+                60 * 60 * 1000
+            )
+        }
     }
 
     stop(): void {
         if (this.inactivityTimer) {
             clearInterval(this.inactivityTimer)
             this.inactivityTimer = null
+        }
+        if (this.orphanCleanupTimer) {
+            clearInterval(this.orphanCleanupTimer)
+            this.orphanCleanupTimer = null
         }
     }
 
@@ -2238,6 +2249,35 @@ export class SyncEngine {
             if (now - machine.activeAt <= machineTimeoutMs) continue
             machine.active = false
             this.emit({ type: 'machine-updated', machineId: machine.id, data: { active: false } })
+        }
+    }
+
+    async cleanupOrphanBrainChildren(): Promise<void> {
+        const ttlHoursRaw = process.env.BRAIN_CHILD_ORPHAN_TTL_HOURS
+        const ttlHours = ttlHoursRaw ? Number(ttlHoursRaw) : 24
+        if (!Number.isFinite(ttlHours) || ttlHours <= 0) return
+        const ttlMs = ttlHours * 60 * 60 * 1000
+        const now = Date.now()
+
+        const orphans: string[] = []
+        for (const session of this.sessions.values()) {
+            const meta = session.metadata as { source?: string; mainSessionId?: string } | undefined
+            if (meta?.source !== 'brain-child') continue
+            if (session.active) continue
+            if (now - session.activeAt <= ttlMs) continue
+            const mainId = meta?.mainSessionId
+            if (mainId && this.sessions.has(mainId)) continue
+            orphans.push(session.id)
+        }
+
+        if (orphans.length === 0) return
+        console.log(`[brain-orphan-gc] cleaning ${orphans.length} orphan brain-child sessions (ttl=${ttlHours}h)`)
+        for (const id of orphans) {
+            try {
+                await this.deleteSession(id, { terminateSession: false, force: true })
+            } catch (err) {
+                console.error(`[brain-orphan-gc] failed to delete ${id}:`, err)
+            }
         }
     }
 

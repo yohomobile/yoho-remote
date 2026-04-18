@@ -843,6 +843,7 @@ export default function SettingsPage() {
     const tokenSources = useMemo(() => {
         return Array.isArray(tokenSourcesData?.tokenSources) ? tokenSourcesData.tokenSources : []
     }, [tokenSourcesData])
+    const localTokenSourceEnabled = tokenSourcesData?.localEnabled !== false
 
     // K1 Brain Config
     const { data: brainConfig, isLoading: brainConfigLoading } = useQuery({
@@ -1101,6 +1102,20 @@ export default function SettingsPage() {
         },
         onError: (err) => {
             setTokenSourceError(err instanceof Error ? err.message : 'Failed to remove Token Source')
+        }
+    })
+
+    const setLocalTokenSourceEnabledMutation = useMutation({
+        mutationFn: async (enabled: boolean) => {
+            if (!api || !currentOrgId) throw new Error('API unavailable')
+            return await api.setLocalTokenSourceEnabled(enabled, currentOrgId)
+        },
+        onSuccess: () => {
+            setTokenSourceError(null)
+            void queryClient.invalidateQueries({ queryKey: tokenSourceQueryPrefix })
+        },
+        onError: (err) => {
+            setTokenSourceError(err instanceof Error ? err.message : 'Failed to update Local Token Source')
         }
     })
 
@@ -1862,26 +1877,40 @@ export default function SettingsPage() {
                                         </button>
                                     ) : null}
                                 </div>
-                                <div className="px-3 py-2 border-b border-[var(--app-divider)]">
-                                    <div className="text-sm font-medium">{LOCAL_TOKEN_SOURCE.name}</div>
-                                    <div className="text-xs text-[var(--app-hint)] mt-0.5">{LOCAL_TOKEN_SOURCE.baseUrl}</div>
-                                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                                        {LOCAL_TOKEN_SOURCE.supportedAgents.map((agent) => (
-                                            <span
-                                                key={agent}
-                                                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${
-                                                    agent === 'claude'
-                                                        ? 'border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300'
-                                                        : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                                                }`}
-                                            >
-                                                {agent}
+                                <div className={`px-3 py-2 border-b border-[var(--app-divider)] flex items-start justify-between gap-3 ${localTokenSourceEnabled ? '' : 'opacity-60'}`}>
+                                    <div className="min-w-0 flex-1">
+                                        <div className="text-sm font-medium">{LOCAL_TOKEN_SOURCE.name}</div>
+                                        <div className="text-xs text-[var(--app-hint)] mt-0.5">{LOCAL_TOKEN_SOURCE.baseUrl}</div>
+                                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                            {LOCAL_TOKEN_SOURCE.supportedAgents.map((agent) => (
+                                                <span
+                                                    key={agent}
+                                                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                                                        agent === 'claude'
+                                                            ? 'border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+                                                            : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                                    }`}
+                                                >
+                                                    {agent}
+                                                </span>
+                                            ))}
+                                            <span className="inline-flex items-center rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/70 px-2 py-0.5 text-[10px] font-medium text-[var(--app-hint)]">
+                                                {localTokenSourceEnabled ? 'Built-in' : 'Built-in · Disabled'}
                                             </span>
-                                        ))}
-                                        <span className="inline-flex items-center rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/70 px-2 py-0.5 text-[10px] font-medium text-[var(--app-hint)]">
-                                            Built-in
-                                        </span>
+                                        </div>
                                     </div>
+                                    {canManageTokenSources ? (
+                                        <label className="inline-flex items-center gap-2 text-xs text-[var(--app-hint)] cursor-pointer select-none">
+                                            <span>{localTokenSourceEnabled ? 'Enabled' : 'Disabled'}</span>
+                                            <input
+                                                type="checkbox"
+                                                checked={localTokenSourceEnabled}
+                                                disabled={setLocalTokenSourceEnabledMutation.isPending}
+                                                onChange={(event) => setLocalTokenSourceEnabledMutation.mutate(event.target.checked)}
+                                                className="h-4 w-4 cursor-pointer"
+                                            />
+                                        </label>
+                                    ) : null}
                                 </div>
                                 {!canManageTokenSources ? (
                                     <div className="px-3 py-2 border-b border-[var(--app-divider)] text-[11px] text-[var(--app-hint)]">

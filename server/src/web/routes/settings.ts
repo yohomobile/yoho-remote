@@ -5,9 +5,11 @@ import type { IStore, OrgRole, UserRole } from '../../store'
 import {
     createTokenSourceForOrg,
     deleteTokenSourceForOrg,
+    getLocalTokenSourceEnabledForOrg,
     getOrgRole,
     getTokenSourcesForOrg,
     serializeTokenSource,
+    setLocalTokenSourceEnabledForOrg,
     tokenSourceInputSchema,
     tokenSourceUpdateSchema,
     updateTokenSourceForOrg,
@@ -176,12 +178,50 @@ export function createSettingsRoutes(
         }
 
         const includeSecrets = c.req.query('includeSecrets') === '1' && canManageOrgSettings(orgRole)
-        const tokenSources = await getTokenSourcesForOrg(store, orgId)
+        const [tokenSources, localEnabled] = await Promise.all([
+            getTokenSourcesForOrg(store, orgId),
+            getLocalTokenSourceEnabledForOrg(store, orgId),
+        ])
         return c.json({
             tokenSources: tokenSources.map((item) => serializeTokenSource(item, includeSecrets)),
             canManage: canManageOrgSettings(orgRole),
             includeSecrets,
+            localEnabled,
         })
+    })
+
+    const localTokenSourceToggleSchema = z.object({
+        enabled: z.boolean(),
+    })
+
+    app.put('/settings/token-sources/local', async (c) => {
+        const email = c.get('email')
+        if (!email) {
+            return c.json({ error: 'Unauthorized' }, 401)
+        }
+
+        const orgId = c.req.query('orgId')
+        if (!orgId) {
+            return c.json({ error: 'orgId is required' }, 400)
+        }
+
+        const orgRole = await getOrgRole(store, orgId, email)
+        if (!canManageOrgSettings(orgRole)) {
+            return c.json({ error: 'Insufficient permissions' }, 403)
+        }
+
+        const json = await c.req.json().catch(() => null)
+        const parsed = localTokenSourceToggleSchema.safeParse(json)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid payload' }, 400)
+        }
+
+        const saved = await setLocalTokenSourceEnabledForOrg(store, orgId, parsed.data.enabled)
+        if (!saved) {
+            return c.json({ error: 'Failed to update setting' }, 500)
+        }
+
+        return c.json({ ok: true, localEnabled: parsed.data.enabled })
     })
 
     app.post('/settings/token-sources', async (c) => {

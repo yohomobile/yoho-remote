@@ -9,13 +9,8 @@ NCU_REPO="/home/workspaces/repos/yoho-remote"
 NCU_EXE_DIR="$NCU_REPO/cli/dist-exe"
 NCU_SUDO_PASS="guang"
 
-DAEMON_TARGETS=(
-    "ubuntu@192.168.122.100|guang-instance"
-    "ubuntu@192.168.122.102|bruce-instance"
-)
 MACMINI_SSH="guang@192.168.0.236"
 MACMINI_DAEMON_ENV="CLI_API_TOKEN=rDhnX0JCPIki0s6t1kNsHJkSLCvpAEt3wNCb_dkEyOc YOHO_REMOTE_URL=https://remote.yohomobile.dev YOHO_MACHINE_NAME=macmini-daemon YOHO_MACHINE_IP=192.168.0.236"
-MACBOOK_SSH="guang@100.106.84.90"  # Tailscale IP
 
 INSTALL_DIR="/opt/yoho-remote"
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3"
@@ -23,7 +18,6 @@ LOCAL_REINSTALL_DAEMON_SCRIPT="$(pwd)/scripts/reinstall-daemon-systemd.sh"
 
 SELF_HOSTNAME=$(hostname)
 SELF_USER=$(id -un)
-SELF_DEPLOY_TARGET=""
 
 # ==================== Helpers ====================
 is_ncu() { [[ "$SELF_HOSTNAME" == "ncu" ]]; }
@@ -129,7 +123,7 @@ force_kill_process() {
 
 # ==================== Parse arguments ====================
 # 所有合法的 daemon 目标名
-ALL_DAEMON_TARGET_NAMES="ncu guang-instance bruce-instance macmini macbook"
+ALL_DAEMON_TARGET_NAMES="ncu macmini"
 
 MODE="${1:-}"
 shift 2>/dev/null || true
@@ -146,16 +140,12 @@ Usage: deploy.sh <server|daemon|all> [target...]
 
 Daemon targets:
   ncu             ncu 本机 (systemd)
-  guang-instance  VM (systemd)
-  bruce-instance  VM (systemd)
   macmini         macOS (darwin-arm64, LAN)
-  macbook         macOS (darwin-arm64, Tailscale 100.106.84.90)
 
 Examples:
-  deploy.sh daemon                        # 部署到全部 5 台
-  deploy.sh daemon guang-instance         # 只部署到 guang-instance
+  deploy.sh daemon                        # 部署到全部 2 台
+  deploy.sh daemon ncu                    # 只部署到 ncu
   deploy.sh daemon ncu macmini            # 部署到 ncu 和 macmini
-  deploy.sh daemon macbook                # 只部署到 macbook
 USAGE
     exit 1
 fi
@@ -187,9 +177,9 @@ should_deploy_daemon() {
     return 1
 }
 
-# 是否需要构建 darwin-arm64 二进制（macmini 或 macbook）
+# 是否需要构建 darwin-arm64 二进制（macmini）
 NEED_DARWIN_BUILD=false
-if should_deploy_daemon macmini || should_deploy_daemon macbook; then
+if should_deploy_daemon macmini; then
     NEED_DARWIN_BUILD=true
 fi
 
@@ -270,8 +260,7 @@ log "Building CLI (linux-x64)..."
 ncu_exec "cd $NCU_REPO/cli && $BUN run build:exe:cli"
 
 if [[ "$DEPLOY_DAEMON" == "true" ]]; then
-    # 只要有任一 linux 目标就构建 linux-x64 daemon
-    if should_deploy_daemon ncu || should_deploy_daemon guang-instance || should_deploy_daemon bruce-instance; then
+    if should_deploy_daemon ncu; then
         log "Building daemon (linux-x64)..."
         ncu_exec "cd $NCU_REPO/cli && $BUN run build:exe:daemon"
     fi
@@ -289,7 +278,7 @@ if [[ "$DEPLOY_SERVER" == "true" ]]; then
     VERIFY_FILES="$VERIFY_FILES bun-linux-x64/yoho-remote-server"
 fi
 if [[ "$DEPLOY_DAEMON" == "true" ]]; then
-    if should_deploy_daemon ncu || should_deploy_daemon guang-instance || should_deploy_daemon bruce-instance; then
+    if should_deploy_daemon ncu; then
         VERIFY_FILES="$VERIFY_FILES bun-linux-x64/yoho-remote-daemon"
     fi
     if [[ "$NEED_DARWIN_BUILD" == "true" ]]; then
@@ -333,40 +322,7 @@ fi
 # --- 6b: Deploy daemon ---
 if [[ "$DEPLOY_DAEMON" == "true" ]]; then
 
-    # 6b-1: Deploy to linux VMs (via ncu as relay)
-    for entry in "${DAEMON_TARGETS[@]}"; do
-        SSH_TARGET="${entry%%|*}"
-        TARGET_NAME="${entry##*|}"
-
-        # 检查是否在部署目标列表中
-        if ! should_deploy_daemon "$TARGET_NAME"; then
-            continue
-        fi
-
-        log "Deploying daemon to $TARGET_NAME ($SSH_TARGET)..."
-
-        # If this is the machine we're running on, defer to last
-        if [[ "$TARGET_NAME" == "$SELF_HOSTNAME" ]]; then
-            SELF_DEPLOY_TARGET="$SSH_TARGET"
-            ok "Self detected — will deploy last"
-            continue
-        fi
-
-        # Check connectivity
-        if ! ncu_exec "ssh $SSH_OPTS -o BatchMode=yes $SSH_TARGET 'true'" 2>/dev/null; then
-            warn "$TARGET_NAME is unreachable — skipping"
-            continue
-        fi
-
-        # Copy new binaries
-        ncu_exec "scp $SSH_OPTS $NCU_EXE_DIR/bun-linux-x64/yoho-remote-daemon $SSH_TARGET:$INSTALL_DIR/ && scp $SSH_OPTS $NCU_EXE_DIR/bun-linux-x64/yoho-remote $SSH_TARGET:$INSTALL_DIR/"
-
-        # Reinstall managed systemd unit so unit changes (KillMode, env, ExecStart) are applied together
-        ncu_exec "ssh $SSH_OPTS $SSH_TARGET 'sudo bash -s -- $INSTALL_DIR/yoho-remote' < $NCU_REPO/scripts/reinstall-daemon-systemd.sh"
-        ok "$TARGET_NAME daemon unit reinstalled and restarted"
-    done
-
-    # 6b-2: Deploy to macmini
+    # 6b-1: Deploy to macmini
     if should_deploy_daemon macmini; then
         log "Deploying daemon to macmini..."
         if ncu_exec "ssh $SSH_OPTS -o BatchMode=yes $MACMINI_SSH 'true'" 2>/dev/null; then
@@ -412,90 +368,14 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
         fi
     fi
 
-    # 6b-2b: Deploy to macbook (via Tailscale)
-    if should_deploy_daemon macbook; then
-        log "Deploying daemon to macbook..."
-        if ncu_exec "ssh $SSH_OPTS -o BatchMode=yes $MACBOOK_SSH 'true'" 2>/dev/null; then
-            # Stop old daemon and detached session children
-            ncu_exec "ssh $SSH_OPTS $MACBOOK_SSH '
-                list_pids() {
-                    { pgrep -x yoho-remote-daemon 2>/dev/null || true; pgrep -x yoho-remote 2>/dev/null || true; } | sort -u
-                }
-                for p in \$(list_pids); do kill -TERM \$p 2>/dev/null || true; done
-                sleep 3
-                R=\$(list_pids)
-                if [ -n \"\$R\" ]; then
-                    echo \"  ⚠ SIGTERM failed, SIGKILL...\"
-                    for p in \$R; do kill -9 \$p 2>/dev/null || true; done
-                    sleep 2
-                fi
-                R=\$(list_pids)
-                if [ -n \"\$R\" ]; then
-                    for p in \$R; do kill -9 \$p 2>/dev/null || true; done
-                    sleep 1
-                fi
-                R=\$(list_pids)
-                [ -n \"\$R\" ] && echo \"  ✗ WARNING: yoho-remote processes still alive\" || echo \"  ✓ Fully stopped\"
-            '"
-
-            # Copy new binaries
-            ncu_exec "rsync -az -e 'ssh $SSH_OPTS' $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote-daemon $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote $MACBOOK_SSH:/opt/yoho-remote/"
-
-            # macOS 要求重新 ad-hoc 签名
-            ncu_exec "ssh $SSH_OPTS $MACBOOK_SSH 'codesign --force --sign - /opt/yoho-remote/yoho-remote-daemon && codesign --force --sign - /opt/yoho-remote/yoho-remote'"
-
-            # 通过 LaunchAgent 重启
-            ncu_exec "ssh $SSH_OPTS $MACBOOK_SSH 'launchctl unload /Users/guang/Library/LaunchAgents/com.hapi.daemon.plist 2>/dev/null; launchctl load /Users/guang/Library/LaunchAgents/com.hapi.daemon.plist'"
-            sleep 4
-            ALIVE=$(ncu_exec "ssh $SSH_OPTS $MACBOOK_SSH 'pgrep -x yoho-remote-daemon >/dev/null && echo yes || echo no'")
-            if [[ "$ALIVE" == *"yes"* ]]; then
-                ok "macbook daemon restarted"
-            else
-                fail "macbook daemon failed to start — check /tmp/yoho-remote-daemon.log"
-            fi
-        else
-            warn "macbook is unreachable — skipping"
-        fi
-    fi
-
-    # 6b-3: Deploy daemon to ncu (从 VM 远程操作时，无需排除本机进程)
+    # 6b-2: Deploy daemon to ncu
     if should_deploy_daemon ncu && ! is_ncu; then
         log "Reinstalling daemon on ncu..."
         ncu_exec "echo $NCU_SUDO_PASS | sudo -SE bash $NCU_REPO/scripts/reinstall-daemon-systemd.sh $NCU_EXE_DIR/bun-linux-x64/yoho-remote"
         ok "ncu daemon unit reinstalled and restarted"
     fi
 
-    # 6b-4: Deploy self (LAST — this will kill current session)
-    if [[ -n "$SELF_DEPLOY_TARGET" ]]; then
-        log "Deploying daemon to self ($SELF_HOSTNAME) — session will restart..."
-
-        # 从 ncu 拉取新二进制到本机（ncu 无法反向 SSH 到 VM，所以从本机主动拉取）
-        # 用 rename trick 避免 "Text file busy"：先 scp 到临时文件，再 mv 覆盖
-        scp $SSH_OPTS "$NCU_SSH:$NCU_EXE_DIR/bun-linux-x64/yoho-remote-daemon" "$INSTALL_DIR/yoho-remote-daemon.new" \
-            && mv -f "$INSTALL_DIR/yoho-remote-daemon.new" "$INSTALL_DIR/yoho-remote-daemon" \
-            && chmod +x "$INSTALL_DIR/yoho-remote-daemon"
-        scp $SSH_OPTS "$NCU_SSH:$NCU_EXE_DIR/bun-linux-x64/yoho-remote" "$INSTALL_DIR/yoho-remote.new" \
-            && mv -f "$INSTALL_DIR/yoho-remote.new" "$INSTALL_DIR/yoho-remote" \
-            && chmod +x "$INSTALL_DIR/yoho-remote"
-        ok "Binaries updated"
-
-        # Restart via systemd-run to survive daemon shutdown while still going through the managed install path
-        RESTART_SCRIPT=$(mktemp /tmp/yr-restart-XXXXXX.sh)
-        cat > "$RESTART_SCRIPT" << RESTART_EOF
-#!/bin/bash
-exec > /tmp/yr-restart.log 2>&1
-echo "\$(date): Reinstalling managed daemon unit..."
-DAEMON_SERVICE_USER="$SELF_USER" bash "$LOCAL_REINSTALL_DAEMON_SCRIPT" "$INSTALL_DIR/yoho-remote"
-rm -f "\$0"
-RESTART_EOF
-        chmod +x "$RESTART_SCRIPT"
-
-        sudo systemctl reset-failed yr-daemon-restart.service 2>/dev/null || true
-        sudo systemd-run --unit=yr-daemon-restart bash "$RESTART_SCRIPT"
-        ok "Restart dispatched (log: /tmp/yr-restart.log)"
-    fi
-
-    # 6b-5: If running on ncu, restart ncu daemon last (will kill session)
+    # 6b-3: If running on ncu, restart ncu daemon last (will kill session)
     if is_ncu && should_deploy_daemon ncu; then
         log "Restarting daemon on ncu (self) — session will restart..."
 

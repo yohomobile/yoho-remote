@@ -6,7 +6,7 @@ import type { SSEManager } from '../../sse/sseManager'
 import type { WebAppEnv } from '../middleware/auth'
 import { resolvePersonalWorktreeSpawnOptions } from '../personalWorktree'
 import { buildInitPrompt } from '../prompts/initPrompt'
-import { resolveTokenSourceForAgent } from '../tokenSources'
+import { getLocalTokenSourceEnabledForOrg, resolveTokenSourceForAgent } from '../tokenSources'
 import { requireMachine } from './guards'
 import { isMachineBlocked } from './blocklist'
 import { serializeMachine, sortMachinesForDisplay } from './machinePayload'
@@ -189,6 +189,11 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
             )
             if ('error' in resolvedTokenSource) {
                 return c.json({ error: resolvedTokenSource.error }, resolvedTokenSource.status as 400 | 404)
+            }
+        } else if (orgIdForLicense) {
+            const localEnabled = await getLocalTokenSourceEnabledForOrg(store, orgIdForLicense)
+            if (!localEnabled) {
+                return c.json({ error: 'Local Token Source is disabled for this organization' }, 400)
             }
         }
 

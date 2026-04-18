@@ -1463,4 +1463,128 @@ describe('SyncEngine', () => {
 
         expect(engine.getSession(session.id)?.activeMonitors).toEqual([])
     })
+
+    test('cleanupOrphanBrainChildren deletes offline brain-child when parent brain is gone', async () => {
+        const deletedIds: string[] = []
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getMessages: async () => [],
+            getMessageCount: async () => 0,
+            deleteSession: async (id: string) => { deletedIds.push(id); return true },
+            setSessionActive: async () => {},
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const TWENTY_FIVE_HOURS_MS = 25 * 60 * 60 * 1000
+        const orphan = createSession('orphan-child', {
+            source: 'brain-child',
+            mainSessionId: 'brain-that-no-longer-exists',
+        })
+        orphan.active = false
+        orphan.activeAt = Date.now() - TWENTY_FIVE_HOURS_MS
+        ;(engine as any).sessions.set(orphan.id, orphan)
+
+        await engine.cleanupOrphanBrainChildren()
+
+        expect(deletedIds).toContain(orphan.id)
+        expect(engine.getSession(orphan.id)).toBeUndefined()
+    })
+
+    test('cleanupOrphanBrainChildren keeps offline brain-child when parent brain still exists', async () => {
+        const deletedIds: string[] = []
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getMessages: async () => [],
+            getMessageCount: async () => 0,
+            deleteSession: async (id: string) => { deletedIds.push(id); return true },
+            setSessionActive: async () => {},
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const TWENTY_FIVE_HOURS_MS = 25 * 60 * 60 * 1000
+        const brain = createSession('brain-parent', { source: 'brain' })
+        brain.active = false
+        brain.activeAt = Date.now() - TWENTY_FIVE_HOURS_MS
+        const child = createSession('child-with-parent', {
+            source: 'brain-child',
+            mainSessionId: brain.id,
+        })
+        child.active = false
+        child.activeAt = Date.now() - TWENTY_FIVE_HOURS_MS
+        ;(engine as any).sessions.set(brain.id, brain)
+        ;(engine as any).sessions.set(child.id, child)
+
+        await engine.cleanupOrphanBrainChildren()
+
+        expect(deletedIds).toHaveLength(0)
+        expect(engine.getSession(child.id)).toBeDefined()
+    })
+
+    test('cleanupOrphanBrainChildren skips recently-idle orphan below TTL', async () => {
+        const deletedIds: string[] = []
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getMessages: async () => [],
+            getMessageCount: async () => 0,
+            deleteSession: async (id: string) => { deletedIds.push(id); return true },
+            setSessionActive: async () => {},
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const ONE_HOUR_MS = 60 * 60 * 1000
+        const recent = createSession('recent-orphan', {
+            source: 'brain-child',
+            mainSessionId: 'nonexistent-brain',
+        })
+        recent.active = false
+        recent.activeAt = Date.now() - ONE_HOUR_MS
+        ;(engine as any).sessions.set(recent.id, recent)
+
+        await engine.cleanupOrphanBrainChildren()
+
+        expect(deletedIds).toHaveLength(0)
+        expect(engine.getSession(recent.id)).toBeDefined()
+    })
 })

@@ -565,6 +565,120 @@ describe('createSessionsRoutes', () => {
         }])
     })
 
+    it('rejects POST /sessions without tokenSourceId when Local is disabled at org level', async () => {
+        let spawnCalled = false
+        const fakeEngine = {
+            getMachine: (id: string) => id === 'machine-1'
+                ? { id: 'machine-1', active: true, metadata: {}, namespace: 'default' }
+                : null,
+            spawnSession: async () => {
+                spawnCalled = true
+                return { type: 'success', sessionId: 'session-new' }
+            },
+            subscribe: () => () => {},
+        }
+
+        const fakeStore = {
+            getOrganization: async () => ({
+                id: 'org-a',
+                name: 'Org A',
+                slug: 'org-a',
+                createdBy: 'owner@example.com',
+                createdAt: 1,
+                updatedAt: 1,
+                settings: { localTokenSourceEnabled: false },
+            }),
+            setSessionCreatedBy: async () => true,
+            setSessionOrgId: async () => true,
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            c.set('role', 'developer')
+            c.set('email', 'dev@example.com')
+            c.set('name', 'Dev')
+            c.set('orgs', [])
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/sessions?orgId=org-a', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                directory: '/tmp/project',
+                agent: 'claude',
+            }),
+        })
+
+        expect(response.status).toBe(400)
+        const body = await response.json() as { error?: string }
+        expect(body.error).toContain('Local Token Source is disabled')
+        expect(spawnCalled).toBe(false)
+    })
+
+    it('allows POST /sessions without tokenSourceId when Local stays enabled by default', async () => {
+        let spawnCalled = false
+        const activeSession = {
+            id: 'session-new',
+            active: true,
+            metadata: { path: '/tmp/project' },
+        }
+        const fakeEngine = {
+            getMachine: (id: string) => id === 'machine-1'
+                ? { id: 'machine-1', active: true, metadata: {}, namespace: 'default' }
+                : null,
+            getSession: () => activeSession,
+            spawnSession: async () => {
+                spawnCalled = true
+                return { type: 'success', sessionId: 'session-new' }
+            },
+            waitForSocketInRoom: async () => true,
+            sendMessage: async () => true,
+            subscribe: () => () => {},
+        }
+
+        const fakeStore = {
+            getOrganization: async () => ({
+                id: 'org-a',
+                name: 'Org A',
+                slug: 'org-a',
+                createdBy: 'owner@example.com',
+                createdAt: 1,
+                updatedAt: 1,
+                settings: {},
+            }),
+            setSessionCreatedBy: async () => true,
+            setSessionOrgId: async () => true,
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            c.set('role', 'developer')
+            c.set('email', 'dev@example.com')
+            c.set('name', 'Dev')
+            c.set('orgs', [])
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/sessions?orgId=org-a', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                directory: '/tmp/project',
+                agent: 'claude',
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        expect(spawnCalled).toBe(true)
+    })
+
     it('preserves brain-child metadata when resume falls back to a new session', async () => {
         const session = {
             id: 'brain-child-old',

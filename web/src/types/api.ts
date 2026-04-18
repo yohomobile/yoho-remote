@@ -197,7 +197,10 @@ export type TokenSourcesResponse = {
     tokenSources: TokenSource[]
     canManage: boolean
     includeSecrets: boolean
+    localEnabled?: boolean
 }
+
+export type SetLocalTokenSourceEnabledResponse = { ok: true; localEnabled: boolean }
 
 export type CreateTokenSourceInput = {
     name: string

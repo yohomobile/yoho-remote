@@ -57,6 +57,7 @@ import type {
     CreateTokenSourceResponse,
     DeleteTokenSourceResponse,
     MeResponse,
+    SetLocalTokenSourceEnabledResponse,
     TokenSourcesResponse,
     UpdateTokenSourceInput,
     UpdateTokenSourceResponse,
@@ -389,6 +390,14 @@ export class ApiClient {
         })
     }
 
+    async setLocalTokenSourceEnabled(enabled: boolean, orgId?: string | null): Promise<SetLocalTokenSourceEnabledResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<SetLocalTokenSourceEnabledResponse>(`/api/settings/token-sources/local${qs}`, {
+            method: 'PUT',
+            body: JSON.stringify({ enabled })
+        })
+    }
+
     async getMessages(sessionId: string, options: { beforeSeq?: number | null; limit?: number }): Promise<MessagesResponse> {
         const params = new URLSearchParams()
         if (options.beforeSeq !== undefined && options.beforeSeq !== null) {
@@ -673,6 +682,8 @@ export class ApiClient {
         machineId?: string
         agent?: 'claude' | 'codex'
         tokenSourceId?: string
+        claudeTokenSourceId?: string
+        codexTokenSourceId?: string
         claudeSettingsType?: 'litellm' | 'claude'
         claudeAgent?: string
         claudeModel?: 'sonnet' | 'opus' | 'opus-4-7'
@@ -689,6 +700,8 @@ export class ApiClient {
                 machineId: input?.machineId,
                 agent: input?.agent,
                 tokenSourceId: input?.tokenSourceId,
+                claudeTokenSourceId: input?.claudeTokenSourceId,
+                codexTokenSourceId: input?.codexTokenSourceId,
                 claudeSettingsType: input?.claudeSettingsType,
                 claudeAgent: input?.claudeAgent,
                 claudeModel: input?.claudeModel,

@@ -36,6 +36,7 @@ export type TokenSourceUpdateInput = z.infer<typeof tokenSourceUpdateSchema>
 export type TokenSourceAgent = z.infer<typeof tokenSourceAgentSchema>
 
 const TOKEN_SOURCE_SETTINGS_KEY = 'tokenSources'
+const LOCAL_TOKEN_SOURCE_ENABLED_KEY = 'localTokenSourceEnabled'
 
 function normalizeBaseUrl(baseUrl: string): string {
     return baseUrl.trim().replace(/\/+$/, '')
@@ -172,6 +173,33 @@ export async function deleteTokenSourceForOrg(store: IStore, orgId: string, id: 
         return false
     }
     return await saveTokenSourcesForOrg(store, orgId, next)
+}
+
+export async function getLocalTokenSourceEnabledForOrg(store: IStore, orgId: string): Promise<boolean> {
+    const org = await store.getOrganization(orgId)
+    if (!org) {
+        return true
+    }
+    const raw = org.settings?.[LOCAL_TOKEN_SOURCE_ENABLED_KEY]
+    if (typeof raw !== 'boolean') {
+        return true
+    }
+    return raw
+}
+
+export async function setLocalTokenSourceEnabledForOrg(store: IStore, orgId: string, enabled: boolean): Promise<boolean> {
+    const org = await store.getOrganization(orgId)
+    if (!org) {
+        return false
+    }
+
+    const settings = {
+        ...org.settings,
+        [LOCAL_TOKEN_SOURCE_ENABLED_KEY]: enabled,
+    }
+
+    const updated = await store.updateOrganization(orgId, { settings })
+    return Boolean(updated)
 }
 
 export async function resolveTokenSourceForAgent(

@@ -149,7 +149,8 @@ export function NewSession(props: {
     })
     const tokenSources = useMemo(() => {
         const remoteTokenSources = Array.isArray(tokenSourcesData?.tokenSources) ? tokenSourcesData.tokenSources : []
-        return [LOCAL_TOKEN_SOURCE, ...remoteTokenSources]
+        const localEnabled = tokenSourcesData?.localEnabled !== false
+        return localEnabled ? [LOCAL_TOKEN_SOURCE, ...remoteTokenSources] : remoteTokenSources
     }, [tokenSourcesData])
     const compatibleTokenSources = useMemo(
         () => getCompatibleTokenSources(tokenSources, agent),
@@ -418,6 +419,14 @@ export function NewSession(props: {
                     ? `${getMachineTitle(currentMachine)} does not support ${agentType}`
                     : undefined}
             />
+
+            {compatibleTokenSources.length === 0 ? (
+                <div className="px-3 py-2 text-xs text-[var(--app-hint)]">
+                    {tokenSources.length === 0
+                        ? 'Local has been disabled by admin. Add a Token Source in Settings before creating a session.'
+                        : `No Token Source supports agent "${agent}". Ask an admin to configure one.`}
+                </div>
+            ) : null}
 
             {/* Spawn Logs */}
             {spawnLogs.length > 0 && (

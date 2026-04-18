@@ -47,6 +47,15 @@ function getCompatibleTokenSources(tokenSources: TokenSource[], agent: AgentType
     return tokenSources.filter((tokenSource) => tokenSource.supportedAgents.includes(agent))
 }
 
+function pickDefaultTokenSourceId(compatibleSources: TokenSource[]): string {
+    if (compatibleSources.length === 0) return ''
+    if (compatibleSources.length === 1) return compatibleSources[0].id
+    const nonLocal = compatibleSources.filter((src) => src.id !== LOCAL_TOKEN_SOURCE_ID)
+    if (nonLocal.length === 0) return compatibleSources[0].id
+    const sorted = [...nonLocal].sort((a, b) => b.createdAt - a.createdAt)
+    return sorted[0].id
+}
+
 function normalizeChildClaudeModels(extra: Record<string, unknown> | null | undefined): ClaudeModelMode[] {
     const values = Array.isArray(extra?.['childClaudeModels']) ? extra['childClaudeModels'] : null
     const normalized = values?.filter((value): value is ClaudeModelMode => value === 'sonnet' || value === 'opus' || value === 'opus-4-7') ?? []
@@ -82,7 +91,8 @@ export function NewBrainSession(props: {
     const queryClient = useQueryClient()
     const [machineId, setMachineId] = useState<string | null>(null)
     const [agent, setAgent] = useState<AgentType>('claude')
-    const [tokenSourceId, setTokenSourceId] = useState('')
+    const [claudeTokenSourceId, setClaudeTokenSourceId] = useState('')
+    const [codexTokenSourceId, setCodexTokenSourceId] = useState('')
     const [claudeModel, setClaudeModel] = useState<ClaudeModelMode>('opus')
     const [codexModel, setCodexModel] = useState(DEFAULT_CODEX_MODEL)
     const [codexReasoningEffort, setCodexReasoningEffort] = useState<CodexReasoningEffort>(DEFAULT_CODEX_REASONING_EFFORT)
@@ -110,11 +120,35 @@ export function NewBrainSession(props: {
     })
     const tokenSources = useMemo(() => {
         const remoteTokenSources = Array.isArray(tokenSourcesData?.tokenSources) ? tokenSourcesData.tokenSources : []
-        return [LOCAL_TOKEN_SOURCE, ...remoteTokenSources]
+        const localEnabled = tokenSourcesData?.localEnabled !== false
+        return localEnabled ? [LOCAL_TOKEN_SOURCE, ...remoteTokenSources] : remoteTokenSources
     }, [tokenSourcesData])
-    const compatibleTokenSources = useMemo(
-        () => getCompatibleTokenSources(tokenSources, agent),
-        [agent, tokenSources]
+    const claudeCompatibleTokenSources = useMemo(
+        () => getCompatibleTokenSources(tokenSources, 'claude'),
+        [tokenSources]
+    )
+    const codexCompatibleTokenSources = useMemo(
+        () => getCompatibleTokenSources(tokenSources, 'codex'),
+        [tokenSources]
+    )
+    const compatibleTokenSources = agent === 'codex' ? codexCompatibleTokenSources : claudeCompatibleTokenSources
+    const tokenSourceId = agent === 'codex' ? codexTokenSourceId : claudeTokenSourceId
+    const setTokenSourceId = useCallback((id: string) => {
+        if (agent === 'codex') {
+            setCodexTokenSourceId(id)
+        } else {
+            setClaudeTokenSourceId(id)
+        }
+    }, [agent])
+    const agentsWithTokenSources = useMemo<AgentType[]>(() => {
+        const agents: AgentType[] = []
+        if (claudeCompatibleTokenSources.length > 0) agents.push('claude')
+        if (codexCompatibleTokenSources.length > 0) agents.push('codex')
+        return agents
+    }, [claudeCompatibleTokenSources, codexCompatibleTokenSources])
+    const effectiveSupportedAgents = useMemo(
+        () => supportedAgents.filter((a) => agentsWithTokenSources.includes(a)),
+        [agentsWithTokenSources, supportedAgents]
     )
 
     const { data: brainConfig, isLoading: brainConfigLoading } = useQuery({
@@ -143,28 +177,36 @@ export function NewBrainSession(props: {
     }, [machineId, onlineMachines])
 
     useEffect(() => {
-        if (supportedAgents.length === 0) return
-        if (!supportedAgents.includes(agent)) {
-            setAgent(supportedAgents[0])
+        if (effectiveSupportedAgents.length === 0) return
+        if (!effectiveSupportedAgents.includes(agent)) {
+            setAgent(effectiveSupportedAgents[0])
         }
-    }, [agent, supportedAgents])
+    }, [agent, effectiveSupportedAgents])
 
     useEffect(() => {
-        if (compatibleTokenSources.length === 0) {
-            setTokenSourceId('')
+        if (claudeCompatibleTokenSources.length === 0) {
+            setClaudeTokenSourceId('')
             return
         }
-        if (compatibleTokenSources.some((tokenSource) => tokenSource.id === tokenSourceId)) {
+        if (claudeCompatibleTokenSources.some((src) => src.id === claudeTokenSourceId)) return
+        setClaudeTokenSourceId(pickDefaultTokenSourceId(claudeCompatibleTokenSources))
+    }, [claudeCompatibleTokenSources, claudeTokenSourceId])
+
+    useEffect(() => {
+        if (codexCompatibleTokenSources.length === 0) {
+            setCodexTokenSourceId('')
             return
         }
-        setTokenSourceId(compatibleTokenSources[0]?.id ?? '')
-    }, [compatibleTokenSources, tokenSourceId])
+        if (codexCompatibleTokenSources.some((src) => src.id === codexTokenSourceId)) return
+        setCodexTokenSourceId(pickDefaultTokenSourceId(codexCompatibleTokenSources))
+    }, [codexCompatibleTokenSources, codexTokenSourceId])
 
     const childModelCount = childClaudeModels.length + childCodexModels.length
     const isFormDisabled = isCreating || props.isLoading || brainConfigLoading
     const canCreate = !isFormDisabled
         && machineId !== null
-        && supportedAgents.length > 0
+        && effectiveSupportedAgents.length > 0
+        && effectiveSupportedAgents.includes(agent)
         && Boolean(tokenSourceId)
         && compatibleTokenSources.some((tokenSource) => tokenSource.id === tokenSourceId)
         && childModelCount > 0
@@ -187,7 +229,8 @@ export function NewBrainSession(props: {
             const result = await props.api.createBrainSession({
                 machineId: machineId ?? undefined,
                 agent,
-                tokenSourceId: tokenSourceId === LOCAL_TOKEN_SOURCE_ID ? undefined : tokenSourceId,
+                claudeTokenSourceId: claudeTokenSourceId && claudeTokenSourceId !== LOCAL_TOKEN_SOURCE_ID ? claudeTokenSourceId : undefined,
+                codexTokenSourceId: codexTokenSourceId && codexTokenSourceId !== LOCAL_TOKEN_SOURCE_ID ? codexTokenSourceId : undefined,
                 claudeModel: agent === 'claude' ? claudeModel : undefined,
                 codexModel: agent === 'codex' ? codexModel : undefined,
                 modelReasoningEffort: agent === 'codex' ? codexReasoningEffort : undefined,
@@ -228,16 +271,17 @@ export function NewBrainSession(props: {
         agent,
         canCreate,
         claudeModel,
+        claudeTokenSourceId,
         childClaudeModels,
         childCodexModels,
         codexModel,
         codexReasoningEffort,
+        codexTokenSourceId,
         currentOrgId,
         haptic,
         machineId,
         props,
         queryClient,
-        tokenSourceId,
     ])
 
     return (
@@ -285,9 +329,61 @@ export function NewBrainSession(props: {
                 onCodexModelChange={setCodexModel}
                 onCodexReasoningEffortChange={setCodexReasoningEffort}
                 isFormDisabled={isFormDisabled}
-                supportedAgents={supportedAgents}
-                getUnsupportedTitle={(agentType) => `No online machine supports ${agentType}`}
+                supportedAgents={effectiveSupportedAgents}
+                getUnsupportedTitle={(agentType) => supportedAgents.includes(agentType)
+                    ? `No Token Source supports ${agentType}`
+                    : `No online machine supports ${agentType}`}
+                hideTokenSource
             />
+
+            <div className="flex flex-col gap-3 px-3 pb-3">
+                <div>
+                    <label className="text-xs font-medium text-[var(--app-hint)]">
+                        Token Sources
+                    </label>
+                    <div className="mt-1 text-xs text-[var(--app-hint)]">
+                        Pick a source per agent. Brain runs with the source matching its own agent; child sessions inherit the source matching their own agent.
+                    </div>
+                </div>
+
+                {(['claude', 'codex'] as const).map((agentType) => {
+                    const agentCompatible = agentType === 'codex' ? codexCompatibleTokenSources : claudeCompatibleTokenSources
+                    const agentTokenSourceId = agentType === 'codex' ? codexTokenSourceId : claudeTokenSourceId
+                    const setAgentTokenSourceId = agentType === 'codex' ? setCodexTokenSourceId : setClaudeTokenSourceId
+                    const selected = agentCompatible.find((src) => src.id === agentTokenSourceId) ?? null
+                    return (
+                        <div key={agentType} className="flex flex-col gap-1.5">
+                            <label className="text-xs font-medium capitalize text-[var(--app-text)]">
+                                {agentType} Token Source
+                            </label>
+                            <select
+                                value={selected?.id ?? ''}
+                                onChange={(e) => setAgentTokenSourceId(e.target.value)}
+                                disabled={isFormDisabled || agentCompatible.length === 0}
+                                className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                            >
+                                {agentCompatible.length === 0 ? (
+                                    <option value="">No Token Source supports {agentType}</option>
+                                ) : null}
+                                {agentCompatible.map((tokenSource) => (
+                                    <option key={tokenSource.id} value={tokenSource.id}>
+                                        {tokenSource.name}
+                                    </option>
+                                ))}
+                            </select>
+                            {selected ? (
+                                <div className="text-xs text-[var(--app-hint)]">
+                                    {selected.baseUrl}
+                                </div>
+                            ) : agentCompatible.length === 0 ? (
+                                <div className="text-xs text-[var(--app-hint)]">
+                                    No compatible Token Source — {agentType} children will be unavailable.
+                                </div>
+                            ) : null}
+                        </div>
+                    )
+                })}
+            </div>
 
             <div className="flex flex-col gap-3 px-3 py-3">
                 <div>
@@ -365,6 +461,12 @@ export function NewBrainSession(props: {
             {onlineMachines.length > 0 && supportedAgents.length === 0 && !props.isLoading ? (
                 <div className="px-3 py-2 text-sm text-red-600">
                     The selected machine does not support Brain session creation with the available agents.
+                </div>
+            ) : null}
+
+            {tokenSources.length === 0 ? (
+                <div className="px-3 py-2 text-xs text-[var(--app-hint)]">
+                    Local has been disabled by admin. Add a Token Source in Settings before creating a Brain session.
                 </div>
             ) : null}
 

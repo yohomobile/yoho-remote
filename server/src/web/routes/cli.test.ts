@@ -312,6 +312,328 @@ describe('createCliRoutes projects', () => {
         expect(spawnSessionCalled).toBe(0)
     })
 
+    it('brain-child inherits Token Source from parent brainTokenSourceIds per child agent', async () => {
+        let spawnedOptions: Record<string, unknown> | undefined
+        const childSession = {
+            id: 'codex-child',
+            namespace: 'default',
+            active: true,
+            metadata: { path: '/tmp/task' },
+        }
+        const mainBrainSession = {
+            id: 'brain-main',
+            namespace: 'default',
+            metadata: {
+                source: 'brain',
+                brainTokenSourceIds: { claude: 'ts-claude', codex: 'ts-codex' },
+            },
+        }
+        const engine = {
+            getMachineByNamespace: () => ({
+                id: 'machine-1',
+                active: true,
+                metadata: {},
+                namespace: 'default',
+                orgId: 'org-1',
+                supportedAgents: ['claude', 'codex'],
+            }),
+            getSessionByNamespace: (sessionId: string) =>
+                sessionId === mainBrainSession.id ? mainBrainSession : null,
+            getSession: (sessionId: string) => sessionId === childSession.id ? childSession : null,
+            spawnSession: async (
+                _machineId: string,
+                _directory: string,
+                _agent: string,
+                _yolo: boolean,
+                options?: Record<string, unknown>,
+            ) => {
+                spawnedOptions = options
+                return { type: 'success', sessionId: childSession.id }
+            },
+            waitForSocketInRoom: async () => true,
+            sendMessage: async () => undefined,
+            subscribe: () => () => {},
+        }
+        const store = {
+            getSessionByNamespace: async (sessionId: string) => sessionId === 'brain-main'
+                ? {
+                    id: 'brain-main',
+                    orgId: 'org-1',
+                    metadata: {
+                        brainTokenSourceIds: { claude: 'ts-claude', codex: 'ts-codex' },
+                    },
+                }
+                : null,
+            getOrganization: async () => ({
+                id: 'org-1',
+                name: 'Org 1',
+                slug: 'org-1',
+                createdBy: 'owner@example.com',
+                createdAt: 1,
+                updatedAt: 1,
+                settings: {
+                    tokenSources: [
+                        {
+                            id: 'ts-claude',
+                            name: 'Claude Source',
+                            baseUrl: 'https://claude.example.com',
+                            apiKey: 'claude-secret',
+                            supportedAgents: ['claude'],
+                            createdAt: 1,
+                            updatedAt: 1,
+                        },
+                        {
+                            id: 'ts-codex',
+                            name: 'Codex Source',
+                            baseUrl: 'https://codex.example.com',
+                            apiKey: 'codex-secret',
+                            supportedAgents: ['codex'],
+                            createdAt: 2,
+                            updatedAt: 2,
+                        },
+                    ],
+                },
+            }),
+            setSessionOrgId: async () => true,
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any, undefined, store as any))
+
+        const response = await app.request('/cli/brain/spawn', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                directory: '/tmp/task',
+                agent: 'codex',
+                source: 'brain-child',
+                mainSessionId: 'brain-main',
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        expect(spawnedOptions).toEqual(expect.objectContaining({
+            tokenSourceId: 'ts-codex',
+            tokenSourceName: 'Codex Source',
+            tokenSourceType: 'codex',
+            tokenSourceBaseUrl: 'https://codex.example.com',
+            tokenSourceApiKey: 'codex-secret',
+        }))
+    })
+
+    it('brain-child legacy parent (no brainTokenSourceIds) with Local disabled still spawns (grandfathered)', async () => {
+        let spawnedOptions: Record<string, unknown> | undefined
+        const childSession = {
+            id: 'legacy-child',
+            namespace: 'default',
+            active: true,
+            metadata: { path: '/tmp/task' },
+        }
+        const mainBrainSession = {
+            id: 'brain-legacy',
+            namespace: 'default',
+            metadata: { source: 'brain' },
+        }
+        const engine = {
+            getMachineByNamespace: () => ({
+                id: 'machine-1',
+                active: true,
+                metadata: {},
+                namespace: 'default',
+                orgId: 'org-1',
+                supportedAgents: ['claude', 'codex'],
+            }),
+            getSessionByNamespace: (sessionId: string) =>
+                sessionId === mainBrainSession.id ? mainBrainSession : null,
+            getSession: (sessionId: string) => sessionId === childSession.id ? childSession : null,
+            spawnSession: async (
+                _machineId: string,
+                _directory: string,
+                _agent: string,
+                _yolo: boolean,
+                options?: Record<string, unknown>,
+            ) => {
+                spawnedOptions = options
+                return { type: 'success', sessionId: childSession.id }
+            },
+            waitForSocketInRoom: async () => true,
+            sendMessage: async () => undefined,
+            subscribe: () => () => {},
+        }
+        const store = {
+            getSessionByNamespace: async (sessionId: string) => sessionId === 'brain-legacy'
+                ? { id: 'brain-legacy', orgId: 'org-1', metadata: {} }
+                : null,
+            getOrganization: async () => ({
+                id: 'org-1',
+                name: 'Org 1',
+                slug: 'org-1',
+                createdBy: 'owner@example.com',
+                createdAt: 1,
+                updatedAt: 1,
+                settings: { localTokenSourceEnabled: false },
+            }),
+            setSessionOrgId: async () => true,
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any, undefined, store as any))
+
+        const response = await app.request('/cli/brain/spawn', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                directory: '/tmp/task',
+                agent: 'codex',
+                source: 'brain-child',
+                mainSessionId: 'brain-legacy',
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        expect(spawnedOptions?.tokenSourceId).toBeUndefined()
+    })
+
+    it('brain-child new-flow parent missing codex source + Local disabled → 400', async () => {
+        let spawnSessionCalled = 0
+        const mainBrainSession = {
+            id: 'brain-strict',
+            namespace: 'default',
+            metadata: {
+                source: 'brain',
+                brainTokenSourceIds: { claude: 'ts-claude' },
+            },
+        }
+        const engine = {
+            getMachineByNamespace: () => ({
+                id: 'machine-1',
+                active: true,
+                metadata: {},
+                namespace: 'default',
+                orgId: 'org-1',
+                supportedAgents: ['claude', 'codex'],
+            }),
+            getSessionByNamespace: (sessionId: string) =>
+                sessionId === mainBrainSession.id ? mainBrainSession : null,
+            getSession: () => null,
+            spawnSession: async () => {
+                spawnSessionCalled += 1
+                return { type: 'success', sessionId: 'should-not-spawn' }
+            },
+        }
+        const store = {
+            getSessionByNamespace: async (sessionId: string) => sessionId === 'brain-strict'
+                ? {
+                    id: 'brain-strict',
+                    orgId: 'org-1',
+                    metadata: { brainTokenSourceIds: { claude: 'ts-claude' } },
+                }
+                : null,
+            getOrganization: async () => ({
+                id: 'org-1',
+                name: 'Org 1',
+                slug: 'org-1',
+                createdBy: 'owner@example.com',
+                createdAt: 1,
+                updatedAt: 1,
+                settings: {
+                    localTokenSourceEnabled: false,
+                    tokenSources: [
+                        {
+                            id: 'ts-claude',
+                            name: 'Claude Source',
+                            baseUrl: 'https://claude.example.com',
+                            apiKey: 'claude-secret',
+                            supportedAgents: ['claude'],
+                            createdAt: 1,
+                            updatedAt: 1,
+                        },
+                    ],
+                },
+            }),
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any, undefined, store as any))
+
+        const response = await app.request('/cli/brain/spawn', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                directory: '/tmp/task',
+                agent: 'codex',
+                source: 'brain-child',
+                mainSessionId: 'brain-strict',
+            }),
+        })
+
+        expect(response.status).toBe(400)
+        const body = await response.json() as { error?: string }
+        expect(body.error).toContain('Local is disabled')
+        expect(spawnSessionCalled).toBe(0)
+    })
+
+    it('brain-child rejects spawn when machine does not support child agent', async () => {
+        let spawnSessionCalled = 0
+        const mainBrainSession = {
+            id: 'brain-main',
+            namespace: 'default',
+            metadata: { source: 'brain' },
+        }
+        const engine = {
+            getMachineByNamespace: () => ({
+                id: 'machine-1',
+                active: true,
+                metadata: {},
+                namespace: 'default',
+                orgId: 'org-1',
+                supportedAgents: ['claude'],
+            }),
+            getSessionByNamespace: (sessionId: string) =>
+                sessionId === mainBrainSession.id ? mainBrainSession : null,
+            getSession: () => null,
+            spawnSession: async () => {
+                spawnSessionCalled += 1
+                return { type: 'success', sessionId: 'should-not-spawn' }
+            },
+        }
+        const store = {
+            getSessionByNamespace: async () => ({ id: 'brain-main', orgId: 'org-1', metadata: {} }),
+            getOrganization: async () => ({
+                id: 'org-1',
+                name: 'Org 1',
+                slug: 'org-1',
+                createdBy: 'owner@example.com',
+                createdAt: 1,
+                updatedAt: 1,
+                settings: {},
+            }),
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any, undefined, store as any))
+
+        const response = await app.request('/cli/brain/spawn', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                directory: '/tmp/task',
+                agent: 'codex',
+                source: 'brain-child',
+                mainSessionId: 'brain-main',
+            }),
+        })
+
+        expect(response.status).toBe(400)
+        const body = await response.json() as { error?: string }
+        expect(body.error).toContain('does not support agent "codex"')
+        expect(spawnSessionCalled).toBe(0)
+    })
+
     it('aborts a namespaced session through the CLI route', async () => {
         let abortedSessionId: string | null = null
         const session = {

@@ -301,4 +301,74 @@ describe('createSettingsRoutes token sources', () => {
         const finalData = await finalList.json() as { tokenSources: unknown[] }
         expect(finalData.tokenSources).toHaveLength(0)
     })
+
+    it('returns localEnabled=true by default and flips via admin PUT', async () => {
+        let settings: Record<string, unknown> = {}
+        const store = {
+            getUserOrgRole: async () => 'admin',
+            getOrganization: async () => ({
+                id: 'org-a',
+                name: 'Org A',
+                slug: 'org-a',
+                createdBy: 'owner@example.com',
+                createdAt: 1,
+                updatedAt: 1,
+                settings,
+            }),
+            updateOrganization: async (_id: string, data: { settings?: Record<string, unknown> }) => {
+                settings = data.settings ?? settings
+                return {
+                    id: 'org-a',
+                    name: 'Org A',
+                    slug: 'org-a',
+                    createdBy: 'owner@example.com',
+                    createdAt: 1,
+                    updatedAt: Date.now(),
+                    settings,
+                }
+            },
+        }
+
+        const app = createAuthedApp(store)
+
+        const initial = await app.request('/api/settings/token-sources?orgId=org-a')
+        expect(initial.status).toBe(200)
+        const initialData = await initial.json() as { localEnabled: boolean }
+        expect(initialData.localEnabled).toBe(true)
+
+        const disableResponse = await app.request('/api/settings/token-sources/local?orgId=org-a', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ enabled: false }),
+        })
+        expect(disableResponse.status).toBe(200)
+
+        const afterDisable = await app.request('/api/settings/token-sources?orgId=org-a')
+        const afterDisableData = await afterDisable.json() as { localEnabled: boolean }
+        expect(afterDisableData.localEnabled).toBe(false)
+    })
+
+    it('rejects non-admin PUT to /token-sources/local with 403', async () => {
+        const store = {
+            getUserOrgRole: async () => 'member',
+            getOrganization: async () => ({
+                id: 'org-a',
+                name: 'Org A',
+                slug: 'org-a',
+                createdBy: 'owner@example.com',
+                createdAt: 1,
+                updatedAt: 1,
+                settings: {},
+            }),
+            updateOrganization: async () => null,
+        }
+
+        const app = createAuthedApp(store, 'member@example.com')
+        const response = await app.request('/api/settings/token-sources/local?orgId=org-a', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ enabled: false }),
+        })
+        expect(response.status).toBe(403)
+    })
 })

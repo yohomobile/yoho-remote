@@ -77,6 +77,7 @@ type SessionAgentFieldsProps = {
     isFormDisabled?: boolean
     supportedAgents?: readonly string[] | null
     getUnsupportedTitle?: (agent: AgentType) => string | undefined
+    hideTokenSource?: boolean
 }
 
 export function SessionAgentFields(props: SessionAgentFieldsProps) {
@@ -115,35 +116,37 @@ export function SessionAgentFields(props: SessionAgentFieldsProps) {
                 </div>
             </div>
 
-            <div className="flex flex-col gap-1.5 px-3 pb-3">
-                <label className="text-xs font-medium text-[var(--app-hint)]">
-                    Token Source
-                </label>
-                <select
-                    value={selectedTokenSource?.id ?? ''}
-                    onChange={(e) => props.onTokenSourceChange(e.target.value)}
-                    disabled={props.isFormDisabled || compatibleTokenSources.length === 0}
-                    className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
-                >
-                    {compatibleTokenSources.length === 0 ? (
-                        <option value="">No Token Source supports {props.agent}</option>
+            {props.hideTokenSource ? null : (
+                <div className="flex flex-col gap-1.5 px-3 pb-3">
+                    <label className="text-xs font-medium text-[var(--app-hint)]">
+                        Token Source
+                    </label>
+                    <select
+                        value={selectedTokenSource?.id ?? ''}
+                        onChange={(e) => props.onTokenSourceChange(e.target.value)}
+                        disabled={props.isFormDisabled || compatibleTokenSources.length === 0}
+                        className="w-full rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
+                    >
+                        {compatibleTokenSources.length === 0 ? (
+                            <option value="">No Token Source supports {props.agent}</option>
+                        ) : null}
+                        {compatibleTokenSources.map((tokenSource) => (
+                            <option key={tokenSource.id} value={tokenSource.id}>
+                                {tokenSource.name}
+                            </option>
+                        ))}
+                    </select>
+                    {selectedTokenSource ? (
+                        <div className="text-xs text-[var(--app-hint)]">
+                            {selectedTokenSource.baseUrl}
+                        </div>
+                    ) : compatibleTokenSources.length === 0 ? (
+                        <div className="text-xs text-[var(--app-hint)]">
+                            Add a compatible Token Source in Settings before creating this session.
+                        </div>
                     ) : null}
-                    {compatibleTokenSources.map((tokenSource) => (
-                        <option key={tokenSource.id} value={tokenSource.id}>
-                            {tokenSource.name}
-                        </option>
-                    ))}
-                </select>
-                {selectedTokenSource ? (
-                    <div className="text-xs text-[var(--app-hint)]">
-                        {selectedTokenSource.baseUrl}
-                    </div>
-                ) : compatibleTokenSources.length === 0 ? (
-                    <div className="text-xs text-[var(--app-hint)]">
-                        Add a compatible Token Source in Settings before creating this session.
-                    </div>
-                ) : null}
-            </div>
+                </div>
+            )}
 
             {props.agent === 'claude' ? (
                 <div className="flex flex-col gap-1.5 px-3 pb-3">

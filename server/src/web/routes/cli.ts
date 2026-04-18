@@ -18,6 +18,7 @@ import {
     waitForSessionOnline,
 } from './sessions'
 import { extractResumeSpawnExtras, extractResumeSpawnMetadata, resolveResumeTokenSourceSpawnOptions } from '../../resumeSpawnMetadata'
+import { getLocalTokenSourceEnabledForOrg, resolveTokenSourceForAgent } from '../tokenSources'
 import {
     getUnsupportedSessionSourceError,
     getSessionSourceFromMetadata,
@@ -1611,6 +1612,48 @@ export function createCliRoutes(
         const effectiveCaller = asNonEmptyString(parsed.data.caller) ?? asNonEmptyString(mainSessionMetadata?.caller)
         const effectiveBrainPreferences = asRecord(parsed.data.brainPreferences) ?? asRecord(mainSessionMetadata?.brainPreferences)
 
+        const childAgent: 'claude' | 'codex' = parsed.data.agent ?? 'claude'
+        const brainOrgId = mainSession?.orgId ?? machineResolved.machine.orgId ?? null
+
+        // brain-child only: spawned with `source: 'brain-child'`. Non-Brain callers skip token-source inheritance and Local-disabled checks.
+        const isBrainChildSpawn = parsed.data.source === 'brain-child'
+
+        // Machine-agent compatibility guard: validate here rather than letting spawnSession fail late.
+        // Even for non-brain-child flows this protects against inherited/selected agent mismatches.
+        const machineSupportedAgents = machineResolved.machine.supportedAgents
+        if (machineSupportedAgents && machineSupportedAgents.length > 0 && !machineSupportedAgents.includes(childAgent)) {
+            return c.json({ error: `Machine does not support agent "${childAgent}"` }, 400)
+        }
+
+        let inheritedTokenSource: Awaited<ReturnType<typeof resolveTokenSourceForAgent>> | null = null
+        if (isBrainChildSpawn && store && brainOrgId) {
+            const brainTokenSourceIds = asRecord(mainSessionMetadata?.brainTokenSourceIds)
+            const hasNewConfig = brainTokenSourceIds !== undefined
+            let inheritedId = asNonEmptyString(brainTokenSourceIds?.[childAgent])
+            if (!inheritedId) {
+                const legacyType = asNonEmptyString(mainSessionMetadata?.tokenSourceType)
+                const legacyId = asNonEmptyString(mainSessionMetadata?.tokenSourceId)
+                if (legacyId && legacyType === childAgent) {
+                    inheritedId = legacyId
+                }
+            }
+            if (inheritedId) {
+                const resolved = await resolveTokenSourceForAgent(store, brainOrgId, inheritedId, childAgent)
+                if ('error' in resolved) {
+                    return c.json({ error: `Brain Token Source unavailable for ${childAgent}: ${resolved.error}` }, resolved.status as 400 | 404)
+                }
+                inheritedTokenSource = resolved
+            } else if (hasNewConfig) {
+                // Brain was created via the dual-source flow (opt-in): admin explicitly chose its TS config,
+                // so enforce the Local-disabled guard strictly.
+                const localEnabled = await getLocalTokenSourceEnabledForOrg(store, brainOrgId)
+                if (!localEnabled) {
+                    return c.json({ error: `Brain does not have a ${childAgent} Token Source configured, and Local is disabled for this organization` }, 400)
+                }
+            }
+            // Legacy Brain (no brainTokenSourceIds) with no matching legacy TS: grandfathered — child falls back to Local.
+        }
+
         const result = await engine.spawnSession(
             parsed.data.machineId,
             parsed.data.directory,
@@ -1624,6 +1667,11 @@ export function createCliRoutes(
                 permissionMode: 'bypassPermissions',
                 modelMode: effectiveModelMode as any,
                 codexModel: parsed.data.codexModel,
+                tokenSourceId: inheritedTokenSource && 'tokenSource' in inheritedTokenSource ? inheritedTokenSource.tokenSource.id : undefined,
+                tokenSourceName: inheritedTokenSource && 'tokenSource' in inheritedTokenSource ? inheritedTokenSource.tokenSource.name : undefined,
+                tokenSourceType: inheritedTokenSource && 'tokenSource' in inheritedTokenSource ? childAgent : undefined,
+                tokenSourceBaseUrl: inheritedTokenSource && 'tokenSource' in inheritedTokenSource ? inheritedTokenSource.tokenSource.baseUrl : undefined,
+                tokenSourceApiKey: inheritedTokenSource && 'tokenSource' in inheritedTokenSource ? inheritedTokenSource.tokenSource.apiKey : undefined,
             }
         )
 
