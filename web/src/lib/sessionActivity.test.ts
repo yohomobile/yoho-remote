@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import type { SessionSummary } from '@/types/api'
-import { isIdleBrainChildSession, shouldShowSessionComposer } from './sessionActivity'
+import {
+    canQueueMessagesWhenInactive,
+    isArchivedSession,
+    isIdleBrainChildSession,
+    matchesArchiveFilter,
+    shouldShowSessionComposer,
+} from './sessionActivity'
 
 function createSession(
     overrides: Partial<Pick<SessionSummary, 'active' | 'pendingRequestsCount' | 'metadata'>> = {}
@@ -33,8 +39,26 @@ describe('sessionActivity', () => {
         }))).toBe(true)
     })
 
+    test('allows inactive queueing for main brain sessions', () => {
+        expect(canQueueMessagesWhenInactive(createSession({
+            metadata: {
+                path: '/tmp/brain',
+                source: 'brain',
+            },
+        }))).toBe(true)
+    })
+
     test('hides composer for brain-child sessions', () => {
         expect(shouldShowSessionComposer(createSession({
+            metadata: {
+                path: '/tmp/child',
+                source: 'brain-child',
+            },
+        }))).toBe(false)
+    })
+
+    test('does not allow inactive queueing for brain-child sessions', () => {
+        expect(canQueueMessagesWhenInactive(createSession({
             metadata: {
                 path: '/tmp/child',
                 source: 'brain-child',
@@ -77,5 +101,31 @@ describe('sessionActivity', () => {
                 source: 'brain',
             },
         }), false)).toBe(false)
+    })
+
+    test('treats lifecycleState=archived as archived even if the summary still says active', () => {
+        const archived = createSession({
+            active: true,
+            metadata: {
+                path: '/tmp/archived-child',
+                source: 'brain-child',
+                lifecycleState: 'archived',
+            },
+        })
+
+        expect(isArchivedSession(archived)).toBe(true)
+        expect(matchesArchiveFilter(archived, 'active')).toBe(false)
+        expect(matchesArchiveFilter(archived, 'archive')).toBe(true)
+    })
+
+    test('keeps regular inactive sessions visible in archive view', () => {
+        const inactive = createSession({
+            active: false,
+            metadata: {
+                path: '/tmp/inactive-session',
+            },
+        })
+
+        expect(matchesArchiveFilter(inactive, 'archive')).toBe(true)
     })
 })

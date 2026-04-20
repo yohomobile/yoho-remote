@@ -3,9 +3,10 @@ import type { AppendMessage, ThreadMessageLike } from '@assistant-ui/react'
 import { useExternalMessageConverter, useExternalStoreRuntime } from '@assistant-ui/react'
 import { deriveStableMessageId } from '@/chat/ids'
 import { renderEventLabel } from '@/chat/presentation'
-import type { ChatBlock, CliOutputBlock } from '@/chat/types'
+import type { ChatBlock, CliOutputBlock, UserTextBlock } from '@/chat/types'
 import type { AgentEvent, ToolCallBlock } from '@/chat/types'
-import type { MessageStatus as YohoRemoteMessageStatus, Session } from '@/types/api'
+import type { BrainMessageDelivery, MessageStatus as YohoRemoteMessageStatus, Session } from '@/types/api'
+import { canQueueMessagesWhenInactive } from '@/lib/sessionActivity'
 
 function safeStringify(value: unknown): string {
     if (typeof value === 'string') return value
@@ -20,6 +21,7 @@ function safeStringify(value: unknown): string {
 export type YohoRemoteChatMessageMetadata = {
     kind: 'user' | 'assistant' | 'tool' | 'event' | 'cli-output'
     status?: YohoRemoteMessageStatus
+    brainDelivery?: BrainMessageDelivery
     localId?: string | null
     originalText?: string
     toolCallId?: string
@@ -30,7 +32,116 @@ export type YohoRemoteChatMessageMetadata = {
 type ThreadMessageParts = Exclude<ThreadMessageLike['content'], string>
 type AssistantBlock = Extract<ChatBlock, { kind: 'agent-text' | 'agent-reasoning' | 'tool-call' }>
 
-function createUserThreadMessage(block: Extract<ChatBlock, { kind: 'user-text' }>): ThreadMessageLike {
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object'
+}
+
+function readBrainDelivery(block: UserTextBlock): BrainMessageDelivery | undefined {
+    if (!isRecord(block.meta)) {
+        return undefined
+    }
+    const raw = block.meta.brainDelivery
+    if (!isRecord(raw)) {
+        return undefined
+    }
+    const phase = raw.phase
+    const acceptedAt = raw.acceptedAt
+    if (
+        phase !== 'queued'
+        && phase !== 'pending_consume'
+        && phase !== 'consuming'
+        && phase !== 'merged'
+    ) {
+        return undefined
+    }
+    if (typeof acceptedAt !== 'number' || !Number.isFinite(acceptedAt)) {
+        return undefined
+    }
+    return { phase, acceptedAt }
+}
+
+function isConsumptionBoundary(block: ChatBlock): boolean {
+    if (block.kind === 'agent-text' || block.kind === 'agent-reasoning' || block.kind === 'tool-call') {
+        return true
+    }
+    return block.kind === 'agent-event' && block.event.type === 'brain-child-callback'
+}
+
+function countConsumptionBoundariesAfter(
+    index: number,
+    blocks: readonly ChatBlock[],
+): number {
+    let boundaries = 0
+    for (let i = index + 1; i < blocks.length; i += 1) {
+        const next = blocks[i]
+        if (!next) continue
+        if (next.kind === 'user-text') {
+            break
+        }
+        if (isConsumptionBoundary(next)) {
+            boundaries += 1
+        }
+    }
+    return boundaries
+}
+
+function deriveBrainDelivery(
+    block: UserTextBlock,
+    index: number,
+    blocks: readonly ChatBlock[],
+    session?: Session,
+): BrainMessageDelivery | undefined {
+    const raw = readBrainDelivery(block)
+    if (!raw) {
+        return undefined
+    }
+
+    const boundaries = countConsumptionBoundariesAfter(index, blocks)
+    const requiredBoundaries = raw.phase === 'pending_consume' ? 2 : 1
+    if (boundaries >= requiredBoundaries) {
+        return {
+            ...raw,
+            phase: 'merged',
+        }
+    }
+
+    if (!session) {
+        return raw
+    }
+    if (!session.active) {
+        return {
+            ...raw,
+            phase: 'queued',
+        }
+    }
+    if (raw.phase === 'pending_consume') {
+        if (boundaries >= 1 || !session.thinking) {
+            return {
+                ...raw,
+                phase: 'consuming',
+            }
+        }
+        return {
+            ...raw,
+            phase: 'pending_consume',
+        }
+    }
+    if (raw.phase === 'consuming') {
+        return {
+            ...raw,
+            phase: 'consuming',
+        }
+    }
+    return {
+        ...raw,
+        phase: 'consuming',
+    }
+}
+
+function createUserThreadMessage(
+    block: Extract<ChatBlock, { kind: 'user-text' }>,
+    brainDelivery?: BrainMessageDelivery,
+): ThreadMessageLike {
     return {
         role: 'user',
         id: `user:${block.id}`,
@@ -40,6 +151,7 @@ function createUserThreadMessage(block: Extract<ChatBlock, { kind: 'user-text' }
             custom: {
                 kind: 'user',
                 status: block.status,
+                brainDelivery,
                 localId: block.localId,
                 originalText: block.originalText
             } satisfies YohoRemoteChatMessageMetadata
@@ -148,7 +260,10 @@ function appendAssistantBlock(
     })
 }
 
-export function convertBlocksToThreadMessages(blocks: readonly ChatBlock[]): ThreadMessageLike[] {
+export function convertBlocksToThreadMessages(
+    blocks: readonly ChatBlock[],
+    session?: Session,
+): ThreadMessageLike[] {
     const messages: ThreadMessageLike[] = []
     let pendingAssistantBlocks: AssistantBlock[] = []
 
@@ -160,7 +275,7 @@ export function convertBlocksToThreadMessages(blocks: readonly ChatBlock[]): Thr
         pendingAssistantBlocks = []
     }
 
-    for (const block of blocks) {
+    for (const [index, block] of blocks.entries()) {
         if (block.kind === 'agent-text' || block.kind === 'agent-reasoning' || block.kind === 'tool-call') {
             pendingAssistantBlocks.push(block)
             continue
@@ -169,7 +284,7 @@ export function convertBlocksToThreadMessages(blocks: readonly ChatBlock[]): Thr
         flushAssistant()
 
         if (block.kind === 'user-text') {
-            messages.push(createUserThreadMessage(block))
+            messages.push(createUserThreadMessage(block, deriveBrainDelivery(block, index, blocks, session)))
             continue
         }
 
@@ -206,8 +321,8 @@ export function useYohoRemoteRuntime(props: {
     onAbort: () => Promise<void>
 }) {
     const groupedMessages = useMemo(
-        () => convertBlocksToThreadMessages(props.blocks),
-        [props.blocks]
+        () => convertBlocksToThreadMessages(props.blocks, props.session),
+        [props.blocks, props.session]
     )
     const convertedMessages = useExternalMessageConverter<ThreadMessageLike>({
         callback: (message) => message,
@@ -228,13 +343,13 @@ export function useYohoRemoteRuntime(props: {
     // Memoize the adapter to avoid recreating on every render
     // useExternalStoreRuntime may use adapter identity for subscriptions
     const adapter = useMemo(() => ({
-        isDisabled: !props.session.active || props.isSending,
+        isDisabled: (!props.session.active && !canQueueMessagesWhenInactive(props.session)) || props.isSending,
         isRunning: props.session.thinking,
         messages: convertedMessages,
         onNew,
         onCancel,
         unstable_capabilities: { copy: true }
-    }), [props.session.active, props.isSending, props.session.thinking, convertedMessages, onNew, onCancel])
+    }), [props.session, props.isSending, convertedMessages, onNew, onCancel])
 
     return useExternalStoreRuntime(adapter)
 }

@@ -1,14 +1,17 @@
 import { useAssistantState } from '@assistant-ui/react'
 import { getEventPresentation } from '@/chat/presentation'
 import type { AgentEvent } from '@/chat/types'
+import { BrainChildCallbackActions } from '@/components/BrainChildActions'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import type { YohoRemoteChatMessageMetadata } from '@/lib/assistant-runtime'
+import { useAppContext } from '@/lib/app-context'
 
 function isBrainChildCallbackEvent(event: AgentEvent | undefined): event is Extract<AgentEvent, { type: 'brain-child-callback' }> {
     return event?.type === 'brain-child-callback'
 }
 
 export function YohoRemoteSystemMessage() {
+    const { api } = useAppContext()
     const messageId = useAssistantState(({ message }) => message.id)
     const role = useAssistantState(({ message }) => message.role)
     const text = useAssistantState(({ message }) => {
@@ -50,6 +53,13 @@ export function YohoRemoteSystemMessage() {
                     <div className="mt-2 text-sm font-semibold text-[var(--app-fg)]">
                         {event.title ?? '未命名子任务'}
                     </div>
+
+                    {event.sessionId ? (
+                        <BrainChildCallbackActions
+                            api={api}
+                            sessionId={event.sessionId}
+                        />
+                    ) : null}
 
                     {event.previousSummary ? (
                         <div className="mt-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-bg)]/65 px-3 py-2">

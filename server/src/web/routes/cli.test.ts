@@ -1,5 +1,6 @@
-import { beforeAll, describe, expect, it } from 'bun:test'
+import { beforeAll, describe, expect, it, mock } from 'bun:test'
 import { Hono } from 'hono'
+import { buildBrainSessionPreferences } from '../../brain/brainSessionPreferences'
 import { configuration, createConfiguration } from '../../configuration'
 import { createCliRoutes } from './cli'
 
@@ -8,6 +9,13 @@ function authHeaders() {
         authorization: `Bearer ${configuration.cliApiToken}`,
         'content-type': 'application/json',
     }
+}
+
+function createBrainPreferences(machineId = 'machine-1') {
+    return buildBrainSessionPreferences({
+        machineSelectionMode: 'manual',
+        machineId,
+    })
 }
 
 describe('createCliRoutes projects', () => {
@@ -114,6 +122,118 @@ describe('createCliRoutes projects', () => {
         expect(removeProjectCalled).toBe(false)
     })
 
+    it('includes brain-child initDone in the CLI session list payload', async () => {
+        const childSession = {
+            id: 'child-session',
+            namespace: 'default',
+            active: true,
+            activeAt: 1_700_000_000_100,
+            thinking: false,
+            modelMode: 'sonnet',
+            agentState: null,
+            metadata: {
+                path: '/tmp/task',
+                source: 'brain-child',
+                machineId: 'machine-1',
+                flavor: 'claude',
+                summary: {
+                    text: 'Child summary',
+                    updatedAt: 1_700_000_000_000,
+                },
+                mainSessionId: 'brain-main',
+                brainSummary: 'previous work',
+            },
+        }
+
+        const engine = {
+            getSessionsByNamespace: () => [childSession],
+            isBrainChildInitDone: (sessionId: string) => sessionId === childSession.id ? false : true,
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/sessions', {
+            method: 'GET',
+            headers: authHeaders(),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            sessions: [{
+                id: 'child-session',
+                active: true,
+                activeAt: 1_700_000_000_100,
+                thinking: false,
+                initDone: false,
+                modelMode: 'sonnet',
+                pendingRequestsCount: 0,
+                metadata: {
+                    path: '/tmp/task',
+                    source: 'brain-child',
+                    machineId: 'machine-1',
+                    flavor: 'claude',
+                    summary: {
+                        text: 'Child summary',
+                        updatedAt: 1_700_000_000_000,
+                    },
+                    mainSessionId: 'brain-main',
+                    brainSummary: 'previous work',
+                },
+            }],
+        })
+    })
+
+    it('archives brain sessions by default and still requests runtime shutdown for inactive sessions', async () => {
+        const archiveCalls: Array<{ sessionId: string; options: Record<string, unknown> }> = []
+        let hardDeleteCalls = 0
+        const session = {
+            id: 'child-session',
+            namespace: 'default',
+            active: false,
+            metadata: {
+                path: '/tmp/task',
+                source: 'brain-child',
+                machineId: 'machine-1',
+                flavor: 'claude',
+            },
+        }
+
+        const engine = {
+            getSessionByNamespace: () => session,
+            getSession: () => session,
+            archiveSession: async (sessionId: string, options: Record<string, unknown>) => {
+                archiveCalls.push({ sessionId, options })
+                return true
+            },
+            deleteSession: async () => {
+                hardDeleteCalls += 1
+                return true
+            },
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/sessions/child-session', {
+            method: 'DELETE',
+            headers: authHeaders(),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ ok: true })
+        expect(archiveCalls).toEqual([{
+            sessionId: 'child-session',
+            options: {
+                terminateSession: true,
+                force: true,
+                archivedBy: 'brain',
+                archiveReason: 'Brain closed session',
+            },
+        }])
+        expect(hardDeleteCalls).toBe(0)
+    })
+
     it('passes brain metadata during child spawn without relying on a post-online metadata patch', async () => {
         let spawnedOptions: Record<string, unknown> | undefined
         let patchSessionMetadataCalled = 0
@@ -133,9 +253,7 @@ describe('createCliRoutes projects', () => {
             metadata: {
                 source: 'brain',
                 caller: 'feishu',
-                brainPreferences: {
-                    machineSelection: { mode: 'manual', machineId: 'machine-1' },
-                },
+                brainPreferences: createBrainPreferences(),
             },
         }
 
@@ -184,9 +302,7 @@ describe('createCliRoutes projects', () => {
                     orgId: 'org-1',
                     metadata: {
                         caller: 'feishu',
-                        brainPreferences: {
-                            machineSelection: { mode: 'manual', machineId: 'machine-1' },
-                        },
+                        brainPreferences: createBrainPreferences(),
                     },
                 }
                 : null,
@@ -214,9 +330,7 @@ describe('createCliRoutes projects', () => {
             source: 'brain-child',
             mainSessionId: 'brain-main',
             caller: 'feishu',
-            brainPreferences: {
-                machineSelection: { mode: 'manual', machineId: 'machine-1' },
-            },
+            brainPreferences: createBrainPreferences(),
             permissionMode: 'bypassPermissions',
         }))
 
@@ -225,6 +339,152 @@ describe('createCliRoutes projects', () => {
         expect(spawnSessionCalled).toBe(1)
         expect(patchSessionMetadataCalled).toBe(0)
         expect(sendMessageCalled).toBe(1)
+    })
+
+    it('uses Codex-compatible permission mode when spawning a brain child', async () => {
+        let spawnedOptions: Record<string, unknown> | undefined
+
+        const session = {
+            id: 'child-session',
+            active: true,
+            metadata: {
+                path: '/tmp/child-session',
+            },
+        }
+        const mainBrainSession = {
+            id: 'brain-main',
+            namespace: 'default',
+            metadata: {
+                source: 'brain',
+                caller: 'feishu',
+                brainPreferences: createBrainPreferences(),
+            },
+        }
+
+        const engine = {
+            getMachineByNamespace: () => ({
+                id: 'machine-1',
+                active: true,
+                metadata: {},
+                namespace: 'default',
+                supportedAgents: ['codex'],
+            }),
+            getSessionByNamespace: (sessionId: string) => {
+                if (sessionId === 'brain-main') return mainBrainSession
+                if (sessionId === 'child-session') return session
+                return null
+            },
+            getSession: (sessionId: string) => {
+                if (sessionId === 'brain-main') return mainBrainSession
+                if (sessionId === 'child-session') return session
+                return null
+            },
+            spawnSession: async (_machineId: string, _directory: string, _agent: string, _yolo: boolean, options?: Record<string, unknown>) => {
+                spawnedOptions = options
+                return { type: 'success', sessionId: 'child-session' }
+            },
+            waitForSocketInRoom: async () => true,
+            sendMessage: async () => true,
+            subscribe: () => () => {},
+        }
+
+        const store = {
+            getSessionByNamespace: async (sessionId: string) => sessionId === 'brain-main'
+                ? {
+                    id: 'brain-main',
+                    orgId: 'org-1',
+                    metadata: mainBrainSession.metadata,
+                }
+                : null,
+            setSessionOrgId: async () => true,
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any, undefined, store as any))
+
+        const response = await app.request('/cli/brain/spawn', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                directory: '/tmp/task',
+                agent: 'codex',
+                codexModel: 'gpt-5.4-mini',
+                source: 'brain-child',
+                mainSessionId: 'brain-main',
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ type: 'success', sessionId: 'child-session' })
+        expect(spawnedOptions).toEqual(expect.objectContaining({
+            source: 'brain-child',
+            mainSessionId: 'brain-main',
+            permissionMode: 'yolo',
+            modelMode: 'gpt-5.4-mini',
+        }))
+    })
+
+    it('rejects child spawn when inherited brainPreferences metadata is invalid', async () => {
+        let spawnCalled = false
+        const mainBrainSession = {
+            id: 'brain-main',
+            namespace: 'default',
+            metadata: {
+                source: 'brain',
+                caller: 'feishu',
+                brainPreferences: {
+                    machineSelection: { mode: 'manual' },
+                },
+            },
+        }
+
+        const engine = {
+            getMachineByNamespace: () => ({
+                id: 'machine-1',
+                active: true,
+                metadata: {},
+                namespace: 'default',
+                supportedAgents: ['codex'],
+            }),
+            getSessionByNamespace: (sessionId: string) => sessionId === 'brain-main' ? mainBrainSession : null,
+            getSession: (sessionId: string) => sessionId === 'brain-main' ? mainBrainSession : null,
+            spawnSession: async () => {
+                spawnCalled = true
+                return { type: 'success', sessionId: 'child-session' }
+            },
+        }
+
+        const store = {
+            getSessionByNamespace: async (sessionId: string) => sessionId === 'brain-main'
+                ? {
+                    id: 'brain-main',
+                    orgId: 'org-1',
+                    metadata: mainBrainSession.metadata,
+                }
+                : null,
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any, undefined, store as any))
+
+        const response = await app.request('/cli/brain/spawn', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                directory: '/tmp/task',
+                agent: 'codex',
+                source: 'brain-child',
+                mainSessionId: 'brain-main',
+            }),
+        })
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({
+            error: 'Parent brain session has invalid brainPreferences metadata; repair it before spawning children',
+        })
+        expect(spawnCalled).toBe(false)
     })
 
     it('rejects brain-child spawn requests without mainSessionId', async () => {
@@ -576,6 +836,73 @@ describe('createCliRoutes projects', () => {
         expect(spawnSessionCalled).toBe(0)
     })
 
+    it('brain-child rejects spawn when brainPreferences disallow the child agent', async () => {
+        let spawnSessionCalled = 0
+        const mainBrainSession = {
+            id: 'brain-main',
+            namespace: 'default',
+            metadata: {
+                source: 'brain',
+                brainPreferences: {
+                    machineSelection: { mode: 'manual', machineId: 'machine-1' },
+                    childModels: {
+                        claude: { allowed: [], defaultModel: 'sonnet' },
+                        codex: { allowed: ['gpt-5.4'], defaultModel: 'gpt-5.4' },
+                    },
+                },
+            },
+        }
+        const engine = {
+            getMachineByNamespace: () => ({
+                id: 'machine-1',
+                active: true,
+                metadata: {},
+                namespace: 'default',
+                orgId: 'org-1',
+                supportedAgents: ['claude', 'codex'],
+            }),
+            getSessionByNamespace: (sessionId: string) =>
+                sessionId === mainBrainSession.id ? mainBrainSession : null,
+            getSession: () => null,
+            spawnSession: async () => {
+                spawnSessionCalled += 1
+                return { type: 'success', sessionId: 'should-not-spawn' }
+            },
+        }
+        const store = {
+            getSessionByNamespace: async () => ({ id: 'brain-main', orgId: 'org-1', metadata: mainBrainSession.metadata }),
+            getOrganization: async () => ({
+                id: 'org-1',
+                name: 'Org 1',
+                slug: 'org-1',
+                createdBy: 'owner@example.com',
+                createdAt: 1,
+                updatedAt: 1,
+                settings: {},
+            }),
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any, undefined, store as any))
+
+        const response = await app.request('/cli/brain/spawn', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                directory: '/tmp/task',
+                agent: 'claude',
+                source: 'brain-child',
+                mainSessionId: 'brain-main',
+            }),
+        })
+
+        expect(response.status).toBe(400)
+        const body = await response.json() as { error?: string }
+        expect(body.error).toContain('does not allow child agent "claude"')
+        expect(spawnSessionCalled).toBe(0)
+    })
+
     it('brain-child rejects spawn when machine does not support child agent', async () => {
         let spawnSessionCalled = 0
         const mainBrainSession = {
@@ -634,6 +961,137 @@ describe('createCliRoutes projects', () => {
         expect(spawnSessionCalled).toBe(0)
     })
 
+    it('logs webhook timing in brain spawn perf summary when spawn fails after webhook wait starts', async () => {
+        const mainBrainSession = {
+            id: 'brain-main',
+            namespace: 'default',
+            metadata: {
+                source: 'brain',
+            },
+        }
+        const engine = {
+            getMachineByNamespace: () => ({
+                id: 'machine-1',
+                active: true,
+                metadata: {},
+                namespace: 'default',
+                supportedAgents: ['claude'],
+            }),
+            getSessionByNamespace: (sessionId: string) =>
+                sessionId === mainBrainSession.id ? mainBrainSession : null,
+            getSession: () => null,
+            spawnSession: async () => ({
+                type: 'error',
+                message: 'Session webhook timeout for PID 42',
+                logs: [
+                    { timestamp: 1_000, step: 'init', message: 'Starting session spawn', status: 'running' },
+                    { timestamp: 1_100, step: 'spawn', message: 'Spawning CLI process: yoho-remote claude', status: 'running' },
+                    { timestamp: 1_300, step: 'spawn', message: 'Process spawned with PID: 42', status: 'success' },
+                    { timestamp: 1_350, step: 'webhook', message: 'Waiting for session to report back (PID: 42)...', status: 'running' },
+                    { timestamp: 2_550, step: 'webhook', message: 'Session webhook timeout for PID 42', status: 'error' },
+                    { timestamp: 2_560, step: 'error', message: 'Failed to spawn session: Session webhook timeout for PID 42', status: 'error' },
+                ],
+            }),
+        }
+        const warn = mock(() => {})
+        const originalWarn = console.warn
+        console.warn = warn as typeof console.warn
+
+        try {
+            const app = new Hono()
+            app.route('/cli', createCliRoutes(() => engine as any))
+
+            const response = await app.request('/cli/brain/spawn', {
+                method: 'POST',
+                headers: authHeaders(),
+                body: JSON.stringify({
+                    machineId: 'machine-1',
+                    directory: '/tmp/task',
+                    agent: 'claude',
+                    source: 'brain-child',
+                    mainSessionId: 'brain-main',
+                }),
+            })
+
+            expect(response.status).toBe(200)
+            expect(await response.json()).toMatchObject({
+                type: 'error',
+                message: 'Session webhook timeout for PID 42',
+            })
+            expect(warn).toHaveBeenCalledTimes(1)
+            const loggedMessage = String((warn as any).mock.calls[0]?.[0] ?? '')
+            expect(loggedMessage).toContain('daemon_cli_spawn=200ms')
+            expect(loggedMessage).toContain('daemon_webhook=1200ms')
+        } finally {
+            console.warn = originalWarn
+        }
+    })
+
+    it('logs spawn timing in brain spawn perf summary when daemon fails before webhook wait starts', async () => {
+        const mainBrainSession = {
+            id: 'brain-main',
+            namespace: 'default',
+            metadata: {
+                source: 'brain',
+            },
+        }
+        const engine = {
+            getMachineByNamespace: () => ({
+                id: 'machine-1',
+                active: true,
+                metadata: {},
+                namespace: 'default',
+                supportedAgents: ['claude'],
+            }),
+            getSessionByNamespace: (sessionId: string) =>
+                sessionId === mainBrainSession.id ? mainBrainSession : null,
+            getSession: () => null,
+            spawnSession: async () => ({
+                type: 'error',
+                message: 'Failed to spawn YR process - no PID returned',
+                logs: [
+                    { timestamp: 2_000, step: 'init', message: 'Starting session spawn', status: 'running' },
+                    { timestamp: 2_120, step: 'spawn', message: 'Spawning CLI process: yoho-remote claude', status: 'running' },
+                    { timestamp: 2_620, step: 'spawn', message: 'Failed to spawn process - no PID returned', status: 'error' },
+                    { timestamp: 2_630, step: 'error', message: 'Failed to spawn session: no pid', status: 'error' },
+                ],
+            }),
+        }
+        const warn = mock(() => {})
+        const originalWarn = console.warn
+        console.warn = warn as typeof console.warn
+
+        try {
+            const app = new Hono()
+            app.route('/cli', createCliRoutes(() => engine as any))
+
+            const response = await app.request('/cli/brain/spawn', {
+                method: 'POST',
+                headers: authHeaders(),
+                body: JSON.stringify({
+                    machineId: 'machine-1',
+                    directory: '/tmp/task',
+                    agent: 'claude',
+                    source: 'brain-child',
+                    mainSessionId: 'brain-main',
+                }),
+            })
+
+            expect(response.status).toBe(200)
+            expect(await response.json()).toMatchObject({
+                type: 'error',
+                message: 'Failed to spawn YR process - no PID returned',
+            })
+            expect(warn).toHaveBeenCalledTimes(1)
+            const loggedMessage = String((warn as any).mock.calls[0]?.[0] ?? '')
+            expect(loggedMessage).toContain('daemon_prep=120ms')
+            expect(loggedMessage).toContain('daemon_cli_spawn=500ms')
+            expect(loggedMessage).toContain('daemon_webhook=n/a')
+        } finally {
+            console.warn = originalWarn
+        }
+    })
+
     it('aborts a namespaced session through the CLI route', async () => {
         let abortedSessionId: string | null = null
         const session = {
@@ -667,7 +1125,7 @@ describe('createCliRoutes projects', () => {
         expect(String(abortedSessionId)).toBe('child-session')
     })
 
-    it('returns a machine-readable busy verdict for session_send without enqueuing', async () => {
+    it('returns a machine-readable busy verdict for non-brain session_send without enqueuing', async () => {
         let sendCalled = 0
         const session = {
             id: 'child-session',
@@ -676,6 +1134,7 @@ describe('createCliRoutes projects', () => {
             thinking: true,
             metadata: {
                 path: '/tmp/child-session',
+                source: 'brain-child',
             },
         }
         const engine = {
@@ -708,6 +1167,114 @@ describe('createCliRoutes projects', () => {
             retryable: true,
         })
         expect(sendCalled).toBe(0)
+    })
+
+    it('returns the previous success verdict for duplicate idempotent retries on busy non-brain sessions', async () => {
+        let sendCalled = 0
+        const session = {
+            id: 'child-session',
+            namespace: 'default',
+            active: true,
+            thinking: true,
+            metadata: {
+                path: '/tmp/child-session',
+                source: 'brain-child',
+            },
+        }
+        const engine = {
+            getSessionByNamespace: (sessionId: string, namespace: string) =>
+                sessionId === session.id && namespace === session.namespace ? session : null,
+            getSession: (sessionId: string) => sessionId === session.id ? session : null,
+            getSendOutcomeForCachedLocalId: (sessionId: string, localId: string) => (
+                sessionId === session.id && localId === 'msg-123'
+                    ? { status: 'delivered' as const }
+                    : null
+            ),
+            sendMessage: async () => {
+                sendCalled += 1
+                return { status: 'delivered' }
+            },
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/sessions/child-session/messages', {
+            method: 'POST',
+            headers: {
+                ...authHeaders(),
+                'idempotency-key': 'msg-123',
+            },
+            body: JSON.stringify({
+                text: 'run task',
+                sentFrom: 'brain',
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            ok: true,
+            status: 'delivered',
+            sessionId: 'child-session',
+        })
+        expect(sendCalled).toBe(0)
+    })
+
+    it('queues busy brain session messages instead of rejecting them and forwards idempotency-key as localId', async () => {
+        let sendPayload: Record<string, unknown> | null = null
+        const session = {
+            id: 'brain-session',
+            namespace: 'default',
+            active: true,
+            thinking: true,
+            metadata: {
+                path: '/tmp/brain-session',
+                source: 'brain',
+            },
+        }
+        const engine = {
+            getSessionByNamespace: (sessionId: string, namespace: string) =>
+                sessionId === session.id && namespace === session.namespace ? session : null,
+            getSession: (sessionId: string) => sessionId === session.id ? session : null,
+            sendMessage: async (_sessionId: string, payload: Record<string, unknown>) => {
+                sendPayload = payload
+                return {
+                    status: 'queued',
+                    queue: 'brain-session-inbox',
+                    queueDepth: 1,
+                }
+            },
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/sessions/brain-session/messages', {
+            method: 'POST',
+            headers: {
+                ...authHeaders(),
+                'idempotency-key': 'msg-123',
+            },
+            body: JSON.stringify({
+                text: '继续处理',
+                sentFrom: 'webapp',
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            ok: true,
+            status: 'queued',
+            sessionId: 'brain-session',
+            queue: 'brain-session-inbox',
+            queueDepth: 1,
+        })
+        expect(sendPayload).not.toBeNull()
+        expect(sendPayload!).toEqual({
+            text: '继续处理',
+            localId: 'msg-123',
+            sentFrom: 'webapp',
+        })
     })
 
     it('returns a machine-readable offline verdict for session_send without delivering', async () => {
@@ -858,6 +1425,91 @@ describe('createCliRoutes projects', () => {
         })
     })
 
+    it('accepts Codex default permissionMode through the CLI config route', async () => {
+        let appliedConfig: Record<string, unknown> | null = null
+        const session = {
+            id: 'codex-session',
+            namespace: 'default',
+            active: true,
+            metadata: {
+                path: '/tmp/codex-session',
+                flavor: 'codex',
+            },
+        }
+        const engine = {
+            getSessionByNamespace: (sessionId: string, namespace: string) =>
+                sessionId === session.id && namespace === session.namespace ? session : null,
+            getSession: (sessionId: string) => sessionId === session.id ? session : null,
+            applySessionConfig: async (_sessionId: string, config: Record<string, unknown>) => {
+                appliedConfig = config
+                return {
+                    permissionMode: config.permissionMode,
+                }
+            },
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/sessions/codex-session/config', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                permissionMode: 'default',
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            ok: true,
+            applied: {
+                permissionMode: 'default',
+            },
+        })
+        expect(appliedConfig ?? {}).toEqual({
+            permissionMode: 'default',
+        })
+    })
+
+    it('rejects bypassPermissions for Codex through the CLI config route', async () => {
+        let applyCalled = false
+        const session = {
+            id: 'codex-session',
+            namespace: 'default',
+            active: true,
+            metadata: {
+                path: '/tmp/codex-session',
+                flavor: 'codex',
+            },
+        }
+        const engine = {
+            getSessionByNamespace: (sessionId: string, namespace: string) =>
+                sessionId === session.id && namespace === session.namespace ? session : null,
+            getSession: (sessionId: string) => sessionId === session.id ? session : null,
+            applySessionConfig: async () => {
+                applyCalled = true
+                return {}
+            },
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/sessions/codex-session/config', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                permissionMode: 'bypassPermissions',
+            }),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Codex sessions do not support permissionMode=bypassPermissions',
+        })
+        expect(applyCalled).toBe(false)
+    })
+
     it('resumes an offline child session through the CLI route', async () => {
         const session = {
             id: 'brain-child-old',
@@ -876,9 +1528,7 @@ describe('createCliRoutes projects', () => {
                 source: 'brain-child',
                 mainSessionId: 'brain-main',
                 caller: 'feishu',
-                brainPreferences: {
-                    machineSelection: { mode: 'manual', machineId: 'machine-1' },
-                },
+                brainPreferences: createBrainPreferences(),
                 codexSessionId: 'thread-brain-child',
             },
             metadataVersion: 1,
@@ -938,13 +1588,91 @@ describe('createCliRoutes projects', () => {
             source: 'brain-child',
             mainSessionId: 'brain-main',
             caller: 'feishu',
-            brainPreferences: {
-                machineSelection: { mode: 'manual', machineId: 'machine-1' },
-            },
+            brainPreferences: createBrainPreferences(),
         })])
     })
 
+    it('rejects CLI resume when brainPreferences metadata is invalid', async () => {
+        let spawnCalled = false
+        const session = {
+            id: 'brain-child-bad',
+            namespace: 'default',
+            active: false,
+            activeAt: 0,
+            createdAt: 0,
+            updatedAt: 0,
+            lastMessageAt: null,
+            createdBy: null,
+            metadata: {
+                path: '/tmp/brain-child',
+                machineId: 'machine-1',
+                flavor: 'codex',
+                source: 'brain-child',
+                mainSessionId: 'brain-main',
+                brainPreferences: {
+                    childModels: {
+                        codex: { allowed: ['gpt-5.4'], defaultModel: 'gpt-5.4' },
+                    },
+                },
+                codexSessionId: 'thread-bad',
+            },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            activeMonitors: [],
+            thinking: false,
+            thinkingAt: 0,
+            permissionMode: 'yolo',
+            modelMode: 'gpt-5.4',
+        }
+
+        const engine = {
+            getSessionByNamespace: (sessionId: string, namespace: string) =>
+                sessionId === session.id && namespace === session.namespace ? session : null,
+            getSession: (sessionId: string) => sessionId === session.id ? session : null,
+            getMachineByNamespace: () => ({ id: 'machine-1', active: true, metadata: {}, namespace: 'default' }),
+            checkPathsExist: async () => ({ '/tmp/brain-child': true }),
+            spawnSession: async () => {
+                spawnCalled = true
+                return { type: 'success', sessionId: session.id }
+            },
+            subscribe: () => () => {},
+        }
+
+        const store = {
+            getSessionByNamespace: async () => ({
+                id: session.id,
+                namespace: session.namespace,
+                orgId: null,
+                metadata: session.metadata,
+                active: false,
+            }),
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any, undefined, store as any))
+
+        const response = await app.request(`/cli/sessions/${session.id}/resume`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({}),
+        })
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({
+            error: 'Session has invalid brainPreferences metadata; repair it before resuming',
+        })
+        expect(spawnCalled).toBe(false)
+    })
+
     it('returns orchestration-focused diagnostics from the inspect route', async () => {
+        const mainSession = {
+            id: 'brain-main',
+            namespace: 'default',
+            metadata: {
+                source: 'brain',
+            },
+        }
         const session = {
             id: 'child-session',
             namespace: 'default',
@@ -970,6 +1698,13 @@ describe('createCliRoutes projects', () => {
                 },
                 mainSessionId: 'brain-main',
                 brainSummary: 'previous work',
+                selfSystemEnabled: true,
+                selfProfileId: 'profile-1',
+                selfProfileName: 'K1',
+                selfProfileResolved: true,
+                selfMemoryProvider: 'yoho-memory',
+                selfMemoryAttached: false,
+                selfMemoryStatus: 'error',
             },
             metadataVersion: 1,
             agentState: {
@@ -1013,8 +1748,13 @@ describe('createCliRoutes projects', () => {
 
         const engine = {
             getSessionByNamespace: (sessionId: string, namespace: string) =>
-                sessionId === session.id && namespace === session.namespace ? session : null,
-            getSession: (sessionId: string) => sessionId === session.id ? session : null,
+                sessionId === session.id && namespace === session.namespace
+                    ? session
+                    : sessionId === mainSession.id && namespace === mainSession.namespace
+                        ? mainSession
+                        : null,
+            getSession: (sessionId: string) =>
+                sessionId === session.id ? session : sessionId === mainSession.id ? mainSession : null,
             getMessageCount: async () => 42,
             getLastUsageForSession: async () => ({
                 input_tokens: 1200,
@@ -1027,7 +1767,7 @@ describe('createCliRoutes projects', () => {
         const app = new Hono()
         app.route('/cli', createCliRoutes(() => engine as any))
 
-        const response = await app.request('/cli/sessions/child-session/inspect', {
+        const response = await app.request('/cli/sessions/child-session/inspect?mainSessionId=brain-main', {
             method: 'GET',
             headers: authHeaders(),
         })
@@ -1050,6 +1790,8 @@ describe('createCliRoutes projects', () => {
                 path: '/tmp/child-session',
                 mainSessionId: 'brain-main',
                 brainSummary: 'previous work',
+                selfProfileName: 'K1',
+                selfMemoryStatus: 'error',
             }),
             contextWindow: expect.objectContaining({
                 usedTokens: 12_345,
@@ -1058,19 +1800,33 @@ describe('createCliRoutes projects', () => {
     })
 
     it('returns recent real tail fragments instead of weak counters', async () => {
+        const mainSession = {
+            id: 'brain-main',
+            namespace: 'default',
+            metadata: {
+                source: 'brain',
+            },
+        }
         const session = {
             id: 'child-session',
             namespace: 'default',
             active: true,
             metadata: {
                 path: '/tmp/child-session',
+                source: 'brain-child',
+                mainSessionId: 'brain-main',
             },
         }
 
         const engine = {
             getSessionByNamespace: (sessionId: string, namespace: string) =>
-                sessionId === session.id && namespace === session.namespace ? session : null,
-            getSession: (sessionId: string) => sessionId === session.id ? session : null,
+                sessionId === session.id && namespace === session.namespace
+                    ? session
+                    : sessionId === mainSession.id && namespace === mainSession.namespace
+                        ? mainSession
+                        : null,
+            getSession: (sessionId: string) =>
+                sessionId === session.id ? session : sessionId === mainSession.id ? mainSession : null,
             getMessagesPage: async () => ({
                 messages: [{
                     id: 'm-1',
@@ -1151,7 +1907,7 @@ describe('createCliRoutes projects', () => {
         const app = new Hono()
         app.route('/cli', createCliRoutes(() => engine as any))
 
-        const response = await app.request('/cli/sessions/child-session/tail?limit=3', {
+        const response = await app.request('/cli/sessions/child-session/tail?mainSessionId=brain-main&limit=3', {
             method: 'GET',
             headers: authHeaders(),
         })
@@ -1190,6 +1946,164 @@ describe('createCliRoutes projects', () => {
             oldestSeq: 1,
             hasMoreHistory: false,
         })
+    })
+
+    it('filters the session list to children of the requested main brain session', async () => {
+        const mainSession = {
+            id: 'brain-main',
+            namespace: 'default',
+            active: true,
+            activeAt: 10,
+            thinking: false,
+            metadata: {
+                source: 'brain',
+            },
+        }
+        const matchingChild = {
+            id: 'child-match',
+            namespace: 'default',
+            active: true,
+            activeAt: 20,
+            thinking: false,
+            modelMode: 'gpt-5.4',
+            agentState: { requests: {} },
+            metadata: {
+                path: '/tmp/match',
+                source: 'brain-child',
+                flavor: 'codex',
+                mainSessionId: 'brain-main',
+            },
+        }
+        const otherChild = {
+            id: 'child-other',
+            namespace: 'default',
+            active: true,
+            activeAt: 30,
+            thinking: false,
+            modelMode: 'sonnet',
+            agentState: { requests: {} },
+            metadata: {
+                path: '/tmp/other',
+                source: 'brain-child',
+                flavor: 'claude',
+                mainSessionId: 'brain-other',
+            },
+        }
+        const plainSession = {
+            id: 'plain-session',
+            namespace: 'default',
+            active: true,
+            activeAt: 40,
+            thinking: false,
+            modelMode: 'default',
+            agentState: { requests: {} },
+            metadata: {
+                path: '/tmp/plain',
+                source: 'manual',
+            },
+        }
+
+        const engine = {
+            getSessionsByNamespace: () => [mainSession, matchingChild, otherChild, plainSession],
+            getSessionByNamespace: (sessionId: string, namespace: string) =>
+                namespace === 'default' && sessionId === mainSession.id ? mainSession : null,
+            getSession: (sessionId: string) => sessionId === mainSession.id ? mainSession : null,
+            isBrainChildInitDone: () => true,
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/sessions?includeOffline=true&mainSessionId=brain-main', {
+            method: 'GET',
+            headers: authHeaders(),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            sessions: [expect.objectContaining({
+                id: 'child-match',
+                active: true,
+                activeAt: 20,
+                thinking: false,
+                modelMode: 'gpt-5.4',
+                pendingRequestsCount: 0,
+                metadata: expect.objectContaining({
+                    path: '/tmp/match',
+                    source: 'brain-child',
+                    flavor: 'codex',
+                    mainSessionId: 'brain-main',
+                }),
+            })],
+        })
+    })
+
+    it('rejects status lookups outside the requested brain child scope', async () => {
+        const mainSession = {
+            id: 'brain-main',
+            namespace: 'default',
+            metadata: {
+                source: 'brain',
+            },
+        }
+        const unrelatedChild = {
+            id: 'child-other',
+            namespace: 'default',
+            active: true,
+            metadata: {
+                source: 'brain-child',
+                mainSessionId: 'brain-other',
+            },
+        }
+
+        const engine = {
+            getSessionByNamespace: (sessionId: string, namespace: string) =>
+                namespace === 'default' && sessionId === unrelatedChild.id
+                    ? unrelatedChild
+                    : namespace === 'default' && sessionId === mainSession.id
+                        ? mainSession
+                        : null,
+            getSession: (sessionId: string) =>
+                sessionId === unrelatedChild.id ? unrelatedChild : sessionId === mainSession.id ? mainSession : null,
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/sessions/child-other/status?mainSessionId=brain-main', {
+            method: 'GET',
+            headers: authHeaders(),
+        })
+
+        expect(response.status).toBe(403)
+        expect(await response.json()).toEqual({
+            error: 'Session access denied',
+        })
+    })
+
+    it('requires mainSessionId for brain child inspect/status/tail routes', async () => {
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => ({
+            getSessionByNamespace: () => null,
+            getSession: () => null,
+        }) as any))
+
+        const inspectResponse = await app.request('/cli/sessions/child-session/inspect', {
+            method: 'GET',
+            headers: authHeaders(),
+        })
+        const statusResponse = await app.request('/cli/sessions/child-session/status', {
+            method: 'GET',
+            headers: authHeaders(),
+        })
+        const tailResponse = await app.request('/cli/sessions/child-session/tail?limit=3', {
+            method: 'GET',
+            headers: authHeaders(),
+        })
+
+        expect(inspectResponse.status).toBe(400)
+        expect(statusResponse.status).toBe(400)
+        expect(tailResponse.status).toBe(400)
     })
 
     it('returns structured session history matches and overlays live session state', async () => {
@@ -1305,6 +2219,13 @@ describe('createCliRoutes projects', () => {
                     machineId: 'machine-1',
                     flavor: 'codex',
                     mainSessionId: 'brain-main',
+                    selfSystemEnabled: null,
+                    selfProfileId: null,
+                    selfProfileName: null,
+                    selfProfileResolved: null,
+                    selfMemoryProvider: null,
+                    selfMemoryAttached: null,
+                    selfMemoryStatus: null,
                 },
                 match: {
                     source: 'turn-summary',
@@ -1312,6 +2233,99 @@ describe('createCliRoutes projects', () => {
                     createdAt: 1_700_000_000_300,
                     seqStart: 10,
                     seqEnd: 18,
+                },
+            }],
+        })
+    })
+
+    it('hides invalid stored permissionMode values in search results when normalization fails', async () => {
+        const store = {
+            searchSessionHistory: async () => [{
+                session: {
+                    id: 'child-session',
+                    active: false,
+                    thinking: false,
+                    activeAt: 1_700_000_000_000,
+                    updatedAt: 1_700_000_000_100,
+                    lastMessageAt: 1_700_000_000_200,
+                    permissionMode: 'bypassPermissions',
+                    modelMode: 'gpt-5.4',
+                    modelReasoningEffort: 'medium',
+                    fastMode: null,
+                    metadata: {
+                        path: '/tmp/project-a',
+                        source: 'brain-child',
+                        machineId: 'machine-1',
+                        flavor: 'codex',
+                        mainSessionId: 'brain-main',
+                        selfSystemEnabled: true,
+                        selfProfileId: 'profile-1',
+                        selfProfileName: 'K1',
+                        selfProfileResolved: true,
+                        selfMemoryProvider: 'yoho-memory',
+                        selfMemoryAttached: false,
+                        selfMemoryStatus: 'empty',
+                    },
+                },
+                score: 99,
+                match: {
+                    source: 'path',
+                    text: '/tmp/project-a',
+                    createdAt: null,
+                    seqStart: null,
+                    seqEnd: null,
+                },
+            }],
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => null, undefined, store as any))
+
+        const response = await app.request('/cli/sessions/search?query=project-a', {
+            method: 'GET',
+            headers: authHeaders(),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            query: 'project-a',
+            returned: 1,
+            results: [{
+                sessionId: 'child-session',
+                score: 99,
+                active: false,
+                thinking: false,
+                activeAt: 1_700_000_000_000,
+                updatedAt: 1_700_000_000_100,
+                lastMessageAt: 1_700_000_000_200,
+                pendingRequestsCount: 0,
+                permissionMode: null,
+                modelMode: 'gpt-5.4',
+                modelReasoningEffort: 'medium',
+                fastMode: null,
+                metadata: {
+                    path: '/tmp/project-a',
+                    summary: null,
+                    brainSummary: null,
+                    source: 'brain-child',
+                    caller: null,
+                    machineId: 'machine-1',
+                    flavor: 'codex',
+                    mainSessionId: 'brain-main',
+                    selfSystemEnabled: true,
+                    selfProfileId: 'profile-1',
+                    selfProfileName: 'K1',
+                    selfProfileResolved: true,
+                    selfMemoryProvider: 'yoho-memory',
+                    selfMemoryAttached: false,
+                    selfMemoryStatus: 'empty',
+                },
+                match: {
+                    source: 'path',
+                    text: '/tmp/project-a',
+                    createdAt: null,
+                    seqStart: null,
+                    seqEnd: null,
                 },
             }],
         })

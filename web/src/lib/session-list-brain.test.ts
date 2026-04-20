@@ -284,4 +284,69 @@ describe('session-list-brain', () => {
             'beta-session',
         ])
     })
+
+    test('drops archived brain children from default grouped entries', () => {
+        const brain = createSession('brain-1', {
+            updatedAt: 100,
+            metadata: {
+                path: '/tmp/brain-1',
+                source: 'brain',
+            },
+        })
+        const archivedChild = createSession('child-archived', {
+            active: true,
+            updatedAt: 200,
+            metadata: {
+                path: '/tmp/child-archived',
+                source: 'brain-child',
+                mainSessionId: 'brain-1',
+                lifecycleState: 'archived',
+            },
+        })
+        const liveChild = createSession('child-live', {
+            updatedAt: 300,
+            metadata: {
+                path: '/tmp/child-live',
+                source: 'brain-child',
+                mainSessionId: 'brain-1',
+            },
+        })
+
+        const entries = buildSessionListEntries([brain, archivedChild, liveChild])
+
+        expect(entries).toHaveLength(1)
+        expect(entries[0]).toMatchObject({
+            kind: 'brain-group',
+            session: { id: 'brain-1' },
+            children: [{ id: 'child-live' }],
+        })
+    })
+
+    test('keeps archived brain children only when explicitly requested', () => {
+        const brain = createSession('brain-1', {
+            metadata: {
+                path: '/tmp/brain-1',
+                source: 'brain',
+            },
+        })
+        const archivedChild = createSession('child-archived', {
+            active: true,
+            metadata: {
+                path: '/tmp/child-archived',
+                source: 'brain-child',
+                mainSessionId: 'brain-1',
+                lifecycleState: 'archived',
+            },
+        })
+
+        const entries = buildSessionListEntries([brain, archivedChild], {
+            includeArchived: true,
+        })
+
+        expect(entries).toHaveLength(1)
+        expect(entries[0]).toMatchObject({
+            kind: 'brain-group',
+            children: [{ id: 'child-archived' }],
+        })
+    })
 })

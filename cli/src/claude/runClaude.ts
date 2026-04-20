@@ -522,19 +522,24 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         cwd: workingDirectory,
         mcpServers,
     });
+    const effectiveTools = resolveEffectiveRuntimeTools({
+        allowedTools: currentAllowedTools,
+        discoveredTools: sdkMetadata.tools,
+    })
+
     logger.debug('[start] SDK metadata extracted, updating session:', sdkMetadata);
     try {
         api.sessionSyncClient(response).updateMetadata((currentMetadata) => ({
             ...currentMetadata,
-            tools: sdkMetadata.tools,
+            tools: effectiveTools,
             slashCommands: sdkMetadata.slashCommands
         }));
-        logger.debug('[start] Session metadata updated with SDK capabilities');
+        logger.debug('[start] Session metadata updated with effective runtime capabilities');
     } catch (error) {
         logger.debug('[start] Failed to update session metadata:', error);
     }
 
-    const runtimeMcpSystemPrompt = buildRuntimeMcpSystemPrompt(sdkMetadata.tools);
+    const runtimeMcpSystemPrompt = buildRuntimeMcpSystemPrompt(effectiveTools);
     mergeAppendSystemPrompt = (userAppendSystemPrompt?: string): string | undefined => {
         return [userAppendSystemPrompt, runtimeMcpSystemPrompt]
             .filter((value): value is string => Boolean(value && value.trim()))
@@ -607,4 +612,18 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
 
     // Exit
     process.exit(exitCode);
+}
+
+export function resolveEffectiveRuntimeTools(args: {
+    allowedTools?: string[]
+    discoveredTools?: string[]
+}): string[] | undefined {
+    if (args.allowedTools !== undefined) {
+        if (args.discoveredTools && args.discoveredTools.length > 0) {
+            const discoveredToolSet = new Set(args.discoveredTools)
+            return args.allowedTools.filter((tool) => discoveredToolSet.has(tool))
+        }
+        return args.allowedTools
+    }
+    return args.discoveredTools
 }

@@ -1,4 +1,5 @@
 import type { IStore } from './store/interface'
+import { parseBrainSessionPreferences, type BrainSessionPreferences } from './brain/brainSessionPreferences'
 import { resolveTokenSourceForAgent } from './web/tokenSources'
 
 function asNonEmptyString(value: unknown): string | undefined {
@@ -18,7 +19,7 @@ export type ResumeSpawnMetadata = {
     source?: string
     caller?: string
     mainSessionId?: string
-    brainPreferences?: Record<string, unknown>
+    brainPreferences?: BrainSessionPreferences
 }
 
 export function extractResumeSpawnMetadata(metadata: unknown): ResumeSpawnMetadata {
@@ -29,9 +30,10 @@ export function extractResumeSpawnMetadata(metadata: unknown): ResumeSpawnMetada
     const source = asNonEmptyString(metadata.source)
     const caller = asNonEmptyString(metadata.caller)
     const mainSessionId = asNonEmptyString(metadata.mainSessionId)
-    const brainPreferences = isRecord(metadata.brainPreferences)
-        ? { ...metadata.brainPreferences }
-        : undefined
+    const rawBrainPreferences = metadata.brainPreferences
+    const brainPreferences = rawBrainPreferences === undefined
+        ? undefined
+        : parseBrainSessionPreferences(rawBrainPreferences) ?? undefined
 
     return {
         ...(source ? { source } : {}),
@@ -39,6 +41,13 @@ export function extractResumeSpawnMetadata(metadata: unknown): ResumeSpawnMetada
         ...(mainSessionId ? { mainSessionId } : {}),
         ...(brainPreferences ? { brainPreferences } : {}),
     }
+}
+
+export function hasInvalidResumeBrainPreferences(metadata: unknown): boolean {
+    if (!isRecord(metadata) || metadata.brainPreferences === undefined) {
+        return false
+    }
+    return parseBrainSessionPreferences(metadata.brainPreferences) === null
 }
 
 export type ResumeSpawnExtras = {

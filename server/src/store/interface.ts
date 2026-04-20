@@ -26,6 +26,10 @@ import type {
     StoredInputPreset,
     StoredAllowedEmail,
     StoredSessionShare,
+    StoredApprovalRequest,
+    StoredApprovalDecision,
+    StoredCapabilityGrant,
+    StoredAuditEvent,
     StoredOrganization,
     StoredOrgMember,
     StoredOrgInvitation,
@@ -55,6 +59,10 @@ import type {
     AutoIterApprovalMethod,
     AutoIterNotificationLevel,
     SpawnAgentType,
+    ControlPlaneActorType,
+    ApprovalRequestStatus,
+    ApprovalDecisionResult,
+    CapabilityGrantStatus,
 } from './types'
 
 export type { StoredSessionShare } from './types'
@@ -518,6 +526,189 @@ export interface IStore {
     listDownloadFiles(sessionId: string): Promise<StoredDownloadFile[]>
     clearDownloadFiles(sessionId: string): Promise<number>
 
+    // === Control Plane 操作 ===
+    createApprovalRequest(data: {
+        namespace: string
+        orgId?: string | null
+        sessionId?: string | null
+        parentSessionId?: string | null
+        requestKind: string
+        toolName?: string | null
+        resourceType?: string | null
+        resourceSelector?: unknown
+        requestedMode?: string | null
+        requestedTools?: string[] | null
+        requestPayload?: unknown
+        riskLevel?: string | null
+        providerHint?: string | null
+        requestedByType: ControlPlaneActorType
+        requestedById: string
+        status?: ApprovalRequestStatus
+        expiresAt?: number | null
+    }): Promise<StoredApprovalRequest>
+    createApprovalRequestAtomically(data: {
+        request: {
+            namespace: string
+            orgId?: string | null
+            sessionId?: string | null
+            parentSessionId?: string | null
+            requestKind: string
+            toolName?: string | null
+            resourceType?: string | null
+            resourceSelector?: unknown
+            requestedMode?: string | null
+            requestedTools?: string[] | null
+            requestPayload?: unknown
+            riskLevel?: string | null
+            providerHint?: string | null
+            requestedByType: ControlPlaneActorType
+            requestedById: string
+            status?: ApprovalRequestStatus
+            expiresAt?: number | null
+        }
+        auditEvent: {
+            namespace: string
+            orgId?: string | null
+            eventType: string
+            subjectType?: ControlPlaneActorType | null
+            subjectId?: string | null
+            sessionId?: string | null
+            parentSessionId?: string | null
+            resourceType?: string | null
+            resourceId?: string | null
+            action: string
+            result: string
+            sourceSystem: string
+            correlationId?: string | null
+            payload?: unknown
+        }
+    }): Promise<StoredApprovalRequest>
+    getApprovalRequest(id: string): Promise<StoredApprovalRequest | null>
+    updateApprovalRequestStatus(id: string, status: ApprovalRequestStatus): Promise<boolean>
+    createApprovalDecision(data: {
+        approvalRequestId: string
+        namespace: string
+        orgId?: string | null
+        provider?: string | null
+        result: ApprovalDecisionResult
+        decidedByType: ControlPlaneActorType
+        decidedById: string
+        decisionPayload?: unknown
+        expiresAt?: number | null
+    }): Promise<StoredApprovalDecision>
+    recordApprovalDecisionAtomically(data: {
+        decision: {
+            approvalRequestId: string
+            namespace: string
+            orgId?: string | null
+            provider?: string | null
+            result: ApprovalDecisionResult
+            decidedByType: ControlPlaneActorType
+            decidedById: string
+            decisionPayload?: unknown
+            expiresAt?: number | null
+        }
+        requestStatus: ApprovalRequestStatus
+        auditEvent: {
+            namespace: string
+            orgId?: string | null
+            eventType: string
+            subjectType?: ControlPlaneActorType | null
+            subjectId?: string | null
+            sessionId?: string | null
+            parentSessionId?: string | null
+            resourceType?: string | null
+            resourceId?: string | null
+            action: string
+            result: string
+            sourceSystem: string
+            correlationId?: string | null
+            payload?: unknown
+        }
+    }): Promise<StoredApprovalDecision>
+    getApprovalDecision(id: string): Promise<StoredApprovalDecision | null>
+    getApprovalDecisionByRequestId(approvalRequestId: string): Promise<StoredApprovalDecision | null>
+    createCapabilityGrant(data: {
+        namespace: string
+        orgId?: string | null
+        approvalRequestId?: string | null
+        approvalDecisionId?: string | null
+        subjectType: ControlPlaneActorType
+        subjectId: string
+        sourceSessionId?: string | null
+        boundSessionId?: string | null
+        boundMachineId?: string | null
+        boundProjectIds?: string[] | null
+        toolAllowlist?: string[] | null
+        resourceScopes?: unknown
+        modeCap?: string | null
+        maxUses?: number | null
+        usedCount?: number
+        status?: CapabilityGrantStatus
+        expiresAt?: number | null
+    }): Promise<StoredCapabilityGrant>
+    issueCapabilityGrantAtomically(data: {
+        grant: {
+            namespace: string
+            orgId?: string | null
+            approvalRequestId?: string | null
+            approvalDecisionId?: string | null
+            subjectType: ControlPlaneActorType
+            subjectId: string
+            sourceSessionId?: string | null
+            boundSessionId?: string | null
+            boundMachineId?: string | null
+            boundProjectIds?: string[] | null
+            toolAllowlist?: string[] | null
+            resourceScopes?: unknown
+            modeCap?: string | null
+            maxUses?: number | null
+            usedCount?: number
+            status?: CapabilityGrantStatus
+            expiresAt?: number | null
+        }
+        auditEvent: {
+            namespace: string
+            orgId?: string | null
+            eventType: string
+            subjectType?: ControlPlaneActorType | null
+            subjectId?: string | null
+            sessionId?: string | null
+            parentSessionId?: string | null
+            resourceType?: string | null
+            resourceId?: string | null
+            action: string
+            result: string
+            sourceSystem: string
+            correlationId?: string | null
+            payload?: unknown
+        }
+    }): Promise<StoredCapabilityGrant>
+    getCapabilityGrant(id: string): Promise<StoredCapabilityGrant | null>
+    revokeCapabilityGrant(id: string, reason?: string | null): Promise<StoredCapabilityGrant | null>
+    createAuditEvent(data: {
+        namespace: string
+        orgId?: string | null
+        eventType: string
+        subjectType?: ControlPlaneActorType | null
+        subjectId?: string | null
+        sessionId?: string | null
+        parentSessionId?: string | null
+        resourceType?: string | null
+        resourceId?: string | null
+        action: string
+        result: string
+        sourceSystem: string
+        correlationId?: string | null
+        payload?: unknown
+    }): Promise<StoredAuditEvent>
+    listAuditEvents(filters?: {
+        orgId?: string | null
+        sessionId?: string
+        subjectId?: string
+        limit?: number
+    }): Promise<StoredAuditEvent[]>
+
     // === 关闭连接 ===
     close(): Promise<void>
 }
@@ -553,6 +744,10 @@ export type {
     StoredOrgLicense,
     StoredAdminOrgLicense,
     StoredDownloadFile,
+    StoredApprovalRequest,
+    StoredApprovalDecision,
+    StoredCapabilityGrant,
+    StoredAuditEvent,
     LicenseStatus,
     OrgRole,
     UserRole,
@@ -574,4 +769,8 @@ export type {
     AutoIterExecutionPolicy,
     AutoIterApprovalMethod,
     AutoIterNotificationLevel,
+    ControlPlaneActorType,
+    ApprovalRequestStatus,
+    ApprovalDecisionResult,
+    CapabilityGrantStatus,
 } from './types'

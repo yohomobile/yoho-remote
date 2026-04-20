@@ -27,6 +27,10 @@ import type {
     StoredInputPreset,
     StoredAllowedEmail,
     StoredSessionShare,
+    StoredApprovalRequest,
+    StoredApprovalDecision,
+    StoredCapabilityGrant,
+    StoredAuditEvent,
     StoredOrganization,
     StoredOrgMember,
     StoredOrgInvitation,
@@ -52,6 +56,10 @@ import type {
     SpawnAgentType,
     StoredSessionSearchMatchSource,
     StoredSessionSearchResult,
+    ControlPlaneActorType,
+    ApprovalRequestStatus,
+    ApprovalDecisionResult,
+    CapabilityGrantStatus,
 } from './types'
 import { isRealActivityMessage, isTurnStartUserMessage } from './messageUtils'
 
@@ -119,9 +127,21 @@ function asTrimmedString(value: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null
 }
 
+function asStringArray(value: unknown): string[] | null {
+    if (!Array.isArray(value)) {
+        return null
+    }
+    return value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0)
+}
+
 function escapeLikePattern(value: string): string {
     return value.replace(/[\\%_]/g, '\\$&')
 }
+
+type Queryable = Pick<Pool, 'query'>
 
 export class PostgresStore implements IStore {
     private pool: Pool
@@ -653,6 +673,136 @@ export class PostgresStore implements IStore {
                 created_at BIGINT NOT NULL,
                 updated_at BIGINT NOT NULL
             );
+
+            -- Control Plane: Approval Requests
+            CREATE TABLE IF NOT EXISTS approval_requests (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                session_id TEXT,
+                parent_session_id TEXT,
+                request_kind TEXT NOT NULL,
+                tool_name TEXT,
+                resource_type TEXT,
+                resource_selector JSONB,
+                requested_mode TEXT,
+                requested_tools JSONB,
+                request_payload JSONB,
+                risk_level TEXT,
+                provider_hint TEXT,
+                requested_by_type TEXT NOT NULL,
+                requested_by_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                requested_at BIGINT NOT NULL,
+                expires_at BIGINT
+            );
+            CREATE INDEX IF NOT EXISTS idx_approval_requests_org_id ON approval_requests(org_id);
+            CREATE INDEX IF NOT EXISTS idx_approval_requests_session_id ON approval_requests(session_id);
+            CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
+
+            -- Control Plane: Approval Decisions
+            CREATE TABLE IF NOT EXISTS approval_decisions (
+                id TEXT PRIMARY KEY,
+                approval_request_id TEXT NOT NULL REFERENCES approval_requests(id) ON DELETE CASCADE,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                provider TEXT,
+                result TEXT NOT NULL,
+                decided_by_type TEXT NOT NULL,
+                decided_by_id TEXT NOT NULL,
+                decision_payload JSONB,
+                decided_at BIGINT NOT NULL,
+                expires_at BIGINT
+            );
+            CREATE INDEX IF NOT EXISTS idx_approval_decisions_request_id ON approval_decisions(approval_request_id);
+            CREATE INDEX IF NOT EXISTS idx_approval_decisions_org_id ON approval_decisions(org_id);
+            DELETE FROM approval_decisions d
+            USING (
+                SELECT id
+                FROM (
+                    SELECT
+                        id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY approval_request_id
+                            ORDER BY decided_at DESC, id DESC
+                        ) AS row_num
+                    FROM approval_decisions
+                ) ranked
+                WHERE ranked.row_num > 1
+            ) duplicates
+            WHERE d.id = duplicates.id;
+            UPDATE approval_requests r
+            SET status = CASE d.result
+                WHEN 'approved' THEN 'approved'
+                WHEN 'rejected' THEN 'rejected'
+                WHEN 'provider_failed' THEN 'rejected'
+                WHEN 'expired' THEN 'expired'
+                WHEN 'cancelled' THEN 'cancelled'
+                ELSE r.status
+            END
+            FROM approval_decisions d
+            WHERE r.id = d.approval_request_id
+              AND r.status IS DISTINCT FROM CASE d.result
+                  WHEN 'approved' THEN 'approved'
+                  WHEN 'rejected' THEN 'rejected'
+                  WHEN 'provider_failed' THEN 'rejected'
+                  WHEN 'expired' THEN 'expired'
+                  WHEN 'cancelled' THEN 'cancelled'
+                  ELSE r.status
+              END;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_decisions_request_unique ON approval_decisions(approval_request_id);
+
+            -- Control Plane: Capability Grants
+            CREATE TABLE IF NOT EXISTS capability_grants (
+                id TEXT PRIMARY KEY,
+                approval_request_id TEXT REFERENCES approval_requests(id) ON DELETE SET NULL,
+                approval_decision_id TEXT REFERENCES approval_decisions(id) ON DELETE SET NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                subject_type TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                source_session_id TEXT,
+                bound_session_id TEXT,
+                bound_machine_id TEXT,
+                bound_project_ids JSONB,
+                tool_allowlist JSONB,
+                resource_scopes JSONB,
+                mode_cap TEXT,
+                max_uses INTEGER,
+                used_count INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'active',
+                issued_at BIGINT NOT NULL,
+                expires_at BIGINT,
+                revoked_at BIGINT,
+                revoke_reason TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_capability_grants_org_id ON capability_grants(org_id);
+            CREATE INDEX IF NOT EXISTS idx_capability_grants_subject ON capability_grants(subject_type, subject_id);
+            CREATE INDEX IF NOT EXISTS idx_capability_grants_status ON capability_grants(status);
+
+            -- Control Plane: Audit Events
+            CREATE TABLE IF NOT EXISTS audit_events (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                event_type TEXT NOT NULL,
+                subject_type TEXT,
+                subject_id TEXT,
+                session_id TEXT,
+                parent_session_id TEXT,
+                resource_type TEXT,
+                resource_id TEXT,
+                action TEXT NOT NULL,
+                result TEXT NOT NULL,
+                source_system TEXT NOT NULL,
+                correlation_id TEXT,
+                payload JSONB,
+                created_at BIGINT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_audit_events_org_id ON audit_events(org_id);
+            CREATE INDEX IF NOT EXISTS idx_audit_events_session_id ON audit_events(session_id);
+            CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at DESC);
+
             -- Migration: Add org_id to projects
             ALTER TABLE projects ADD COLUMN IF NOT EXISTS org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL;
             CREATE INDEX IF NOT EXISTS idx_projects_org_id ON projects(org_id);
@@ -3371,6 +3521,679 @@ export class PostgresStore implements IStore {
             [sessionId]
         )
         return Number(result.rowCount ?? 0)
+    }
+
+    private toStoredApprovalRequest(row: any): StoredApprovalRequest {
+        return {
+            id: row.id,
+            namespace: row.namespace,
+            orgId: row.org_id ?? null,
+            sessionId: row.session_id ?? null,
+            parentSessionId: row.parent_session_id ?? null,
+            requestKind: row.request_kind,
+            toolName: row.tool_name ?? null,
+            resourceType: row.resource_type ?? null,
+            resourceSelector: row.resource_selector ?? null,
+            requestedMode: row.requested_mode ?? null,
+            requestedTools: asStringArray(row.requested_tools),
+            requestPayload: row.request_payload ?? null,
+            riskLevel: row.risk_level ?? null,
+            providerHint: row.provider_hint ?? null,
+            requestedByType: row.requested_by_type as ControlPlaneActorType,
+            requestedById: row.requested_by_id,
+            status: row.status as ApprovalRequestStatus,
+            requestedAt: Number(row.requested_at),
+            expiresAt: row.expires_at != null ? Number(row.expires_at) : null,
+        }
+    }
+
+    private toStoredApprovalDecision(row: any): StoredApprovalDecision {
+        return {
+            id: row.id,
+            approvalRequestId: row.approval_request_id,
+            namespace: row.namespace,
+            orgId: row.org_id ?? null,
+            provider: row.provider ?? null,
+            result: row.result as ApprovalDecisionResult,
+            decidedByType: row.decided_by_type as ControlPlaneActorType,
+            decidedById: row.decided_by_id,
+            decisionPayload: row.decision_payload ?? null,
+            decidedAt: Number(row.decided_at),
+            expiresAt: row.expires_at != null ? Number(row.expires_at) : null,
+        }
+    }
+
+    private toStoredCapabilityGrant(row: any): StoredCapabilityGrant {
+        return {
+            id: row.id,
+            approvalRequestId: row.approval_request_id ?? null,
+            approvalDecisionId: row.approval_decision_id ?? null,
+            namespace: row.namespace,
+            orgId: row.org_id ?? null,
+            subjectType: row.subject_type as ControlPlaneActorType,
+            subjectId: row.subject_id,
+            sourceSessionId: row.source_session_id ?? null,
+            boundSessionId: row.bound_session_id ?? null,
+            boundMachineId: row.bound_machine_id ?? null,
+            boundProjectIds: asStringArray(row.bound_project_ids),
+            toolAllowlist: asStringArray(row.tool_allowlist),
+            resourceScopes: row.resource_scopes ?? null,
+            modeCap: row.mode_cap ?? null,
+            maxUses: row.max_uses != null ? Number(row.max_uses) : null,
+            usedCount: Number(row.used_count ?? 0),
+            status: row.status as CapabilityGrantStatus,
+            issuedAt: Number(row.issued_at),
+            expiresAt: row.expires_at != null ? Number(row.expires_at) : null,
+            revokedAt: row.revoked_at != null ? Number(row.revoked_at) : null,
+            revokeReason: row.revoke_reason ?? null,
+        }
+    }
+
+    private toStoredAuditEvent(row: any): StoredAuditEvent {
+        return {
+            id: row.id,
+            namespace: row.namespace,
+            orgId: row.org_id ?? null,
+            eventType: row.event_type,
+            subjectType: row.subject_type ? row.subject_type as ControlPlaneActorType : null,
+            subjectId: row.subject_id ?? null,
+            sessionId: row.session_id ?? null,
+            parentSessionId: row.parent_session_id ?? null,
+            resourceType: row.resource_type ?? null,
+            resourceId: row.resource_id ?? null,
+            action: row.action,
+            result: row.result,
+            sourceSystem: row.source_system,
+            correlationId: row.correlation_id ?? null,
+            payload: row.payload ?? null,
+            createdAt: Number(row.created_at),
+        }
+    }
+
+    private async insertApprovalRequest(
+        queryable: Queryable,
+        data: {
+            namespace: string
+            orgId?: string | null
+            sessionId?: string | null
+            parentSessionId?: string | null
+            requestKind: string
+            toolName?: string | null
+            resourceType?: string | null
+            resourceSelector?: unknown
+            requestedMode?: string | null
+            requestedTools?: string[] | null
+            requestPayload?: unknown
+            riskLevel?: string | null
+            providerHint?: string | null
+            requestedByType: ControlPlaneActorType
+            requestedById: string
+            status?: ApprovalRequestStatus
+            expiresAt?: number | null
+        }
+    ): Promise<StoredApprovalRequest> {
+        const now = Date.now()
+        const id = randomUUID()
+        const result = await queryable.query(
+            `INSERT INTO approval_requests (
+                id, namespace, org_id, session_id, parent_session_id, request_kind, tool_name,
+                resource_type, resource_selector, requested_mode, requested_tools, request_payload,
+                risk_level, provider_hint, requested_by_type, requested_by_id, status, requested_at, expires_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7,
+                $8, $9, $10, $11, $12,
+                $13, $14, $15, $16, $17, $18, $19
+            )
+            RETURNING *`,
+            [
+                id,
+                data.namespace,
+                data.orgId ?? null,
+                data.sessionId ?? null,
+                data.parentSessionId ?? null,
+                data.requestKind,
+                data.toolName ?? null,
+                data.resourceType ?? null,
+                data.resourceSelector ?? null,
+                data.requestedMode ?? null,
+                data.requestedTools ?? null,
+                data.requestPayload ?? null,
+                data.riskLevel ?? null,
+                data.providerHint ?? null,
+                data.requestedByType,
+                data.requestedById,
+                data.status ?? 'pending',
+                now,
+                data.expiresAt ?? null,
+            ]
+        )
+        return this.toStoredApprovalRequest(result.rows[0])
+    }
+
+    async createApprovalRequest(data: {
+        namespace: string
+        orgId?: string | null
+        sessionId?: string | null
+        parentSessionId?: string | null
+        requestKind: string
+        toolName?: string | null
+        resourceType?: string | null
+        resourceSelector?: unknown
+        requestedMode?: string | null
+        requestedTools?: string[] | null
+        requestPayload?: unknown
+        riskLevel?: string | null
+        providerHint?: string | null
+        requestedByType: ControlPlaneActorType
+        requestedById: string
+        status?: ApprovalRequestStatus
+        expiresAt?: number | null
+    }): Promise<StoredApprovalRequest> {
+        return this.insertApprovalRequest(this.pool, data)
+    }
+
+    async createApprovalRequestAtomically(data: {
+        request: {
+            namespace: string
+            orgId?: string | null
+            sessionId?: string | null
+            parentSessionId?: string | null
+            requestKind: string
+            toolName?: string | null
+            resourceType?: string | null
+            resourceSelector?: unknown
+            requestedMode?: string | null
+            requestedTools?: string[] | null
+            requestPayload?: unknown
+            riskLevel?: string | null
+            providerHint?: string | null
+            requestedByType: ControlPlaneActorType
+            requestedById: string
+            status?: ApprovalRequestStatus
+            expiresAt?: number | null
+        }
+        auditEvent: {
+            namespace: string
+            orgId?: string | null
+            eventType: string
+            subjectType?: ControlPlaneActorType | null
+            subjectId?: string | null
+            sessionId?: string | null
+            parentSessionId?: string | null
+            resourceType?: string | null
+            resourceId?: string | null
+            action: string
+            result: string
+            sourceSystem: string
+            correlationId?: string | null
+            payload?: unknown
+        }
+    }): Promise<StoredApprovalRequest> {
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
+            const approvalRequest = await this.insertApprovalRequest(client, data.request)
+            const requestAuditPayload = data.auditEvent.payload && typeof data.auditEvent.payload === 'object' && !Array.isArray(data.auditEvent.payload)
+                ? {
+                    ...(data.auditEvent.payload as Record<string, unknown>),
+                    approvalRequestId: approvalRequest.id,
+                }
+                : data.auditEvent.payload
+            await this.insertAuditEvent(client, {
+                ...data.auditEvent,
+                correlationId: data.auditEvent.correlationId ?? approvalRequest.id,
+                payload: requestAuditPayload,
+            })
+            await client.query('COMMIT')
+            return approvalRequest
+        } catch (error) {
+            try { await client.query('ROLLBACK') } catch {}
+            throw error
+        } finally {
+            client.release()
+        }
+    }
+
+    async getApprovalRequest(id: string): Promise<StoredApprovalRequest | null> {
+        const result = await this.pool.query('SELECT * FROM approval_requests WHERE id = $1', [id])
+        return result.rows.length > 0 ? this.toStoredApprovalRequest(result.rows[0]) : null
+    }
+
+    async updateApprovalRequestStatus(id: string, status: ApprovalRequestStatus): Promise<boolean> {
+        const result = await this.pool.query(
+            'UPDATE approval_requests SET status = $2 WHERE id = $1',
+            [id, status]
+        )
+        return (result.rowCount ?? 0) > 0
+    }
+
+    private async insertApprovalDecision(
+        queryable: Queryable,
+        data: {
+            approvalRequestId: string
+            namespace: string
+            orgId?: string | null
+            provider?: string | null
+            result: ApprovalDecisionResult
+            decidedByType: ControlPlaneActorType
+            decidedById: string
+            decisionPayload?: unknown
+            expiresAt?: number | null
+        }
+    ): Promise<StoredApprovalDecision> {
+        const now = Date.now()
+        const id = randomUUID()
+        const result = await queryable.query(
+            `INSERT INTO approval_decisions (
+                id, approval_request_id, namespace, org_id, provider, result,
+                decided_by_type, decided_by_id, decision_payload, decided_at, expires_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6,
+                $7, $8, $9, $10, $11
+            )
+            RETURNING *`,
+            [
+                id,
+                data.approvalRequestId,
+                data.namespace,
+                data.orgId ?? null,
+                data.provider ?? null,
+                data.result,
+                data.decidedByType,
+                data.decidedById,
+                data.decisionPayload ?? null,
+                now,
+                data.expiresAt ?? null,
+            ]
+        )
+        return this.toStoredApprovalDecision(result.rows[0])
+    }
+
+    async createApprovalDecision(data: {
+        approvalRequestId: string
+        namespace: string
+        orgId?: string | null
+        provider?: string | null
+        result: ApprovalDecisionResult
+        decidedByType: ControlPlaneActorType
+        decidedById: string
+        decisionPayload?: unknown
+        expiresAt?: number | null
+    }): Promise<StoredApprovalDecision> {
+        return this.insertApprovalDecision(this.pool, data)
+    }
+
+    async recordApprovalDecisionAtomically(data: {
+        decision: {
+            approvalRequestId: string
+            namespace: string
+            orgId?: string | null
+            provider?: string | null
+            result: ApprovalDecisionResult
+            decidedByType: ControlPlaneActorType
+            decidedById: string
+            decisionPayload?: unknown
+            expiresAt?: number | null
+        }
+        requestStatus: ApprovalRequestStatus
+        auditEvent: {
+            namespace: string
+            orgId?: string | null
+            eventType: string
+            subjectType?: ControlPlaneActorType | null
+            subjectId?: string | null
+            sessionId?: string | null
+            parentSessionId?: string | null
+            resourceType?: string | null
+            resourceId?: string | null
+            action: string
+            result: string
+            sourceSystem: string
+            correlationId?: string | null
+            payload?: unknown
+        }
+    }): Promise<StoredApprovalDecision> {
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
+
+            const requestResult = await client.query(
+                'SELECT status FROM approval_requests WHERE id = $1 FOR UPDATE',
+                [data.decision.approvalRequestId]
+            )
+            if (requestResult.rows.length === 0) {
+                throw Object.assign(new Error('Approval request not found'), {
+                    code: 'APPROVAL_REQUEST_NOT_FOUND',
+                })
+            }
+
+            const existingDecisionResult = await client.query(
+                'SELECT id FROM approval_decisions WHERE approval_request_id = $1 LIMIT 1',
+                [data.decision.approvalRequestId]
+            )
+            if (existingDecisionResult.rows.length > 0) {
+                throw Object.assign(new Error('Approval request already has a decision'), {
+                    code: 'APPROVAL_DECISION_EXISTS',
+                })
+            }
+
+            if (requestResult.rows[0]?.status !== 'pending') {
+                throw Object.assign(new Error('Approval request is no longer pending'), {
+                    code: 'APPROVAL_REQUEST_NOT_PENDING',
+                })
+            }
+
+            const decision = await this.insertApprovalDecision(client, data.decision)
+            const decisionAuditPayload = data.auditEvent.payload && typeof data.auditEvent.payload === 'object' && !Array.isArray(data.auditEvent.payload)
+                ? {
+                    ...(data.auditEvent.payload as Record<string, unknown>),
+                    approvalDecisionId: decision.id,
+                }
+                : data.auditEvent.payload
+            await client.query(
+                'UPDATE approval_requests SET status = $2 WHERE id = $1',
+                [data.decision.approvalRequestId, data.requestStatus]
+            )
+            await this.insertAuditEvent(client, {
+                ...data.auditEvent,
+                correlationId: data.auditEvent.correlationId ?? decision.id,
+                payload: decisionAuditPayload,
+            })
+
+            await client.query('COMMIT')
+            return decision
+        } catch (error) {
+            try { await client.query('ROLLBACK') } catch {}
+            throw error
+        } finally {
+            client.release()
+        }
+    }
+
+    async getApprovalDecision(id: string): Promise<StoredApprovalDecision | null> {
+        const result = await this.pool.query('SELECT * FROM approval_decisions WHERE id = $1', [id])
+        return result.rows.length > 0 ? this.toStoredApprovalDecision(result.rows[0]) : null
+    }
+
+    async getApprovalDecisionByRequestId(approvalRequestId: string): Promise<StoredApprovalDecision | null> {
+        const result = await this.pool.query(
+            `SELECT * FROM approval_decisions
+             WHERE approval_request_id = $1
+             ORDER BY decided_at DESC, id DESC
+             LIMIT 1`,
+            [approvalRequestId]
+        )
+        return result.rows.length > 0 ? this.toStoredApprovalDecision(result.rows[0]) : null
+    }
+
+    private async insertCapabilityGrant(
+        queryable: Queryable,
+        data: {
+            namespace: string
+            orgId?: string | null
+            approvalRequestId?: string | null
+            approvalDecisionId?: string | null
+            subjectType: ControlPlaneActorType
+            subjectId: string
+            sourceSessionId?: string | null
+            boundSessionId?: string | null
+            boundMachineId?: string | null
+            boundProjectIds?: string[] | null
+            toolAllowlist?: string[] | null
+            resourceScopes?: unknown
+            modeCap?: string | null
+            maxUses?: number | null
+            usedCount?: number
+            status?: CapabilityGrantStatus
+            expiresAt?: number | null
+        }
+    ): Promise<StoredCapabilityGrant> {
+        const now = Date.now()
+        const id = randomUUID()
+        const result = await queryable.query(
+            `INSERT INTO capability_grants (
+                id, approval_request_id, approval_decision_id, namespace, org_id,
+                subject_type, subject_id, source_session_id, bound_session_id, bound_machine_id,
+                bound_project_ids, tool_allowlist, resource_scopes, mode_cap,
+                max_uses, used_count, status, issued_at, expires_at
+            ) VALUES (
+                $1, $2, $3, $4, $5,
+                $6, $7, $8, $9, $10,
+                $11, $12, $13, $14,
+                $15, $16, $17, $18, $19
+            )
+            RETURNING *`,
+            [
+                id,
+                data.approvalRequestId ?? null,
+                data.approvalDecisionId ?? null,
+                data.namespace,
+                data.orgId ?? null,
+                data.subjectType,
+                data.subjectId,
+                data.sourceSessionId ?? null,
+                data.boundSessionId ?? null,
+                data.boundMachineId ?? null,
+                data.boundProjectIds ?? null,
+                data.toolAllowlist ?? null,
+                data.resourceScopes ?? null,
+                data.modeCap ?? null,
+                data.maxUses ?? null,
+                data.usedCount ?? 0,
+                data.status ?? 'active',
+                now,
+                data.expiresAt ?? null,
+            ]
+        )
+        return this.toStoredCapabilityGrant(result.rows[0])
+    }
+
+    async createCapabilityGrant(data: {
+        namespace: string
+        orgId?: string | null
+        approvalRequestId?: string | null
+        approvalDecisionId?: string | null
+        subjectType: ControlPlaneActorType
+        subjectId: string
+        sourceSessionId?: string | null
+        boundSessionId?: string | null
+        boundMachineId?: string | null
+        boundProjectIds?: string[] | null
+        toolAllowlist?: string[] | null
+        resourceScopes?: unknown
+        modeCap?: string | null
+        maxUses?: number | null
+        usedCount?: number
+        status?: CapabilityGrantStatus
+        expiresAt?: number | null
+    }): Promise<StoredCapabilityGrant> {
+        return this.insertCapabilityGrant(this.pool, data)
+    }
+
+    async issueCapabilityGrantAtomically(data: {
+        grant: {
+            namespace: string
+            orgId?: string | null
+            approvalRequestId?: string | null
+            approvalDecisionId?: string | null
+            subjectType: ControlPlaneActorType
+            subjectId: string
+            sourceSessionId?: string | null
+            boundSessionId?: string | null
+            boundMachineId?: string | null
+            boundProjectIds?: string[] | null
+            toolAllowlist?: string[] | null
+            resourceScopes?: unknown
+            modeCap?: string | null
+            maxUses?: number | null
+            usedCount?: number
+            status?: CapabilityGrantStatus
+            expiresAt?: number | null
+        }
+        auditEvent: {
+            namespace: string
+            orgId?: string | null
+            eventType: string
+            subjectType?: ControlPlaneActorType | null
+            subjectId?: string | null
+            sessionId?: string | null
+            parentSessionId?: string | null
+            resourceType?: string | null
+            resourceId?: string | null
+            action: string
+            result: string
+            sourceSystem: string
+            correlationId?: string | null
+            payload?: unknown
+        }
+    }): Promise<StoredCapabilityGrant> {
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
+            const grant = await this.insertCapabilityGrant(client, data.grant)
+            await this.insertAuditEvent(client, {
+                ...data.auditEvent,
+                resourceId: data.auditEvent.resourceId ?? grant.id,
+                correlationId: data.auditEvent.correlationId ?? grant.id,
+            })
+            await client.query('COMMIT')
+            return grant
+        } catch (error) {
+            try { await client.query('ROLLBACK') } catch {}
+            throw error
+        } finally {
+            client.release()
+        }
+    }
+
+    async getCapabilityGrant(id: string): Promise<StoredCapabilityGrant | null> {
+        const result = await this.pool.query('SELECT * FROM capability_grants WHERE id = $1', [id])
+        return result.rows.length > 0 ? this.toStoredCapabilityGrant(result.rows[0]) : null
+    }
+
+    async revokeCapabilityGrant(id: string, reason?: string | null): Promise<StoredCapabilityGrant | null> {
+        const now = Date.now()
+        const result = await this.pool.query(
+            `UPDATE capability_grants
+             SET status = 'revoked', revoked_at = $2, revoke_reason = $3
+             WHERE id = $1
+             RETURNING *`,
+            [id, now, reason ?? null]
+        )
+        return result.rows.length > 0 ? this.toStoredCapabilityGrant(result.rows[0]) : null
+    }
+
+    private async insertAuditEvent(
+        queryable: Queryable,
+        data: {
+            namespace: string
+            orgId?: string | null
+            eventType: string
+            subjectType?: ControlPlaneActorType | null
+            subjectId?: string | null
+            sessionId?: string | null
+            parentSessionId?: string | null
+            resourceType?: string | null
+            resourceId?: string | null
+            action: string
+            result: string
+            sourceSystem: string
+            correlationId?: string | null
+            payload?: unknown
+        }
+    ): Promise<StoredAuditEvent> {
+        const now = Date.now()
+        const id = randomUUID()
+        const result = await queryable.query(
+            `INSERT INTO audit_events (
+                id, namespace, org_id, event_type, subject_type, subject_id, session_id,
+                parent_session_id, resource_type, resource_id, action, result, source_system,
+                correlation_id, payload, created_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7,
+                $8, $9, $10, $11, $12, $13,
+                $14, $15, $16
+            )
+            RETURNING *`,
+            [
+                id,
+                data.namespace,
+                data.orgId ?? null,
+                data.eventType,
+                data.subjectType ?? null,
+                data.subjectId ?? null,
+                data.sessionId ?? null,
+                data.parentSessionId ?? null,
+                data.resourceType ?? null,
+                data.resourceId ?? null,
+                data.action,
+                data.result,
+                data.sourceSystem,
+                data.correlationId ?? null,
+                data.payload ?? null,
+                now,
+            ]
+        )
+        return this.toStoredAuditEvent(result.rows[0])
+    }
+
+    async createAuditEvent(data: {
+        namespace: string
+        orgId?: string | null
+        eventType: string
+        subjectType?: ControlPlaneActorType | null
+        subjectId?: string | null
+        sessionId?: string | null
+        parentSessionId?: string | null
+        resourceType?: string | null
+        resourceId?: string | null
+        action: string
+        result: string
+        sourceSystem: string
+        correlationId?: string | null
+        payload?: unknown
+    }): Promise<StoredAuditEvent> {
+        return this.insertAuditEvent(this.pool, data)
+    }
+
+    async listAuditEvents(filters?: {
+        orgId?: string | null
+        sessionId?: string
+        subjectId?: string
+        limit?: number
+    }): Promise<StoredAuditEvent[]> {
+        const where: string[] = []
+        const params: unknown[] = []
+        let index = 1
+
+        if (filters?.orgId !== undefined) {
+            where.push(`org_id ${filters.orgId === null ? 'IS NULL' : `= $${index}`}`)
+            if (filters.orgId !== null) {
+                params.push(filters.orgId)
+                index += 1
+            }
+        }
+        if (filters?.sessionId) {
+            where.push(`session_id = $${index}`)
+            params.push(filters.sessionId)
+            index += 1
+        }
+        if (filters?.subjectId) {
+            where.push(`subject_id = $${index}`)
+            params.push(filters.subjectId)
+            index += 1
+        }
+
+        const limit = Math.min(Math.max(filters?.limit ?? 50, 1), 200)
+        params.push(limit)
+        const sql = `
+            SELECT * FROM audit_events
+            ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+            ORDER BY created_at DESC
+            LIMIT $${index}
+        `
+        const result = await this.pool.query(sql, params)
+        return result.rows.map((row) => this.toStoredAuditEvent(row))
     }
 
     async close(): Promise<void> {

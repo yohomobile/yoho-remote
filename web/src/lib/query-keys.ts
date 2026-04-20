@@ -17,7 +17,7 @@ export const queryKeys = {
     typing: (sessionId: string) => ['typing', sessionId] as const,
     me: ['me'] as const,
     userPreferences: ['user-preferences'] as const,
-    aiProfiles: ['ai-profiles'] as const,
+    aiProfiles: (orgId?: string | null) => ['ai-profiles', orgId ?? null] as const,
     tokenSources: (orgId: string, includeSecrets: boolean) => ['token-sources', orgId, includeSecrets ? 'secret' : 'public'] as const,
     orgs: ['orgs'] as const,
     org: (orgId: string) => ['org', orgId] as const,

@@ -1,0 +1,785 @@
+{
+  "mode": "dry-run",
+  "guardrails": {
+    "requiresManifest": true,
+    "defaultDryRun": true,
+    "requiresApplyFlag": true,
+    "alwaysSkipActive": true,
+    "validateAgainstCurrentSchema": true,
+    "restartServices": false
+  },
+  "manifestPath": "/home/workspaces/repos/yoho-remote/data/brain-manual-repair-patch.batch-01.o2.json",
+  "plan": {
+    "generatedAt": 1776530922985,
+    "manifestVersion": 1,
+    "summary": {
+      "manifestItems": 5,
+      "plannedWrites": 5,
+      "skippedActive": 0,
+      "skippedNoop": 0,
+      "rejected": 0
+    },
+    "planned": [
+      {
+        "manifestIndex": 0,
+        "sessionId": "7704b71a-7272-4b81-aa9a-1888d597021a",
+        "namespace": "default",
+        "source": "brain",
+        "action": "set-brainPreferences",
+        "reason": "O2 首批 patch。A 组 high/high，按已确认决策显式写入 Track B 的 codex 禁用。",
+        "beforeSession": {
+          "id": "7704b71a-7272-4b81-aa9a-1888d597021a",
+          "tag": "8992dd88-beb1-4b96-adab-ec16e7382271",
+          "namespace": "default",
+          "machineId": null,
+          "createdAt": 1774924488146,
+          "updatedAt": 1774964744800,
+          "createdBy": "guang.yang@yohomobile.com",
+          "orgId": "2280991b-4c9c-44c8-ba1c-82b213551284",
+          "metadata": {
+            "os": "linux",
+            "host": "ncu",
+            "path": "/home/guang/.yoho-remote/brain-workspace",
+            "tools": [
+              "Task",
+              "TaskOutput",
+              "Bash",
+              "Glob",
+              "Grep",
+              "ExitPlanMode",
+              "Read",
+              "Edit",
+              "Write",
+              "NotebookEdit",
+              "WebFetch",
+              "TodoWrite",
+              "WebSearch",
+              "TaskStop",
+              "AskUserQuestion",
+              "Skill",
+              "EnterPlanMode"
+            ],
+            "flavor": "claude",
+            "source": "brain",
+            "homeDir": "/home/guang",
+            "hostPid": 2377637,
+            "summary": {
+              "text": "CRS 导航栏高度/圆角优化 + 部署",
+              "updatedAt": 1774937137092
+            },
+            "version": "v2026.03.31.1029",
+            "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+            "startedBy": "daemon",
+            "archivedBy": "cli",
+            "runtimeModel": "claude-opus-4-6",
+            "archiveReason": "User terminated",
+            "slashCommands": [
+              "keybindings-help",
+              "debug",
+              "agent-browser",
+              "dogfood",
+              "electron",
+              "slack",
+              "vercel-sandbox",
+              "compact",
+              "context",
+              "cost",
+              "init",
+              "pr-comments",
+              "release-notes",
+              "review",
+              "security-review",
+              "insights"
+            ],
+            "lifecycleState": "archived",
+            "claudeSessionId": "762c50ff-d842-4b4e-a7dd-1de4879fea30",
+            "yohoRemoteLibDir": "/home/guang/.yoho-remote/runtime/v2026.03.31.1029",
+            "startedFromDaemon": true,
+            "yohoRemoteHomeDir": "/home/guang/.yoho-remote",
+            "yohoRemoteToolsDir": "/home/guang/.yoho-remote/runtime/v2026.03.31.1029/tools/unpacked",
+            "lifecycleStateSince": 1774964744735
+          },
+          "metadataVersion": 77,
+          "agentState": {
+            "requests": {},
+            "controlledByUser": false,
+            "completedRequests": {}
+          },
+          "agentStateVersion": 8,
+          "todos": null,
+          "todosUpdatedAt": null,
+          "active": false,
+          "activeAt": 1774964744735,
+          "thinking": false,
+          "thinkingAt": null,
+          "seq": 802,
+          "advisorTaskId": null,
+          "creatorChatId": null,
+          "advisorMode": false,
+          "advisorPromptInjected": false,
+          "rolePromptSent": false,
+          "permissionMode": "bypassPermissions",
+          "modelMode": "opus",
+          "modelReasoningEffort": null,
+          "fastMode": null,
+          "terminationReason": null,
+          "lastMessageAt": 1774948203945,
+          "activeMonitors": null
+        },
+        "brainPreferences": {
+          "machineSelection": {
+            "mode": "auto",
+            "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+          },
+          "childModels": {
+            "claude": {
+              "allowed": [
+                "sonnet"
+              ],
+              "defaultModel": "sonnet"
+            },
+            "codex": {
+              "allowed": [],
+              "defaultModel": "gpt-5.4"
+            }
+          }
+        },
+        "copyFromSessionId": null,
+        "diff": {
+          "field": "brainPreferences",
+          "after": {
+            "machineSelection": {
+              "mode": "auto",
+              "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+            },
+            "childModels": {
+              "claude": {
+                "allowed": [
+                  "sonnet"
+                ],
+                "defaultModel": "sonnet"
+              },
+              "codex": {
+                "allowed": [],
+                "defaultModel": "gpt-5.4"
+              }
+            }
+          }
+        }
+      },
+      {
+        "manifestIndex": 1,
+        "sessionId": "5b056c5c-775d-4f0e-9551-e9ee5d0c3b2a",
+        "namespace": "default",
+        "source": "brain",
+        "action": "set-brainPreferences",
+        "reason": "O2 首批 patch。A 组 high/high，按已确认决策显式写入 Track B 的 codex 禁用。",
+        "beforeSession": {
+          "id": "5b056c5c-775d-4f0e-9551-e9ee5d0c3b2a",
+          "tag": "ee9bed44-c99c-4fd9-a52b-c4d81555019d",
+          "namespace": "default",
+          "machineId": null,
+          "createdAt": 1774974105146,
+          "updatedAt": 1775094352792,
+          "createdBy": null,
+          "orgId": "2280991b-4c9c-44c8-ba1c-82b213551284",
+          "metadata": {
+            "os": "linux",
+            "host": "ncu",
+            "path": "/home/guang/.yoho-remote/brain-workspace",
+            "tools": [
+              "Task",
+              "TaskOutput",
+              "Bash",
+              "Glob",
+              "Grep",
+              "ExitPlanMode",
+              "Read",
+              "Edit",
+              "Write",
+              "NotebookEdit",
+              "WebFetch",
+              "TodoWrite",
+              "WebSearch",
+              "TaskStop",
+              "AskUserQuestion",
+              "Skill",
+              "EnterPlanMode"
+            ],
+            "flavor": "claude",
+            "source": "brain",
+            "homeDir": "/home/guang",
+            "hostPid": 1220703,
+            "summary": {
+              "text": "飞书群: Yoho 技术 · 04/01 00:21",
+              "updatedAt": 1774974105158
+            },
+            "version": "v2026.04.02.0549",
+            "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+            "startedBy": "daemon",
+            "archivedBy": "cli",
+            "runtimeModel": "claude-sonnet-4-5-20250929",
+            "archiveReason": "User terminated",
+            "slashCommands": [
+              "keybindings-help",
+              "debug",
+              "agent-browser",
+              "dogfood",
+              "electron",
+              "slack",
+              "vercel-sandbox",
+              "compact",
+              "context",
+              "cost",
+              "init",
+              "pr-comments",
+              "release-notes",
+              "review",
+              "security-review",
+              "insights"
+            ],
+            "lifecycleState": "archived",
+            "claudeSessionId": "194d8048-43f3-4454-ac8a-4debb8418d71",
+            "yohoRemoteLibDir": "/home/guang/.yoho-remote/runtime/v2026.04.02.0549",
+            "startedFromDaemon": true,
+            "yohoRemoteHomeDir": "/home/guang/.yoho-remote",
+            "yohoRemoteToolsDir": "/home/guang/.yoho-remote/runtime/v2026.04.02.0549/tools/unpacked",
+            "lifecycleStateSince": 1775094352622
+          },
+          "metadataVersion": 89,
+          "agentState": {
+            "requests": {},
+            "controlledByUser": false,
+            "completedRequests": {}
+          },
+          "agentStateVersion": 9,
+          "todos": null,
+          "todosUpdatedAt": null,
+          "active": false,
+          "activeAt": 1775080800194,
+          "thinking": false,
+          "thinkingAt": null,
+          "seq": 607,
+          "advisorTaskId": null,
+          "creatorChatId": null,
+          "advisorMode": false,
+          "advisorPromptInjected": false,
+          "rolePromptSent": false,
+          "permissionMode": "bypassPermissions",
+          "modelMode": "default",
+          "modelReasoningEffort": null,
+          "fastMode": null,
+          "terminationReason": null,
+          "lastMessageAt": 1775051365031,
+          "activeMonitors": null
+        },
+        "brainPreferences": {
+          "machineSelection": {
+            "mode": "auto",
+            "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+          },
+          "childModels": {
+            "claude": {
+              "allowed": [
+                "sonnet"
+              ],
+              "defaultModel": "sonnet"
+            },
+            "codex": {
+              "allowed": [],
+              "defaultModel": "gpt-5.4"
+            }
+          }
+        },
+        "copyFromSessionId": null,
+        "diff": {
+          "field": "brainPreferences",
+          "after": {
+            "machineSelection": {
+              "mode": "auto",
+              "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+            },
+            "childModels": {
+              "claude": {
+                "allowed": [
+                  "sonnet"
+                ],
+                "defaultModel": "sonnet"
+              },
+              "codex": {
+                "allowed": [],
+                "defaultModel": "gpt-5.4"
+              }
+            }
+          }
+        }
+      },
+      {
+        "manifestIndex": 2,
+        "sessionId": "94aa00bb-85af-4ec4-b3f6-9500a60a0416",
+        "namespace": "default",
+        "source": "brain",
+        "action": "set-brainPreferences",
+        "reason": "O2 首批 patch。A 组 high/high，按已确认决策显式写入 Track B 的 codex 禁用。",
+        "beforeSession": {
+          "id": "94aa00bb-85af-4ec4-b3f6-9500a60a0416",
+          "tag": "9467bf95-3f26-4067-893d-633d189a342d",
+          "namespace": "default",
+          "machineId": null,
+          "createdAt": 1775089806777,
+          "updatedAt": 1775183984029,
+          "createdBy": null,
+          "orgId": null,
+          "metadata": {
+            "os": "linux",
+            "host": "ncu",
+            "path": "/home/guang/.yoho-remote/brain-workspace",
+            "tools": [
+              "Task",
+              "TaskOutput",
+              "Bash",
+              "Glob",
+              "Grep",
+              "ExitPlanMode",
+              "Read",
+              "Edit",
+              "Write",
+              "NotebookEdit",
+              "WebFetch",
+              "TodoWrite",
+              "WebSearch",
+              "TaskStop",
+              "AskUserQuestion",
+              "Skill",
+              "EnterPlanMode"
+            ],
+            "flavor": "claude",
+            "source": "brain",
+            "homeDir": "/home/guang",
+            "hostPid": 3441751,
+            "summary": {
+              "text": "飞书群: Yoho 技术 · 04/02 08:30",
+              "updatedAt": 1775089806792
+            },
+            "version": "v2026.04.02.1105",
+            "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+            "startedBy": "daemon",
+            "archivedBy": "cli",
+            "runtimeModel": "claude-sonnet-4-5-20250929",
+            "archiveReason": "User terminated",
+            "slashCommands": [
+              "keybindings-help",
+              "debug",
+              "agent-browser",
+              "dogfood",
+              "electron",
+              "slack",
+              "vercel-sandbox",
+              "compact",
+              "context",
+              "cost",
+              "init",
+              "pr-comments",
+              "release-notes",
+              "review",
+              "security-review",
+              "insights"
+            ],
+            "lifecycleState": "archived",
+            "claudeSessionId": "a6834897-ab32-4df2-a3a7-87a739615fce",
+            "yohoRemoteLibDir": "/home/guang/.yoho-remote/runtime/v2026.04.02.1105",
+            "startedFromDaemon": true,
+            "yohoRemoteHomeDir": "/home/guang/.yoho-remote",
+            "yohoRemoteToolsDir": "/home/guang/.yoho-remote/runtime/v2026.04.02.1105/tools/unpacked",
+            "lifecycleStateSince": 1775183983917
+          },
+          "metadataVersion": 27,
+          "agentState": {
+            "requests": {},
+            "controlledByUser": false,
+            "completedRequests": {}
+          },
+          "agentStateVersion": 5,
+          "todos": null,
+          "todosUpdatedAt": null,
+          "active": false,
+          "activeAt": 1775094352618,
+          "thinking": false,
+          "thinkingAt": null,
+          "seq": 177,
+          "advisorTaskId": null,
+          "creatorChatId": null,
+          "advisorMode": false,
+          "advisorPromptInjected": false,
+          "rolePromptSent": false,
+          "permissionMode": "bypassPermissions",
+          "modelMode": "default",
+          "modelReasoningEffort": null,
+          "fastMode": null,
+          "terminationReason": null,
+          "lastMessageAt": 1775093673675,
+          "activeMonitors": null
+        },
+        "brainPreferences": {
+          "machineSelection": {
+            "mode": "auto",
+            "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+          },
+          "childModels": {
+            "claude": {
+              "allowed": [
+                "sonnet"
+              ],
+              "defaultModel": "sonnet"
+            },
+            "codex": {
+              "allowed": [],
+              "defaultModel": "gpt-5.4"
+            }
+          }
+        },
+        "copyFromSessionId": null,
+        "diff": {
+          "field": "brainPreferences",
+          "after": {
+            "machineSelection": {
+              "mode": "auto",
+              "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+            },
+            "childModels": {
+              "claude": {
+                "allowed": [
+                  "sonnet"
+                ],
+                "defaultModel": "sonnet"
+              },
+              "codex": {
+                "allowed": [],
+                "defaultModel": "gpt-5.4"
+              }
+            }
+          }
+        }
+      },
+      {
+        "manifestIndex": 3,
+        "sessionId": "edf6f8db-1406-4b62-b0ee-d449ecf38b8c",
+        "namespace": "default",
+        "source": "brain",
+        "action": "set-brainPreferences",
+        "reason": "O2 首批 patch。A 组 high/high，按已确认决策显式写入 Track B 的 codex 禁用。",
+        "beforeSession": {
+          "id": "edf6f8db-1406-4b62-b0ee-d449ecf38b8c",
+          "tag": "c8df3754-5093-4723-8795-79e7f82fc174",
+          "namespace": "default",
+          "machineId": null,
+          "createdAt": 1775258258813,
+          "updatedAt": 1775469600105,
+          "createdBy": null,
+          "orgId": null,
+          "metadata": {
+            "os": "linux",
+            "host": "ncu",
+            "path": "/home/guang/.yoho-remote/brain-workspace",
+            "tools": [
+              "Task",
+              "AskUserQuestion",
+              "Bash",
+              "CronCreate",
+              "CronDelete",
+              "CronList",
+              "Edit",
+              "EnterPlanMode",
+              "EnterWorktree",
+              "ExitPlanMode",
+              "ExitWorktree",
+              "Glob",
+              "Grep",
+              "NotebookEdit",
+              "Read",
+              "RemoteTrigger",
+              "Skill",
+              "TaskOutput",
+              "TaskStop",
+              "TodoWrite",
+              "WebFetch",
+              "WebSearch",
+              "Write"
+            ],
+            "flavor": "claude",
+            "source": "brain",
+            "homeDir": "/home/guang",
+            "hostPid": 1867297,
+            "summary": {
+              "text": "飞书群: Yoho 技术 · 04/04 07:17",
+              "updatedAt": 1775258258830
+            },
+            "version": "v2026.04.03.1628",
+            "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+            "startedBy": "daemon",
+            "archivedBy": "cli",
+            "runtimeModel": "claude-sonnet-4-6",
+            "archiveReason": "User terminated",
+            "slashCommands": [
+              "update-config",
+              "debug",
+              "simplify",
+              "batch",
+              "loop",
+              "schedule",
+              "claude-api",
+              "agent-browser",
+              "dogfood",
+              "electron",
+              "slack",
+              "vercel-sandbox",
+              "compact",
+              "context",
+              "cost",
+              "heapdump",
+              "init",
+              "release-notes",
+              "review",
+              "security-review",
+              "insights"
+            ],
+            "lifecycleState": "archived",
+            "claudeSessionId": "dd48d1f2-b9c3-4f2b-9f65-9755a7b7a32f",
+            "yohoRemoteLibDir": "/home/guang/.yoho-remote/runtime/v2026.04.03.1628",
+            "startedFromDaemon": true,
+            "yohoRemoteHomeDir": "/home/guang/.yoho-remote",
+            "yohoRemoteToolsDir": "/home/guang/.yoho-remote/runtime/v2026.04.03.1628/tools/unpacked",
+            "lifecycleStateSince": 1775469600103
+          },
+          "metadataVersion": 29,
+          "agentState": {
+            "requests": {},
+            "controlledByUser": false,
+            "completedRequests": {}
+          },
+          "agentStateVersion": 11,
+          "todos": null,
+          "todosUpdatedAt": null,
+          "active": false,
+          "activeAt": 1775361600349,
+          "thinking": false,
+          "thinkingAt": null,
+          "seq": 268,
+          "advisorTaskId": null,
+          "creatorChatId": null,
+          "advisorMode": false,
+          "advisorPromptInjected": false,
+          "rolePromptSent": false,
+          "permissionMode": "bypassPermissions",
+          "modelMode": "default",
+          "modelReasoningEffort": null,
+          "fastMode": null,
+          "terminationReason": null,
+          "lastMessageAt": 1775331008714,
+          "activeMonitors": null
+        },
+        "brainPreferences": {
+          "machineSelection": {
+            "mode": "auto",
+            "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+          },
+          "childModels": {
+            "claude": {
+              "allowed": [
+                "sonnet"
+              ],
+              "defaultModel": "sonnet"
+            },
+            "codex": {
+              "allowed": [],
+              "defaultModel": "gpt-5.4"
+            }
+          }
+        },
+        "copyFromSessionId": null,
+        "diff": {
+          "field": "brainPreferences",
+          "after": {
+            "machineSelection": {
+              "mode": "auto",
+              "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+            },
+            "childModels": {
+              "claude": {
+                "allowed": [
+                  "sonnet"
+                ],
+                "defaultModel": "sonnet"
+              },
+              "codex": {
+                "allowed": [],
+                "defaultModel": "gpt-5.4"
+              }
+            }
+          }
+        }
+      },
+      {
+        "manifestIndex": 4,
+        "sessionId": "f8ecaf60-3bfc-4076-909d-df4e08fc1e2a",
+        "namespace": "default",
+        "source": "brain",
+        "action": "set-brainPreferences",
+        "reason": "O2 首批 patch。A 组 high/high，按已确认决策显式写入 Track B 的 codex 禁用。",
+        "beforeSession": {
+          "id": "f8ecaf60-3bfc-4076-909d-df4e08fc1e2a",
+          "tag": "fcd9b702-ce85-40a3-9a13-97bd04ad9b42",
+          "namespace": "default",
+          "machineId": null,
+          "createdAt": 1775365904139,
+          "updatedAt": 1775620800230,
+          "createdBy": null,
+          "orgId": null,
+          "metadata": {
+            "os": "linux",
+            "host": "ncu",
+            "path": "/home/guang/.yoho-remote/brain-workspace",
+            "tools": [
+              "Task",
+              "AskUserQuestion",
+              "Bash",
+              "CronCreate",
+              "CronDelete",
+              "CronList",
+              "Edit",
+              "EnterPlanMode",
+              "EnterWorktree",
+              "ExitPlanMode",
+              "ExitWorktree",
+              "Glob",
+              "Grep",
+              "NotebookEdit",
+              "Read",
+              "RemoteTrigger",
+              "Skill",
+              "TaskOutput",
+              "TaskStop",
+              "TodoWrite",
+              "WebFetch",
+              "WebSearch",
+              "Write"
+            ],
+            "flavor": "claude",
+            "source": "brain",
+            "homeDir": "/home/guang",
+            "hostPid": 4145977,
+            "summary": {
+              "text": "飞书群: Yoho 技术 · 04/05 13:11",
+              "updatedAt": 1775365904149
+            },
+            "version": "v2026.04.06.1536",
+            "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+            "startedBy": "daemon",
+            "archivedBy": "cli",
+            "runtimeModel": "claude-sonnet-4-6",
+            "archiveReason": "User terminated",
+            "slashCommands": [
+              "update-config",
+              "debug",
+              "simplify",
+              "batch",
+              "loop",
+              "schedule",
+              "claude-api",
+              "agent-browser",
+              "dogfood",
+              "electron",
+              "slack",
+              "vercel-sandbox",
+              "compact",
+              "context",
+              "cost",
+              "heapdump",
+              "init",
+              "release-notes",
+              "review",
+              "security-review",
+              "insights"
+            ],
+            "lifecycleState": "archived",
+            "claudeSessionId": "f2c6e4ae-9264-48ea-81ca-5bae46a18956",
+            "yohoRemoteLibDir": "/home/guang/.yoho-remote/runtime/v2026.04.06.1536",
+            "startedFromDaemon": true,
+            "yohoRemoteHomeDir": "/home/guang/.yoho-remote",
+            "yohoRemoteToolsDir": "/home/guang/.yoho-remote/runtime/v2026.04.06.1536/tools/unpacked",
+            "lifecycleStateSince": 1775620800187
+          },
+          "metadataVersion": 97,
+          "agentState": {
+            "requests": {},
+            "controlledByUser": false,
+            "completedRequests": {}
+          },
+          "agentStateVersion": 22,
+          "todos": null,
+          "todosUpdatedAt": null,
+          "active": false,
+          "activeAt": 1775469600115,
+          "thinking": false,
+          "thinkingAt": null,
+          "seq": 732,
+          "advisorTaskId": null,
+          "creatorChatId": null,
+          "advisorMode": false,
+          "advisorPromptInjected": false,
+          "rolePromptSent": false,
+          "permissionMode": "bypassPermissions",
+          "modelMode": "sonnet",
+          "modelReasoningEffort": null,
+          "fastMode": null,
+          "terminationReason": null,
+          "lastMessageAt": 1775406656486,
+          "activeMonitors": null
+        },
+        "brainPreferences": {
+          "machineSelection": {
+            "mode": "auto",
+            "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+          },
+          "childModels": {
+            "claude": {
+              "allowed": [
+                "sonnet"
+              ],
+              "defaultModel": "sonnet"
+            },
+            "codex": {
+              "allowed": [],
+              "defaultModel": "gpt-5.4"
+            }
+          }
+        },
+        "copyFromSessionId": null,
+        "diff": {
+          "field": "brainPreferences",
+          "after": {
+            "machineSelection": {
+              "mode": "auto",
+              "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+            },
+            "childModels": {
+              "claude": {
+                "allowed": [
+                  "sonnet"
+                ],
+                "defaultModel": "sonnet"
+              },
+              "codex": {
+                "allowed": [],
+                "defaultModel": "gpt-5.4"
+              }
+            }
+          }
+        }
+      }
+    ],
+    "skippedActive": [],
+    "skippedNoop": [],
+    "rejected": []
+  }
+}

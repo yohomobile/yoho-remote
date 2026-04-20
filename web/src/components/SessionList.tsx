@@ -7,7 +7,7 @@ import { useDebouncedThinking } from '@/hooks/useDebouncedThinking'
 import { getMachineTitle } from '@/lib/machines'
 import { formatSessionModelLabel } from '@/lib/sessionModelLabel'
 import { matchSessionToProject } from '@/lib/projectMatching'
-import { isIdleBrainChildSession } from '@/lib/sessionActivity'
+import { isArchivedSession, isIdleBrainChildSession, matchesArchiveFilter } from '@/lib/sessionActivity'
 import {
     buildSessionListEntries,
     getCollapsedBrainChildCount,
@@ -46,8 +46,7 @@ function filterSessions(
 ): SessionSummary[] {
     return sessions.filter(session => {
         // Archive filter
-        if (archiveFilter === 'archive' && session.active) return false
-        if (archiveFilter === 'active' && !session.active) return false
+        if (!matchesArchiveFilter(session, archiveFilter)) return false
 
         // Owner filter
         const isBrainSession = session.metadata?.source === 'brain' || session.metadata?.source === 'brain-child'
@@ -152,6 +151,33 @@ function getSessionMachineLabel(session: SessionSummary, machineMap: Map<string,
         return getMachineTitle(machine)
     }
     return machineId.slice(0, 8)
+}
+
+function getBrainSelfLabel(session: SessionSummary): string | null {
+    if (session.metadata?.source !== 'brain') {
+        return null
+    }
+    if (session.metadata.selfSystemEnabled !== true) {
+        return 'Self: off'
+    }
+    if (session.metadata.selfProfileResolved === true) {
+        const suffix = session.metadata.selfMemoryStatus === 'attached'
+            ? ' + memory'
+            : session.metadata.selfMemoryStatus === 'error'
+                ? ' · memory error'
+                : session.metadata.selfMemoryStatus === 'empty'
+                    ? ' · memory empty'
+                    : session.metadata.selfMemoryStatus === 'skipped'
+                        ? ' · memory skipped'
+                        : ''
+        return `Self: ${session.metadata.selfProfileName ?? session.metadata.selfProfileId ?? 'configured'}${suffix}`
+    }
+    if (session.metadata.selfProfileId) {
+        return session.metadata.selfMemoryStatus === 'skipped'
+            ? `Self: unresolved (${session.metadata.selfProfileId.slice(0, 8)}) · memory skipped`
+            : `Self: unresolved (${session.metadata.selfProfileId.slice(0, 8)})`
+    }
+    return 'Self: unresolved'
 }
 
 function formatRelativeTime(value: number): string | null {
@@ -259,6 +285,7 @@ function SessionItem(props: {
     const runtimeAgent = s.metadata?.runtimeAgent?.trim()
     const sourceTag = getSourceTag(s)
     const timestamp = statusSummary?.timestamp ?? (s.lastMessageAt ?? s.updatedAt)
+    const brainSelfLabel = getBrainSelfLabel(s)
 
     const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
         if (event.key !== 'Enter' && event.key !== ' ') return
@@ -369,6 +396,11 @@ function SessionItem(props: {
                         </>
                     )}
                 </div>
+                {brainSelfLabel && (
+                    <div className="mt-0.5 text-[11px] text-[var(--app-hint)] truncate" title={brainSelfLabel}>
+                        {brainSelfLabel}
+                    </div>
+                )}
             </div>
 
             {/* Status and Time */}
@@ -485,8 +517,9 @@ export function SessionList(props: {
     const listEntries = useMemo(
         () => buildSessionListEntries(filteredSessions, {
             sortMode: effectiveOwnerFilter === 'brain' ? 'createdAtDesc' : 'activity',
+            includeArchived: props.archiveFilter === 'archive',
         }),
-        [effectiveOwnerFilter, filteredSessions]
+        [effectiveOwnerFilter, filteredSessions, props.archiveFilter]
     )
     const expandedBrainSessionIdSet = useMemo(
         () => new Set(expandedBrainSessionIds),
@@ -498,7 +531,7 @@ export function SessionList(props: {
     )
 
     // Statistics
-    const activeCount = filteredSessions.filter(s => s.active).length
+    const activeCount = filteredSessions.filter((session) => session.active && !isArchivedSession(session)).length
     const archiveFilterLabel = props.archiveFilter === 'active' ? 'Active' : 'Archive'
     const nextArchiveFilter = props.archiveFilter === 'active' ? 'archive' : 'active'
     const nextArchiveFilterLabel = nextArchiveFilter === 'active' ? 'Active' : 'Archive'

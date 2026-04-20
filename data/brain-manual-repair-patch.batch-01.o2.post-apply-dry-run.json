@@ -1,0 +1,58 @@
+{
+  "mode": "dry-run",
+  "guardrails": {
+    "requiresManifest": true,
+    "defaultDryRun": true,
+    "requiresApplyFlag": true,
+    "alwaysSkipActive": true,
+    "validateAgainstCurrentSchema": true,
+    "restartServices": false
+  },
+  "manifestPath": "/home/workspaces/repos/yoho-remote/data/brain-manual-repair-patch.batch-01.o2.json",
+  "plan": {
+    "generatedAt": 1776531059541,
+    "manifestVersion": 1,
+    "summary": {
+      "manifestItems": 5,
+      "plannedWrites": 0,
+      "skippedActive": 0,
+      "skippedNoop": 5,
+      "rejected": 0
+    },
+    "planned": [],
+    "skippedActive": [],
+    "skippedNoop": [
+      {
+        "manifestIndex": 0,
+        "sessionId": "7704b71a-7272-4b81-aa9a-1888d597021a",
+        "namespace": "default",
+        "reason": "brainPreferences 已经与目标值一致"
+      },
+      {
+        "manifestIndex": 1,
+        "sessionId": "5b056c5c-775d-4f0e-9551-e9ee5d0c3b2a",
+        "namespace": "default",
+        "reason": "brainPreferences 已经与目标值一致"
+      },
+      {
+        "manifestIndex": 2,
+        "sessionId": "94aa00bb-85af-4ec4-b3f6-9500a60a0416",
+        "namespace": "default",
+        "reason": "brainPreferences 已经与目标值一致"
+      },
+      {
+        "manifestIndex": 3,
+        "sessionId": "edf6f8db-1406-4b62-b0ee-d449ecf38b8c",
+        "namespace": "default",
+        "reason": "brainPreferences 已经与目标值一致"
+      },
+      {
+        "manifestIndex": 4,
+        "sessionId": "f8ecaf60-3bfc-4076-909d-df4e08fc1e2a",
+        "namespace": "default",
+        "reason": "brainPreferences 已经与目标值一致"
+      }
+    ],
+    "rejected": []
+  }
+}

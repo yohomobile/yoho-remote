@@ -26,6 +26,7 @@ import { createOrgsRoutes } from './routes/orgs'
 import { createLicensesRoutes } from './routes/licenses'
 import { createCodexOpenAIRoutes } from './routes/codex-openai'
 import { createDownloadCliRoutes, createDownloadApiRoutes } from './routes/downloads'
+import { createControlPlaneRoutes } from './routes/control-plane'
 import type { SSEManager } from '../sse/sseManager'
 import type { Server as BunServer } from 'bun'
 import type { Server as SocketEngine } from '@socket.io/bun-engine'
@@ -121,6 +122,7 @@ function createWebApp(options: {
     app.route('/api', createOrgsRoutes(options.store))
     app.route('/api', createLicensesRoutes(options.store))
     app.route('/api', createDownloadApiRoutes(options.store))
+    app.route('/api', createControlPlaneRoutes(options.store))
 
     if (options.embeddedAssetMap) {
         const embeddedAssetMap = options.embeddedAssetMap

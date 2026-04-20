@@ -19,12 +19,14 @@ import {
     buildBrainSessionPreferences,
     extractBrainChildModelDefaults,
     extractBrainSessionPreferencesFromMetadata,
+    resolveBrainSpawnPermissionMode,
 } from '../brain/brainSessionPreferences'
 import { extractAgentText, extractAgentMessageMeta, isInternalBrainMessage } from './agentMessage'
 import { buildFeishuMessage, buildFeishuMessageForEdit } from './feishu/formatter'
 import { extractActions, actionsToExtras } from './feishu/actionExtractor'
 import { lookupKeycloakUserByEmail, type KeycloakUserInfo } from './keycloakLookup'
 import { getLicenseService } from '../license/licenseService'
+import { appendSelfSystemPrompt, resolveBrainSelfSystemContext } from '../brain/selfSystem'
 
 // ========== Structured logging ==========
 
@@ -92,6 +94,59 @@ function mergeStreamingAgentTexts(texts: string[]): string[] {
     }
 
     return merged
+}
+
+const BUSY_BRAIN_KEEP_RUNNING_PATTERNS = [
+    /不要停/,
+    /别停/,
+    /不用停/,
+    /先不停/,
+    /继续原任务/,
+    /继续原来的/,
+    /按原计划继续/,
+    /保持原任务/,
+]
+
+const BUSY_BRAIN_REDIRECT_PATTERNS = [
+    /停掉/,
+    /停下/,
+    /停止/,
+    /先停/,
+    /取消/,
+    /作废/,
+    /忽略(?:前面|刚才|上一条|上个|之前|原来)?/,
+    /(?:别|不要|不用)(?:再)?(?:做|查|继续|跑|执行)/,
+    /重新来/,
+    /重来/,
+    /重做/,
+    /推翻/,
+    /改方向/,
+    /换方向/,
+    /纠偏/,
+    /跑偏/,
+    /不是这个/,
+    /不是刚才那个/,
+    /搞错了/,
+    /说错了/,
+    /理解错了/,
+    /abort/,
+    /cancel/,
+    /stop/,
+]
+
+function normalizeBusyBrainControlText(text: string): string {
+    return text.trim().toLowerCase().replace(/\s+/g, '')
+}
+
+function shouldAbortBusyBrainTurn(text: string): boolean {
+    const normalized = normalizeBusyBrainControlText(text)
+    if (!normalized) {
+        return false
+    }
+    if (BUSY_BRAIN_KEEP_RUNNING_PATTERNS.some((pattern) => pattern.test(normalized))) {
+        return false
+    }
+    return BUSY_BRAIN_REDIRECT_PATTERNS.some((pattern) => pattern.test(normalized))
 }
 
 export class BrainBridge implements IMBridgeCallbacks {
@@ -370,19 +425,27 @@ export class BrainBridge implements IMBridgeCallbacks {
         if (state.busy || state.creating) {
             console.log(`${this.logPrefix} Chat ${chatId.slice(0, 12)} busy, buffered (${state.incoming.length} pending)`)
 
-            // Abort current Brain turn if the new addressed message warrants it:
-            //   - p2p: always abort (single user, new message = new intent)
-            //   - group: abort only if the sender is already in the current processing batch
-            //     (same person adding context / correcting themselves; don't interrupt for a different user)
+            // Abort current Brain turn only for an explicit redirect/correction while busy:
+            //   - p2p: same user by definition, but do NOT abort for normal follow-ups
+            //   - group: only the sender already in the current batch may redirect the turn
             if (message.addressed && !state.creating) {
                 const isSameSender = chatType === 'p2p'
                     || (this.lastSenderIds.get(chatId)?.has(message.senderId) ?? false)
-                if (isSameSender) {
+                const wantsRedirect = shouldAbortBusyBrainTurn(message.text)
+                if (isSameSender && wantsRedirect) {
                     const sessionId = this.chatIdToSessionId.get(chatId)
                     if (sessionId) {
                         console.log(`${this.logPrefix} Aborting current Brain turn for ${chatId.slice(0, 12)} (${chatType}, sender=${message.senderId.slice(0, 8)})`)
                         this.syncEngine.abortSession(sessionId).catch(() => {})
                     }
+                } else if (isSameSender) {
+                    slog('info', 'im.busy.followup.buffered', {
+                        traceId,
+                        chatId: chatId.slice(0, 12),
+                        chatType,
+                        senderId: message.senderId.slice(0, 8),
+                        note: 'buffer_without_abort',
+                    })
                 }
             }
             return
@@ -796,7 +859,7 @@ export class BrainBridge implements IMBridgeCallbacks {
                 })
                 const spawnOptions: Record<string, unknown> = {
                     source: 'brain',
-                    permissionMode: 'bypassPermissions',
+                    permissionMode: resolveBrainSpawnPermissionMode(agent),
                     caller: this.adapter.platform,
                     brainPreferences,
                 }
@@ -910,7 +973,21 @@ export class BrainBridge implements IMBridgeCallbacks {
             const brainPreferences = extractBrainSessionPreferencesFromMetadata(
                 (session?.metadata as Record<string, unknown> | null | undefined) ?? null
             )
-            const prompt = await this.adapter.buildInitPrompt(chatType, chatName, senderName, brainPreferences)
+            const selfSystem = session
+                ? await resolveBrainSelfSystemContext({
+                    store: this.store,
+                    namespace: session.namespace,
+                    yohoMemoryUrl: this.YOHO_MEMORY_URL,
+                })
+                : null
+            const prompt = appendSelfSystemPrompt(
+                await this.adapter.buildInitPrompt(chatType, chatName, senderName, brainPreferences),
+                selfSystem?.prompt,
+            )
+
+            if (selfSystem) {
+                await this.syncEngine.patchSessionMetadata(sessionId, selfSystem.metadataPatch)
+            }
 
             await this.syncEngine.sendMessage(sessionId, {
                 text: prompt,
@@ -1066,7 +1143,7 @@ export class BrainBridge implements IMBridgeCallbacks {
                     sessionId: oldSessionId,
                     resumeSessionId: underlyingSessionId,
                     source: 'brain',
-                    permissionMode: 'bypassPermissions',
+                    permissionMode: resolveBrainSpawnPermissionMode(agent),
                     caller: this.adapter.platform,
                     brainPreferences,
                 }

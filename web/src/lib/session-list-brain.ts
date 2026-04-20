@@ -1,4 +1,5 @@
 import type { SessionSummary } from '@/types/api'
+import { isArchivedSession } from '@/lib/sessionActivity'
 
 export type BrainGroupStatusSummary = {
     active: boolean
@@ -128,22 +129,26 @@ function compareEntriesByCreatedAt(left: SessionListEntry, right: SessionListEnt
 
 export function buildSessionListEntries(
     sessions: SessionSummary[],
-    options: { sortMode?: SessionListSortMode } = {}
+    options: { sortMode?: SessionListSortMode; includeArchived?: boolean } = {}
 ): SessionListEntry[] {
     if (!Array.isArray(sessions) || sessions.length === 0) return []
     const sortMode = options.sortMode ?? 'activity'
+    const includeArchived = options.includeArchived === true
     const compareSessionRows = sortMode === 'createdAtDesc' ? compareSessionsByCreatedAt : compareSessions
     const compareTopLevelEntries = sortMode === 'createdAtDesc' ? compareEntriesByCreatedAt : compareEntries
+    const visibleSessions = includeArchived
+        ? sessions
+        : sessions.filter((session) => !isArchivedSession(session))
 
     const visibleBrainParents = new Map<string, SessionSummary>()
-    sessions.forEach(session => {
+    visibleSessions.forEach(session => {
         if (isBrainSession(session)) {
             visibleBrainParents.set(session.id, session)
         }
     })
 
     const childrenByParent = new Map<string, SessionSummary[]>()
-    sessions.forEach(session => {
+    visibleSessions.forEach(session => {
         if (!isBrainChildSession(session)) return
         const parentId = session.metadata?.mainSessionId
         if (!parentId || !visibleBrainParents.has(parentId)) return
@@ -156,7 +161,7 @@ export function buildSessionListEntries(
     })
 
     const entries: SessionListEntry[] = []
-    sessions.forEach(session => {
+    visibleSessions.forEach(session => {
         if (isBrainChildSession(session)) {
             const parentId = session.metadata?.mainSessionId
             if (parentId && visibleBrainParents.has(parentId)) {

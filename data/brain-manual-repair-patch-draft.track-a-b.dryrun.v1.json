@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "sessionId": "7704b71a-7272-4b81-aa9a-1888d597021a",
+      "namespace": "default",
+      "reason": "首批 dry-run：仅纳入 Track A 高置信 5 条；codex 采用 fail-closed 禁用写法，仅用于 dry-run 审核。",
+      "action": "set-brainPreferences",
+      "brainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      }
+    },
+    {
+      "sessionId": "5b056c5c-775d-4f0e-9551-e9ee5d0c3b2a",
+      "namespace": "default",
+      "reason": "首批 dry-run：仅纳入 Track A 高置信 5 条；codex 采用 fail-closed 禁用写法，仅用于 dry-run 审核。",
+      "action": "set-brainPreferences",
+      "brainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      }
+    },
+    {
+      "sessionId": "94aa00bb-85af-4ec4-b3f6-9500a60a0416",
+      "namespace": "default",
+      "reason": "首批 dry-run：仅纳入 Track A 高置信 5 条；codex 采用 fail-closed 禁用写法，仅用于 dry-run 审核。",
+      "action": "set-brainPreferences",
+      "brainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      }
+    },
+    {
+      "sessionId": "edf6f8db-1406-4b62-b0ee-d449ecf38b8c",
+      "namespace": "default",
+      "reason": "首批 dry-run：仅纳入 Track A 高置信 5 条；codex 采用 fail-closed 禁用写法，仅用于 dry-run 审核。",
+      "action": "set-brainPreferences",
+      "brainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      }
+    },
+    {
+      "sessionId": "f8ecaf60-3bfc-4076-909d-df4e08fc1e2a",
+      "namespace": "default",
+      "reason": "首批 dry-run：仅纳入 Track A 高置信 5 条；codex 采用 fail-closed 禁用写法，仅用于 dry-run 审核。",
+      "action": "set-brainPreferences",
+      "brainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      }
+    }
+  ]
+}

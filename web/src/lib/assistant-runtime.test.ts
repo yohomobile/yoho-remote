@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { ChatBlock } from '@/chat/types'
+import type { Session } from '@/types/api'
 import { convertBlocksToThreadMessages } from './assistant-runtime'
 
 function getMessageParts(message: ReturnType<typeof convertBlocksToThreadMessages>[number]) {
@@ -7,6 +8,24 @@ function getMessageParts(message: ReturnType<typeof convertBlocksToThreadMessage
         throw new Error('Expected message.content to be an array')
     }
     return message.content
+}
+
+function createSession(overrides: Partial<Session> = {}): Session {
+    return {
+        id: 'brain-1',
+        createdAt: 1,
+        updatedAt: 1,
+        lastMessageAt: null,
+        active: true,
+        thinking: false,
+        metadata: {
+            path: '/tmp/brain',
+            host: 'ncu',
+            source: 'brain',
+        },
+        agentState: null,
+        ...overrides,
+    }
 }
 
 describe('convertBlocksToThreadMessages', () => {
@@ -206,6 +225,125 @@ describe('convertBlocksToThreadMessages', () => {
         expect(messages[3]!.metadata?.custom).toMatchObject({
             kind: 'cli-output',
             source: 'assistant'
+        })
+    })
+
+    test('surfaces queued brain delivery on inactive brain sessions', () => {
+        const blocks: ChatBlock[] = [
+            {
+                kind: 'user-text',
+                id: 'user-1',
+                localId: 'local-1',
+                createdAt: 1,
+                text: 'Keep going',
+                meta: {
+                    brainDelivery: {
+                        phase: 'queued',
+                        acceptedAt: 1,
+                    },
+                },
+            },
+        ]
+
+        const messages = convertBlocksToThreadMessages(blocks, createSession({
+            active: false,
+        }))
+
+        expect(messages[0]?.metadata?.custom).toMatchObject({
+            kind: 'user',
+            brainDelivery: {
+                phase: 'queued',
+                acceptedAt: 1,
+            },
+        })
+    })
+
+    test('does not merge pending-consume brain messages on the first child callback boundary', () => {
+        const blocks: ChatBlock[] = [
+            {
+                kind: 'user-text',
+                id: 'user-1',
+                localId: 'local-1',
+                createdAt: 1,
+                text: 'Do task B next',
+                meta: {
+                    brainDelivery: {
+                        phase: 'pending_consume',
+                        acceptedAt: 1,
+                    },
+                },
+            },
+            {
+                kind: 'agent-event',
+                id: 'event-1',
+                createdAt: 2,
+                event: {
+                    type: 'brain-child-callback',
+                    title: 'Task A done',
+                    details: [],
+                },
+            },
+        ]
+
+        const messages = convertBlocksToThreadMessages(blocks, createSession({
+            active: true,
+            thinking: true,
+        }))
+
+        expect(messages[0]?.metadata?.custom).toMatchObject({
+            kind: 'user',
+            brainDelivery: {
+                phase: 'consuming',
+                acceptedAt: 1,
+            },
+        })
+    })
+
+    test('merges pending-consume brain messages after a second consumption boundary', () => {
+        const blocks: ChatBlock[] = [
+            {
+                kind: 'user-text',
+                id: 'user-1',
+                localId: 'local-1',
+                createdAt: 1,
+                text: 'Do task B next',
+                meta: {
+                    brainDelivery: {
+                        phase: 'pending_consume',
+                        acceptedAt: 1,
+                    },
+                },
+            },
+            {
+                kind: 'agent-event',
+                id: 'event-1',
+                createdAt: 2,
+                event: {
+                    type: 'brain-child-callback',
+                    title: 'Task A done',
+                    details: [],
+                },
+            },
+            {
+                kind: 'agent-text',
+                id: 'assistant-1',
+                localId: null,
+                createdAt: 3,
+                text: 'Task B started',
+            },
+        ]
+
+        const messages = convertBlocksToThreadMessages(blocks, createSession({
+            active: true,
+            thinking: true,
+        }))
+
+        expect(messages[0]?.metadata?.custom).toMatchObject({
+            kind: 'user',
+            brainDelivery: {
+                phase: 'merged',
+                acceptedAt: 1,
+            },
         })
     })
 })

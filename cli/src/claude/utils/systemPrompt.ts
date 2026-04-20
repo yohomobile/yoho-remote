@@ -31,6 +31,11 @@ export function buildRuntimeMcpSystemPrompt(tools?: string[]): string | undefine
         return undefined
     }
 
+    const ordinaryTools = [...new Set(
+        (tools ?? [])
+            .filter(tool => !tool.startsWith('mcp__'))
+    )].sort()
+
     const namespaces = [...new Set(
         mcpTools
             .map(tool => tool.match(/^mcp__(.+?)__/))
@@ -42,6 +47,9 @@ export function buildRuntimeMcpSystemPrompt(tools?: string[]): string | undefine
         'mcp__yoho_remote__environment_info',
         'mcp__yoho_remote__project_list',
         'mcp__yoho_remote__change_title',
+        'mcp__yoho_remote__ask_user_question',
+        'mcp__yoho_remote__chat_messages',
+        'mcp__yoho_remote__session_search',
         'mcp__yoho-vault__recall',
         'mcp__yoho-vault__remember',
         'mcp__yoho-vault__get_credential',
@@ -58,11 +66,15 @@ export function buildRuntimeMcpSystemPrompt(tools?: string[]): string | undefine
 
     return trimIdent(`
         Runtime MCP tools are available in this session.
+        Detected ordinary Claude tools in this session: ${ordinaryTools.length > 0 ? ordinaryTools.join(', ') : 'none'}.
         Detected MCP namespaces: ${namespaces.join(', ')}.
         ${keyRuntimeTools.length > 0 ? `Key runtime MCP tools already available here: ${keyRuntimeTools.join(', ')}.` : ''}
+        Only use ordinary Claude tools that are explicitly listed above.
+        In restricted Brain-style sessions, do not assume Bash, Read, Edit, Write, Grep, Glob, Task, Agent, or AskUserQuestion exist unless they are explicitly listed in the ordinary Claude tool set above.
         If the user asks which MCP tools are available, answer from this runtime set.
         Do NOT use Bash or shell commands such as "which mcp", "env | grep MCP", "claude mcp list", or reading ~/.claude/settings.json to decide MCP availability. Those reflect shell/config state, not this session's runtime-injected tools.
         When the user asks for environment info, project list, recall, remember, credentials, or skill search, call the matching MCP tool directly from the runtime namespaces above.
+        If structured user Q&A is needed and "mcp__yoho_remote__ask_user_question" is listed above, use that exact Yoho tool name. Do not assume a generic "request_user_input" alias exists.
     `)
 }
 

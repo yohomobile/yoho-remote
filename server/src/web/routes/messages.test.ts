@@ -3,7 +3,7 @@ import { Hono } from 'hono'
 import type { WebAppEnv } from '../middleware/auth'
 import { createMessagesRoutes } from './messages'
 
-function createSession(): Record<string, unknown> {
+function createSession(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
         id: 'session-1',
         namespace: 'ns-test',
@@ -19,7 +19,8 @@ function createSession(): Record<string, unknown> {
         thinkingAt: 1_700_000_000_000,
         seq: 0,
         activeAt: 1_700_000_000_000,
-        activeMonitors: []
+        activeMonitors: [],
+        ...overrides,
     }
 }
 
@@ -100,6 +101,94 @@ describe('createMessagesRoutes', () => {
             deleted: 5,
             remaining: 0,
             compacted: false
+        })
+    })
+
+    it('accepts messages for inactive brain sessions and returns queued delivery semantics', async () => {
+        const sendMessageCalls: Array<{ sessionId: string; payload: unknown }> = []
+        const fakeEngine = {
+            getOrRefreshSession: async () => createSession({
+                active: false,
+                thinking: false,
+                metadata: {
+                    source: 'brain',
+                },
+            }),
+            sendMessage: async (sessionId: string, payload: unknown) => {
+                sendMessageCalls.push({ sessionId, payload })
+                return { status: 'delivered' }
+            },
+        }
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'ns-test')
+            await next()
+        })
+        app.route('/api', createMessagesRoutes(() => fakeEngine as any, {} as any))
+
+        const response = await app.request('/api/sessions/session-1/messages', {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({ text: 'queue this', localId: 'local-1' }),
+        })
+
+        expect(response.status).toBe(200)
+        const payload = await response.json()
+        expect(payload).toMatchObject({
+            ok: true,
+            sessionId: 'session-1',
+            status: 'delivered',
+            brainDelivery: {
+                phase: 'queued',
+            },
+        })
+        expect(sendMessageCalls).toHaveLength(1)
+        expect(sendMessageCalls[0]).toMatchObject({
+            sessionId: 'session-1',
+            payload: {
+                text: 'queue this',
+                localId: 'local-1',
+                sentFrom: 'webapp',
+                meta: {
+                    brainDelivery: {
+                        phase: 'queued',
+                    },
+                },
+            },
+        })
+    })
+
+    it('keeps rejecting inactive non-brain sessions', async () => {
+        const fakeEngine = {
+            getOrRefreshSession: async () => createSession({
+                active: false,
+                metadata: {
+                    source: 'cli',
+                },
+            }),
+        }
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'ns-test')
+            await next()
+        })
+        app.route('/api', createMessagesRoutes(() => fakeEngine as any, {} as any))
+
+        const response = await app.request('/api/sessions/session-1/messages', {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({ text: 'hello' }),
+        })
+
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({
+            error: 'Session is inactive',
         })
     })
 })

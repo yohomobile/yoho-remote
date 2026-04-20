@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "sessionId": "<TARGET_SESSION_ID_FOR_BRAIN_PREFERENCES>",
+      "namespace": "<OPTIONAL_NAMESPACE>",
+      "reason": "<HUMAN_REVIEW_REASON>",
+      "action": "set-brainPreferences",
+      "copyFromSessionId": "<REFERENCE_SESSION_ID_WITH_VALID_BRAIN_PREFERENCES>"
+    },
+    {
+      "sessionId": "<TARGET_SESSION_ID_FOR_PERMISSION_MODE>",
+      "namespace": "<OPTIONAL_NAMESPACE>",
+      "reason": "<HUMAN_REVIEW_REASON>",
+      "action": "set-permissionMode",
+      "permissionMode": "<default|bypassPermissions|read-only|safe-yolo|yolo>"
+    }
+  ]
+}

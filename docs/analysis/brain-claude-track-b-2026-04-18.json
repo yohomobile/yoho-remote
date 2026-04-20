@@ -1,0 +1,3009 @@
+{
+  "generatedAt": "2026-04-18T16:28:25.106Z",
+  "method": "Track B independent inference from local export + read-only database evidence; no Track A conclusions used.",
+  "sourceManifest": "data/brain-manual-repair-manifest.default.json",
+  "targetFilter": {
+    "source": "brain",
+    "flavor": "claude",
+    "count": 58
+  },
+  "cutoffs": {
+    "firstCodexBrainChildCreatedAt": 1776336896980,
+    "firstCodexBrainChildCreatedAtIso": "2026-04-16T10:54:56.980Z"
+  },
+  "globalEvidence": [
+    "默认 manifest 显示本批次共有 58 条 target，全部为 source=brain + flavor=claude，且 brainPreferences 完全缺失、没有父 session 参考源。",
+    "只读库旁证中，全部 Claude brain-child 共 46 条，modelMode 仅出现 default / sonnet / null，从未出现 opus 或 opus-4-7。",
+    "只读库旁证中，全部 Codex brain-child 共 78 条，最早创建于 2026-04-16T10:54:56.980Z，且父 session 只见于 codex brain，从未见于 claude brain。",
+    "本批 58 条里，除最后 1 条外，其余 57 条都早于首个 Codex brain-child 出现时间。",
+    "所有 58 条都没有 tokenSourceId / brainTokenSourceIds，说明没有额外的外部模型来源痕迹。"
+  ],
+  "template": {
+    "name": "claude-auto-sonnet-only",
+    "brainPreferences": {
+      "machineSelection": {
+        "mode": "auto",
+        "machineId": "<per-session machineId>"
+      },
+      "childModels": {
+        "claude": {
+          "allowed": [
+            "sonnet"
+          ],
+          "defaultModel": "sonnet"
+        },
+        "codex": {
+          "allowed": [],
+          "defaultModel": "gpt-5.4"
+        }
+      }
+    },
+    "rationale": [
+      "machineSelection.mode 取 auto，避免在没有显式人工 pin 证据时把 child 路由错误冻结到 manual。",
+      "Claude child 取 sonnet-only，因为历史库里 Claude brain-child 仅观察到 default/sonnet，从未观察到 opus/opus-4-7。",
+      "Codex child 取空 allowlist，因为历史库里 Codex brain-child 从未挂在 claude brain 下，且 57/58 条记录早于首个 Codex brain-child。"
+    ]
+  },
+  "groups": [
+    {
+      "group": "legacy-no-runtime",
+      "count": 6,
+      "confidenceRange": [
+        0.55,
+        0.73
+      ]
+    },
+    {
+      "group": "no-child-pre-codex",
+      "count": 34,
+      "confidenceRange": [
+        0.74,
+        0.74
+      ]
+    },
+    {
+      "group": "with-child-evidence",
+      "count": 17,
+      "confidenceRange": [
+        0.9,
+        0.9
+      ]
+    },
+    {
+      "group": "post-codex-cutoff-singleton",
+      "count": 1,
+      "confidenceRange": [
+        0.65,
+        0.65
+      ]
+    }
+  ],
+  "items": [
+    {
+      "sessionId": "6785a739-9cc1-4481-8bf9-0abceadd39a2",
+      "createdAt": 1774814066870,
+      "createdAtIso": "2026-03-29T19:54:26.870Z",
+      "lastMessageAt": 1774816923826,
+      "lastMessageAtIso": "2026-03-29T20:42:03.826Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": null,
+        "modelMode": null,
+        "modelReasoningEffort": null
+      },
+      "group": "legacy-no-runtime",
+      "confidence": {
+        "score": 0.55,
+        "label": "中低"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-03-29T19:54:26.870Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode 未落库，说明它属于更早期的 legacy 样本。",
+        "modelMode 未落库，无法从父会话直接反推 Claude child 默认模型，只能依赖全局 child 行为。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "ad13cb18-c86e-45ad-939c-88fdd78d4161",
+      "createdAt": 1774843373745,
+      "createdAtIso": "2026-03-30T04:02:53.745Z",
+      "lastMessageAt": 1774843383571,
+      "lastMessageAtIso": "2026-03-30T04:03:03.571Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": null,
+        "modelMode": null,
+        "modelReasoningEffort": null
+      },
+      "group": "legacy-no-runtime",
+      "confidence": {
+        "score": 0.55,
+        "label": "中低"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-03-30T04:02:53.745Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode 未落库，说明它属于更早期的 legacy 样本。",
+        "modelMode 未落库，无法从父会话直接反推 Claude child 默认模型，只能依赖全局 child 行为。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "7d536f59-f025-4e3b-b0d9-a020f437f8ea",
+      "createdAt": 1774850942015,
+      "createdAtIso": "2026-03-30T06:09:02.015Z",
+      "lastMessageAt": 1774878934057,
+      "lastMessageAtIso": "2026-03-30T13:55:34.057Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": null,
+        "modelMode": null,
+        "modelReasoningEffort": null
+      },
+      "group": "legacy-no-runtime",
+      "confidence": {
+        "score": 0.73,
+        "label": "中高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "85c0aac6-675e-4ffb-8afc-b006a4320e57",
+          "flavor": "claude",
+          "modelMode": null,
+          "permissionMode": null,
+          "createdAt": 1774873499911,
+          "lastMessageAt": 1774877500702
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-03-30T06:09:02.015Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode 未落库，说明它属于更早期的 legacy 样本。",
+        "modelMode 未落库，无法从父会话直接反推 Claude child 默认模型，只能依赖全局 child 行为。",
+        "该 Brain 下观察到 1 个 child，会话 flavor 仅为 claude，modelMode 仅为 null。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "37007616-8114-40cf-85ff-2f9d69debba2",
+      "createdAt": 1774858895409,
+      "createdAtIso": "2026-03-30T08:21:35.409Z",
+      "lastMessageAt": 1774866828592,
+      "lastMessageAtIso": "2026-03-30T10:33:48.592Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": null,
+        "modelMode": null,
+        "modelReasoningEffort": null
+      },
+      "group": "legacy-no-runtime",
+      "confidence": {
+        "score": 0.55,
+        "label": "中低"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-03-30T08:21:35.409Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode 未落库，说明它属于更早期的 legacy 样本。",
+        "modelMode 未落库，无法从父会话直接反推 Claude child 默认模型，只能依赖全局 child 行为。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "52354191-ba25-4191-96a5-49bd71b04d08",
+      "createdAt": 1774880506683,
+      "createdAtIso": "2026-03-30T14:21:46.683Z",
+      "lastMessageAt": 1774880990614,
+      "lastMessageAtIso": "2026-03-30T14:29:50.614Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": null,
+        "modelMode": null,
+        "modelReasoningEffort": null
+      },
+      "group": "legacy-no-runtime",
+      "confidence": {
+        "score": 0.55,
+        "label": "中低"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-03-30T14:21:46.683Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode 未落库，说明它属于更早期的 legacy 样本。",
+        "modelMode 未落库，无法从父会话直接反推 Claude child 默认模型，只能依赖全局 child 行为。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "1d389732-e616-4443-ab10-7d6c3b160f2c",
+      "createdAt": 1774881612196,
+      "createdAtIso": "2026-03-30T14:40:12.196Z",
+      "lastMessageAt": 1774887834927,
+      "lastMessageAtIso": "2026-03-30T16:23:54.927Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": null,
+        "modelMode": null,
+        "modelReasoningEffort": null
+      },
+      "group": "legacy-no-runtime",
+      "confidence": {
+        "score": 0.55,
+        "label": "中低"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-03-30T14:40:12.196Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode 未落库，说明它属于更早期的 legacy 样本。",
+        "modelMode 未落库，无法从父会话直接反推 Claude child 默认模型，只能依赖全局 child 行为。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "230fd533-7eff-4f29-bc92-25310b2f330e",
+      "createdAt": 1774890057641,
+      "createdAtIso": "2026-03-30T17:00:57.641Z",
+      "lastMessageAt": 1774890425161,
+      "lastMessageAtIso": "2026-03-30T17:07:05.161Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "sonnet",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-03-30T17:00:57.641Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=sonnet，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "916165ae-fb01-4359-8468-d9fda0eaa3c6",
+      "createdAt": 1774890077426,
+      "createdAtIso": "2026-03-30T17:01:17.426Z",
+      "lastMessageAt": 1774926432676,
+      "lastMessageAtIso": "2026-03-31T03:07:12.676Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "sonnet",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "474ffd2e-c6eb-4927-8c5e-a9fc9c5496ad",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1774926353682,
+          "lastMessageAt": 1774926428839
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-03-30T17:01:17.426Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=sonnet，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 1 个 child，会话 flavor 仅为 claude，modelMode 仅为 sonnet。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "7704b71a-7272-4b81-aa9a-1888d597021a",
+      "createdAt": 1774924488146,
+      "createdAtIso": "2026-03-31T02:34:48.146Z",
+      "lastMessageAt": 1774948203945,
+      "lastMessageAtIso": "2026-03-31T09:10:03.945Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "opus",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "15e01c8c-0975-49cf-baf7-ab09bbbdb9e8",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1774924713474,
+          "lastMessageAt": 1774931720285
+        },
+        {
+          "sessionId": "e89dfa85-e565-4c19-9038-b2e3d5ba2243",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1774931092954,
+          "lastMessageAt": 1774947908935
+        },
+        {
+          "sessionId": "369e048e-f272-4df8-8c65-b10bf788c61d",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1774947563286,
+          "lastMessageAt": 1774948101206
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-03-31T02:34:48.146Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=opus，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 3 个 child，会话 flavor 仅为 claude，modelMode 仅为 sonnet。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "50681847-4e7f-4b2c-bdc3-e95bd31d5480",
+      "createdAt": 1774937923369,
+      "createdAtIso": "2026-03-31T06:18:43.369Z",
+      "lastMessageAt": 1774950311923,
+      "lastMessageAtIso": "2026-03-31T09:45:11.923Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-03-31T06:18:43.369Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "1be1fbb2-33a9-4ac9-9239-d3129a73df03",
+      "createdAt": 1774947372255,
+      "createdAtIso": "2026-03-31T08:56:12.255Z",
+      "lastMessageAt": 1774948290054,
+      "lastMessageAtIso": "2026-03-31T09:11:30.054Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "opus",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "67a198f4-a176-41b3-b170-9f8b7384c7f9",
+          "flavor": "claude",
+          "modelMode": "default",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1774947642345,
+          "lastMessageAt": 1774948115293
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-03-31T08:56:12.255Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=opus，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 1 个 child，会话 flavor 仅为 claude，modelMode 仅为 default。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "2843fd42-a0e9-418c-be13-75921260fc02",
+      "createdAt": 1774967849827,
+      "createdAtIso": "2026-03-31T14:37:29.827Z",
+      "lastMessageAt": 1775036762617,
+      "lastMessageAtIso": "2026-04-01T09:46:02.617Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "457d378b-55bd-42bc-b4c2-fae93d0c7720",
+          "flavor": "claude",
+          "modelMode": "default",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775034810423,
+          "lastMessageAt": 1775036754516
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-03-31T14:37:29.827Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 1 个 child，会话 flavor 仅为 claude，modelMode 仅为 default。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "c83d66d0-bf5d-47f1-819f-a4e4b3c7ee10",
+      "createdAt": 1774973880172,
+      "createdAtIso": "2026-03-31T16:18:00.172Z",
+      "lastMessageAt": 1774978088131,
+      "lastMessageAtIso": "2026-03-31T17:28:08.131Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "9615b58a-2dbe-44c5-a3c2-56fb885b26b9",
+          "flavor": "claude",
+          "modelMode": "default",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1774973886967,
+          "lastMessageAt": 1774978087174
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-03-31T16:18:00.172Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 1 个 child，会话 flavor 仅为 claude，modelMode 仅为 default。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "5b056c5c-775d-4f0e-9551-e9ee5d0c3b2a",
+      "createdAt": 1774974105146,
+      "createdAtIso": "2026-03-31T16:21:45.146Z",
+      "lastMessageAt": 1775051365031,
+      "lastMessageAtIso": "2026-04-01T13:49:25.031Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "137120f4-7f43-4c78-8862-4a3e7ff6e67f",
+          "flavor": "claude",
+          "modelMode": "default",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775025111845,
+          "lastMessageAt": 1775046198609
+        },
+        {
+          "sessionId": "086b5500-2ad6-4cfe-b2f3-d9d2ce92f80b",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775038394144,
+          "lastMessageAt": 1775051351144
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-03-31T16:21:45.146Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 2 个 child，会话 flavor 仅为 claude，modelMode 仅为 default, sonnet。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "94aa00bb-85af-4ec4-b3f6-9500a60a0416",
+      "createdAt": 1775089806777,
+      "createdAtIso": "2026-04-02T00:30:06.777Z",
+      "lastMessageAt": 1775093673675,
+      "lastMessageAtIso": "2026-04-02T01:34:33.675Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "24298166-8cbb-474b-9d66-13e3c6911505",
+          "flavor": "claude",
+          "modelMode": "default",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775089826032,
+          "lastMessageAt": 1775093268881
+        },
+        {
+          "sessionId": "1e956202-2c3c-4d85-859e-06db0d787d54",
+          "flavor": "claude",
+          "modelMode": "default",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775092468390,
+          "lastMessageAt": 1775092853064
+        },
+        {
+          "sessionId": "b5ada2da-c24b-4886-b117-b0a102fc143d",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775092993888,
+          "lastMessageAt": 1775093404679
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-02T00:30:06.777Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 3 个 child，会话 flavor 仅为 claude，modelMode 仅为 default, sonnet。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "b62fef12-ad3a-47be-94e5-a8ef4713ddb9",
+      "createdAt": 1775128166437,
+      "createdAtIso": "2026-04-02T11:09:26.437Z",
+      "lastMessageAt": 1775128745994,
+      "lastMessageAtIso": "2026-04-02T11:19:05.994Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "sonnet",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-02T11:09:26.437Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=sonnet，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "edf6f8db-1406-4b62-b0ee-d449ecf38b8c",
+      "createdAt": 1775258258813,
+      "createdAtIso": "2026-04-03T23:17:38.813Z",
+      "lastMessageAt": 1775331008714,
+      "lastMessageAtIso": "2026-04-04T19:30:08.714Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "506739cc-3c3a-4ab9-a432-08fdc9b23b4c",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775300308028,
+          "lastMessageAt": null
+        },
+        {
+          "sessionId": "589024a8-e79d-4b02-b2de-c1bad17b8b3e",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775301109149,
+          "lastMessageAt": 1775301284719
+        },
+        {
+          "sessionId": "e3c93885-be21-4760-8c15-4a0f079afe48",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775301789657,
+          "lastMessageAt": 1775302357041
+        },
+        {
+          "sessionId": "ee41f6c1-8d5e-40bf-bbcb-0f49221da953",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775331005437,
+          "lastMessageAt": null
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-03T23:17:38.813Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 4 个 child，会话 flavor 仅为 claude，modelMode 仅为 sonnet。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "39132708-23e0-4501-a473-b51ee006d8b4",
+      "createdAt": 1775325430604,
+      "createdAtIso": "2026-04-04T17:57:10.604Z",
+      "lastMessageAt": 1775396538987,
+      "lastMessageAtIso": "2026-04-05T13:42:18.987Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "sonnet",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-04T17:57:10.604Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=sonnet，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "f8ecaf60-3bfc-4076-909d-df4e08fc1e2a",
+      "createdAt": 1775365904139,
+      "createdAtIso": "2026-04-05T05:11:44.139Z",
+      "lastMessageAt": 1775406656486,
+      "lastMessageAtIso": "2026-04-05T16:30:56.486Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "sonnet",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "46622806-cc1b-4453-9055-9785be687bc6",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775388948942,
+          "lastMessageAt": 1775402295957
+        },
+        {
+          "sessionId": "1d678287-1223-4f15-82f9-da698a287d76",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775390273258,
+          "lastMessageAt": 1775390342610
+        },
+        {
+          "sessionId": "be60ea3a-681f-4733-ac44-51e981e46642",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775394489490,
+          "lastMessageAt": 1775404043910
+        },
+        {
+          "sessionId": "028af49c-b68e-4b91-bd10-5c9083de10aa",
+          "flavor": "claude",
+          "modelMode": "default",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775395208013,
+          "lastMessageAt": 1775395672865
+        },
+        {
+          "sessionId": "efd84087-84b5-4a0e-92cb-0dd4f54fb72a",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775395760232,
+          "lastMessageAt": 1775400558566
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-05T05:11:44.139Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=sonnet，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 5 个 child，会话 flavor 仅为 claude，modelMode 仅为 sonnet, default。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "ef9aec68-feea-4b01-a63b-3b3719d3a9c4",
+      "createdAt": 1775395315023,
+      "createdAtIso": "2026-04-05T13:21:55.023Z",
+      "lastMessageAt": 1775432408116,
+      "lastMessageAtIso": "2026-04-05T23:40:08.116Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-05T13:21:55.023Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "2d72bb69-08c5-4c68-98bb-8ed180f9f2fd",
+      "createdAt": 1775407498110,
+      "createdAtIso": "2026-04-05T16:44:58.110Z",
+      "lastMessageAt": 1775407680967,
+      "lastMessageAtIso": "2026-04-05T16:48:00.967Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-05T16:44:58.110Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "c85e9182-8baa-4f6b-b7da-db35f3447dd4",
+      "createdAt": 1775526406083,
+      "createdAtIso": "2026-04-07T01:46:46.083Z",
+      "lastMessageAt": 1775526496696,
+      "lastMessageAtIso": "2026-04-07T01:48:16.696Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "sonnet",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-07T01:46:46.083Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=sonnet，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "38efd4ba-ccd3-405d-83e4-9dee308701f4",
+      "createdAt": 1775526587824,
+      "createdAtIso": "2026-04-07T01:49:47.824Z",
+      "lastMessageAt": 1775526599684,
+      "lastMessageAtIso": "2026-04-07T01:49:59.684Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "sonnet",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-07T01:49:47.824Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=sonnet，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "c806b7c5-7e25-43ac-bcd6-4a7a17cfc439",
+      "createdAt": 1775622511189,
+      "createdAtIso": "2026-04-08T04:28:31.189Z",
+      "lastMessageAt": 1775786081044,
+      "lastMessageAtIso": "2026-04-10T01:54:41.044Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "sonnet",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-08T04:28:31.189Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=sonnet，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "292702a2-a052-44bf-9004-b2fb1c6b0573",
+      "createdAt": 1775660536463,
+      "createdAtIso": "2026-04-08T15:02:16.463Z",
+      "lastMessageAt": 1775732511833,
+      "lastMessageAtIso": "2026-04-09T11:01:51.833Z",
+      "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-08T15:02:16.463Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "9726a010-1515-40c3-b755-df212eab337c",
+      "createdAt": 1775792646798,
+      "createdAtIso": "2026-04-10T03:44:06.798Z",
+      "lastMessageAt": 1775792985937,
+      "lastMessageAtIso": "2026-04-10T03:49:45.937Z",
+      "machineId": "35824289-2536-420e-be27-526f6496124a",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "35824289-2536-420e-be27-526f6496124a"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=35824289-2536-420e-be27-526f6496124a。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-10T03:44:06.798Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "52587aa0-8bb5-467d-8e0f-3545a48f6585",
+      "createdAt": 1775795268078,
+      "createdAtIso": "2026-04-10T04:27:48.078Z",
+      "lastMessageAt": 1775795597564,
+      "lastMessageAtIso": "2026-04-10T04:33:17.564Z",
+      "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-10T04:27:48.078Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "75f92e41-5d97-469b-a929-0d5dd1aecdbf",
+      "createdAt": 1775795567780,
+      "createdAtIso": "2026-04-10T04:32:47.780Z",
+      "lastMessageAt": 1775795591240,
+      "lastMessageAtIso": "2026-04-10T04:33:11.240Z",
+      "machineId": "35824289-2536-420e-be27-526f6496124a",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "35824289-2536-420e-be27-526f6496124a"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=35824289-2536-420e-be27-526f6496124a。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-10T04:32:47.780Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "bfb32b4e-cd33-4030-be4a-f66bd6a580a3",
+      "createdAt": 1775873297762,
+      "createdAtIso": "2026-04-11T02:08:17.762Z",
+      "lastMessageAt": 1775873603219,
+      "lastMessageAtIso": "2026-04-11T02:13:23.219Z",
+      "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T02:08:17.762Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "372d3ff0-8563-4d9a-9ab5-03da850a82da",
+      "createdAt": 1775878644576,
+      "createdAtIso": "2026-04-11T03:37:24.576Z",
+      "lastMessageAt": 1775879330287,
+      "lastMessageAtIso": "2026-04-11T03:48:50.287Z",
+      "machineId": "a95e8107-9b9f-42d6-bd4d-09f2f9a4d497",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "7a272c76-bd8e-4162-961b-77adc54425e5",
+          "flavor": "claude",
+          "modelMode": "default",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775878842969,
+          "lastMessageAt": 1775879319537
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "a95e8107-9b9f-42d6-bd4d-09f2f9a4d497"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=a95e8107-9b9f-42d6-bd4d-09f2f9a4d497。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T03:37:24.576Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 1 个 child，会话 flavor 仅为 claude，modelMode 仅为 default。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "cbfb6599-d424-4291-a0cd-3f3d6815de50",
+      "createdAt": 1775884114919,
+      "createdAtIso": "2026-04-11T05:08:34.919Z",
+      "lastMessageAt": 1775884186510,
+      "lastMessageAtIso": "2026-04-11T05:09:46.510Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "d2e7dfd1-759d-4039-b10b-9a7a8c9251fb",
+          "flavor": "claude",
+          "modelMode": "default",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775884150971,
+          "lastMessageAt": 1775884175619
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T05:08:34.919Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 1 个 child，会话 flavor 仅为 claude，modelMode 仅为 default。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "3b3fffcf-2f15-4ba9-b541-c742e14b6f1e",
+      "createdAt": 1775885658553,
+      "createdAtIso": "2026-04-11T05:34:18.553Z",
+      "lastMessageAt": 1775885734181,
+      "lastMessageAtIso": "2026-04-11T05:35:34.181Z",
+      "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T05:34:18.553Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "55f17b9b-cc3a-40f0-9cee-c9ca46f103e2",
+      "createdAt": 1775888350371,
+      "createdAtIso": "2026-04-11T06:19:10.371Z",
+      "lastMessageAt": 1775888947963,
+      "lastMessageAtIso": "2026-04-11T06:29:07.963Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T06:19:10.371Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "2d5c6fbd-a6a0-45f7-a6e5-8f0d9d26cc29",
+      "createdAt": 1775889471080,
+      "createdAtIso": "2026-04-11T06:37:51.080Z",
+      "lastMessageAt": 1775889840051,
+      "lastMessageAtIso": "2026-04-11T06:44:00.051Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "6b1cacf7-2f3d-4c86-8c04-91366fa09c83",
+          "flavor": "claude",
+          "modelMode": "default",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775889492162,
+          "lastMessageAt": 1775889523251
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T06:37:51.080Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 1 个 child，会话 flavor 仅为 claude，modelMode 仅为 default。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "d2ae1f59-bd02-40a7-bb26-2aa010a8b8fc",
+      "createdAt": 1775889957908,
+      "createdAtIso": "2026-04-11T06:45:57.908Z",
+      "lastMessageAt": 1775890516403,
+      "lastMessageAtIso": "2026-04-11T06:55:16.403Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T06:45:57.908Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "5b075137-d7fc-407d-bc89-1fc768099851",
+      "createdAt": 1775890614561,
+      "createdAtIso": "2026-04-11T06:56:54.561Z",
+      "lastMessageAt": 1775890654722,
+      "lastMessageAtIso": "2026-04-11T06:57:34.722Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T06:56:54.561Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "fe6d9220-5586-492c-ad1f-602f315bcd6a",
+      "createdAt": 1775890694949,
+      "createdAtIso": "2026-04-11T06:58:14.949Z",
+      "lastMessageAt": 1775890949672,
+      "lastMessageAtIso": "2026-04-11T07:02:29.672Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T06:58:14.949Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "da348251-c8ba-492a-9abf-5ec7eccff807",
+      "createdAt": 1775891487640,
+      "createdAtIso": "2026-04-11T07:11:27.640Z",
+      "lastMessageAt": 1775892441742,
+      "lastMessageAtIso": "2026-04-11T07:27:21.742Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "af0da4ea-a293-4e29-809b-9847b5638059",
+          "flavor": "claude",
+          "modelMode": "default",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775891588677,
+          "lastMessageAt": 1775891903602
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T07:11:27.640Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 1 个 child，会话 flavor 仅为 claude，modelMode 仅为 default。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "5361fa5d-7079-46c8-b720-c76b9c386865",
+      "createdAt": 1775892944661,
+      "createdAtIso": "2026-04-11T07:35:44.661Z",
+      "lastMessageAt": 1775893079032,
+      "lastMessageAtIso": "2026-04-11T07:37:59.032Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "c041cbad-7d51-488d-b04c-465465482151",
+          "flavor": "claude",
+          "modelMode": "default",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775893036763,
+          "lastMessageAt": 1775893073111
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T07:35:44.661Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 1 个 child，会话 flavor 仅为 claude，modelMode 仅为 default。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "cb352e49-90bd-469a-ae21-bc7de664587f",
+      "createdAt": 1775893305101,
+      "createdAtIso": "2026-04-11T07:41:45.101Z",
+      "lastMessageAt": 1775893841758,
+      "lastMessageAtIso": "2026-04-11T07:50:41.758Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "3ebbf01b-9d76-453c-8e05-560e1b818844",
+          "flavor": "claude",
+          "modelMode": "default",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775893613427,
+          "lastMessageAt": 1775893766581
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T07:41:45.101Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 1 个 child，会话 flavor 仅为 claude，modelMode 仅为 default。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "089aeec1-13af-4c98-90d8-8264b52e20b7",
+      "createdAt": 1775894247520,
+      "createdAtIso": "2026-04-11T07:57:27.520Z",
+      "lastMessageAt": 1775894283688,
+      "lastMessageAtIso": "2026-04-11T07:58:03.688Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T07:57:27.520Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "78d787f3-4e4f-4bbc-adb7-768e03c53aee",
+      "createdAt": 1775909858206,
+      "createdAtIso": "2026-04-11T12:17:38.206Z",
+      "lastMessageAt": 1775909896569,
+      "lastMessageAtIso": "2026-04-11T12:18:16.569Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T12:17:38.206Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "e189d6df-b0aa-431a-8484-734b5701ab2d",
+      "createdAt": 1775911009133,
+      "createdAtIso": "2026-04-11T12:36:49.133Z",
+      "lastMessageAt": 1775911782011,
+      "lastMessageAtIso": "2026-04-11T12:49:42.011Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T12:36:49.133Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "71d2c840-1ff6-41cd-a718-7e5e5ae29ef2",
+      "createdAt": 1775911877043,
+      "createdAtIso": "2026-04-11T12:51:17.043Z",
+      "lastMessageAt": 1775912058436,
+      "lastMessageAtIso": "2026-04-11T12:54:18.436Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T12:51:17.043Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "572f27a5-e7ea-4c78-94be-3fb19ff2cc11",
+      "createdAt": 1775912832198,
+      "createdAtIso": "2026-04-11T13:07:12.198Z",
+      "lastMessageAt": 1775913110226,
+      "lastMessageAtIso": "2026-04-11T13:11:50.226Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "c1b00672-4449-41fc-89a6-5c68f866c582",
+          "flavor": "claude",
+          "modelMode": "default",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775912947678,
+          "lastMessageAt": 1775913102830
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T13:07:12.198Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 1 个 child，会话 flavor 仅为 claude，modelMode 仅为 default。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "6687964e-5608-4a5f-b230-b5d19248ed74",
+      "createdAt": 1775942371024,
+      "createdAtIso": "2026-04-11T21:19:31.024Z",
+      "lastMessageAt": 1775944418523,
+      "lastMessageAtIso": "2026-04-11T21:53:38.523Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-11T21:19:31.024Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "9af4d046-cb18-44a7-8ab6-051cb596cc6d",
+      "createdAt": 1775965186505,
+      "createdAtIso": "2026-04-12T03:39:46.505Z",
+      "lastMessageAt": 1775965322491,
+      "lastMessageAtIso": "2026-04-12T03:42:02.491Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "with-child-evidence",
+      "confidence": {
+        "score": 0.9,
+        "label": "高"
+      },
+      "observedChildren": [
+        {
+          "sessionId": "2c776ae7-8451-48d5-8613-7634be2fc495",
+          "flavor": "claude",
+          "modelMode": "default",
+          "permissionMode": "bypassPermissions",
+          "createdAt": 1775965259882,
+          "lastMessageAt": 1775965528584
+        }
+      ],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-12T03:39:46.505Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下观察到 1 个 child，会话 flavor 仅为 claude，modelMode 仅为 default。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "a8838d7a-5dc4-4e9d-af42-d388033f09c5",
+      "createdAt": 1775997136137,
+      "createdAtIso": "2026-04-12T12:32:16.137Z",
+      "lastMessageAt": 1775997219618,
+      "lastMessageAtIso": "2026-04-12T12:33:39.618Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-12T12:32:16.137Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "27a7a861-3dbe-4f42-8c68-36868a0670ac",
+      "createdAt": 1775999891900,
+      "createdAtIso": "2026-04-12T13:18:11.900Z",
+      "lastMessageAt": 1776000209863,
+      "lastMessageAtIso": "2026-04-12T13:23:29.863Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-12T13:18:11.900Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "16cf5b45-97c8-4c9d-a6f5-d68b744343c9",
+      "createdAt": 1776048710082,
+      "createdAtIso": "2026-04-13T02:51:50.082Z",
+      "lastMessageAt": 1776048715761,
+      "lastMessageAtIso": "2026-04-13T02:51:55.761Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-13T02:51:50.082Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "2e75a1d3-0c15-41f0-b041-211e3aea4f31",
+      "createdAt": 1776049943665,
+      "createdAtIso": "2026-04-13T03:12:23.665Z",
+      "lastMessageAt": 1776051165575,
+      "lastMessageAtIso": "2026-04-13T03:32:45.575Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-13T03:12:23.665Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "82ca5c9c-3efb-4ded-83bb-b19db5e23cf4",
+      "createdAt": 1776051489635,
+      "createdAtIso": "2026-04-13T03:38:09.635Z",
+      "lastMessageAt": 1776051743658,
+      "lastMessageAtIso": "2026-04-13T03:42:23.658Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-13T03:38:09.635Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "63e4f318-5e3a-45fd-9838-a0f0b89a64cd",
+      "createdAt": 1776051969170,
+      "createdAtIso": "2026-04-13T03:46:09.170Z",
+      "lastMessageAt": 1776052166474,
+      "lastMessageAtIso": "2026-04-13T03:49:26.474Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-13T03:46:09.170Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "92e26d91-35fb-41de-b452-f85e6b02995c",
+      "createdAt": 1776062090449,
+      "createdAtIso": "2026-04-13T06:34:50.449Z",
+      "lastMessageAt": 1776062099628,
+      "lastMessageAtIso": "2026-04-13T06:34:59.628Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-13T06:34:50.449Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "d7e3911a-2a75-4ada-81c8-222ff053c689",
+      "createdAt": 1776124198983,
+      "createdAtIso": "2026-04-13T23:49:58.983Z",
+      "lastMessageAt": 1776124203468,
+      "lastMessageAtIso": "2026-04-13T23:50:03.468Z",
+      "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-13T23:49:58.983Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "55edc485-20ad-49ee-a732-439b2efbc7c7",
+      "createdAt": 1776124251868,
+      "createdAtIso": "2026-04-13T23:50:51.868Z",
+      "lastMessageAt": 1776124254609,
+      "lastMessageAtIso": "2026-04-13T23:50:54.609Z",
+      "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-13T23:50:51.868Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "df392143-912f-46a4-a771-da6b80e5aa0a",
+      "createdAt": 1776126506771,
+      "createdAtIso": "2026-04-14T00:28:26.771Z",
+      "lastMessageAt": 1776126635127,
+      "lastMessageAtIso": "2026-04-14T00:30:35.127Z",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "no-child-pre-codex",
+      "confidence": {
+        "score": 0.74,
+        "label": "中高"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=54d7dbe3-6035-4819-9613-1dbf510894d0。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-14T00:28:26.771Z 早于首个 Codex brain-child (2026-04-16T10:54:56.980Z)，更像 Claude-only Brain 时代产物。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    },
+    {
+      "sessionId": "7614f164-3aa6-4dc9-887b-e98ee017c04c",
+      "createdAt": 1776465718572,
+      "createdAtIso": "2026-04-17T22:41:58.572Z",
+      "lastMessageAt": 1776470254678,
+      "lastMessageAtIso": "2026-04-17T23:57:34.678Z",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+      "parentRuntime": {
+        "permissionMode": "bypassPermissions",
+        "modelMode": "default",
+        "modelReasoningEffort": null
+      },
+      "group": "post-codex-cutoff-singleton",
+      "confidence": {
+        "score": 0.65,
+        "label": "中"
+      },
+      "observedChildren": [],
+      "recommendedBrainPreferences": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": {
+            "allowed": [],
+            "defaultModel": "gpt-5.4"
+          }
+        }
+      },
+      "basis": [
+        "顶层 brain/claude，会话本身没有父 session，可回填 machineSelection.machineId=e16b3653-ad9f-46a7-89fd-48a3d576cccb。",
+        "manifest 标记为 missingBrainPreferencesOnly + inactiveOnly + resumeCandidateOnly；没有任何 reference source。",
+        "创建时间 2026-04-17T22:41:58.572Z 晚于首个 Codex brain-child，但库里仍未观察到任何 claude brain -> codex child 证据。",
+        "permissionMode=bypassPermissions，与 Claude Brain 运行方式一致。",
+        "modelMode=default，但该字段描述的是父 Brain 模型，不足以证明 child 应开放 opus。",
+        "该 Brain 下没有可观察子任务；只能依赖时间切片和全局分布推断。",
+        "全局只读旁证里，Claude brain-child 从未出现 opus / opus-4-7；Codex brain-child 从未挂到 claude brain 之下。"
+      ]
+    }
+  ]
+}

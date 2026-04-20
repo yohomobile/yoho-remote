@@ -12,12 +12,20 @@ import { reconcileChatBlocks } from '@/chat/reconcile'
 import { collectActiveMonitors } from '@/chat/activeMonitors'
 import { YohoRemoteComposer } from '@/components/AssistantChat/YohoRemoteComposer'
 import { YohoRemoteThread } from '@/components/AssistantChat/YohoRemoteThread'
+import { BrainChildPageActionBar } from '@/components/BrainChildActions'
 import { useYohoRemoteRuntime } from '@/lib/assistant-runtime'
 import { SessionHeader } from '@/components/SessionHeader'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
-import { shouldShowSessionComposer } from '@/lib/sessionActivity'
+import { deriveBrainChildPageActionState, getBrainChildPageInactiveHint } from '@/lib/brainChildActions'
+import { canQueueMessagesWhenInactive, shouldShowSessionComposer } from '@/lib/sessionActivity'
+import {
+    clearBrainSessionReadyMarker,
+    deriveBrainCreationReadyPhase,
+    getBrainSessionReadyMarker,
+    hasBrainReadyFollowUpActivity,
+} from '@/lib/brainReadyState'
 import { queryKeys } from '@/lib/query-keys'
 import { isLicenseTermination, getLicenseTerminationLabel } from '@/lib/license'
 import { isFlutterApp } from '@/hooks/useFlutterApp'
@@ -108,8 +116,13 @@ export function SessionChat(props: {
     const { haptic } = usePlatform()
     const navigate = useNavigate()
     const queryClient = useQueryClient()
-    const controlsDisabled = !props.session.active
+    const canQueueWhileInactive = canQueueMessagesWhenInactive(props.session)
+    const controlsDisabled = !props.session.active && !canQueueWhileInactive
     const showComposer = shouldShowSessionComposer(props.session)
+    const brainChildActionState = useMemo(
+        () => deriveBrainChildPageActionState(props.session),
+        [props.session]
+    )
 
     const { data: privacyData } = useQuery({
         queryKey: ['session-privacy-mode', props.session.id],
@@ -123,6 +136,20 @@ export function SessionChat(props: {
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
     const [isResuming, setIsResuming] = useState(false)
     const [resumeError, setResumeError] = useState<string | null>(null)
+    const [brainReadyMarker, setBrainReadyMarker] = useState(() => getBrainSessionReadyMarker(props.session.id))
+    const brainChildInactiveHint = useMemo(() => props.session.metadata?.source === 'brain-child'
+        ? getBrainChildPageInactiveHint({
+            resumeError: Boolean(resumeError),
+            hasMainSessionId: Boolean(brainChildActionState.mainSessionId),
+            hasMessages: props.messages.length > 0,
+        })
+        : null,
+    [
+        brainChildActionState.mainSessionId,
+        props.messages.length,
+        props.session.metadata?.source,
+        resumeError,
+    ])
     const resumeQueueRef = useRef<string[]>([])
     const resumePhaseRef = useRef<ResumePhase>('idle')
     const resumeInFlightRef = useRef(false)
@@ -141,6 +168,7 @@ export function SessionChat(props: {
         resumeInFlightRef.current = false
         setIsResuming(false)
         setResumeError(null)
+        setBrainReadyMarker(getBrainSessionReadyMarker(props.session.id))
     }, [props.session.id])
 
     // Update browser title with AI name
@@ -398,6 +426,12 @@ export function SessionChat(props: {
         () => props.session.activeMonitors ?? collectActiveMonitors(reconciled.blocks),
         [props.session.activeMonitors, reconciled.blocks]
     )
+    const brainCreationReadyPhase = useMemo(() => deriveBrainCreationReadyPhase({
+        source: props.session.metadata?.source,
+        active: props.session.active,
+        thinking: props.session.thinking,
+        marker: brainReadyMarker,
+    }), [brainReadyMarker, props.session.active, props.session.metadata?.source, props.session.thinking])
     const resolvedModelMode = useMemo(() => {
         const fallbackMode = coerceModelMode(props.session.metadata?.runtimeModel)
         if (props.session.modelMode && props.session.modelMode !== 'default') {
@@ -407,6 +441,17 @@ export function SessionChat(props: {
     }, [props.session.modelMode, props.session.metadata?.runtimeModel])
     const resolvedReasoningEffort = props.session.modelReasoningEffort
         ?? props.session.metadata?.runtimeModelReasoningEffort
+
+    useEffect(() => {
+        if (!brainReadyMarker || brainCreationReadyPhase !== 'ready') {
+            return
+        }
+        if (!hasBrainReadyFollowUpActivity(props.messages)) {
+            return
+        }
+        clearBrainSessionReadyMarker(props.session.id)
+        setBrainReadyMarker(null)
+    }, [brainCreationReadyPhase, brainReadyMarker, props.messages, props.session.id])
 
     const availableModels = useMemo(() => getAvailableModels(props.session), [props.session])
 
@@ -627,6 +672,21 @@ export function SessionChat(props: {
                 </DialogContent>
             </Dialog>
 
+            {props.session.metadata?.source === 'brain-child' ? (
+                <BrainChildPageActionBar
+                    api={props.api}
+                    sessionId={props.session.id}
+                    mainSessionId={brainChildActionState.mainSessionId}
+                    canStop={brainChildActionState.canStop}
+                    canResume={brainChildActionState.canResume}
+                    onStop={handleAbort}
+                    onResume={async () => {
+                        await resumeSession()
+                    }}
+                    initialMessages={props.messages}
+                />
+            ) : null}
+
             {controlsDisabled ? (
                 <div className="px-3 pt-3">
                     {isLicenseTermination(props.session.terminationReason) ? (
@@ -640,14 +700,51 @@ export function SessionChat(props: {
                                 : resumeError
                                     ? showComposer
                                         ? 'Resume failed. Tap the composer to retry.'
-                                        : 'Resume failed. Brain subtask pages do not accept manual input.'
+                                        : brainChildInactiveHint
+                                            ?? 'Resume failed. Brain subtask pages do not accept manual input.'
                                     : props.messages.length === 0
-                                        ? 'Starting session...'
+                                        ? brainChildInactiveHint ?? 'Starting session...'
                                         : showComposer
                                             ? 'Session is inactive. Tap the composer to resume.'
-                                            : 'Session is inactive. Brain subtask pages do not accept manual input.'}
+                                            : brainChildInactiveHint
+                                                ?? 'Session is inactive. Brain subtask pages do not accept manual input.'}
                         </div>
                     )}
+                </div>
+            ) : null}
+
+            {brainCreationReadyPhase ? (
+                <div className="px-3 pt-3">
+                    <div
+                        className={`mx-auto w-full max-w-content rounded-md border p-3 text-sm ${
+                            brainCreationReadyPhase === 'created'
+                                ? 'border-sky-500/20 bg-sky-500/10 text-sky-700'
+                                : brainCreationReadyPhase === 'initializing'
+                                    ? 'border-amber-500/20 bg-amber-500/10 text-amber-700'
+                                    : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700'
+                        }`}
+                    >
+                        {brainCreationReadyPhase === 'created'
+                            ? '已创建：Brain 会话已创建成功，正在等待 runtime 上线。现在发送的消息会先入队。'
+                            : brainCreationReadyPhase === 'initializing'
+                                ? '初始化中：Brain 已上线，正在加载初始化指令和工具，暂时不要把“创建成功”误当成“已经完全可用”。'
+                                : '可开始使用：Brain 已准备就绪，现在可以开始派发任务。'}
+                    </div>
+                </div>
+            ) : null}
+
+            {!brainCreationReadyPhase && !props.session.active && canQueueWhileInactive ? (
+                <div className="px-3 pt-3">
+                    <div className="mx-auto flex w-full max-w-content items-center justify-between gap-3 rounded-md border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-700">
+                        <span>Brain 当前未运行。新消息会先入队，等恢复后再消费。</span>
+                        <button
+                            type="button"
+                            onClick={handleResumeRequest}
+                            className="shrink-0 rounded-md border border-amber-500/30 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-500/10"
+                        >
+                            立即恢复
+                        </button>
+                    </div>
                 </div>
             ) : null}
 
@@ -680,6 +777,7 @@ export function SessionChat(props: {
                             fastMode={props.session.fastMode}
                             agentFlavor={props.session.metadata?.flavor ?? 'claude'}
                             active={props.session.active}
+                            allowInactiveQueueing={canQueueWhileInactive}
                             thinking={props.session.thinking}
                             agentState={props.session.agentState}
                             contextSize={reduced.latestUsage?.contextSize}

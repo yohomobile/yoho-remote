@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { z } from 'zod'
 import type { WebAppEnv } from '../middleware/auth'
 import type { IStore, OrgRole, UserRole } from '../../store'
@@ -33,6 +33,41 @@ const setRolePromptSchema = z.object({
     prompt: z.string().max(10000)
 })
 
+const aiProfileRoleSchema = z.enum(['developer', 'architect', 'reviewer', 'pm', 'tester', 'devops'])
+
+const createAIProfileSchema = z.object({
+    name: z.string().min(1).max(100),
+    role: aiProfileRoleSchema,
+    specialties: z.array(z.string().min(1).max(100)).max(20).optional(),
+    personality: z.string().max(2000).nullable().optional(),
+    greetingTemplate: z.string().max(500).nullable().optional(),
+    preferredProjects: z.array(z.string().min(1).max(200)).max(20).optional(),
+    workStyle: z.string().max(1000).nullable().optional(),
+    avatarEmoji: z.string().min(1).max(20).optional(),
+})
+
+const updateAIProfileSchema = createAIProfileSchema.partial()
+
+const brainSelfSystemSchema = z.object({
+    enabled: z.boolean(),
+    defaultProfileId: z.string().trim().min(1).nullable().optional(),
+    memoryProvider: z.enum(['yoho-memory', 'none']),
+}).strict().superRefine((value, ctx) => {
+    if (value.enabled && !value.defaultProfileId) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'defaultProfileId is required when selfSystem is enabled',
+            path: ['defaultProfileId'],
+        })
+    }
+})
+
+const brainConfigExtraSchema = z.object({
+    childClaudeModels: z.array(z.enum(['sonnet', 'opus', 'opus-4-7'])).optional(),
+    childCodexModels: z.array(z.string().trim().min(1)).optional(),
+    selfSystem: brainSelfSystemSchema.optional(),
+}).passthrough()
+
 function normalizeOptionalId(value: string | null | undefined): string | null {
     const trimmed = value?.trim()
     return trimmed ? trimmed : null
@@ -40,6 +75,24 @@ function normalizeOptionalId(value: string | null | undefined): string | null {
 
 function canManageOrgSettings(role: OrgRole | null): boolean {
     return role === 'owner' || role === 'admin'
+}
+
+async function requireSharedBrainSettingsWriteAccess(c: Context<WebAppEnv>): Promise<Response | null> {
+    const namespace = c.get('namespace') || 'default'
+    if (namespace !== 'default') {
+        return null
+    }
+
+    const role = c.get('role')
+    if (!role) {
+        return c.json({ error: 'Unauthorized' }, 401)
+    }
+
+    if (role !== 'operator') {
+        return c.json({ error: 'Insufficient permissions' }, 403)
+    }
+
+    return null
 }
 
 export function createSettingsRoutes(
@@ -413,13 +466,91 @@ export function createSettingsRoutes(
         return c.json({ ok: true, shareAllSessions, viewOthersSessions })
     })
 
+    // ========== AI Profiles ==========
+
+    app.get('/settings/ai-profiles', async (c) => {
+        const namespace = c.get('namespace') || 'default'
+        const profiles = await store.getAIProfiles(namespace)
+        return c.json({ profiles })
+    })
+
+    app.post('/settings/ai-profiles', async (c) => {
+        const permissionError = await requireSharedBrainSettingsWriteAccess(c)
+        if (permissionError) {
+            return permissionError
+        }
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = createAIProfileSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid AI profile', details: parsed.error.issues }, 400)
+        }
+
+        const namespace = c.get('namespace') || 'default'
+        const profile = await store.createAIProfile({
+            namespace,
+            ...parsed.data,
+        })
+        if (!profile) {
+            return c.json({ error: 'Failed to create AI profile' }, 500)
+        }
+
+        return c.json({ ok: true, profile })
+    })
+
+    app.put('/settings/ai-profiles/:id', async (c) => {
+        const permissionError = await requireSharedBrainSettingsWriteAccess(c)
+        if (permissionError) {
+            return permissionError
+        }
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = updateAIProfileSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid AI profile', details: parsed.error.issues }, 400)
+        }
+
+        const namespace = c.get('namespace') || 'default'
+        const existing = await store.getAIProfile(c.req.param('id'))
+        if (!existing || existing.namespace !== namespace) {
+            return c.json({ error: 'AI profile not found' }, 404)
+        }
+
+        const profile = await store.updateAIProfile(existing.id, parsed.data)
+        if (!profile) {
+            return c.json({ error: 'AI profile not found' }, 404)
+        }
+
+        return c.json({ ok: true, profile })
+    })
+
+    app.delete('/settings/ai-profiles/:id', async (c) => {
+        const permissionError = await requireSharedBrainSettingsWriteAccess(c)
+        if (permissionError) {
+            return permissionError
+        }
+
+        const namespace = c.get('namespace') || 'default'
+        const existing = await store.getAIProfile(c.req.param('id'))
+        if (!existing || existing.namespace !== namespace) {
+            return c.json({ error: 'AI profile not found' }, 404)
+        }
+
+        const deleted = await store.deleteAIProfile(existing.id)
+        if (!deleted) {
+            return c.json({ error: 'AI profile not found' }, 404)
+        }
+
+        return c.json({ ok: true })
+    })
+
     // ========== Brain Config ==========
 
     const brainConfigSchema = z.object({
         agent: z.enum(['claude', 'codex']),
         claudeModelMode: z.string().optional(),
         codexModel: z.string().optional(),
-        extra: z.record(z.string(), z.unknown()).optional(),
+        extra: brainConfigExtraSchema.optional(),
     })
 
     app.get('/settings/brain-config', async (c) => {
@@ -440,6 +571,11 @@ export function createSettingsRoutes(
     })
 
     app.put('/settings/brain-config', async (c) => {
+        const permissionError = await requireSharedBrainSettingsWriteAccess(c)
+        if (permissionError) {
+            return permissionError
+        }
+
         const body = await c.req.json()
         const parsed = brainConfigSchema.safeParse(body)
         if (!parsed.success) {
@@ -448,6 +584,13 @@ export function createSettingsRoutes(
 
         const namespace = c.get('namespace') || 'default'
         const email = c.get('email') || null
+        const selfSystem = parsed.data.extra?.selfSystem
+        if (selfSystem?.defaultProfileId) {
+            const profile = await store.getAIProfile(selfSystem.defaultProfileId)
+            if (!profile || profile.namespace !== namespace) {
+                return c.json({ error: 'Invalid config', details: [{ path: ['extra', 'selfSystem', 'defaultProfileId'], message: 'AI profile not found in current namespace' }] }, 400)
+            }
+        }
         const result = await store.setBrainConfig(namespace, {
             ...parsed.data,
             updatedBy: email,

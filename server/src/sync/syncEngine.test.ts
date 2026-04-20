@@ -228,6 +228,108 @@ function createMonitorToolResultMessage(seq: number, toolUseId: string, opts: {
 }
 
 describe('SyncEngine', () => {
+    test('archiveSession soft-archives brain sessions and falls back to daemon stop-session when runtime RPC is unavailable', async () => {
+        const setSessionActiveCalls: Array<{
+            id: string
+            active: boolean
+            activeAt: number
+            namespace: string
+            terminationReason?: string | null
+        }> = []
+        const patchSessionMetadataCalls: Array<{
+            id: string
+            patch: Record<string, unknown>
+            namespace: string
+        }> = []
+        let hardDeleteCalls = 0
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActive: async (id: string, active: boolean, activeAt: number, namespace: string, terminationReason?: string | null) => {
+                setSessionActiveCalls.push({ id, active, activeAt, namespace, terminationReason })
+                return true
+            },
+            patchSessionMetadata: async (id: string, patch: Record<string, unknown>, namespace: string) => {
+                patchSessionMetadataCalls.push({ id, patch, namespace })
+                return true
+            },
+            deleteSession: async () => {
+                hardDeleteCalls += 1
+                return true
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const mainSession = createSession('brain-main', {
+            source: 'brain',
+            machineId: 'machine-1',
+            path: '/tmp/brain-main',
+        })
+        mainSession.active = false
+        const childSession = createSession('brain-child', {
+            source: 'brain-child',
+            mainSessionId: 'brain-main',
+            machineId: 'machine-1',
+            path: '/tmp/brain-child',
+        })
+        childSession.active = false
+
+        ;(engine as any).sessions.set(mainSession.id, mainSession)
+        ;(engine as any).sessions.set(childSession.id, childSession)
+
+        const sessionRpcCalls: Array<{ sessionId: string; method: string }> = []
+        const machineRpcCalls: Array<{ machineId: string; method: string; payload: unknown }> = []
+        ;(engine as any).sessionRpc = async (sessionId: string, method: string) => {
+            sessionRpcCalls.push({ sessionId, method })
+            throw new Error('session rpc unavailable')
+        }
+        ;(engine as any).machineRpc = async (machineId: string, method: string, payload: unknown) => {
+            machineRpcCalls.push({ machineId, method, payload })
+            return { message: 'Session stopped' }
+        }
+
+        const archived = await engine.archiveSession('brain-main', {
+            terminateSession: true,
+            archivedBy: 'brain',
+            archiveReason: 'Brain closed session',
+        })
+
+        expect(archived).toBe(true)
+        expect(hardDeleteCalls).toBe(0)
+        expect(sessionRpcCalls).toEqual([
+            { sessionId: 'brain-child', method: 'killSession' },
+            { sessionId: 'brain-main', method: 'killSession' },
+        ])
+        expect(machineRpcCalls).toEqual([
+            { machineId: 'machine-1', method: 'stop-session', payload: { sessionId: 'brain-child' } },
+            { machineId: 'machine-1', method: 'stop-session', payload: { sessionId: 'brain-main' } },
+        ])
+        expect(setSessionActiveCalls).toHaveLength(2)
+        expect(setSessionActiveCalls.map(call => call.id)).toEqual(['brain-child', 'brain-main'])
+        expect(setSessionActiveCalls.every(call => call.active === false && call.namespace === 'default' && call.terminationReason === null)).toBe(true)
+        expect(patchSessionMetadataCalls).toHaveLength(2)
+        expect(patchSessionMetadataCalls.map(call => call.id)).toEqual(['brain-child', 'brain-main'])
+        expect(patchSessionMetadataCalls.every(call => call.patch.archivedBy === 'brain')).toBe(true)
+        expect((engine.getSession('brain-main')?.metadata as Record<string, unknown>)?.lifecycleState).toBe('archived')
+        expect((engine.getSession('brain-child')?.metadata as Record<string, unknown>)?.archiveReason).toBe('Brain closed session')
+        expect(engine.getSession('brain-main')?.active).toBe(false)
+        expect(engine.getSession('brain-child')?.active).toBe(false)
+    })
+
     test('waits for late tail messages before sending brain callback', async () => {
         let childMessages: ReturnType<typeof createAgentAssistantMessage>[] = []
         const sent: Array<{ sessionId: string; payload: { text: string } }> = []
@@ -498,6 +600,563 @@ describe('SyncEngine', () => {
         expect(added[0]?.sessionId).toBe(childSession.id)
         expect((added[0]?.content as any)?.meta?.sentFrom).toBe('brain')
         expect((engine as any).brainChildPendingMessages.get(childSession.id)).toBeUndefined()
+    })
+
+    test('keeps user follow-ups and child callback together while the main brain is still thinking', async () => {
+        let seq = 0
+        const added: Array<{ sessionId: string; content: unknown; localId?: string | undefined }> = []
+        const childMessages = [
+            createAgentResultMessage(1, '子任务 burst 最终结果'),
+        ]
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getMessages: async () => childMessages,
+            getMessageCount: async () => childMessages.length,
+            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+                seq += 1
+                added.push({ sessionId, content, localId })
+                return {
+                    id: `stored-${seq}`,
+                    sessionId,
+                    seq,
+                    localId: localId ?? null,
+                    content,
+                    createdAt: 1_000 + seq,
+                }
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        mainSession.thinking = true
+        const childSession = createSession('child-session', {
+            source: 'brain-child',
+            mainSessionId: 'main-session',
+            summary: { text: 'Child', updatedAt: 0 },
+        })
+
+        ;(engine as any).sessions.set(mainSession.id, mainSession)
+        ;(engine as any).sessions.set(childSession.id, childSession)
+        ;(engine as any).sessionMessages.set(childSession.id, childMessages)
+        ;(engine as any).waitForSessionMessagesToSettle = async () => {}
+
+        await Promise.all([
+            engine.sendMessage(mainSession.id, { text: '用户追问 1', sentFrom: 'webapp' }),
+            (engine as any).sendBrainCallbackIfNeeded(childSession),
+            engine.sendMessage(mainSession.id, { text: '用户追问 2', sentFrom: 'webapp' }),
+        ])
+
+        const mainMessages = added.filter(item => item.sessionId === mainSession.id)
+        const sentFroms = mainMessages.map(item => (item.content as any)?.meta?.sentFrom)
+
+        expect(mainMessages).toHaveLength(3)
+        expect(sentFroms.filter(value => value === 'webapp')).toHaveLength(2)
+        expect(sentFroms.filter(value => value === 'brain-callback')).toHaveLength(1)
+        expect(mainMessages.every(item => Boolean((item.content as any)?.meta?.brainSessionQueue))).toBe(true)
+        expect(mainSession.thinking).toBe(true)
+    })
+
+    test('resets brain wake queue depth when the next consume round starts', async () => {
+        let seq = 0
+        const added: Array<{ sessionId: string; content: unknown; localId?: string | undefined }> = []
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+                seq += 1
+                added.push({ sessionId, content, localId })
+                return {
+                    id: `stored-${seq}`,
+                    sessionId,
+                    seq,
+                    localId: localId ?? null,
+                    content,
+                    createdAt: 1_000 + seq,
+                }
+            },
+            setSessionThinking: async () => {},
+            setSessionActive: async () => {},
+            setSessionModelConfig: async () => {},
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const mainSession = createSession('brain-main', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        mainSession.thinking = true
+        ;(engine as any).sessions.set(mainSession.id, mainSession)
+
+        const first = await engine.sendMessage(mainSession.id, { text: '用户追问 1', sentFrom: 'webapp', localId: 'u-1' })
+        const second = await engine.sendMessage(mainSession.id, { text: '用户追问 2', sentFrom: 'telegram-bot', localId: 'u-2' })
+
+        expect(first).toEqual({
+            status: 'queued',
+            queue: 'brain-session-inbox',
+            queueDepth: 1,
+        })
+        expect(second).toEqual({
+            status: 'queued',
+            queue: 'brain-session-inbox',
+            queueDepth: 2,
+        })
+        expect((added[0]?.content as any)?.meta?.brainSessionQueue).toMatchObject({
+            source: 'user',
+            delivery: 'queued',
+            wakeQueueDepth: 1,
+            localId: 'u-1',
+        })
+        expect((added[1]?.content as any)?.meta?.brainSessionQueue).toMatchObject({
+            source: 'channel',
+            delivery: 'queued',
+            wakeQueueDepth: 2,
+            localId: 'u-2',
+        })
+
+        await engine.handleSessionAlive({ sid: mainSession.id, time: Date.now(), thinking: false })
+        await engine.handleSessionAlive({ sid: mainSession.id, time: Date.now() + 1, thinking: true })
+
+        const third = await engine.sendMessage(mainSession.id, { text: '下一轮消息', sentFrom: 'brain-callback', localId: 'cb-1' })
+        expect(third).toEqual({
+            status: 'queued',
+            queue: 'brain-session-inbox',
+            queueDepth: 1,
+        })
+        expect((added[2]?.content as any)?.meta?.brainSessionQueue).toMatchObject({
+            source: 'brain-callback',
+            delivery: 'queued',
+            wakeQueueDepth: 1,
+            localId: 'cb-1',
+        })
+    })
+
+    test('does not send duplicate brain callbacks when the same child completion is replayed', async () => {
+        let seq = 0
+        const added: Array<{ sessionId: string; content: unknown; localId?: string | undefined }> = []
+        const childMessages = [
+            createAgentResultMessage(1, '同一轮子任务结果'),
+        ]
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getMessages: async () => childMessages,
+            getMessageCount: async () => childMessages.length,
+            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+                seq += 1
+                added.push({ sessionId, content, localId })
+                return {
+                    id: `stored-${seq}`,
+                    sessionId,
+                    seq,
+                    localId: localId ?? null,
+                    content,
+                    createdAt: 1_000 + seq,
+                }
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const childSession = createSession('child-session', {
+            source: 'brain-child',
+            mainSessionId: 'main-session',
+            summary: { text: 'Child', updatedAt: 0 },
+        })
+
+        ;(engine as any).sessions.set(mainSession.id, mainSession)
+        ;(engine as any).sessions.set(childSession.id, childSession)
+        ;(engine as any).sessionMessages.set(childSession.id, childMessages)
+        ;(engine as any).waitForSessionMessagesToSettle = async () => {}
+
+        await (engine as any).sendBrainCallbackIfNeeded(childSession)
+        await (engine as any).sendBrainCallbackIfNeeded(childSession)
+
+        const callbackMessages = added.filter(item =>
+            item.sessionId === mainSession.id
+            && (item.content as any)?.meta?.sentFrom === 'brain-callback'
+        )
+
+        expect(callbackMessages).toHaveLength(1)
+        expect(callbackMessages[0]?.localId).toBe('brain-callback:child-session:main-session:1:result:1')
+        expect((callbackMessages[0]?.content as any)?.meta?.brainChildCallback?.result?.text).toBe('同一轮子任务结果')
+    })
+
+    test('does not collide callback localId across different children targeting the same brain session', async () => {
+        let seq = 0
+        const added: Array<{ sessionId: string; content: unknown; localId?: string | undefined }> = []
+        const childOneMessages = [createAgentResultMessage(1, 'child-1 result')]
+        const childTwoMessages = [createAgentResultMessage(1, 'child-2 result')]
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getMessages: async (sessionId: string) => sessionId === 'child-1' ? childOneMessages : childTwoMessages,
+            getMessageCount: async () => 1,
+            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+                seq += 1
+                added.push({ sessionId, content, localId })
+                return {
+                    id: `stored-${seq}`,
+                    sessionId,
+                    seq,
+                    localId: localId ?? null,
+                    content,
+                    createdAt: 1_000 + seq,
+                }
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const childOne = createSession('child-1', {
+            source: 'brain-child',
+            mainSessionId: 'main-session',
+            summary: { text: 'Child 1', updatedAt: 0 },
+        })
+        const childTwo = createSession('child-2', {
+            source: 'brain-child',
+            mainSessionId: 'main-session',
+            summary: { text: 'Child 2', updatedAt: 0 },
+        })
+
+        ;(engine as any).sessions.set(mainSession.id, mainSession)
+        ;(engine as any).sessions.set(childOne.id, childOne)
+        ;(engine as any).sessions.set(childTwo.id, childTwo)
+        ;(engine as any).sessionMessages.set(childOne.id, childOneMessages)
+        ;(engine as any).sessionMessages.set(childTwo.id, childTwoMessages)
+        ;(engine as any).waitForSessionMessagesToSettle = async () => {}
+
+        await (engine as any).sendBrainCallbackIfNeeded(childOne)
+        await (engine as any).sendBrainCallbackIfNeeded(childTwo)
+
+        const callbackMessages = added.filter(item =>
+            item.sessionId === mainSession.id
+            && (item.content as any)?.meta?.sentFrom === 'brain-callback'
+        )
+
+        expect(callbackMessages).toHaveLength(2)
+        expect(callbackMessages.map(item => item.localId)).toEqual([
+            'brain-callback:child-1:main-session:1:result:1',
+            'brain-callback:child-2:main-session:1:result:1',
+        ])
+    })
+
+    test('still forwards a later child completion after deduplicating the previous callback replay', async () => {
+        let seq = 0
+        const added: Array<{ sessionId: string; content: unknown }> = []
+        let childMessages: Array<ReturnType<typeof createAgentResultMessage> | ReturnType<typeof createUserTextMessage>> = [
+            createAgentResultMessage(1, '第一次结果'),
+        ]
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getMessages: async () => childMessages,
+            getMessageCount: async () => childMessages.length,
+            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+                seq += 1
+                added.push({ sessionId, content })
+                return {
+                    id: `stored-${seq}`,
+                    sessionId,
+                    seq,
+                    localId: localId ?? null,
+                    content,
+                    createdAt: 1_000 + seq,
+                }
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const childSession = createSession('child-session', {
+            source: 'brain-child',
+            mainSessionId: 'main-session',
+            summary: { text: 'Child', updatedAt: 0 },
+        })
+
+        ;(engine as any).sessions.set(mainSession.id, mainSession)
+        ;(engine as any).sessions.set(childSession.id, childSession)
+        ;(engine as any).sessionMessages.set(childSession.id, childMessages)
+        ;(engine as any).waitForSessionMessagesToSettle = async () => {}
+
+        await (engine as any).sendBrainCallbackIfNeeded(childSession)
+        await (engine as any).sendBrainCallbackIfNeeded(childSession)
+
+        childMessages = [
+            ...childMessages,
+            createUserTextMessage(2, '继续处理下一轮任务', 'brain'),
+            createAgentResultMessage(3, '第二次结果'),
+        ]
+        ;(engine as any).sessionMessages.set(childSession.id, childMessages)
+
+        await (engine as any).sendBrainCallbackIfNeeded(childSession)
+
+        const callbackMessages = added.filter(item =>
+            item.sessionId === mainSession.id
+            && (item.content as any)?.meta?.sentFrom === 'brain-callback'
+        )
+        const callbackResults = callbackMessages.map(item => (item.content as any)?.meta?.brainChildCallback?.result?.text)
+
+        expect(callbackResults).toEqual(['第一次结果', '第二次结果'])
+    })
+
+    test('prefers the latest terminal result over a later replayed assistant narration in brain callback', async () => {
+        let seq = 0
+        const added: Array<{ sessionId: string; content: unknown }> = []
+        const childMessages = [
+            createAgentAssistantMessage(1, '这是过程旁白'),
+            createAgentResultMessage(2, '真正应该回灌的最终结果'),
+            createAgentAssistantMessage(3, '较晚回放的旧旁白'),
+        ]
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getMessages: async () => childMessages,
+            getMessageCount: async () => childMessages.length,
+            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+                seq += 1
+                added.push({ sessionId, content })
+                return {
+                    id: `stored-${seq}`,
+                    sessionId,
+                    seq,
+                    localId: localId ?? null,
+                    content,
+                    createdAt: 1_000 + seq,
+                }
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const childSession = createSession('child-session', {
+            source: 'brain-child',
+            mainSessionId: 'main-session',
+            summary: { text: 'Child', updatedAt: 0 },
+        })
+
+        ;(engine as any).sessions.set(mainSession.id, mainSession)
+        ;(engine as any).sessions.set(childSession.id, childSession)
+        ;(engine as any).sessionMessages.set(childSession.id, childMessages)
+        ;(engine as any).waitForSessionMessagesToSettle = async () => {}
+
+        await (engine as any).sendBrainCallbackIfNeeded(childSession)
+
+        const callbackMessage = added.find(item =>
+            item.sessionId === mainSession.id
+            && (item.content as any)?.meta?.sentFrom === 'brain-callback'
+        )
+
+        expect((callbackMessage?.content as any)?.meta?.brainChildCallback?.result).toMatchObject({
+            text: '真正应该回灌的最终结果',
+            source: 'result',
+            seq: 2,
+        })
+    })
+
+    test('keeps brain wake queue idempotent when the same localId is retried', async () => {
+        let seq = 0
+        const added: Array<{ sessionId: string; content: unknown; localId?: string | undefined }> = []
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+                seq += 1
+                added.push({ sessionId, content, localId })
+                return {
+                    id: `stored-${seq}`,
+                    sessionId,
+                    seq,
+                    localId: localId ?? null,
+                    content,
+                    createdAt: 1_000 + seq,
+                }
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const mainSession = createSession('brain-main', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        mainSession.thinking = true
+        ;(engine as any).sessions.set(mainSession.id, mainSession)
+
+        const first = await engine.sendMessage(mainSession.id, {
+            text: '第一次投递',
+            sentFrom: 'webapp',
+            localId: 'dup-1',
+        })
+        const second = await engine.sendMessage(mainSession.id, {
+            text: '第一次投递',
+            sentFrom: 'webapp',
+            localId: 'dup-1',
+        })
+
+        expect(first).toEqual({
+            status: 'queued',
+            queue: 'brain-session-inbox',
+            queueDepth: 1,
+        })
+        expect(second).toEqual({
+            status: 'queued',
+            queue: 'brain-session-inbox',
+            queueDepth: 1,
+        })
+        expect(added).toHaveLength(1)
+        expect((added[0]?.content as any)?.meta?.brainSessionQueue).toMatchObject({
+            delivery: 'queued',
+            wakeQueueDepth: 1,
+            localId: 'dup-1',
+        })
+    })
+
+    test('keeps brain-child init buffer idempotent when the same localId is retried', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getMessages: async () => [],
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const childSession = createSession('child-session', {
+            source: 'brain-child',
+            summary: { text: 'Child', updatedAt: 0 },
+        })
+        ;(engine as any).sessions.set(childSession.id, childSession)
+
+        const first = await engine.sendMessage(childSession.id, {
+            text: '请继续处理',
+            sentFrom: 'brain',
+            localId: 'brain-msg-1',
+        })
+        const second = await engine.sendMessage(childSession.id, {
+            text: '请继续处理',
+            sentFrom: 'brain',
+            localId: 'brain-msg-1',
+        })
+
+        expect(first).toEqual({
+            status: 'queued',
+            queue: 'brain-child-init',
+            queueDepth: 1,
+        })
+        expect(second).toEqual({
+            status: 'queued',
+            queue: 'brain-child-init',
+            queueDepth: 1,
+        })
+        expect((engine as any).brainChildPendingMessages.get(childSession.id)).toEqual([
+            {
+                text: '请继续处理',
+                localId: 'brain-msg-1',
+            },
+        ])
     })
 
     test('marks disconnected sessions inactive in memory and allows heartbeat reactivation', async () => {
@@ -816,6 +1475,102 @@ describe('SyncEngine', () => {
         expect(sessionUpdatedEvents.some(event => event.data?.wasThinking === true)).toBe(false)
 
         unsubscribe()
+    })
+
+    test('normalizes legacy Codex bypassPermissions to yolo before persisting heartbeat config', async () => {
+        const storedSession = createSession('session-codex-legacy-perm', {
+            machineId: 'machine-1',
+            path: '/tmp/project',
+            flavor: 'codex',
+            yolo: true,
+        })
+        storedSession.permissionMode = 'bypassPermissions' as any
+
+        const setSessionModelConfigCalls: Array<Record<string, unknown>> = []
+        const store = {
+            getSessions: async () => [storedSession],
+            getSession: async () => storedSession,
+            getMachines: async () => [],
+            setSessionActive: async () => true,
+            setSessionModelConfig: async (_sessionId: string, config: Record<string, unknown>) => {
+                setSessionModelConfigCalls.push(config)
+            },
+            getSessionNotificationRecipientClientIds: async () => [],
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        await engine.handleSessionAlive({
+            sid: storedSession.id,
+            time: Date.now(),
+            thinking: false,
+        })
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        expect(engine.getSession(storedSession.id)?.permissionMode).toBe('yolo')
+        expect(setSessionModelConfigCalls).toContainEqual(expect.objectContaining({
+            permissionMode: 'yolo',
+        }))
+    })
+
+    test('accepts Codex default permissionMode from heartbeat without treating it as dirty', async () => {
+        const storedSession = createSession('session-codex-default-perm', {
+            machineId: 'machine-1',
+            path: '/tmp/project',
+            flavor: 'codex',
+        })
+        storedSession.permissionMode = undefined
+
+        const setSessionModelConfigCalls: Array<Record<string, unknown>> = []
+        const store = {
+            getSessions: async () => [storedSession],
+            getSession: async () => storedSession,
+            getMachines: async () => [],
+            setSessionActive: async () => true,
+            setSessionModelConfig: async (_sessionId: string, config: Record<string, unknown>) => {
+                setSessionModelConfigCalls.push(config)
+            },
+            getSessionNotificationRecipientClientIds: async () => [],
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        await engine.handleSessionAlive({
+            sid: storedSession.id,
+            time: Date.now(),
+            thinking: false,
+            permissionMode: 'default',
+        })
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        expect(engine.getSession(storedSession.id)?.permissionMode).toBe('default')
+        expect(setSessionModelConfigCalls).toContainEqual(expect.objectContaining({
+            permissionMode: 'default',
+        }))
     })
 
     test('sendMessage neutralizes startup stale thinking before old session-end arrives', async () => {

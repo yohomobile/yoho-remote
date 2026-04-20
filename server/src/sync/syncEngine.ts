@@ -17,7 +17,13 @@ import type { SSEManager } from '../sse/sseManager'
 import { buildSessionClearMessagesUpdate } from '../socket/handlers/cli'
 import { extractTodoWriteTodosFromMessageContent, TodosSchema, type TodoItem } from './todos'
 import { getWebPushService } from '../services/webPush'
-import { extractResumeSpawnExtras, extractResumeSpawnMetadata, resolveResumeTokenSourceSpawnOptions } from '../resumeSpawnMetadata'
+import {
+    extractResumeSpawnExtras,
+    extractResumeSpawnMetadata,
+    hasInvalidResumeBrainPreferences,
+    resolveResumeTokenSourceSpawnOptions,
+} from '../resumeSpawnMetadata'
+import { normalizeSessionPermissionMode, type SessionPermissionMode } from '../sessionPermissionMode'
 import {
     SUMMARIZE_TURN_QUEUE_NAME,
     SUMMARIZE_TURN_JOB_VERSION,
@@ -117,7 +123,7 @@ export interface Session {
     thinking: boolean
     thinkingAt: number
     todos?: TodoItem[]
-    permissionMode?: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
+    permissionMode?: SessionPermissionMode
     modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'glm-5.1' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     fastMode?: boolean
@@ -154,11 +160,13 @@ export type BrainChildCallbackEnvelope = {
     }
 }
 
+type BrainSessionInboundSource = 'user' | 'channel' | 'brain' | 'brain-callback'
+
 export type SendMessageOutcome =
     | { status: 'delivered' }
     | {
         status: 'queued'
-        queue: 'brain-child-init'
+        queue: 'brain-child-init' | 'brain-session-inbox'
         queueDepth: number
     }
 
@@ -610,7 +618,15 @@ export class SyncEngine {
     private readonly brainChildInitCompleted: Set<string> = new Set()
     // Messages sent from brain to a brain-child session before init prompt completes.
     // Held here and flushed once the init prompt finishes.
-    private readonly brainChildPendingMessages: Map<string, string[]> = new Map()
+    private readonly brainChildPendingMessages: Map<string, Array<{ text: string; localId: string | null }>> = new Map()
+    // Lightweight "next wake" queue for Brain sessions. The durable backlog still lives
+    // in persisted messages + CLI MessageQueue2; this depth only tracks messages accepted
+    // while the current turn is still running and will be consumed on the next wake.
+    private readonly brainSessionPendingWakeDepthBySessionId: Map<string, number> = new Map()
+    // Last successfully delivered callback signature per brain-child session.
+    private readonly brainChildLastDeliveredCallbackKeyBySessionId: Map<string, string> = new Map()
+    // Callback currently being delivered per brain-child session to avoid duplicate concurrent sends.
+    private readonly brainChildInFlightCallbackKeyBySessionId: Map<string, string> = new Map()
     private _dbActiveSessionIds: Set<string> = new Set() // Sessions that were active in DB at startup
     private inactivityTimer: NodeJS.Timeout | null = null
     private orphanCleanupTimer: NodeJS.Timeout | null = null
@@ -1035,6 +1051,105 @@ export class SyncEngine {
         return session
     }
 
+    async archiveSession(sessionId: string, options?: {
+        terminateSession?: boolean
+        force?: boolean
+        archivedBy?: string
+        archiveReason?: string
+    }): Promise<boolean> {
+        let session = this.sessions.get(sessionId)
+        if (!session) {
+            session = await this.refreshSession(sessionId, { silent: true }) ?? undefined
+        }
+
+        const source = (session?.metadata as any)?.source
+        if (source === 'brain') {
+            const childSessions = this.getSessions().filter(s => {
+                const meta = s.metadata as any
+                return meta?.source === 'brain-child' && meta?.mainSessionId === sessionId
+            })
+            for (const child of childSessions) {
+                try {
+                    await this.archiveSession(child.id, {
+                        terminateSession: true,
+                        force: true,
+                        archivedBy: options?.archivedBy ?? 'brain',
+                        archiveReason: options?.archiveReason ?? 'Parent brain session archived',
+                    })
+                } catch (err) {
+                    console.error(`[archiveSession] Failed to cascade-archive child session ${child.id}:`, err)
+                }
+            }
+        }
+
+        if (!session && !options?.force) {
+            return false
+        }
+
+        this.deletingSessions.add(sessionId)
+        try {
+            if (options?.terminateSession) {
+                await this.terminateSessionProcess(sessionId)
+            }
+
+            if (!session) {
+                return false
+            }
+
+            const now = Date.now()
+            const archivedBy = options?.archivedBy ?? 'server'
+            const archiveReason = options?.archiveReason ?? 'Session archived'
+            const wasThinking = session.thinking
+            session.active = false
+            session.thinking = false
+            session.thinkingAt = now
+            session.updatedAt = now
+            session.terminationReason = undefined
+            if (wasThinking !== session.thinking) {
+                this.persistSessionThinking(session)
+            }
+            const clearedActiveMonitors = await this.clearSessionActiveMonitors(session)
+            this.pendingMonitorCallsBySessionId.delete(session.id)
+            this.brainSessionPendingWakeDepthBySessionId.delete(session.id)
+            this.brainChildPendingMessages.delete(session.id)
+            this.brainChildInFlightCallbackKeyBySessionId.delete(session.id)
+
+            const metadataPatch = {
+                lifecycleState: 'archived',
+                lifecycleStateSince: now,
+                archivedBy,
+                archiveReason,
+            }
+            session.metadata = {
+                ...((session.metadata ?? {}) as Record<string, unknown>),
+                ...metadataPatch,
+            } as unknown as Session['metadata']
+
+            const persistedActive = await this.store.setSessionActive(session.id, false, now, session.namespace, null)
+            const persistedMetadata = await this.store.patchSessionMetadata(session.id, metadataPatch, session.namespace)
+            if (persistedMetadata) {
+                session.metadataVersion += 1
+            }
+            this._dbActiveSessionIds.delete(session.id)
+
+            if (!persistedActive && !persistedMetadata && !options?.force) {
+                return false
+            }
+
+            this.emit({
+                type: 'session-updated',
+                sessionId: session.id,
+                data: {
+                    ...this.buildSessionPayload(session),
+                    ...(clearedActiveMonitors ? { activeMonitorCount: 0 } : {}),
+                }
+            })
+            return persistedActive || persistedMetadata || Boolean(session)
+        } finally {
+            this.deletingSessions.delete(sessionId)
+        }
+    }
+
     async deleteSession(sessionId: string, options?: { terminateSession?: boolean; force?: boolean }): Promise<boolean> {
         const session = this.sessions.get(sessionId)
 
@@ -1101,6 +1216,9 @@ export class SyncEngine {
         this.deletingSessions.delete(sessionId)
         this.brainChildInitCompleted.delete(sessionId)
         this.brainChildPendingMessages.delete(sessionId)
+        this.brainSessionPendingWakeDepthBySessionId.delete(sessionId)
+        this.brainChildLastDeliveredCallbackKeyBySessionId.delete(sessionId)
+        this.brainChildInFlightCallbackKeyBySessionId.delete(sessionId)
         this.emit({ type: 'session-removed', sessionId })
         return deleted || Boolean(session)
     }
@@ -1160,6 +1278,83 @@ export class SyncEngine {
         return this.brainChildInitCompleted.has(sessionId)
     }
 
+    private isBrainSession(session: Session | undefined): boolean {
+        return session?.metadata?.source === 'brain'
+    }
+
+    private getBrainSessionInboundSource(
+        sentFrom: string,
+        meta?: Record<string, unknown>
+    ): BrainSessionInboundSource {
+        if (sentFrom === 'brain-callback') {
+            return 'brain-callback'
+        }
+        if (sentFrom === 'brain') {
+            return 'brain'
+        }
+        if (
+            sentFrom === 'telegram-bot'
+            || sentFrom === 'feishu'
+            || sentFrom === 'slack'
+            || typeof meta?.feishuChatId === 'string'
+            || typeof meta?.telegramChatId === 'string'
+            || typeof meta?.slackChannelId === 'string'
+        ) {
+            return 'channel'
+        }
+        return 'user'
+    }
+
+    private peekBrainSessionPendingWakeDepth(sessionId: string): number {
+        return this.brainSessionPendingWakeDepthBySessionId.get(sessionId) ?? 0
+    }
+
+    private enqueueBrainSessionPendingWake(sessionId: string): number {
+        const nextDepth = this.peekBrainSessionPendingWakeDepth(sessionId) + 1
+        this.brainSessionPendingWakeDepthBySessionId.set(sessionId, nextDepth)
+        return nextDepth
+    }
+
+    private clearBrainSessionPendingWake(sessionId: string): number {
+        const depth = this.peekBrainSessionPendingWakeDepth(sessionId)
+        if (depth > 0) {
+            this.brainSessionPendingWakeDepthBySessionId.delete(sessionId)
+        }
+        return depth
+    }
+
+    private getCachedMessageByLocalId(sessionId: string, localId: string): DecryptedMessage | undefined {
+        const cached = this.sessionMessages.get(sessionId) ?? []
+        return cached.find((message) => message.localId === localId)
+    }
+
+    private getDuplicateSendOutcome(
+        session: Session | undefined,
+        cachedMessage: DecryptedMessage,
+    ): SendMessageOutcome {
+        if (this.isBrainSession(session)) {
+            const meta = isRecord((cachedMessage.content as Record<string, unknown> | null)?.meta)
+                ? ((cachedMessage.content as Record<string, unknown>).meta as Record<string, unknown>)
+                : null
+            const brainSessionQueue = meta && isRecord(meta.brainSessionQueue)
+                ? meta.brainSessionQueue
+                : null
+            if (brainSessionQueue?.delivery === 'queued') {
+                const wakeQueueDepth = typeof brainSessionQueue.wakeQueueDepth === 'number'
+                    && Number.isFinite(brainSessionQueue.wakeQueueDepth)
+                    ? Math.max(1, Math.floor(brainSessionQueue.wakeQueueDepth))
+                    : 1
+                return {
+                    status: 'queued',
+                    queue: 'brain-session-inbox',
+                    queueDepth: wakeQueueDepth,
+                }
+            }
+        }
+
+        return { status: 'delivered' }
+    }
+
     getMachineByNamespace(machineId: string, namespace: string): Machine | undefined {
         const machine = this.machines.get(machineId)
         if (!machine || machine.namespace !== namespace) {
@@ -1182,6 +1377,15 @@ export class SyncEngine {
 
     getSessionMessages(sessionId: string): DecryptedMessage[] {
         return this.sessionMessages.get(sessionId) || []
+    }
+
+    getSendOutcomeForCachedLocalId(sessionId: string, localId: string): SendMessageOutcome | null {
+        const session = this.sessions.get(sessionId)
+        const cachedMessage = this.getCachedMessageByLocalId(sessionId, localId)
+        if (!cachedMessage) {
+            return null
+        }
+        return this.getDuplicateSendOutcome(session, cachedMessage)
     }
 
     async getMessagesPage(sessionId: string, options: { limit: number; beforeSeq: number | null }): Promise<{
@@ -1270,6 +1474,8 @@ export class SyncEngine {
 
         // Clear the in-memory cache for this session
         this.sessionMessages.delete(sessionId)
+        this.brainChildLastDeliveredCallbackKeyBySessionId.delete(sessionId)
+        this.brainChildInFlightCallbackKeyBySessionId.delete(sessionId)
 
         this.io.of('/cli').to(`session:${sessionId}`).emit('update', buildSessionClearMessagesUpdate({
             sessionId,
@@ -1390,7 +1596,7 @@ export class SyncEngine {
         time: number
         thinking?: boolean
         mode?: 'local' | 'remote'
-        permissionMode?: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
+        permissionMode?: SessionPermissionMode
         modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'glm-5.1' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
         modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
         fastMode?: boolean
@@ -1418,9 +1624,19 @@ export class SyncEngine {
             }
         }
 
+        const previousPermissionMode = session.permissionMode
+        const normalizedExistingPermissionMode = normalizeSessionPermissionMode({
+            flavor: session.metadata?.flavor,
+            permissionMode: session.permissionMode,
+            metadata: session.metadata,
+        })
+        const repairedStoredPermissionMode = normalizedExistingPermissionMode !== session.permissionMode
+        if (repairedStoredPermissionMode) {
+            session.permissionMode = normalizedExistingPermissionMode
+        }
+
         const wasActive = session.active
         const wasThinking = session.thinking
-        const previousPermissionMode = session.permissionMode
         const previousModelMode = session.modelMode
         const previousReasoningEffort = session.modelReasoningEffort
         const previousFastMode = session.fastMode
@@ -1464,9 +1680,14 @@ export class SyncEngine {
         // Only update mode values from CLI heartbeat if server doesn't have authoritative values
         // This prevents CLI heartbeats with stale values from overwriting server-set values
         // (e.g., when Web UI just set a new mode via applySessionConfig but CLI hasn't synced yet)
-        let needsPersist = false
-        if (payload.permissionMode !== undefined && session.permissionMode === undefined) {
-            session.permissionMode = payload.permissionMode
+        let needsPersist = repairedStoredPermissionMode
+        const normalizedPayloadPermissionMode = normalizeSessionPermissionMode({
+            flavor: session.metadata?.flavor,
+            permissionMode: payload.permissionMode,
+            metadata: session.metadata,
+        })
+        if (normalizedPayloadPermissionMode !== undefined && session.permissionMode === undefined) {
+            session.permissionMode = normalizedPayloadPermissionMode
             needsPersist = true
         }
         if (payload.modelMode !== undefined && session.modelMode === undefined) {
@@ -1510,10 +1731,21 @@ export class SyncEngine {
         const now = Date.now()
         const lastBroadcastAt = this.lastBroadcastAtBySessionId.get(session.id) ?? 0
         const thinkingChanged = wasThinking !== session.thinking
+        const turnJustStarted = !wasThinking && session.thinking
         const taskJustCompleted = wasThinking && !session.thinking
 
         if (thinkingChanged) {
             this.persistSessionThinking(session)
+        }
+
+        if (turnJustStarted && this.isBrainSession(session)) {
+            const clearedDepth = this.clearBrainSessionPendingWake(session.id)
+            if (clearedDepth > 0) {
+                console.log(
+                    `[brain-queue] Brain session ${shortId(session.id)} started next consume round, ` +
+                    `clearing wake queue depth=${clearedDepth}`
+                )
+            }
         }
 
         if (taskJustCompleted) {
@@ -1733,6 +1965,15 @@ export class SyncEngine {
         return sawInitPrompt
     }
 
+    private buildBrainCallbackDeliveryKey(
+        mainSessionId: string,
+        messageCount: number,
+        resultSource: BrainChildCallbackEnvelope['result']['source'],
+        resultSeq: number | null,
+    ): string {
+        return `${mainSessionId}:${messageCount}:${resultSource}:${resultSeq ?? 'none'}`
+    }
+
     private async sendBrainCallbackIfNeeded(session: Session): Promise<void> {
         try {
             const source = (session.metadata as any)?.source
@@ -1741,12 +1982,13 @@ export class SyncEngine {
                 return
             }
 
-            // Check Brain session exists
+            // Check Brain session exists and is online. Offline parents cannot consume
+            // queued callbacks reliably without a fresh runtime backfill.
             const brainSession = this.getSession(mainSessionId)
-            if (!brainSession) {
-                console.warn(`[brain-callback] Brain session ${mainSessionId} not found, will retry`)
+            if (!brainSession?.active) {
+                console.warn(`[brain-callback] Brain session ${mainSessionId} unavailable (active=${brainSession?.active ?? false}), will retry`)
                 // Brain may be temporarily offline (restarting, etc.) - retry with delay
-                await this.retryBrainCallback(session, mainSessionId, 'brain session not found')
+                await this.retryBrainCallback(session, mainSessionId, 'brain session unavailable')
                 return
             }
 
@@ -1767,8 +2009,8 @@ export class SyncEngine {
                     if (pending && pending.length > 0) {
                         this.brainChildPendingMessages.delete(session.id)
                         console.log(`[brain-queue] Flushing ${pending.length} buffered message(s) to ${shortId(session.id)}`)
-                        for (const text of pending) {
-                            await this.sendMessage(session.id, { text, sentFrom: 'brain' })
+                        for (const item of pending) {
+                            await this.sendMessage(session.id, { text: item.text, localId: item.localId, sentFrom: 'brain' })
                         }
                     }
                     return
@@ -1820,18 +2062,28 @@ export class SyncEngine {
                 }
             }
 
-            // Extract result text from messages
+            // Extract result text from messages.
+            // Prefer the latest terminal result; only fall back to assistant/message text
+            // when no result payload exists in the settled tail.
             for (let i = messages.length - 1; i >= 0; i--) {
                 const content = messages[i].content as any
                 if (!content || content.role !== 'agent') continue
                 const data = content.content?.data
 
-                if (!resultText) {
-                    if (data?.type === 'result' && typeof data.result === 'string') {
-                        resultText = data.result
-                        resultSource = 'result'
-                        resultSeq = messages[i].seq
-                    }
+                if (data?.type === 'result' && typeof data.result === 'string') {
+                    resultText = data.result
+                    resultSource = 'result'
+                    resultSeq = messages[i].seq
+                    break
+                }
+            }
+
+            if (!resultText) {
+                for (let i = messages.length - 1; i >= 0; i--) {
+                    const content = messages[i].content as any
+                    if (!content || content.role !== 'agent') continue
+                    const data = content.content?.data
+
                     if (data?.type === 'assistant' && data.message?.content) {
                         const blocks = data.message.content
                         if (Array.isArray(blocks)) {
@@ -1843,22 +2095,25 @@ export class SyncEngine {
                                 resultText = texts.join('\n')
                                 resultSource = 'assistant'
                                 resultSeq = messages[i].seq
+                                break
                             }
                         }
                     }
-                    // simpler agent format
+
                     if (typeof data?.message === 'string') {
                         resultText = data.message
                         resultSource = 'message'
                         resultSeq = messages[i].seq
-                    } else if (typeof data === 'string') {
+                        break
+                    }
+
+                    if (typeof data === 'string') {
                         resultText = data
                         resultSource = 'raw-data'
                         resultSeq = messages[i].seq
+                        break
                     }
                 }
-
-                if (resultText) break
             }
 
             const sessionTitle = session.metadata?.summary?.text || session.metadata?.path || session.id
@@ -1884,6 +2139,27 @@ export class SyncEngine {
 
             // Build token stats line (contextSize formula matches frontend: cache_creation + cache_read + input_tokens)
             const messageCount = await this.store.getMessageCount(session.id)
+            const callbackDeliveryKey = this.buildBrainCallbackDeliveryKey(
+                mainSessionId,
+                messageCount,
+                resultSource,
+                resultSeq,
+            )
+            if (this.brainChildLastDeliveredCallbackKeyBySessionId.get(session.id) === callbackDeliveryKey) {
+                console.log(
+                    `[brain-callback] Skipping duplicate delivered callback for ${shortId(session.id)} ` +
+                    `(key=${callbackDeliveryKey})`
+                )
+                return
+            }
+            if (this.brainChildInFlightCallbackKeyBySessionId.get(session.id) === callbackDeliveryKey) {
+                console.log(
+                    `[brain-callback] Skipping duplicate in-flight callback for ${shortId(session.id)} ` +
+                    `(key=${callbackDeliveryKey})`
+                )
+                return
+            }
+
             const CONTEXT_BUDGET = getContextBudget(session.modelMode)
             let statsLine = `消息数: ${messageCount}`
             let contextRemainingPercent: number | undefined
@@ -1929,25 +2205,35 @@ export class SyncEngine {
 
             console.log(`[brain-callback] Pushing result from child ${shortId(session.id)} to brain ${shortId(mainSessionId)} (${callbackResult.length} chars)`)
 
+            this.brainChildInFlightCallbackKeyBySessionId.set(session.id, callbackDeliveryKey)
+
             // Retry sendMessage up to 3 times with exponential backoff
             let lastError: Error | null = null
-            for (let attempt = 0; attempt < 3; attempt++) {
-                try {
-                    await this.sendMessage(mainSessionId, {
-                        text: callbackMessage,
-                        sentFrom: 'brain-callback',
-                        meta: {
-                            brainChildCallback: callbackEnvelope,
-                        },
-                    })
-                    return // success
-                } catch (e) {
-                    lastError = e as Error
-                    if (attempt < 2) {
-                        const delay = (attempt + 1) * 2000 // 2s, 4s
-                        console.warn(`[brain-callback] Send failed (attempt ${attempt + 1}/3), retrying in ${delay}ms:`, (e as Error).message)
-                        await new Promise(r => setTimeout(r, delay))
+            try {
+                for (let attempt = 0; attempt < 3; attempt++) {
+                    try {
+                        await this.sendMessage(mainSessionId, {
+                            text: callbackMessage,
+                            localId: `brain-callback:${session.id}:${callbackDeliveryKey}`,
+                            sentFrom: 'brain-callback',
+                            meta: {
+                                brainChildCallback: callbackEnvelope,
+                            },
+                        })
+                        this.brainChildLastDeliveredCallbackKeyBySessionId.set(session.id, callbackDeliveryKey)
+                        return // success
+                    } catch (e) {
+                        lastError = e as Error
+                        if (attempt < 2) {
+                            const delay = (attempt + 1) * 2000 // 2s, 4s
+                            console.warn(`[brain-callback] Send failed (attempt ${attempt + 1}/3), retrying in ${delay}ms:`, (e as Error).message)
+                            await new Promise(r => setTimeout(r, delay))
+                        }
                     }
+                }
+            } finally {
+                if (this.brainChildInFlightCallbackKeyBySessionId.get(session.id) === callbackDeliveryKey) {
+                    this.brainChildInFlightCallbackKeyBySessionId.delete(session.id)
                 }
             }
             console.error(`[brain-callback] Failed to send callback for session ${session.id} after 3 attempts:`, lastError)
@@ -2431,6 +2717,10 @@ export class SyncEngine {
                     const flavor = session.metadata!.flavor as string
                     const rawId = flavor === 'claude' ? session.metadata?.claudeSessionId : session.metadata?.codexSessionId
                     if (typeof rawId !== 'string' || !rawId) return
+                    if (hasInvalidResumeBrainPreferences(session.metadata)) {
+                        console.warn(`[auto-resume] skip session ${session.id}: invalid brainPreferences metadata`)
+                        return
+                    }
 
                     const directory = session.metadata!.path
                     const previousActiveAt = session.activeAt
@@ -2648,6 +2938,7 @@ export class SyncEngine {
             this.clearTodoBackfillState(sessionId)
         }
 
+        const rawMetadata = isRecord(stored.metadata) ? stored.metadata : null
         const metadata = (() => {
             const parsed = MetadataSchema.safeParse(stored.metadata)
             return parsed.success ? parsed.data : null
@@ -2669,6 +2960,12 @@ export class SyncEngine {
             return parsed.success ? sortActiveMonitors(parsed.data) : []
         })()
 
+        const normalizedStoredPermissionMode = normalizeSessionPermissionMode({
+            flavor: metadata?.flavor ?? rawMetadata?.flavor,
+            permissionMode: stored.permissionMode,
+            metadata: metadata ?? rawMetadata,
+        })
+
         const session: Session = {
             id: stored.id,
             namespace: stored.namespace,
@@ -2686,7 +2983,7 @@ export class SyncEngine {
             thinking: existing?.thinking ?? stored.thinking,
             thinkingAt: existing?.thinkingAt ?? (stored.thinkingAt ?? 0),
             todos,
-            permissionMode: existing?.permissionMode ?? (stored.permissionMode as any) ?? undefined,
+            permissionMode: existing?.permissionMode ?? normalizedStoredPermissionMode,
             modelMode: existing?.modelMode ?? (stored.modelMode as any) ?? undefined,
             modelReasoningEffort: existing?.modelReasoningEffort ?? (stored.modelReasoningEffort as any) ?? undefined,
             fastMode: existing?.fastMode ?? stored.fastMode ?? undefined,
@@ -2696,6 +2993,16 @@ export class SyncEngine {
         }
 
         this.sessions.set(sessionId, session)
+        if (normalizedStoredPermissionMode !== stored.permissionMode) {
+            this.store.setSessionModelConfig(session.id, {
+                permissionMode: normalizedStoredPermissionMode,
+                modelMode: stored.modelMode as any,
+                modelReasoningEffort: stored.modelReasoningEffort as any,
+                fastMode: stored.fastMode ?? undefined,
+            }, session.namespace).catch(err => {
+                console.error(`[refreshSession] Failed to normalize model config for session ${session.id}:`, err)
+            })
+        }
         if (!opts?.silent) {
             this.emit({ type: existing ? 'session-updated' : 'session-added', sessionId, data: this.buildSessionPayload(session) })
         }
@@ -2968,10 +3275,19 @@ export class SyncEngine {
     }
 
     async sendMessage(sessionId: string, payload: { text: string; localId?: string | null; sentFrom?: string; meta?: Record<string, unknown> }): Promise<SendMessageOutcome> {
+        const session = this.sessions.get(sessionId)
+        const localId = typeof payload.localId === 'string' && payload.localId.length > 0
+            ? payload.localId
+            : null
+        if (localId) {
+            const cachedDuplicate = this.getCachedMessageByLocalId(sessionId, localId)
+            if (cachedDuplicate) {
+                return this.getDuplicateSendOutcome(session, cachedDuplicate)
+            }
+        }
         // If this is a brain-sent message and the brain-child hasn't finished its init prompt yet,
         // buffer it and deliver it once the init prompt completes.
         if ((payload.sentFrom as string) === 'brain') {
-            const session = this.sessions.get(sessionId)
             const isBrainChild = session?.metadata?.source === 'brain-child'
             if (isBrainChild && !this.brainChildInitCompleted.has(sessionId)) {
                 const recovered = await this.recoverBrainChildInitFromHistory(sessionId, session)
@@ -2979,7 +3295,14 @@ export class SyncEngine {
                     console.log(`[brain-queue] Recovered buffered-send path for ${shortId(sessionId)}`)
                 } else {
                     const pending = this.brainChildPendingMessages.get(sessionId) ?? []
-                    pending.push(payload.text)
+                    if (localId && pending.some((item) => item.localId === localId)) {
+                        return {
+                            status: 'queued',
+                            queue: 'brain-child-init',
+                            queueDepth: pending.length,
+                        }
+                    }
+                    pending.push({ text: payload.text, localId })
                     this.brainChildPendingMessages.set(sessionId, pending)
                     console.log(`[brain-queue] Buffered brain message for ${sessionId.slice(0, 8)} (init not done yet), queue size=${pending.length}`)
                     return {
@@ -2992,7 +3315,6 @@ export class SyncEngine {
         }
 
         // Clear abort state so the CLI's new thinking heartbeats are accepted
-        const session = this.sessions.get(sessionId)
         if (session?.abortedAt) {
             session.abortedAt = undefined
         }
@@ -3014,6 +3336,16 @@ export class SyncEngine {
         }
 
         const sentFrom = payload.sentFrom ?? 'webapp'
+        const queueMeta = payload.meta ?? {}
+        const isBrainSession = this.isBrainSession(session)
+        const shouldQueueBrainSessionWake = Boolean(
+            isBrainSession
+            && session?.active
+            && (session.thinking || this.peekBrainSessionPendingWakeDepth(sessionId) > 0)
+        )
+        const brainSessionWakeQueueDepth = shouldQueueBrainSessionWake
+            ? this.enqueueBrainSessionPendingWake(sessionId)
+            : 0
 
         const content = {
             role: 'user',
@@ -3023,11 +3355,23 @@ export class SyncEngine {
             },
             meta: {
                 sentFrom,
-                ...(payload.meta ?? {})
+                ...queueMeta,
+                ...(isBrainSession
+                    ? {
+                        brainSessionQueue: {
+                            version: 1,
+                            source: this.getBrainSessionInboundSource(sentFrom, queueMeta),
+                            acceptedAt: Date.now(),
+                            delivery: shouldQueueBrainSessionWake ? 'queued' : 'delivered',
+                            wakeQueueDepth: brainSessionWakeQueueDepth,
+                            localId,
+                        },
+                    }
+                    : {}),
             }
         }
 
-        const msg = await this.store.addMessage(sessionId, content, payload.localId ?? undefined)
+        const msg = await this.store.addMessage(sessionId, content, localId ?? undefined)
 
         // 用户主动发消息 → 重置 task-complete 冷却期
         // 确保用户交互后的下一次 thinking→done 能正常触发通知
@@ -3072,6 +3416,14 @@ export class SyncEngine {
                 createdAt: msg.createdAt
             }
         })
+
+        if (shouldQueueBrainSessionWake) {
+            return {
+                status: 'queued',
+                queue: 'brain-session-inbox',
+                queueDepth: brainSessionWakeQueueDepth,
+            }
+        }
 
         return { status: 'delivered' }
     }
@@ -3200,7 +3552,7 @@ export class SyncEngine {
 
     async setPermissionMode(
         sessionId: string,
-        mode: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
+        mode: SessionPermissionMode
     ): Promise<void> {
         const session = this.sessions.get(sessionId)
         if (session) {
@@ -3232,7 +3584,7 @@ export class SyncEngine {
     async applySessionConfig(
         sessionId: string,
         config: {
-            permissionMode?: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
+            permissionMode?: SessionPermissionMode
             modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'glm-5.1' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
             modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
             fastMode?: boolean
@@ -3335,6 +3687,7 @@ export class SyncEngine {
             }
         }
 
+        const startedAt = Date.now()
         try {
             const result = await this.machineRpc(
                 machineId,
@@ -3367,18 +3720,43 @@ export class SyncEngine {
                     reuseExistingWorktree: options?.reuseExistingWorktree,
                 }
             )
+            const elapsedMs = Date.now() - startedAt
             if (result && typeof result === 'object') {
                 const obj = result as Record<string, unknown>
                 const logs = Array.isArray(obj.logs) ? obj.logs : undefined
                 if (obj.type === 'success' && typeof obj.sessionId === 'string') {
+                    console.log(
+                        `[spawn-perf] machine=${shortId(machineId)} agent=${agent} ` +
+                        `rpc=spawn-yoho-remote-session elapsed=${elapsedMs}ms outcome=success session=${obj.sessionId}`
+                    )
                     return { type: 'success', sessionId: obj.sessionId, logs }
                 }
                 if (obj.type === 'error' && typeof obj.errorMessage === 'string') {
+                    const preview = obj.errorMessage.length > 200
+                        ? `${obj.errorMessage.slice(0, 199).trimEnd()}…`
+                        : obj.errorMessage
+                    console.warn(
+                        `[spawn-perf] machine=${shortId(machineId)} agent=${agent} ` +
+                        `rpc=spawn-yoho-remote-session elapsed=${elapsedMs}ms outcome=error message=${preview}`
+                    )
                     return { type: 'error', message: obj.errorMessage, logs }
                 }
             }
+            console.warn(
+                `[spawn-perf] machine=${shortId(machineId)} agent=${agent} ` +
+                `rpc=spawn-yoho-remote-session elapsed=${elapsedMs}ms outcome=unexpected`
+            )
             return { type: 'error', message: 'Unexpected spawn result' }
         } catch (error) {
+            const elapsedMs = Date.now() - startedAt
+            const errorMessage = error instanceof Error ? error.message : String(error)
+            const preview = errorMessage.length > 200
+                ? `${errorMessage.slice(0, 199).trimEnd()}…`
+                : errorMessage
+            console.warn(
+                `[spawn-perf] machine=${shortId(machineId)} agent=${agent} ` +
+                `rpc=spawn-yoho-remote-session elapsed=${elapsedMs}ms outcome=throw message=${preview}`
+            )
             return { type: 'error', message: error instanceof Error ? error.message : String(error) }
         }
     }

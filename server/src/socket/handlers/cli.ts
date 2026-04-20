@@ -11,6 +11,7 @@ import {
     getSessionSourceFromMetadata,
     isSupportedSessionSource,
 } from '../../sessionSourcePolicy'
+import type { SessionPermissionMode } from '../../sessionPermissionMode'
 import type { StoredMessage } from '../../store/types'
 
 type SessionAlivePayload = {
@@ -18,7 +19,7 @@ type SessionAlivePayload = {
     time: number
     thinking?: boolean
     mode?: 'local' | 'remote'
-    permissionMode?: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
+    permissionMode?: SessionPermissionMode
     modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'gpt-5.3-codex' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     fastMode?: boolean

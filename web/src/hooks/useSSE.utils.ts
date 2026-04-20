@@ -187,6 +187,109 @@ export function toSessionFromSsePayload(data: Record<string, unknown>): Session 
     }
 }
 
+function toSessionSummaryMetadata(
+    metadata: Session['metadata']
+): SessionSummary['metadata'] {
+    if (!metadata) return null
+
+    return {
+        ...(typeof metadata.name === 'string' && { name: metadata.name }),
+        path: metadata.path,
+        ...(typeof metadata.machineId === 'string' && { machineId: metadata.machineId }),
+        ...(typeof metadata.mainSessionId === 'string' && { mainSessionId: metadata.mainSessionId }),
+        ...(metadata.summary?.text ? { summary: { text: metadata.summary.text } } : {}),
+        ...(metadata.flavor !== undefined && { flavor: metadata.flavor ?? null }),
+        ...(typeof metadata.runtimeAgent === 'string' && { runtimeAgent: metadata.runtimeAgent }),
+        ...(typeof metadata.runtimeModel === 'string' && { runtimeModel: metadata.runtimeModel }),
+        ...(typeof metadata.runtimeModelReasoningEffort === 'string' && { runtimeModelReasoningEffort: metadata.runtimeModelReasoningEffort }),
+        ...(metadata.worktree && typeof metadata.worktree.basePath === 'string' && typeof metadata.worktree.branch === 'string' && typeof metadata.worktree.name === 'string'
+            ? { worktree: metadata.worktree }
+            : {}),
+        ...(typeof metadata.source === 'string' && { source: metadata.source }),
+        ...(typeof metadata.lifecycleState === 'string' && { lifecycleState: metadata.lifecycleState }),
+        ...(typeof metadata.lifecycleStateSince === 'number' && { lifecycleStateSince: metadata.lifecycleStateSince }),
+        ...(typeof metadata.archivedBy === 'string' && { archivedBy: metadata.archivedBy }),
+        ...(typeof metadata.archiveReason === 'string' && { archiveReason: metadata.archiveReason }),
+        ...(metadata.selfSystemEnabled === true && { selfSystemEnabled: true }),
+        ...(typeof metadata.selfProfileId === 'string' && { selfProfileId: metadata.selfProfileId }),
+        ...(typeof metadata.selfProfileName === 'string' && { selfProfileName: metadata.selfProfileName }),
+        ...(metadata.selfProfileResolved === true && { selfProfileResolved: true }),
+        ...(metadata.selfMemoryProvider === 'yoho-memory' || metadata.selfMemoryProvider === 'none'
+            ? { selfMemoryProvider: metadata.selfMemoryProvider }
+            : {}),
+        ...(metadata.selfMemoryAttached === true && { selfMemoryAttached: true }),
+        ...(metadata.selfMemoryStatus === 'disabled'
+            || metadata.selfMemoryStatus === 'skipped'
+            || metadata.selfMemoryStatus === 'attached'
+            || metadata.selfMemoryStatus === 'empty'
+            || metadata.selfMemoryStatus === 'error'
+            ? { selfMemoryStatus: metadata.selfMemoryStatus }
+            : {}),
+    }
+}
+
+export function toSessionSummaryFromSsePayload(data: Record<string, unknown>): SessionSummary {
+    const session = toSessionFromSsePayload(data)
+    const pendingRequestsCount = session.agentState?.requests ? Object.keys(session.agentState.requests).length : 0
+    const todoProgress = session.todos?.length
+        ? {
+            completed: session.todos.filter((item) => item.status === 'completed').length,
+            total: session.todos.length,
+        }
+        : null
+
+    return {
+        id: session.id,
+        createdAt: session.createdAt,
+        active: session.active,
+        activeAt: typeof data.activeAt === 'number' ? data.activeAt : session.updatedAt,
+        updatedAt: session.updatedAt,
+        lastMessageAt: session.lastMessageAt ?? null,
+        ...(typeof session.createdBy === 'string' && { createdBy: session.createdBy }),
+        metadata: toSessionSummaryMetadata(session.metadata),
+        todoProgress,
+        pendingRequestsCount,
+        thinking: session.thinking,
+        ...(typeof session.modelMode === 'string' && { modelMode: session.modelMode }),
+        ...(typeof session.modelReasoningEffort === 'string' && { modelReasoningEffort: session.modelReasoningEffort }),
+        ...(typeof session.fastMode === 'boolean' && { fastMode: session.fastMode }),
+        ...(typeof data.activeMonitorCount === 'number'
+            ? { activeMonitorCount: data.activeMonitorCount }
+            : Array.isArray(data.activeMonitors)
+                ? { activeMonitorCount: data.activeMonitors.length }
+                : {}),
+        ...(typeof session.terminationReason === 'string' && { terminationReason: session.terminationReason }),
+    }
+}
+
+export function upsertSessionSummary(
+    previous: SessionsResponse | undefined,
+    nextSession: SessionSummary
+): SessionsResponse {
+    if (!previous?.sessions) {
+        return { sessions: [nextSession] }
+    }
+
+    const existingIndex = previous.sessions.findIndex((session) => session.id === nextSession.id)
+    if (existingIndex === -1) {
+        return {
+            ...previous,
+            sessions: [nextSession, ...previous.sessions],
+        }
+    }
+
+    const sessions = [...previous.sessions]
+    sessions[existingIndex] = {
+        ...sessions[existingIndex],
+        ...nextSession,
+    }
+
+    return {
+        ...previous,
+        sessions,
+    }
+}
+
 export function applySessionSummaryStatusUpdate(
     previous: SessionsResponse | undefined,
     sessionId: string,

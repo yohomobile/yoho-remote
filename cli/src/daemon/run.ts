@@ -256,6 +256,19 @@ export async function startDaemon(): Promise<void> {
         spawnLogs.push(entry);
         logger.debug(`[SPAWN LOG] [${step}] ${message} (${status})`);
       };
+      const spawnStartedAt = Date.now();
+      let cliSpawnStartedAt: number | null = null;
+      let cliSpawnedAt: number | null = null;
+      let webhookWaitStartedAt: number | null = null;
+      const formatPerfMs = (value: number | null): string => value === null ? 'n/a' : `${Math.max(0, value)}ms`;
+      const buildSpawnPerfSummary = (sessionId: string | null): string => {
+        const now = Date.now();
+        const totalMs = now - spawnStartedAt;
+        const prepMs = cliSpawnStartedAt === null ? null : cliSpawnStartedAt - spawnStartedAt;
+        const cliSpawnMs = cliSpawnStartedAt === null || cliSpawnedAt === null ? null : cliSpawnedAt - cliSpawnStartedAt;
+        const webhookWaitMs = webhookWaitStartedAt === null ? null : now - webhookWaitStartedAt;
+        return `[SPAWN PERF] agent=${agent} machine=${machineId ?? 'unknown'} session=${sessionId ?? 'pending'} total=${formatPerfMs(totalMs)} prep=${formatPerfMs(prepMs)} cliSpawn=${formatPerfMs(cliSpawnMs)} webhookWait=${formatPerfMs(webhookWaitMs)}`;
+      };
 
       let { directory } = options;
       const { sessionId, machineId, approvedNewDirectoryCreation = true } = options;
@@ -633,6 +646,7 @@ export async function startDaemon(): Promise<void> {
           args.push('--yolo');
         }
 
+        cliSpawnStartedAt = Date.now();
         addLog('spawn', `Spawning CLI process: yoho-remote ${args.join(' ')}`, 'running');
         addLog('spawn', `Working directory: ${spawnDirectory}`, 'running');
 
@@ -728,6 +742,7 @@ export async function startDaemon(): Promise<void> {
 
         const pid = cliProcess.pid;
         logger.debug(`[DAEMON RUN] Spawned process with PID ${pid}`);
+        cliSpawnedAt = Date.now();
         addLog('spawn', `Process spawned with PID: ${pid}`, 'success');
 
         const trackedSession: TrackedSession = {
@@ -775,6 +790,7 @@ export async function startDaemon(): Promise<void> {
             logger.debug(`[DAEMON RUN] Session ${completedSession.yohoRemoteSessionId} fully spawned with webhook`);
             addLog('webhook', `Session ready: ${completedSession.yohoRemoteSessionId}`, 'success');
             addLog('complete', `Session created successfully`, 'success');
+            logger.debug(buildSpawnPerfSummary(completedSession.yohoRemoteSessionId ?? null));
             resolve(completedSession);
           });
         });
@@ -797,6 +813,7 @@ export async function startDaemon(): Promise<void> {
             logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${pid}`);
             logStderrTail();
             addLog('webhook', `Session webhook timeout for PID ${pid}`, 'error');
+            logger.debug(buildSpawnPerfSummary(null));
             reject(new Error(`Session webhook timeout for PID ${pid}`));
             // 15 second timeout - I have seen timeouts on 10 seconds
             // even though session was still created successfully in ~2 more seconds
@@ -812,6 +829,7 @@ export async function startDaemon(): Promise<void> {
             }
             const earlyExitError = buildEarlyExitError(code, signal);
             addLog('webhook', earlyExitError.message, 'error');
+            logger.debug(buildSpawnPerfSummary(null));
             rejectEarlyExit?.(earlyExitError);
           }
           onChildExited(pid);
@@ -823,6 +841,7 @@ export async function startDaemon(): Promise<void> {
             const errorMessage = error instanceof Error ? error.message : String(error);
             const childError = new Error(`Child process error for PID ${pid}: ${errorMessage}`);
             addLog('webhook', childError.message, 'error');
+            logger.debug(buildSpawnPerfSummary(null));
             rejectEarlyExit?.(childError);
           }
           onChildExited(pid);
@@ -830,6 +849,7 @@ export async function startDaemon(): Promise<void> {
 
         // Wait for webhook to populate session with yohoRemoteSessionId
         logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${pid}`);
+        webhookWaitStartedAt = Date.now();
         addLog('webhook', `Waiting for session to report back (PID: ${pid})...`, 'running');
 
         const completedSession = await Promise.race([readyPromise, exitPromise, timeoutPromise]);

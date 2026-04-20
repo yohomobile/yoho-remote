@@ -17,7 +17,7 @@ Options:
   --namespace=NAME       Namespace for access token (default: token namespace or "default")
   --min-idle-minutes=N   Only include sessions idle at least N minutes
   --limit=N              Max sessions to show/delete
-  --delete               Delete offline sessions (default: dry-run)
+  --delete               Permanently delete offline sessions (default: dry-run)
   --yes                  Skip confirmation prompt
   --force                Add force=1 to DELETE (removes in-memory sessions even if DB row is missing)
   --help                 Show this help message
@@ -370,8 +370,11 @@ async function main() {
 
     let deletedCount = 0;
     for (const session of offline) {
-        const forceQuery = options.force ? '?force=1' : '';
-        const deleteUrl = `${baseUrl}/api/sessions/${encodeURIComponent(session.id)}${forceQuery}`;
+        const params = new URLSearchParams({ purge: '1' });
+        if (options.force) {
+            params.set('force', '1');
+        }
+        const deleteUrl = `${baseUrl}/api/sessions/${encodeURIComponent(session.id)}?${params.toString()}`;
         try {
             await requestJson(deleteUrl, {
                 method: 'DELETE',

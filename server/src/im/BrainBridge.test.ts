@@ -2,6 +2,92 @@ import { describe, expect, test } from 'bun:test'
 import { BrainBridge } from './BrainBridge'
 
 describe('BrainBridge', () => {
+    test('keeps the current busy Brain turn running for normal p2p follow-up context', async () => {
+        const aborted: string[] = []
+        const bridge = new BrainBridge({
+            syncEngine: {
+                subscribe: () => () => {},
+                abortSession: async (sessionId: string) => {
+                    aborted.push(sessionId)
+                },
+            } as any,
+            store: {
+                updateFeishuChatState: async () => true,
+            } as any,
+            adapter: {
+                platform: 'feishu',
+                start: async () => {},
+                stop: async () => {},
+                sendReply: async () => {},
+            } as any,
+        })
+
+        const chatId = 'oc_busy_keep'
+        ;(bridge as any).chatIdToSessionId.set(chatId, 'session-keep')
+        ;(bridge as any).chatStates.set(chatId, {
+            incoming: [],
+            debounceTimer: null,
+            passiveDebounceTimer: null,
+            busy: true,
+            creating: false,
+        })
+
+        bridge.onMessage(chatId, 'p2p', {
+            text: '补充一点上下文：报错只在 iOS 端出现，先继续原来的任务。',
+            messageId: 'msg-1',
+            senderName: 'Dev',
+            senderId: 'user-1',
+            senderEmail: null,
+            chatType: 'p2p',
+            addressed: true,
+        })
+
+        expect(aborted).toHaveLength(0)
+    })
+
+    test('aborts the current busy Brain turn only for explicit redirect text', async () => {
+        const aborted: string[] = []
+        const bridge = new BrainBridge({
+            syncEngine: {
+                subscribe: () => () => {},
+                abortSession: async (sessionId: string) => {
+                    aborted.push(sessionId)
+                },
+            } as any,
+            store: {
+                updateFeishuChatState: async () => true,
+            } as any,
+            adapter: {
+                platform: 'feishu',
+                start: async () => {},
+                stop: async () => {},
+                sendReply: async () => {},
+            } as any,
+        })
+
+        const chatId = 'oc_busy_abort'
+        ;(bridge as any).chatIdToSessionId.set(chatId, 'session-abort')
+        ;(bridge as any).chatStates.set(chatId, {
+            incoming: [],
+            debounceTimer: null,
+            passiveDebounceTimer: null,
+            busy: true,
+            creating: false,
+        })
+
+        bridge.onMessage(chatId, 'p2p', {
+            text: '停止刚才那个，之前的方向不对，改个方向重新来。',
+            messageId: 'msg-2',
+            senderName: 'Dev',
+            senderId: 'user-1',
+            senderEmail: null,
+            chatType: 'p2p',
+            addressed: true,
+        })
+
+        expect(aborted).toEqual(['session-abort'])
+    })
+
     test('waits for late agent messages before sending final summary', async () => {
         const replies: Array<{ chatId: string; payload: { text: string } }> = []
 
@@ -142,5 +228,109 @@ describe('BrainBridge', () => {
         expect(replies).toHaveLength(1)
         expect(replies[0]?.payload.text).toContain('今天上午 Medusa 总订单 254 单')
         expect(replies[0]?.payload.text).not.toContain('今天上午 Medusa\n今天上午 Medusa 总订单 254 单')
+    })
+
+    test('appends self system prompt and patches metadata during IM Brain initialization', async () => {
+        const originalFetch = globalThis.fetch
+        globalThis.fetch = (async () => new Response(JSON.stringify({
+            answer: 'K1 长期记忆：收到模糊输入时，优先把上下文结构化。',
+        }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+        })) as unknown as typeof fetch
+
+        try {
+            const patchCalls: Array<Record<string, unknown>> = []
+            const sentMessages: Array<{ sessionId: string; text: string }> = []
+
+            const bridge = new BrainBridge({
+                syncEngine: {
+                    subscribe: () => () => {},
+                    getSession: () => ({
+                        id: 'session-im-self',
+                        namespace: 'default',
+                        active: true,
+                        metadata: {
+                            path: '/tmp/brain',
+                            source: 'brain',
+                        },
+                    }),
+                    patchSessionMetadata: async (_sessionId: string, patch: Record<string, unknown>) => {
+                        patchCalls.push(patch)
+                        return { ok: true }
+                    },
+                    waitForSocketInRoom: async () => true,
+                    sendMessage: async (sessionId: string, payload: { text: string }) => {
+                        sentMessages.push({ sessionId, text: payload.text })
+                    },
+                } as any,
+                store: {
+                    getBrainConfig: async () => ({
+                        namespace: 'default',
+                        agent: 'claude',
+                        claudeModelMode: 'opus',
+                        codexModel: 'gpt-5.4',
+                        extra: {
+                            selfSystem: {
+                                enabled: true,
+                                defaultProfileId: 'profile-1',
+                                memoryProvider: 'yoho-memory',
+                            },
+                        },
+                        updatedAt: 1,
+                        updatedBy: null,
+                    }),
+                    getAIProfile: async () => ({
+                        id: 'profile-1',
+                        namespace: 'default',
+                        name: 'K1',
+                        role: 'architect',
+                        specialties: ['TypeScript'],
+                        personality: '结构化',
+                        greetingTemplate: null,
+                        preferredProjects: [],
+                        workStyle: '先澄清再执行',
+                        avatarEmoji: '🤖',
+                        status: 'idle',
+                        stats: {
+                            tasksCompleted: 0,
+                            activeMinutes: 0,
+                            lastActiveAt: null,
+                        },
+                        createdAt: 1,
+                        updatedAt: 1,
+                    }),
+                } as any,
+                adapter: {
+                    platform: 'feishu',
+                    start: async () => {},
+                    stop: async () => {},
+                    sendReply: async () => {},
+                    buildSessionTitle: () => '飞书: 测试会话',
+                    buildInitPrompt: async () => '#InitPrompt-Brain',
+                } as any,
+            })
+
+            await (bridge as any).initializeSession('session-im-self', 'chat-1', 'p2p', undefined, 'Dev')
+
+            expect(patchCalls[0]).toEqual({
+                summary: { text: '飞书: 测试会话', updatedAt: expect.any(Number) },
+            })
+            expect(patchCalls[1]).toEqual({
+                selfSystemEnabled: true,
+                selfProfileId: 'profile-1',
+                selfProfileName: 'K1',
+                selfProfileResolved: true,
+                selfMemoryProvider: 'yoho-memory',
+                selfMemoryAttached: true,
+                selfMemoryStatus: 'attached',
+            })
+            expect(sentMessages).toHaveLength(1)
+            expect(sentMessages[0]?.sessionId).toBe('session-im-self')
+            expect(sentMessages[0]?.text).toContain('## K1 自我系统')
+            expect(sentMessages[0]?.text).toContain('K1 长期记忆')
+        } finally {
+            globalThis.fetch = originalFetch
+        }
     })
 })

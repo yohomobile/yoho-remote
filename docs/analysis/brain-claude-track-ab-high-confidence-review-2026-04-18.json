@@ -1,0 +1,114 @@
+{
+  "reviewedAt": "2026-04-18",
+  "sources": {
+    "trackA": "data/brain-claude-batch-a-suggestions.default.json",
+    "trackB": "docs/analysis/brain-claude-track-b-2026-04-18.json",
+    "batch": "data/brain-manual-repair-batch-01.brain-claude.json"
+  },
+  "strictIntersection": {
+    "trackAHighCount": 5,
+    "trackBHighCount": 17,
+    "overlapCount": 5,
+    "overlapSessionIds": [
+      "7704b71a-7272-4b81-aa9a-1888d597021a",
+      "5b056c5c-775d-4f0e-9551-e9ee5d0c3b2a",
+      "94aa00bb-85af-4ec4-b3f6-9500a60a0416",
+      "edf6f8db-1406-4b62-b0ee-d449ecf38b8c",
+      "f8ecaf60-3bfc-4076-909d-df4e08fc1e2a"
+    ]
+  },
+  "schemaCheck": {
+    "hypotheticalExplicitManifestParses": true,
+    "hypotheticalPlanSummary": {
+      "manifestItems": 5,
+      "plannedWrites": 5,
+      "skippedActive": 0,
+      "skippedNoop": 0,
+      "rejected": 0
+    },
+    "semanticApproval": false,
+    "semanticBlocker": "Track A leaves childModels.codex.allowed/defaultModel unresolved, so Track B's codex empty allowlist would be an extra conclusion rather than strict intersection."
+  },
+  "freshnessCheck": {
+    "allOverlapInactive": true,
+    "allOverlapStillMissingBrainPreferences": true,
+    "allOverlapUpdatedAtMatchTrackADraft": true,
+    "items": [
+      {
+        "sessionId": "7704b71a-7272-4b81-aa9a-1888d597021a",
+        "active": false,
+        "brainPreferencesPresent": false,
+        "updatedAtMatchesTrackADraft": true
+      },
+      {
+        "sessionId": "5b056c5c-775d-4f0e-9551-e9ee5d0c3b2a",
+        "active": false,
+        "brainPreferencesPresent": false,
+        "updatedAtMatchesTrackADraft": true
+      },
+      {
+        "sessionId": "94aa00bb-85af-4ec4-b3f6-9500a60a0416",
+        "active": false,
+        "brainPreferencesPresent": false,
+        "updatedAtMatchesTrackADraft": true
+      },
+      {
+        "sessionId": "edf6f8db-1406-4b62-b0ee-d449ecf38b8c",
+        "active": false,
+        "brainPreferencesPresent": false,
+        "updatedAtMatchesTrackADraft": true
+      },
+      {
+        "sessionId": "f8ecaf60-3bfc-4076-909d-df4e08fc1e2a",
+        "active": false,
+        "brainPreferencesPresent": false,
+        "updatedAtMatchesTrackADraft": true
+      }
+    ]
+  },
+  "tightenedDecision": {
+    "approvedPatchItems": [],
+    "withheldFormerHighIntersection": [
+      {
+        "sessionId": "7704b71a-7272-4b81-aa9a-1888d597021a",
+        "reason": "Track A unresolved codex fields"
+      },
+      {
+        "sessionId": "5b056c5c-775d-4f0e-9551-e9ee5d0c3b2a",
+        "reason": "Track A unresolved codex fields"
+      },
+      {
+        "sessionId": "94aa00bb-85af-4ec4-b3f6-9500a60a0416",
+        "reason": "Track A unresolved codex fields"
+      },
+      {
+        "sessionId": "edf6f8db-1406-4b62-b0ee-d449ecf38b8c",
+        "reason": "Track A unresolved codex fields"
+      },
+      {
+        "sessionId": "f8ecaf60-3bfc-4076-909d-df4e08fc1e2a",
+        "reason": "Track A unresolved codex fields"
+      }
+    ],
+    "all58RemainManual": true,
+    "pendingManualBreakdown": {
+      "formerHighIntersectionNowWithheld": 5,
+      "trackBHighOnly": 12,
+      "notHighByBothTracks": 41
+    },
+    "trackBHighOnlySessionIds": [
+      "916165ae-fb01-4359-8468-d9fda0eaa3c6",
+      "1be1fbb2-33a9-4ac9-9239-d3129a73df03",
+      "2843fd42-a0e9-418c-be13-75921260fc02",
+      "c83d66d0-bf5d-47f1-819f-a4e4b3c7ee10",
+      "372d3ff0-8563-4d9a-9ab5-03da850a82da",
+      "cbfb6599-d424-4291-a0cd-3f3d6815de50",
+      "2d5c6fbd-a6a0-45f7-a6e5-8f0d9d26cc29",
+      "da348251-c8ba-492a-9abf-5ec7eccff807",
+      "5361fa5d-7079-46c8-b720-c76b9c386865",
+      "cb352e49-90bd-469a-ae21-bc7de664587f",
+      "572f27a5-e7ea-4c78-94be-3fb19ff2cc11",
+      "9af4d046-cb18-44a7-8ab6-051cb596cc6d"
+    ]
+  }
+}

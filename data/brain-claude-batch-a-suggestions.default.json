@@ -1,0 +1,3292 @@
+{
+  "generatedAt": "2026-04-18T16:30:53.457Z",
+  "sourceManifest": "/home/workspaces/repos/yoho-remote/data/brain-manual-repair-manifest.default.json",
+  "selection": {
+    "source": "brain",
+    "flavor": "claude",
+    "batchSize": 58
+  },
+  "summary": {
+    "high": 5,
+    "medium": 52,
+    "low": 1
+  },
+  "suggestions": [
+    {
+      "sessionId": "7704b71a-7272-4b81-aa9a-1888d597021a",
+      "confidence": "high",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "createdBy=guang.yang@yohomobile.com",
+        "version=v2026.03.31.1029 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 3 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1774924488146,
+        "updatedAt": 1774964744800,
+        "createdBy": "guang.yang@yohomobile.com",
+        "host": "ncu",
+        "version": "v2026.03.31.1029",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "CRS 导航栏高度/圆角优化 + 部署",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 3
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "369e048e-f272-4df8-8c65-b10bf788c61d",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "runtimeModel": "claude-sonnet-4-5-20250929",
+          "summary": "降低CRS导航栏高度并移除顶部边距"
+        },
+        {
+          "sessionId": "e89dfa85-e565-4c19-9038-b2e3d5ba2243",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "runtimeModel": "claude-sonnet-4-5-20250929",
+          "summary": "优化CRS导航栏高度和顶部边距"
+        },
+        {
+          "sessionId": "15e01c8c-0975-49cf-baf7-ab09bbbdb9e8",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "runtimeModel": "claude-sonnet-4-5-20250929",
+          "summary": "优化账户管理页面UI布局"
+        }
+      ],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.03.31.1029",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "5b056c5c-775d-4f0e-9551-e9ee5d0c3b2a",
+      "confidence": "high",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 04/01 00:21",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.02.0549 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 2 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1774974105146,
+        "updatedAt": 1775094352792,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.04.02.0549",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书群: Yoho 技术 · 04/01 00:21",
+        "runtimeModel": "claude-sonnet-4-5-20250929",
+        "childCount": 2
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "086b5500-2ad6-4cfe-b2f3-d9d2ce92f80b",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "runtimeModel": "claude-sonnet-4-5-20250929",
+          "summary": "部署 Web checkout 多语言字段显示"
+        },
+        {
+          "sessionId": "137120f4-7f43-4c78-8862-4a3e7ff6e67f",
+          "flavor": "claude",
+          "modelMode": "default",
+          "runtimeModel": "claude-sonnet-4-5-20250929",
+          "summary": "调查 checkout 页面 description 和 notice 消失原因"
+        }
+      ],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.04.02.0549",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "94aa00bb-85af-4ec4-b3f6-9500a60a0416",
+      "confidence": "high",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 04/02 08:30",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.02.1105 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 3 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775089806777,
+        "updatedAt": 1775183984029,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.04.02.1105",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书群: Yoho 技术 · 04/02 08:30",
+        "runtimeModel": "claude-sonnet-4-5-20250929",
+        "childCount": 3
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "b5ada2da-c24b-4886-b117-b0a102fc143d",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "runtimeModel": "claude-sonnet-4-5-20250929",
+          "summary": "Free eSIM 误收费监控任务"
+        },
+        {
+          "sessionId": "24298166-8cbb-474b-9d66-13e3c6911505",
+          "flavor": "claude",
+          "modelMode": "default",
+          "runtimeModel": "claude-sonnet-4-5-20250929",
+          "summary": "查询订单 563537/563455/563384 支付状态与折扣码"
+        },
+        {
+          "sessionId": "1e956202-2c3c-4d85-859e-06db0d787d54",
+          "flavor": "claude",
+          "modelMode": "default",
+          "runtimeModel": "claude-sonnet-4-5-20250929",
+          "summary": "Free eSIM 防误收费后端兜底方案"
+        }
+      ],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.04.02.1105",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "edf6f8db-1406-4b62-b0ee-d449ecf38b8c",
+      "confidence": "high",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 04/04 07:17",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.03.1628 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 4 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775258258813,
+        "updatedAt": 1775469600105,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.04.03.1628",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书群: Yoho 技术 · 04/04 07:17",
+        "runtimeModel": "claude-sonnet-4-6",
+        "childCount": 4
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "ee41f6c1-8d5e-40bf-bbcb-0f49221da953",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "runtimeModel": null,
+          "summary": null
+        },
+        {
+          "sessionId": "506739cc-3c3a-4ab9-a432-08fdc9b23b4c",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "runtimeModel": null,
+          "summary": null
+        },
+        {
+          "sessionId": "e3c93885-be21-4760-8c15-4a0f079afe48",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "runtimeModel": "claude-sonnet-4-6",
+          "summary": "整理 Yoho Remote 记忆系统"
+        },
+        {
+          "sessionId": "589024a8-e79d-4b02-b2de-c1bad17b8b3e",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "runtimeModel": "claude-sonnet-4-6",
+          "summary": "记忆整理与Session状态检查"
+        }
+      ],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.04.03.1628",
+        "targetCount": 4,
+        "sessionsWithClaudeChildEvidence": 2,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "f8ecaf60-3bfc-4076-909d-df4e08fc1e2a",
+      "confidence": "high",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 04/05 13:11",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.06.1536 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 5 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775365904139,
+        "updatedAt": 1775620800230,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.04.06.1536",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书群: Yoho 技术 · 04/05 13:11",
+        "runtimeModel": "claude-sonnet-4-6",
+        "childCount": 5
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "be60ea3a-681f-4733-ac44-51e981e46642",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "runtimeModel": "claude-sonnet-4-6",
+          "summary": "紧急检查 sgprod 短信路由配置"
+        },
+        {
+          "sessionId": "46622806-cc1b-4453-9055-9785be687bc6",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "runtimeModel": "claude-sonnet-4-6",
+          "summary": "紧急：云片实际发送大量国际短信调查"
+        },
+        {
+          "sessionId": "efd84087-84b5-4a0e-92cb-0dd4f54fb72a",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "runtimeModel": "claude-sonnet-4-6",
+          "summary": "订单579949调查结果 - 与之前失败订单不同"
+        },
+        {
+          "sessionId": "028af49c-b68e-4b91-bd10-5c9083de10aa",
+          "flavor": "claude",
+          "modelMode": "default",
+          "runtimeModel": "claude-sonnet-4-6",
+          "summary": "排查今日邮件发送失败订单"
+        },
+        {
+          "sessionId": "1d678287-1223-4f15-82f9-da698a287d76",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "runtimeModel": "claude-sonnet-4-6",
+          "summary": "检查记忆系统 Embedding 配置"
+        }
+      ],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.04.06.1536",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "6785a739-9cc1-4481-8bf9-0abceadd39a2",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: AI硬件创业机会 · 03/30 03:54",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.03.30.1224 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1774814066870,
+        "updatedAt": 1774878933881,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.03.30.1224",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书群: AI硬件创业机会 · 03/30 03:54",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.03.30.1224",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "ad13cb18-c86e-45ad-939c-88fdd78d4161",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 03/30 12:02",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.03.30.1224 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1774843373745,
+        "updatedAt": 1774878933848,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.03.30.1224",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书群: Yoho 技术 · 03/30 12:02",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.03.30.1224",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "7d536f59-f025-4e3b-b0d9-a020f437f8ea",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 03/30 14:09",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.03.30.2151 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 1 条",
+        "观察到的 Claude child 模型族: opus",
+        "最常见 child 模型族: opus",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1774850942015,
+        "updatedAt": 1774881268016,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.03.30.2151",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书群: Yoho 技术 · 03/30 14:09",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 1
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "opus"
+            ],
+            "defaultModel": "opus"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "85c0aac6-675e-4ffb-8afc-b006a4320e57",
+          "flavor": "claude",
+          "modelMode": null,
+          "runtimeModel": "claude-opus-4-6",
+          "summary": "修复 topup_esim_id 被错误设为 \"countries\" 的 bug"
+        }
+      ],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.03.30.2151",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "37007616-8114-40cf-85ff-2f9d69debba2",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: AI硬件创业机会 · 03/30 16:21",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.03.31.1307 早于 brainPreferences 引入版本",
+        "同 cohort child 证据仅 1 条，低于建议阈值，Claude childModels 留空",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1774858895409,
+        "updatedAt": 1774964744817,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.03.31.1307",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书群: AI硬件创业机会 · 03/30 16:21",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.03.31.1307",
+        "targetCount": 3,
+        "sessionsWithClaudeChildEvidence": 1,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "52354191-ba25-4191-96a5-49bd71b04d08",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 03/30 22:21",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.03.30.2239 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1774880506683,
+        "updatedAt": 1774881582677,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.03.30.2239",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书群: Yoho 技术 · 03/30 22:21",
+        "runtimeModel": "claude-sonnet-4-5-20250929",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.03.30.2239",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "1d389732-e616-4443-ab10-7d6c3b160f2c",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 03/30 22:40",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.03.30.2246 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1774881612196,
+        "updatedAt": 1774964744818,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.03.30.2246",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书群: Yoho 技术 · 03/30 22:40",
+        "runtimeModel": "claude-sonnet-4-5-20250929",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.03.30.2246",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "230fd533-7eff-4f29-bc92-25310b2f330e",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书: 与Hao Chen的对话 · 03/31 01:00",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.03.31.2259 早于 brainPreferences 引入版本",
+        "同 cohort child 证据仅 1 条，低于建议阈值，Claude childModels 留空",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1774890057641,
+        "updatedAt": 1775080800151,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.03.31.2259",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书: 与Hao Chen的对话 · 03/31 01:00",
+        "runtimeModel": "claude-sonnet-4-5-20250929",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.03.31.2259",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 1,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "916165ae-fb01-4359-8468-d9fda0eaa3c6",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 03/31 01:01",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.03.31.2259 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 1 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1774890077426,
+        "updatedAt": 1775080800189,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.03.31.2259",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书群: Yoho 技术 · 03/31 01:01",
+        "runtimeModel": "claude-sonnet-4-5-20250929",
+        "childCount": 1
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "474ffd2e-c6eb-4927-8c5e-a9fc9c5496ad",
+          "flavor": "claude",
+          "modelMode": "sonnet",
+          "runtimeModel": "claude-sonnet-4-5-20250929",
+          "summary": "通过 Shopee FileKey 查找 Medusa 订单号"
+        }
+      ],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.03.31.2259",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "50681847-4e7f-4b2c-bdc3-e95bd31d5480",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: AI硬件创业机会 · 03/31 14:18",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.03.31.1307 早于 brainPreferences 引入版本",
+        "同 cohort child 证据仅 1 条，低于建议阈值，Claude childModels 留空",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1774937923369,
+        "updatedAt": 1774964744830,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.03.31.1307",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书群: AI硬件创业机会 · 03/31 14:18",
+        "runtimeModel": "claude-sonnet-4-5-20250929",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.03.31.1307",
+        "targetCount": 3,
+        "sessionsWithClaudeChildEvidence": 1,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "1be1fbb2-33a9-4ac9-9239-d3129a73df03",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "createdBy=guang.yang@yohomobile.com",
+        "version=v2026.03.31.1307 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 1 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1774947372255,
+        "updatedAt": 1774964744771,
+        "createdBy": "guang.yang@yohomobile.com",
+        "host": "ncu",
+        "version": "v2026.03.31.1307",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "Yoho Remote Org API Key 关联记录",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 1
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "67a198f4-a176-41b3-b170-9f8b7384c7f9",
+          "flavor": "claude",
+          "modelMode": "default",
+          "runtimeModel": "claude-sonnet-4-5-20250929",
+          "summary": "yoho-remote 数据库架构调研"
+        }
+      ],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.03.31.1307",
+        "targetCount": 3,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "2843fd42-a0e9-418c-be13-75921260fc02",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: AI硬件创业机会 · 03/31 22:37",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.03.1628 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 1 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1774967849827,
+        "updatedAt": 1775491200188,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.04.03.1628",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书群: AI硬件创业机会 · 03/31 22:37",
+        "runtimeModel": "claude-sonnet-4-5-20250929",
+        "childCount": 1
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "457d378b-55bd-42bc-b4c2-fae93d0c7720",
+          "flavor": "claude",
+          "modelMode": "default",
+          "runtimeModel": "claude-sonnet-4-5-20250929",
+          "summary": "麒麟软件并购尽调报告PPT制作"
+        }
+      ],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.04.03.1628",
+        "targetCount": 4,
+        "sessionsWithClaudeChildEvidence": 2,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "c83d66d0-bf5d-47f1-819f-a4e4b3c7ee10",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书: 与Hao Chen的对话 · 04/01 00:18",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.03.1628 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 1 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1774973880172,
+        "updatedAt": 1775383200062,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.04.03.1628",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书: 与Hao Chen的对话 · 04/01 00:18",
+        "runtimeModel": "claude-sonnet-4-5-20250929",
+        "childCount": 1
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "9615b58a-2dbe-44c5-a3c2-56fb885b26b9",
+          "flavor": "claude",
+          "modelMode": "default",
+          "runtimeModel": "claude-sonnet-4-5-20250929",
+          "summary": "调查工单557425的eSIM激活问题"
+        }
+      ],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.04.03.1628",
+        "targetCount": 4,
+        "sessionsWithClaudeChildEvidence": 2,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "b62fef12-ad3a-47be-94e5-a8ef4713ddb9",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 04/02 19:09",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.03.1628 早于 brainPreferences 引入版本",
+        "同 host/version cohort 的其他 brain 共有 6 条 child 证据",
+        "cohort 观察到的 Claude child 模型族: sonnet",
+        "cohort 最常见 child 模型族: sonnet",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775128166437,
+        "updatedAt": 1775361600336,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.04.03.1628",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书群: Yoho 技术 · 04/02 19:09",
+        "runtimeModel": "claude-sonnet-4-5-20250929",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.04.03.1628",
+        "targetCount": 4,
+        "sessionsWithClaudeChildEvidence": 3,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "39132708-23e0-4501-a473-b51ee006d8b4",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书: 与Qun Su的对话 · 04/05 01:57",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.05.2152 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775325430604,
+        "updatedAt": 1775534400322,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.04.05.2152",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书: 与Qun Su的对话 · 04/05 01:57",
+        "runtimeModel": "claude-sonnet-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.04.05.2152",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "ef9aec68-feea-4b01-a63b-3b3719d3a9c4",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: AI硬件创业机会 · 04/05 21:21",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.07.1304 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775395315023,
+        "updatedAt": 1775728800158,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.04.07.1304",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书群: AI硬件创业机会 · 04/05 21:21",
+        "runtimeModel": "claude-sonnet-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.04.07.1304",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "2d72bb69-08c5-4c68-98bb-8ed180f9f2fd",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "createdBy=qun.su@yohomobile.com",
+        "version=v2026.04.05.2152 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775407498110,
+        "updatedAt": 1775512800282,
+        "createdBy": "qun.su@yohomobile.com",
+        "host": "ncu",
+        "version": "v2026.04.05.2152",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": null,
+        "runtimeModel": "claude-sonnet-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.04.05.2152",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "c85e9182-8baa-4f6b-b7da-db35f3447dd4",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 04/07 09:46",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.08.2001 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775526406083,
+        "updatedAt": 1775750400211,
+        "createdBy": null,
+        "host": "ncu",
+        "version": "v2026.04.08.2001",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "飞书群: Yoho 技术 · 04/07 09:46",
+        "runtimeModel": "claude-sonnet-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.04.08.2001",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "38efd4ba-ccd3-405d-83e4-9dee308701f4",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "createdBy=guang.yang@yohomobile.com",
+        "version=v2026.04.06.1536 早于 brainPreferences 引入版本",
+        "同 host/version cohort 的其他 brain 共有 5 条 child 证据",
+        "cohort 观察到的 Claude child 模型族: sonnet",
+        "cohort 最常见 child 模型族: sonnet",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775526587824,
+        "updatedAt": 1775620800265,
+        "createdBy": "guang.yang@yohomobile.com",
+        "host": "ncu",
+        "version": "v2026.04.06.1536",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": null,
+        "runtimeModel": "claude-sonnet-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.04.06.1536",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 1,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "c806b7c5-7e25-43ac-bcd6-4a7a17cfc439",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.11.2117 早于 brainPreferences 引入版本",
+        "同 cohort child 证据仅 1 条，低于建议阈值，Claude childModels 留空",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775622511189,
+        "updatedAt": 1775966804327,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.11.2117",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "AI数字员工产品介绍 - 销售导向版",
+        "runtimeModel": "claude-sonnet-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.11.2117",
+        "targetCount": 3,
+        "sessionsWithClaudeChildEvidence": 1,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "292702a2-a052-44bf-9004-b2fb1c6b0573",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.10.1140 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775660536463,
+        "updatedAt": 1775875082747,
+        "createdBy": null,
+        "host": "bruce-instance",
+        "version": "v2026.04.10.1140",
+        "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3",
+        "summary": "修复订单585192/585188/585182邮件问题+分析QR获取失败原因",
+        "runtimeModel": "claude-sonnet-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "bruce-instance",
+        "version": "v2026.04.10.1140",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "9726a010-1515-40c3-b755-df212eab337c",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书: 与杨柳岸的对话 · 04/10 11:44",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.03.31.2259 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775792646798,
+        "updatedAt": 1776001273551,
+        "createdBy": null,
+        "host": "C202603090920413",
+        "version": "v2026.03.31.2259",
+        "machineId": "35824289-2536-420e-be27-526f6496124a",
+        "summary": "飞书: 与杨柳岸的对话 · 04/10 11:44",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "35824289-2536-420e-be27-526f6496124a"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "C202603090920413",
+        "version": "v2026.03.31.2259",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "52587aa0-8bb5-467d-8e0f-3545a48f6585",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书: 与杨柳岸的对话 · 04/10 12:27",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.10.1140 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775795268078,
+        "updatedAt": 1775875082749,
+        "createdBy": null,
+        "host": "bruce-instance",
+        "version": "v2026.04.10.1140",
+        "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3",
+        "summary": "飞书: 与杨柳岸的对话 · 04/10 12:27",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "bruce-instance",
+        "version": "v2026.04.10.1140",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "75f92e41-5d97-469b-a929-0d5dd1aecdbf",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 04/10 12:32",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.03.31.2259 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775795567780,
+        "updatedAt": 1776001273551,
+        "createdBy": null,
+        "host": "C202603090920413",
+        "version": "v2026.03.31.2259",
+        "machineId": "35824289-2536-420e-be27-526f6496124a",
+        "summary": "飞书群: Yoho 技术 · 04/10 12:32",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "35824289-2536-420e-be27-526f6496124a"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "C202603090920413",
+        "version": "v2026.03.31.2259",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "bfb32b4e-cd33-4030-be4a-f66bd6a580a3",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书: 与杨柳岸的对话 · 04/11 10:08",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.11.1037 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775873297762,
+        "updatedAt": 1775876302680,
+        "createdBy": null,
+        "host": "bruce-instance",
+        "version": "v2026.04.11.1037",
+        "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3",
+        "summary": "飞书: 与杨柳岸的对话 · 04/11 10:08",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "bruce-instance",
+        "version": "v2026.04.11.1037",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "372d3ff0-8563-4d9a-9ab5-03da850a82da",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书: 与杨柳岸的对话 · 04/11 11:37",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.11.1202 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 1 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775878644576,
+        "updatedAt": 1776065967030,
+        "createdBy": null,
+        "host": "yohoMac-mini.local",
+        "version": "v2026.04.11.1202",
+        "machineId": "a95e8107-9b9f-42d6-bd4d-09f2f9a4d497",
+        "summary": "飞书: 与杨柳岸的对话 · 04/11 11:37",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 1
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "a95e8107-9b9f-42d6-bd4d-09f2f9a4d497"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "7a272c76-bd8e-4162-961b-77adc54425e5",
+          "flavor": "claude",
+          "modelMode": "default",
+          "runtimeModel": "claude-sonnet-4-6",
+          "summary": "查询 2026-04-11 生产订单数量"
+        }
+      ],
+      "cohort": {
+        "host": "yohoMac-mini.local",
+        "version": "v2026.04.11.1202",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "cbfb6599-d424-4291-a0cd-3f3d6815de50",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书: 与杨柳岸的对话 · 04/11 13:08",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.10.1051 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 1 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775884114919,
+        "updatedAt": 1775890586859,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.10.1051",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书: 与杨柳岸的对话 · 04/11 13:08",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 1
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "d2e7dfd1-759d-4039-b10b-9a7a8c9251fb",
+          "flavor": "claude",
+          "modelMode": "default",
+          "runtimeModel": "claude-sonnet-4-6",
+          "summary": "feishu-api 项目文件统计"
+        }
+      ],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.10.1051",
+        "targetCount": 7,
+        "sessionsWithClaudeChildEvidence": 4,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "3b3fffcf-2f15-4ba9-b541-c742e14b6f1e",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书: 与杨柳岸的对话 · 04/11 13:34",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.11.1314 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775885658553,
+        "updatedAt": 1775911674546,
+        "createdBy": null,
+        "host": "bruce-instance",
+        "version": "v2026.04.11.1314",
+        "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3",
+        "summary": "飞书: 与杨柳岸的对话 · 04/11 13:34",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "bruce-instance",
+        "version": "v2026.04.11.1314",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "55f17b9b-cc3a-40f0-9cee-c9ca46f103e2",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书: 与杨柳岸的对话 · 04/11 14:19",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.12.2114 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775888350371,
+        "updatedAt": 1776002053973,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.12.2114",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书: 与杨柳岸的对话 · 04/11 14:19",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.12.2114",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "2d5c6fbd-a6a0-45f7-a6e5-8f0d9d26cc29",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 04/11 14:37",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.10.1051 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 1 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775889471080,
+        "updatedAt": 1775890586859,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.10.1051",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: Yoho 技术 · 04/11 14:37",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 1
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "6b1cacf7-2f3d-4c86-8c04-91366fa09c83",
+          "flavor": "claude",
+          "modelMode": "default",
+          "runtimeModel": "claude-sonnet-4-6",
+          "summary": "创建2026科技趋势展望PPT"
+        }
+      ],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.10.1051",
+        "targetCount": 7,
+        "sessionsWithClaudeChildEvidence": 4,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "d2ae1f59-bd02-40a7-bb26-2aa010a8b8fc",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Guang Yang, Qun Su, Bruce Li · 04/11 14:45",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.10.1051 早于 brainPreferences 引入版本",
+        "同 host/version cohort 的其他 brain 共有 5 条 child 证据",
+        "cohort 观察到的 Claude child 模型族: sonnet",
+        "cohort 最常见 child 模型族: sonnet",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775889957908,
+        "updatedAt": 1775891138194,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.10.1051",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: Guang Yang, Qun Su, Bruce Li · 04/11 14:45",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.10.1051",
+        "targetCount": 7,
+        "sessionsWithClaudeChildEvidence": 5,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "5b075137-d7fc-407d-bc89-1fc768099851",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 04/11 14:56",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.11.2117 早于 brainPreferences 引入版本",
+        "同 cohort child 证据仅 1 条，低于建议阈值，Claude childModels 留空",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775890614561,
+        "updatedAt": 1775966804281,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.11.2117",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: Yoho 技术 · 04/11 14:56",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.11.2117",
+        "targetCount": 3,
+        "sessionsWithClaudeChildEvidence": 1,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "fe6d9220-5586-492c-ad1f-602f315bcd6a",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: K1魔鬼训练营 · 04/11 14:58",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.10.1051 早于 brainPreferences 引入版本",
+        "同 host/version cohort 的其他 brain 共有 5 条 child 证据",
+        "cohort 观察到的 Claude child 模型族: sonnet",
+        "cohort 最常见 child 模型族: sonnet",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775890694949,
+        "updatedAt": 1775892657004,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.10.1051",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: K1魔鬼训练营 · 04/11 14:58",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.10.1051",
+        "targetCount": 7,
+        "sessionsWithClaudeChildEvidence": 5,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "da348251-c8ba-492a-9abf-5ec7eccff807",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: K1魔鬼训练营 · 04/11 15:11",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.10.1051 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 1 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775891487640,
+        "updatedAt": 1775893212663,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.10.1051",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: K1魔鬼训练营 · 04/11 15:11",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 1
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "af0da4ea-a293-4e29-809b-9847b5638059",
+          "flavor": "claude",
+          "modelMode": "default",
+          "runtimeModel": "claude-sonnet-4-6",
+          "summary": "创建程序员打油诗文件"
+        }
+      ],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.10.1051",
+        "targetCount": 7,
+        "sessionsWithClaudeChildEvidence": 4,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "5361fa5d-7079-46c8-b720-c76b9c386865",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: K1魔鬼训练营 · 04/11 15:35",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.10.1051 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 1 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775892944661,
+        "updatedAt": 1775893987422,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.10.1051",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: K1魔鬼训练营 · 04/11 15:35",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 1
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "c041cbad-7d51-488d-b04c-465465482151",
+          "flavor": "claude",
+          "modelMode": "default",
+          "runtimeModel": "claude-sonnet-4-6",
+          "summary": "Python 生成渐变图片 /tmp/k1_hello.png"
+        }
+      ],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.10.1051",
+        "targetCount": 7,
+        "sessionsWithClaudeChildEvidence": 4,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "cb352e49-90bd-469a-ae21-bc7de664587f",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: K1魔鬼训练营 · 04/11 15:41",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.10.1051 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 1 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775893305101,
+        "updatedAt": 1775894362211,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.10.1051",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: K1魔鬼训练营 · 04/11 15:41",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 1
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "3ebbf01b-9d76-453c-8e05-560e1b818844",
+          "flavor": "claude",
+          "modelMode": "default",
+          "runtimeModel": "claude-sonnet-4-6",
+          "summary": "搜索高清城市天际线图片直链"
+        }
+      ],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.10.1051",
+        "targetCount": 7,
+        "sessionsWithClaudeChildEvidence": 4,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "089aeec1-13af-4c98-90d8-8264b52e20b7",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: K1魔鬼训练营 · 04/11 15:57",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.11.2013 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775894247520,
+        "updatedAt": 1775910066602,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.11.2013",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: K1魔鬼训练营 · 04/11 15:57",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.11.2013",
+        "targetCount": 4,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "78d787f3-4e4f-4bbc-adb7-768e03c53aee",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: K1魔鬼训练营 · 04/11 20:17",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.11.2013 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775909858206,
+        "updatedAt": 1775911812821,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.11.2013",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: K1魔鬼训练营 · 04/11 20:17",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.11.2013",
+        "targetCount": 4,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "e189d6df-b0aa-431a-8484-734b5701ab2d",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: K1魔鬼训练营 · 04/11 20:36",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.11.2013 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775911009133,
+        "updatedAt": 1775913611986,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.11.2013",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: K1魔鬼训练营 · 04/11 20:36",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.11.2013",
+        "targetCount": 4,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "71d2c840-1ff6-41cd-a718-7e5e5ae29ef2",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: K1魔鬼训练营 · 04/11 20:51",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.11.2013 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775911877043,
+        "updatedAt": 1775913611986,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.11.2013",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: K1魔鬼训练营 · 04/11 20:51",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.11.2013",
+        "targetCount": 4,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "572f27a5-e7ea-4c78-94be-3fb19ff2cc11",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: K1魔鬼训练营 · 04/11 21:07",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.11.2117 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 1 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775912832198,
+        "updatedAt": 1775966804248,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.11.2117",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: K1魔鬼训练营 · 04/11 21:07",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 1
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "c1b00672-4449-41fc-89a6-5c68f866c582",
+          "flavor": "claude",
+          "modelMode": "default",
+          "runtimeModel": "claude-sonnet-4-6",
+          "summary": "国乒2026巡礼 PPT 制作"
+        }
+      ],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.11.2117",
+        "targetCount": 3,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "6687964e-5608-4a5f-b230-b5d19248ed74",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 04/12 05:19",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.12.1458 早于 brainPreferences 引入版本",
+        "同 cohort child 证据仅 1 条，低于建议阈值，Claude childModels 留空",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775942371024,
+        "updatedAt": 1775999706011,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.12.1458",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: Yoho 技术 · 04/12 05:19",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.12.1458",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 1,
+        "observedClaudeFamilies": [
+          "sonnet"
+        ]
+      }
+    },
+    {
+      "sessionId": "9af4d046-cb18-44a7-8ab6-051cb596cc6d",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: K1魔鬼训练营 · 04/12 11:39",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.12.1458 早于 brainPreferences 引入版本",
+        "直接关联 child 会话 1 条",
+        "观察到的 Claude child 模型族: sonnet",
+        "最常见 child 模型族: sonnet",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775965186505,
+        "updatedAt": 1775999705028,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.12.1458",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: K1魔鬼训练营 · 04/12 11:39",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 1
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": {
+            "allowed": [
+              "sonnet"
+            ],
+            "defaultModel": "sonnet"
+          },
+          "codex": null
+        }
+      },
+      "observedChildren": [
+        {
+          "sessionId": "2c776ae7-8451-48d5-8613-7634be2fc495",
+          "flavor": "claude",
+          "modelMode": "default",
+          "runtimeModel": "claude-sonnet-4-6",
+          "summary": "AI大模型调研PPT生成"
+        }
+      ],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.12.1458",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "a8838d7a-5dc4-4e9d-af42-d388033f09c5",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 04/12 20:32",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.12.2151 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775997136137,
+        "updatedAt": 1776049535183,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.12.2151",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: Yoho 技术 · 04/12 20:32",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.12.2151",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "27a7a861-3dbe-4f42-8c68-36868a0670ac",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书: 与杨柳岸的对话 · 04/12 21:18",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.12.2114 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1775999891900,
+        "updatedAt": 1776040129195,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.12.2114",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书: 与杨柳岸的对话 · 04/12 21:18",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.12.2114",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "16cf5b45-97c8-4c9d-a6f5-d68b744343c9",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 04/13 10:51",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.13.1105 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1776048710082,
+        "updatedAt": 1776051250711,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.13.1105",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: Yoho 技术 · 04/13 10:51",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.13.1105",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "2e75a1d3-0c15-41f0-b041-211e3aea4f31",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 04/13 11:12",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.13.1133 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1776049943665,
+        "updatedAt": 1776051772914,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.13.1133",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: Yoho 技术 · 04/13 11:12",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.13.1133",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "82ca5c9c-3efb-4ded-83bb-b19db5e23cf4",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 04/13 11:38",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.13.1142 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1776051489635,
+        "updatedAt": 1776052166397,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.13.1142",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: Yoho 技术 · 04/13 11:38",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.13.1142",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "63e4f318-5e3a-45fd-9838-a0f0b89a64cd",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 04/13 11:46",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.13.1149 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1776051969170,
+        "updatedAt": 1776065715352,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.13.1149",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: Yoho 技术 · 04/13 11:46",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.13.1149",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "92e26d91-35fb-41de-b452-f85e6b02995c",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "summary 表示 Feishu Brain 自动创建: 飞书群: Yoho 技术 · 04/13 14:34",
+        "createdBy 为空，更接近 bot/daemon 自动创建",
+        "version=v2026.04.13.1538 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1776062090449,
+        "updatedAt": 1776129357208,
+        "createdBy": null,
+        "host": "guang-instance",
+        "version": "v2026.04.13.1538",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": "飞书群: Yoho 技术 · 04/13 14:34",
+        "runtimeModel": "claude-opus-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.13.1538",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "d7e3911a-2a75-4ada-81c8-222ff053c689",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "createdBy=guang.yang@yohomobile.com",
+        "version=v2026.04.13.1538 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1776124198983,
+        "updatedAt": 1776129367670,
+        "createdBy": "guang.yang@yohomobile.com",
+        "host": "bruce-instance",
+        "version": "v2026.04.13.1538",
+        "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3",
+        "summary": null,
+        "runtimeModel": "claude-sonnet-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "bruce-instance",
+        "version": "v2026.04.13.1538",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "55edc485-20ad-49ee-a732-439b2efbc7c7",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "createdBy=guang.yang@yohomobile.com",
+        "version=v2026.04.13.1538 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1776124251868,
+        "updatedAt": 1776129367671,
+        "createdBy": "guang.yang@yohomobile.com",
+        "host": "bruce-instance",
+        "version": "v2026.04.13.1538",
+        "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3",
+        "summary": null,
+        "runtimeModel": "claude-sonnet-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "2e26bc05-6cb6-4f4d-8ac7-16c17741c8e3"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "bruce-instance",
+        "version": "v2026.04.13.1538",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "df392143-912f-46a4-a771-da6b80e5aa0a",
+      "confidence": "medium",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "createdBy=guang.yang@yohomobile.com",
+        "version=v2026.04.13.1538 早于 brainPreferences 引入版本",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1776126506771,
+        "updatedAt": 1776129356606,
+        "createdBy": "guang.yang@yohomobile.com",
+        "host": "guang-instance",
+        "version": "v2026.04.13.1538",
+        "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0",
+        "summary": null,
+        "runtimeModel": "claude-sonnet-4-6",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": "auto",
+          "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "guang-instance",
+        "version": "v2026.04.13.1538",
+        "targetCount": 2,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    },
+    {
+      "sessionId": "7614f164-3aa6-4dc9-887b-e98ee017c04c",
+      "confidence": "low",
+      "basis": [
+        "startedBy=daemon",
+        "path 指向固定 brain-workspace",
+        "createdBy=guang.yang@yohomobile.com",
+        "version=v2026.04.18.0546 已晚于 brainPreferences 引入版本",
+        "post-feature 缺失 brainPreferences 属于异常，不能仅凭 daemon/path 推断 auto",
+        "无直接 child 会话证据",
+        "metadata.tokenSourceId 缺失",
+        "metadata.brainTokenSourceIds 缺失"
+      ],
+      "unresolved": [
+        "machineSelection.mode",
+        "childModels.claude.allowed",
+        "childModels.claude.defaultModel",
+        "childModels.codex.allowed",
+        "childModels.codex.defaultModel",
+        "codex token source / local capability 无稳定线索"
+      ],
+      "session": {
+        "createdAt": 1776465718572,
+        "updatedAt": 1776471565552,
+        "createdBy": "guang.yang@yohomobile.com",
+        "host": "ncu",
+        "version": "v2026.04.18.0546",
+        "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb",
+        "summary": "yoho-remote 消息展示逻辑分析",
+        "runtimeModel": "claude-opus-4-7",
+        "childCount": 0
+      },
+      "candidate": {
+        "machineSelection": {
+          "mode": null,
+          "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+        },
+        "childModels": {
+          "claude": null,
+          "codex": null
+        }
+      },
+      "observedChildren": [],
+      "cohort": {
+        "host": "ncu",
+        "version": "v2026.04.18.0546",
+        "targetCount": 1,
+        "sessionsWithClaudeChildEvidence": 0,
+        "observedClaudeFamilies": []
+      }
+    }
+  ]
+}

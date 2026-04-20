@@ -276,6 +276,7 @@ export function YohoRemoteComposer(props: {
     modelMode?: ModelMode
     modelReasoningEffort?: ModelReasoningEffort
     active?: boolean
+    allowInactiveQueueing?: boolean
     thinking?: boolean
     agentState?: AgentState | null
     contextSize?: number
@@ -307,6 +308,7 @@ export function YohoRemoteComposer(props: {
         modelMode: rawModelMode,
         modelReasoningEffort,
         active = true,
+        allowInactiveQueueing = false,
         thinking = false,
         agentState,
         contextSize,
@@ -353,7 +355,7 @@ export function YohoRemoteComposer(props: {
     const MAX_BASE64_BYTES = 3.5 * 1024 * 1024
     const MAX_FILE_BYTES = 100 * 1024 * 1024
 
-    const showResumeOverlay = !active && Boolean(onRequestResume)
+    const showResumeOverlay = !active && !allowInactiveQueueing && Boolean(onRequestResume)
     const resumeLabel = resumePending
         ? 'Resuming...'
         : resumeError
@@ -381,7 +383,7 @@ export function YohoRemoteComposer(props: {
     const [isDragging, setIsDragging] = useState(false)
     const dragCounterRef = useRef(0)
 
-    const controlsDisabled = disabled || !active || threadIsDisabled
+    const controlsDisabled = disabled || (!active && !allowInactiveQueueing) || threadIsDisabled
     const trimmed = composerText.trim()
     const hasText = trimmed.length > 0
     const hasImages = uploadedImages.length > 0

@@ -64,13 +64,15 @@ function ProfileForm({
     onSubmit,
     onCancel,
     isPending,
-    submitLabel
+    submitLabel,
+    readOnly = false,
 }: {
     initial?: AIProfileFormData
     onSubmit: (data: AIProfileFormData) => void
     onCancel: () => void
     isPending: boolean
     submitLabel: string
+    readOnly?: boolean
 }) {
     const [formData, setFormData] = useState<AIProfileFormData>(initial ?? defaultFormData)
 
@@ -84,8 +86,11 @@ function ProfileForm({
             <div className="flex items-start gap-3">
                 <div className="flex flex-col items-center gap-1">
                     <div
-                        className="w-12 h-12 rounded-full bg-[var(--app-secondary-bg)] flex items-center justify-center text-2xl cursor-pointer hover:bg-[var(--app-button)]/10 transition-colors"
+                        className={`w-12 h-12 rounded-full bg-[var(--app-secondary-bg)] flex items-center justify-center text-2xl transition-colors ${
+                            readOnly ? 'cursor-default opacity-70' : 'cursor-pointer hover:bg-[var(--app-button)]/10'
+                        }`}
                         onClick={() => {
+                            if (readOnly) return
                             const currentIndex = DEFAULT_EMOJIS.indexOf(formData.avatarEmoji)
                             const nextIndex = (currentIndex + 1) % DEFAULT_EMOJIS.length
                             setFormData({ ...formData, avatarEmoji: DEFAULT_EMOJIS[nextIndex] })
@@ -103,14 +108,14 @@ function ProfileForm({
                         onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                         placeholder="AI Employee Name"
                         className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
-                        disabled={isPending}
+                        disabled={isPending || readOnly}
                         required
                     />
                     <select
                         value={formData.role}
                         onChange={(e) => setFormData({ ...formData, role: e.target.value as AIProfileRole })}
                         className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
-                        disabled={isPending}
+                        disabled={isPending || readOnly}
                     >
                         {Object.entries(ROLE_LABELS).map(([role, label]) => (
                             <option key={role} value={role}>{label} - {ROLE_DESCRIPTIONS[role as AIProfileRole]}</option>
@@ -127,7 +132,7 @@ function ProfileForm({
                     onChange={(e) => setFormData({ ...formData, specialties: e.target.value })}
                     placeholder="e.g. TypeScript, React, Backend APIs"
                     className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
-                    disabled={isPending}
+                    disabled={isPending || readOnly}
                 />
             </div>
 
@@ -139,7 +144,7 @@ function ProfileForm({
                     placeholder="Describe this AI's personality and communication style..."
                     className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)] resize-none"
                     rows={2}
-                    disabled={isPending}
+                    disabled={isPending || readOnly}
                 />
             </div>
 
@@ -151,7 +156,7 @@ function ProfileForm({
                     onChange={(e) => setFormData({ ...formData, greetingTemplate: e.target.value })}
                     placeholder="e.g. Hey! Ready to code something awesome?"
                     className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
-                    disabled={isPending}
+                    disabled={isPending || readOnly}
                 />
             </div>
 
@@ -159,14 +164,14 @@ function ProfileForm({
                 <button
                     type="button"
                     onClick={onCancel}
-                    disabled={isPending}
+                    disabled={isPending || readOnly}
                     className="px-3 py-1.5 text-sm rounded border border-[var(--app-border)] text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors disabled:opacity-50"
                 >
                     Cancel
                 </button>
                 <button
                     type="submit"
-                    disabled={isPending || !formData.name.trim()}
+                    disabled={readOnly || isPending || !formData.name.trim()}
                     className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium rounded bg-[var(--app-button)] text-[var(--app-button-text)] disabled:opacity-50 hover:opacity-90 transition-opacity"
                 >
                     {isPending && <Spinner size="sm" label={null} />}
@@ -181,12 +186,14 @@ function ProfileCard({
     profile,
     onEdit,
     onDelete,
-    isDeleting
+    isDeleting,
+    readOnly = false,
 }: {
     profile: AIProfile
     onEdit: () => void
     onDelete: () => void
     isDeleting: boolean
+    readOnly?: boolean
 }) {
     return (
         <div className="px-3 py-2">
@@ -227,7 +234,7 @@ function ProfileCard({
                     <button
                         type="button"
                         onClick={onEdit}
-                        disabled={isDeleting}
+                        disabled={isDeleting || readOnly}
                         className="flex h-7 w-7 items-center justify-center rounded text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors disabled:opacity-50"
                         title="Edit profile"
                     >
@@ -239,7 +246,7 @@ function ProfileCard({
                     <button
                         type="button"
                         onClick={onDelete}
-                        disabled={isDeleting}
+                        disabled={isDeleting || readOnly}
                         className="flex h-7 w-7 items-center justify-center rounded text-[var(--app-hint)] hover:text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50"
                         title="Delete profile"
                     >
@@ -254,18 +261,23 @@ function ProfileCard({
     )
 }
 
-export function AIProfileSettings() {
+export function AIProfileSettings(props: {
+    orgId?: string | null
+    canManage?: boolean
+}) {
     const { api } = useAppContext()
     const queryClient = useQueryClient()
+    const orgId = props.orgId ?? null
+    const canManage = props.canManage !== false
     const [showAddForm, setShowAddForm] = useState(false)
     const [editingProfile, setEditingProfile] = useState<AIProfile | null>(null)
     const [error, setError] = useState<string | null>(null)
 
     const { data, isLoading } = useQuery({
-        queryKey: queryKeys.aiProfiles,
+        queryKey: queryKeys.aiProfiles(orgId),
         queryFn: async () => {
             if (!api) throw new Error('API unavailable')
-            return await api.getAIProfiles()
+            return await api.getAIProfiles(orgId)
         },
         enabled: Boolean(api)
     })
@@ -282,10 +294,10 @@ export function AIProfileSettings() {
                 preferredProjects: formData.preferredProjects.split(',').map(s => s.trim()).filter(Boolean),
                 workStyle: formData.workStyle || null,
                 avatarEmoji: formData.avatarEmoji
-            })
+            }, orgId)
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: queryKeys.aiProfiles })
+            queryClient.invalidateQueries({ queryKey: queryKeys.aiProfiles(orgId) })
             setShowAddForm(false)
             setError(null)
         },
@@ -306,10 +318,10 @@ export function AIProfileSettings() {
                 preferredProjects: formData.preferredProjects.split(',').map(s => s.trim()).filter(Boolean),
                 workStyle: formData.workStyle || null,
                 avatarEmoji: formData.avatarEmoji
-            })
+            }, orgId)
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: queryKeys.aiProfiles })
+            queryClient.invalidateQueries({ queryKey: queryKeys.aiProfiles(orgId) })
             setEditingProfile(null)
             setError(null)
         },
@@ -321,10 +333,10 @@ export function AIProfileSettings() {
     const deleteMutation = useMutation({
         mutationFn: async (id: string) => {
             if (!api) throw new Error('API unavailable')
-            return await api.deleteAIProfile(id)
+            return await api.deleteAIProfile(id, orgId)
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: queryKeys.aiProfiles })
+            queryClient.invalidateQueries({ queryKey: queryKeys.aiProfiles(orgId) })
             setError(null)
         },
         onError: (err: Error) => {
@@ -333,19 +345,21 @@ export function AIProfileSettings() {
     })
 
     const handleCreate = useCallback((formData: AIProfileFormData) => {
+        if (!canManage) return
         createMutation.mutate(formData)
-    }, [createMutation])
+    }, [canManage, createMutation])
 
     const handleUpdate = useCallback((formData: AIProfileFormData) => {
-        if (!editingProfile) return
+        if (!editingProfile || !canManage) return
         updateMutation.mutate({ id: editingProfile.id, formData })
-    }, [editingProfile, updateMutation])
+    }, [canManage, editingProfile, updateMutation])
 
     const handleDelete = useCallback((id: string) => {
+        if (!canManage) return
         if (confirm('Are you sure you want to delete this AI profile?')) {
             deleteMutation.mutate(id)
         }
-    }, [deleteMutation])
+    }, [canManage, deleteMutation])
 
     const profiles = Array.isArray(data?.profiles) ? data.profiles : []
 
@@ -373,6 +387,7 @@ export function AIProfileSettings() {
                     <button
                         type="button"
                         onClick={() => setShowAddForm(true)}
+                        disabled={!canManage}
                         className="flex items-center gap-1 px-2 py-1 text-xs font-medium rounded bg-[var(--app-button)] text-[var(--app-button-text)] hover:opacity-90 transition-opacity"
                     >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -384,6 +399,12 @@ export function AIProfileSettings() {
                 )}
             </div>
 
+            {!canManage && (
+                <div className="px-3 py-2 text-xs text-[var(--app-hint)] border-b border-[var(--app-divider)]">
+                    Only platform operators can create or edit AI profiles for the shared K1 Brain configuration.
+                </div>
+            )}
+
             {showAddForm && (
                 <ProfileForm
                     onSubmit={handleCreate}
@@ -393,6 +414,7 @@ export function AIProfileSettings() {
                     }}
                     isPending={createMutation.isPending}
                     submitLabel="Create"
+                    readOnly={!canManage}
                 />
             )}
 
@@ -424,6 +446,7 @@ export function AIProfileSettings() {
                                 }}
                                 isPending={updateMutation.isPending}
                                 submitLabel="Save"
+                                readOnly={!canManage}
                             />
                         ) : (
                             <ProfileCard
@@ -432,6 +455,7 @@ export function AIProfileSettings() {
                                 onEdit={() => setEditingProfile(profile)}
                                 onDelete={() => handleDelete(profile.id)}
                                 isDeleting={deleteMutation.isPending}
+                                readOnly={!canManage}
                             />
                         )
                     )}

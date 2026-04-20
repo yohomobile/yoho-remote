@@ -319,8 +319,9 @@ export class ApiClient {
 
     // ========== Brain Config ==========
 
-    async getBrainConfig(): Promise<BrainConfigResponse> {
-        return await this.request<BrainConfigResponse>('/api/settings/brain-config')
+    async getBrainConfig(orgId?: string | null): Promise<BrainConfigResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<BrainConfigResponse>(`/api/settings/brain-config${qs}`)
     }
 
     async updateBrainConfig(config: {
@@ -328,33 +329,38 @@ export class ApiClient {
         claudeModelMode?: string
         codexModel?: string
         extra?: Record<string, unknown>
-    }): Promise<UpdateBrainConfigResponse> {
-        return await this.request<UpdateBrainConfigResponse>('/api/settings/brain-config', {
+    }, orgId?: string | null): Promise<UpdateBrainConfigResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<UpdateBrainConfigResponse>(`/api/settings/brain-config${qs}`, {
             method: 'PUT',
             body: JSON.stringify(config)
         })
     }
 
-    async getAIProfiles(): Promise<AIProfilesResponse> {
-        return await this.request<AIProfilesResponse>('/api/settings/ai-profiles')
+    async getAIProfiles(orgId?: string | null): Promise<AIProfilesResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<AIProfilesResponse>(`/api/settings/ai-profiles${qs}`)
     }
 
-    async createAIProfile(data: CreateAIProfileInput): Promise<CreateAIProfileResponse> {
-        return await this.request<CreateAIProfileResponse>('/api/settings/ai-profiles', {
+    async createAIProfile(data: CreateAIProfileInput, orgId?: string | null): Promise<CreateAIProfileResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<CreateAIProfileResponse>(`/api/settings/ai-profiles${qs}`, {
             method: 'POST',
             body: JSON.stringify(data)
         })
     }
 
-    async updateAIProfile(id: string, data: UpdateAIProfileInput): Promise<UpdateAIProfileResponse> {
-        return await this.request<UpdateAIProfileResponse>(`/api/settings/ai-profiles/${encodeURIComponent(id)}`, {
+    async updateAIProfile(id: string, data: UpdateAIProfileInput, orgId?: string | null): Promise<UpdateAIProfileResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<UpdateAIProfileResponse>(`/api/settings/ai-profiles/${encodeURIComponent(id)}${qs}`, {
             method: 'PUT',
             body: JSON.stringify(data)
         })
     }
 
-    async deleteAIProfile(id: string): Promise<DeleteAIProfileResponse> {
-        return await this.request<DeleteAIProfileResponse>(`/api/settings/ai-profiles/${encodeURIComponent(id)}`, {
+    async deleteAIProfile(id: string, orgId?: string | null): Promise<DeleteAIProfileResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<DeleteAIProfileResponse>(`/api/settings/ai-profiles/${encodeURIComponent(id)}${qs}`, {
             method: 'DELETE'
         })
     }
@@ -534,8 +540,8 @@ export class ApiClient {
         })
     }
 
-    async sendMessage(sessionId: string, text: string, localId?: string | null): Promise<void> {
-        await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    async sendMessage(sessionId: string, text: string, localId?: string | null): Promise<import('@/types/api').SendMessageResponse> {
+        return await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
             method: 'POST',
             body: JSON.stringify({ text, localId: localId ?? undefined })
         })

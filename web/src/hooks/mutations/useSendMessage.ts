@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient, type InfiniteData } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
-import type { DecryptedMessage, MessagesResponse } from '@/types/api'
+import type { BrainMessageDelivery, DecryptedMessage, MessagesResponse, SendMessageResponse } from '@/types/api'
 import { makeClientSideId, upsertMessagesInCache } from '@/lib/messages'
 import { queryKeys } from '@/lib/query-keys'
 import { usePlatform } from '@/hooks/usePlatform'
@@ -24,6 +24,53 @@ function updateMessageStatus(
         messages: page.messages.map((message) =>
             message.localId === localId
                 ? { ...message, status }
+                : message
+        ),
+    }))
+
+    return {
+        ...data,
+        pages,
+    }
+}
+
+function attachBrainDelivery(
+    message: DecryptedMessage,
+    brainDelivery: BrainMessageDelivery | undefined,
+): DecryptedMessage {
+    if (!brainDelivery) {
+        return message
+    }
+
+    const content = {
+        role: 'user',
+        content: message.originalText ?? '',
+        meta: {
+            brainDelivery,
+        },
+    }
+
+    return {
+        ...message,
+        content,
+    }
+}
+
+function updateMessageDelivery(
+    data: InfiniteData<MessagesResponse> | undefined,
+    localId: string,
+    response: SendMessageResponse,
+): InfiniteData<MessagesResponse> | undefined {
+    if (!data) return data
+
+    const pages = data.pages.map((page) => ({
+        ...page,
+        messages: page.messages.map((message) =>
+            message.localId === localId
+                ? attachBrainDelivery({
+                    ...message,
+                    status: 'sent',
+                }, response.brainDelivery)
                 : message
         ),
     }))
@@ -59,14 +106,17 @@ export function useSendMessage(api: ApiClient | null, sessionId: string | null):
             if (!api) {
                 throw new Error('API unavailable')
             }
-            await api.sendMessage(input.sessionId, input.text, input.localId)
+            return await api.sendMessage(input.sessionId, input.text, input.localId)
         },
         onMutate: async (input) => {
             const optimisticMessage: DecryptedMessage = {
                 id: input.localId,
                 seq: null,
                 localId: input.localId,
-                content: { role: 'user', content: input.text },
+                content: {
+                    role: 'user',
+                    content: input.text,
+                },
                 createdAt: input.createdAt,
                 status: 'sending',
                 originalText: input.text,
@@ -77,10 +127,10 @@ export function useSendMessage(api: ApiClient | null, sessionId: string | null):
                 (data) => upsertMessagesInCache(data, [optimisticMessage]),
             )
         },
-        onSuccess: (_, input) => {
+        onSuccess: (response, input) => {
             queryClient.setQueryData<InfiniteData<MessagesResponse>>(
                 queryKeys.messages(input.sessionId),
-                (data) => updateMessageStatus(data, input.localId, 'sent'),
+                (data) => updateMessageDelivery(data, input.localId, response),
             )
             haptic.notification('success')
         },

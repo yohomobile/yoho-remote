@@ -48,11 +48,11 @@ describe('startYohoRemoteServer tool registration', () => {
 
         try {
             expect(server.toolNames).toContain('chat_messages')
+            expect(server.toolNames).toContain('ask_user_question')
             expect(server.toolNames).toContain('session_status')
             expect(server.toolNames).toContain('session_tail')
             expect(server.toolNames).toContain('session_send')
             expect(server.toolNames).toContain('session_set_config')
-            expect(server.toolNames).not.toContain('ask_user_question')
             expect(server.toolNames).not.toContain('session_status_self')
             expect(server.toolNames).not.toContain('session_tail_self')
         } finally {

@@ -1,4 +1,4 @@
-export type PermissionMode = 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
+export type PermissionMode = 'default' | 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
 export type SpawnAgentType = 'claude' | 'codex'
 export type ClaudeModelMode = 'default' | 'sonnet' | 'opus' | 'opus-4-7'
 export type CodexModelMode = 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.2' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini'
@@ -30,6 +30,17 @@ export type SessionMetadataSummary = {
     runtimeModelReasoningEffort?: ModelReasoningEffort
     worktree?: WorktreeMetadata
     source?: string
+    selfSystemEnabled?: boolean
+    selfProfileId?: string
+    selfProfileName?: string
+    selfProfileResolved?: boolean
+    selfMemoryProvider?: 'yoho-memory' | 'none'
+    selfMemoryAttached?: boolean
+    selfMemoryStatus?: 'disabled' | 'skipped' | 'attached' | 'empty' | 'error'
+    lifecycleState?: string
+    lifecycleStateSince?: number
+    archivedBy?: string
+    archiveReason?: string
 }
 
 export type AgentStateRequest = {
@@ -122,6 +133,17 @@ export type SessionSummaryMetadata = {
     worktree?: WorktreeMetadata
     source?: string
     privacyMode?: boolean  // true = 私密模式，不分享给其他人
+    selfSystemEnabled?: boolean
+    selfProfileId?: string
+    selfProfileName?: string
+    selfProfileResolved?: boolean
+    selfMemoryProvider?: 'yoho-memory' | 'none'
+    selfMemoryAttached?: boolean
+    selfMemoryStatus?: 'disabled' | 'skipped' | 'attached' | 'empty' | 'error'
+    lifecycleState?: string
+    lifecycleStateSince?: number
+    archivedBy?: string
+    archiveReason?: string
 }
 
 export type SessionViewer = {
@@ -276,6 +298,22 @@ export type SessionSummary = {
 }
 
 export type MessageStatus = 'sending' | 'sent' | 'failed'
+
+export type BrainMessageDeliveryPhase = 'queued' | 'pending_consume' | 'consuming' | 'merged'
+
+export type BrainMessageDelivery = {
+    phase: BrainMessageDeliveryPhase
+    acceptedAt: number
+}
+
+export type SendMessageResponse = {
+    ok: true
+    sessionId: string
+    status: 'delivered' | 'queued'
+    queue?: 'brain-child-init' | 'brain-session-inbox'
+    queueDepth?: number
+    brainDelivery?: BrainMessageDelivery
+}
 
 export type DecryptedMessage = {
     id: string

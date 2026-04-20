@@ -9,6 +9,8 @@ import {
     shouldSuppressNotificationWithoutPreviousState,
     toSessionNotificationState,
     toSessionFromSsePayload,
+    toSessionSummaryFromSsePayload,
+    upsertSessionSummary,
 } from './useSSE.utils'
 
 describe('useSSE utils', () => {
@@ -115,6 +117,126 @@ describe('useSSE utils', () => {
             taskId: 'task-1',
             state: 'running',
         }])
+    })
+
+    test('maps full session payloads into session summaries with derived fields', () => {
+        const summary = toSessionSummaryFromSsePayload({
+            id: 'session-1',
+            createdAt: 1,
+            updatedAt: 2,
+            activeAt: 3,
+            lastMessageAt: 4,
+            active: true,
+            thinking: false,
+            createdBy: 'user@example.com',
+            metadata: {
+                path: '/tmp/project',
+                name: 'Brain child',
+                source: 'brain-child',
+                mainSessionId: 'brain-1',
+                lifecycleState: 'archived',
+                archivedBy: 'brain',
+                archiveReason: 'Brain closed session',
+                summary: { text: 'child summary', updatedAt: 99 },
+                runtimeAgent: 'claude',
+                runtimeModel: 'sonnet',
+            },
+            agentState: {
+                requests: {
+                    req1: { tool: 'AskUserQuestion', arguments: {} },
+                    req2: { tool: 'RequestApproval', arguments: {} },
+                }
+            },
+            todos: [
+                { id: 'todo-1', content: 'A', status: 'completed', priority: 'high' },
+                { id: 'todo-2', content: 'B', status: 'in_progress', priority: 'medium' },
+            ],
+            modelMode: 'sonnet',
+            modelReasoningEffort: 'high',
+            fastMode: true,
+            terminationReason: 'LICENSE_EXPIRED',
+        })
+
+        expect(summary).toEqual({
+            id: 'session-1',
+            createdAt: 1,
+            active: true,
+            activeAt: 3,
+            updatedAt: 2,
+            lastMessageAt: 4,
+            createdBy: 'user@example.com',
+            metadata: {
+                path: '/tmp/project',
+                name: 'Brain child',
+                source: 'brain-child',
+                mainSessionId: 'brain-1',
+                lifecycleState: 'archived',
+                archivedBy: 'brain',
+                archiveReason: 'Brain closed session',
+                summary: { text: 'child summary' },
+                runtimeAgent: 'claude',
+                runtimeModel: 'sonnet',
+            },
+            todoProgress: {
+                completed: 1,
+                total: 2,
+            },
+            pendingRequestsCount: 2,
+            thinking: false,
+            modelMode: 'sonnet',
+            modelReasoningEffort: 'high',
+            fastMode: true,
+            terminationReason: 'LICENSE_EXPIRED',
+        })
+    })
+
+    test('upserts session summaries while preserving list-only fields not present in SSE payload', () => {
+        const previous = {
+            sessions: [{
+                id: 'session-1',
+                createdAt: 1,
+                active: false,
+                activeAt: 1,
+                updatedAt: 1,
+                lastMessageAt: null,
+                ownerEmail: 'owner@example.com',
+                metadata: { path: '/tmp/project' },
+                todoProgress: null,
+                pendingRequestsCount: 0,
+                thinking: false,
+                viewers: [{ email: 'viewer@example.com', clientId: 'client-1' }],
+            }]
+        }
+
+        const next = upsertSessionSummary(previous, {
+            id: 'session-1',
+            createdAt: 1,
+            active: true,
+            activeAt: 5,
+            updatedAt: 6,
+            lastMessageAt: 7,
+            metadata: { path: '/tmp/project', source: 'brain-child' },
+            todoProgress: { completed: 0, total: 1 },
+            pendingRequestsCount: 1,
+            thinking: true,
+        })
+
+        expect(next).toEqual({
+            sessions: [{
+                id: 'session-1',
+                createdAt: 1,
+                active: true,
+                activeAt: 5,
+                updatedAt: 6,
+                lastMessageAt: 7,
+                ownerEmail: 'owner@example.com',
+                metadata: { path: '/tmp/project', source: 'brain-child' },
+                todoProgress: { completed: 0, total: 1 },
+                pendingRequestsCount: 1,
+                thinking: true,
+                viewers: [{ email: 'viewer@example.com', clientId: 'client-1' }],
+            }]
+        })
     })
 
     test('applies lastMessageAt-only status updates to session summaries', () => {

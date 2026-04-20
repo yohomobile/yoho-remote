@@ -21,6 +21,15 @@ const clearMessagesBodySchema = z.object({
     compact: z.boolean().optional()
 })
 
+type BrainDeliveryPhase = 'queued' | 'pending_consume' | 'consuming'
+
+function getBrainDeliveryPhase(session: { active: boolean; thinking: boolean }): BrainDeliveryPhase {
+    if (!session.active) {
+        return 'queued'
+    }
+    return session.thinking ? 'pending_consume' : 'consuming'
+}
+
 export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null, store: IStore): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
@@ -48,11 +57,11 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null, sto
             return engine
         }
 
-        const sessionResult = await requireSessionFromParamWithShareCheck(c, engine, store, { requireActive: true })
+        const sessionResult = await requireSessionFromParamWithShareCheck(c, engine, store)
         if (sessionResult instanceof Response) {
             return sessionResult
         }
-        const sessionId = sessionResult.sessionId
+        const { sessionId, session } = sessionResult
 
         const body = await c.req.json().catch(() => null)
         const parsed = sendMessageBodySchema.safeParse(body)
@@ -61,9 +70,38 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null, sto
         }
 
         const sentFrom = parsed.data.sentFrom || 'webapp'
+        const isBrainSession = session.metadata?.source === 'brain'
+        if (!session.active && !isBrainSession) {
+            return c.json({ error: 'Session is inactive' }, 409)
+        }
 
-        await engine.sendMessage(sessionId, { text: parsed.data.text, localId: parsed.data.localId, sentFrom: sentFrom as 'webapp' | 'telegram-bot' })
-        return c.json({ ok: true })
+        const acceptedAt = Date.now()
+        const brainDelivery = isBrainSession
+            ? {
+                phase: getBrainDeliveryPhase(session),
+                acceptedAt,
+            }
+            : undefined
+
+        const outcome = await engine.sendMessage(sessionId, {
+            text: parsed.data.text,
+            localId: parsed.data.localId,
+            sentFrom: sentFrom as 'webapp' | 'telegram-bot',
+            meta: brainDelivery ? { brainDelivery } : undefined,
+        })
+
+        return c.json({
+            ok: true,
+            sessionId,
+            status: outcome.status,
+            ...(outcome.status === 'queued'
+                ? {
+                    queue: outcome.queue,
+                    queueDepth: outcome.queueDepth,
+                }
+                : {}),
+            ...(brainDelivery ? { brainDelivery } : {}),
+        })
     })
 
     // Get message count for a session

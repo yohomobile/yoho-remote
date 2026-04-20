@@ -14,6 +14,33 @@ import { matchSessionToProject } from '@/lib/projectMatching'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { isFlutterApp } from '@/hooks/useFlutterApp'
 
+function getBrainSelfSummary(session: Session): string | null {
+    if (session.metadata?.source !== 'brain') {
+        return null
+    }
+    if (session.metadata.selfSystemEnabled !== true) {
+        return 'Self: off'
+    }
+    if (session.metadata.selfProfileResolved === true) {
+        const suffix = session.metadata.selfMemoryStatus === 'attached'
+            ? ' + memory'
+            : session.metadata.selfMemoryStatus === 'error'
+                ? ' · memory error'
+                : session.metadata.selfMemoryStatus === 'empty'
+                    ? ' · memory empty'
+                    : session.metadata.selfMemoryStatus === 'skipped'
+                        ? ' · memory skipped'
+                        : ''
+        return `Self: ${session.metadata.selfProfileName ?? session.metadata.selfProfileId ?? 'configured'}${suffix}`
+    }
+    if (session.metadata.selfProfileId) {
+        return session.metadata.selfMemoryStatus === 'skipped'
+            ? `Self: unresolved (${session.metadata.selfProfileId.slice(0, 8)}) · memory skipped`
+            : `Self: unresolved (${session.metadata.selfProfileId.slice(0, 8)})`
+    }
+    return 'Self: unresolved'
+}
+
 function getSessionTitle(session: Session): string {
     if (session.metadata?.name) {
         return session.metadata.name
@@ -321,6 +348,7 @@ export function SessionHeader(props: {
         }),
         [agentLabel, machineName, project?.name]
     )
+    const brainSelfSummary = useMemo(() => getBrainSelfSummary(props.session), [props.session])
 
     // Subscription state - supports both Telegram chatId and Web clientId
     const tg = getTelegramWebApp()
@@ -394,6 +422,11 @@ export function SessionHeader(props: {
                                 >
                                     {mobileAgentSummary}
                                 </button>
+                                {brainSelfSummary && (
+                                    <div className="text-[10px] text-[var(--app-hint)] truncate leading-none">
+                                        {brainSelfSummary}
+                                    </div>
+                                )}
                         </div>
                         {/* PC端：标题 */}
                         <div className="hidden sm:block max-w-[180px] truncate font-medium text-sm sm:max-w-none">
@@ -403,11 +436,17 @@ export function SessionHeader(props: {
                         <div className="hidden sm:block text-[10px] text-[var(--app-hint)] truncate">
                             {agentMeta}
                         </div>
+                        {brainSelfSummary && (
+                            <div className="hidden sm:block text-[10px] text-[var(--app-hint)] truncate">
+                                {brainSelfSummary}
+                            </div>
+                        )}
                         {/* 移动端详情弹出框 */}
                         {showAgentDetails && (
                             <div className="sm:hidden absolute left-0 top-full z-30 mt-1 min-w-[200px] max-w-[280px] rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] py-2 px-3 shadow-lg">
                                 <div className="text-xs text-[var(--app-fg)] space-y-1">
                                     <div className="text-[var(--app-hint)] truncate">{agentMeta}</div>
+                                    {brainSelfSummary && <div className="text-[var(--app-hint)] truncate">{brainSelfSummary}</div>}
                                     {project && <div><span className="text-[var(--app-hint)]">Project:</span> {project.name}</div>}
                                     {worktreeBranch && <div><span className="text-[var(--app-hint)]">Branch:</span> {worktreeBranch}</div>}
                                 </div>

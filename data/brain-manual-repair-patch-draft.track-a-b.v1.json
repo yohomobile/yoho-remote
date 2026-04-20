@@ -1,0 +1,42 @@
+{
+  "reviewStatus": "rejected-as-overwide",
+  "reviewedAt": "2026-04-18",
+  "approvedManifest": null,
+  "reason": "原草稿把 Track B 的 codex 空 allowlist 直接补进了完整 brainPreferences，但 Track A 对 childModels.codex.allowed/defaultModel 仍标记 unresolved，因此这 5 条不属于严格两轨一致。",
+  "safetyNote": "本文件已故意收紧为不可直接通过 repair-brain-sessions schema 校验的审计封套，避免误当成可 apply manifest 使用。",
+  "originalDraftSummary": {
+    "itemCount": 5,
+    "allItemsWouldPassManifestSchema": true,
+    "allItemsWouldBePlannedWritesOnCurrentDryRun": true,
+    "allItemsCurrentlyInactive": true,
+    "allItemsStillMissingBrainPreferences": true
+  },
+  "withheldItems": [
+    {
+      "sessionId": "7704b71a-7272-4b81-aa9a-1888d597021a",
+      "namespace": "default",
+      "withheldReason": "Track A unresolved codex fields"
+    },
+    {
+      "sessionId": "5b056c5c-775d-4f0e-9551-e9ee5d0c3b2a",
+      "namespace": "default",
+      "withheldReason": "Track A unresolved codex fields"
+    },
+    {
+      "sessionId": "94aa00bb-85af-4ec4-b3f6-9500a60a0416",
+      "namespace": "default",
+      "withheldReason": "Track A unresolved codex fields"
+    },
+    {
+      "sessionId": "edf6f8db-1406-4b62-b0ee-d449ecf38b8c",
+      "namespace": "default",
+      "withheldReason": "Track A unresolved codex fields"
+    },
+    {
+      "sessionId": "f8ecaf60-3bfc-4076-909d-df4e08fc1e2a",
+      "namespace": "default",
+      "withheldReason": "Track A unresolved codex fields"
+    }
+  ],
+  "nextAction": "继续保留全部 58 条在人工处理池；若想重新产出高置信 patch，先让 Track A 明确 codex 字段，或扩展为 partial brainPreferences patch。"
+}

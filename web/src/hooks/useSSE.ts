@@ -11,6 +11,8 @@ import {
     isSidOnlySessionRefreshHint,
     type SessionStatusUpdateData,
     toSessionFromSsePayload,
+    toSessionSummaryFromSsePayload,
+    upsertSessionSummary,
 } from './useSSE.utils'
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -129,7 +131,24 @@ export function useSSE(options: {
                         void queryClient.removeQueries({ queryKey: queryKeys.session(event.sessionId) })
                         void queryClient.removeQueries({ queryKey: queryKeys.messages(event.sessionId) })
                     } else if (event.type === 'session-added') {
-                        // New session added - invalidate to fetch fresh data
+                        const rawData = ('data' in event ? event.data : null)
+                        const isFullSessionAdd = isFullSessionPayload(rawData, event.sessionId)
+
+                        if (isFullSessionAdd) {
+                            const nextSession = toSessionFromSsePayload(rawData)
+                            const nextSummary = toSessionSummaryFromSsePayload(rawData)
+
+                            queryClient.setQueryData<SessionResponse>(
+                                queryKeys.session(event.sessionId),
+                                { session: nextSession }
+                            )
+                            queryClient.setQueriesData<SessionsResponse>(
+                                { queryKey: queryKeys.sessions },
+                                (prev) => upsertSessionSummary(prev, nextSummary)
+                            )
+                        }
+
+                        // New session added - still invalidate in background to refresh server-derived fields.
                         if (import.meta.env.DEV) {
                             console.log('[sse] invalidate sessions (new session)', event.sessionId)
                         }
@@ -160,20 +179,26 @@ export function useSSE(options: {
                         }
 
                         if (isFullSessionUpdate) {
+                            const nextSession = toSessionFromSsePayload(rawData)
+                            const nextSummary = toSessionSummaryFromSsePayload(rawData)
+
                             if (import.meta.env.DEV) {
                                 console.log('[sse] full session update, refreshing detail + list cache', event.sessionId)
                             }
                             queryClient.setQueryData<SessionResponse>(
                                 queryKeys.session(event.sessionId),
                                 (prev) => {
-                                    const nextSession = toSessionFromSsePayload(rawData)
                                     if (nextSession.activeMonitors === undefined && prev?.session?.activeMonitors !== undefined) {
                                         nextSession.activeMonitors = prev.session.activeMonitors
                                     }
                                     return { session: nextSession }
                                 }
                             )
-                            // 列表项里还有 pendingRequestsCount / todoProgress 等派生字段，只能从服务端重新拉。
+                            queryClient.setQueriesData<SessionsResponse>(
+                                { queryKey: queryKeys.sessions },
+                                (prev) => upsertSessionSummary(prev, nextSummary)
+                            )
+                            // viewers / ownerEmail 等服务端衍生字段仍然走后台刷新。
                             void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
                         } else if (hasStatusUpdate && statusData) {
                             if (import.meta.env.DEV) {

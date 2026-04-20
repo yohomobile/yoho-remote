@@ -37,7 +37,7 @@ const SendMessageToSessionResponseSchema = z.object({
     retryable: z.boolean().optional(),
     resumeRequired: z.boolean().optional(),
     error: z.string().optional(),
-    queue: z.enum(['brain-child-init']).optional(),
+    queue: z.enum(['brain-child-init', 'brain-session-inbox']).optional(),
     queueDepth: z.number().int().min(0).optional(),
 })
 
@@ -326,12 +326,13 @@ export class ApiClient {
         return response.data
     }
 
-    async listSessions(opts?: { includeOffline?: boolean }): Promise<{
+    async listSessions(opts?: { includeOffline?: boolean; mainSessionId?: string }): Promise<{
         sessions: Array<{
             id: string
             active: boolean
             activeAt: number
             thinking: boolean
+            initDone?: boolean
             modelMode?: string
             pendingRequestsCount: number
             metadata: {
@@ -345,9 +346,16 @@ export class ApiClient {
             } | null
         }>
     }> {
-        const params = opts?.includeOffline ? '?includeOffline=true' : ''
+        const params = new URLSearchParams()
+        if (opts?.includeOffline) {
+            params.set('includeOffline', 'true')
+        }
+        if (opts?.mainSessionId?.trim()) {
+            params.set('mainSessionId', opts.mainSessionId.trim())
+        }
+        const query = params.toString()
         const response = await axios.get(
-            `${configuration.serverUrl}/cli/sessions${params}`,
+            `${configuration.serverUrl}/cli/sessions${query ? `?${query}` : ''}`,
             {
                 headers: {
                     Authorization: `Bearer ${this.token}`,
@@ -429,14 +437,14 @@ export class ApiClient {
     }
 
     async setSessionConfig(sessionId: string, config: {
-        permissionMode?: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
+        permissionMode?: 'default' | 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
         model?: string
         reasoningEffort?: SessionModelReasoningEffort
         fastMode?: boolean
     }): Promise<{
         ok: boolean
         applied?: {
-            permissionMode?: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
+            permissionMode?: 'default' | 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
             model?: string
             reasoningEffort?: SessionModelReasoningEffort
             fastMode?: boolean
@@ -456,7 +464,7 @@ export class ApiClient {
         return response.data
     }
 
-    async getSessionStatus(sessionId: string): Promise<{
+    async getSessionStatus(sessionId: string, opts?: { mainSessionId?: string }): Promise<{
         active: boolean
         thinking: boolean
         initDone: boolean
@@ -465,8 +473,13 @@ export class ApiClient {
         modelMode?: string
         metadata: { path?: string; summary?: { text: string }; brainSummary?: string } | null
     }> {
+        const params = new URLSearchParams()
+        if (opts?.mainSessionId?.trim()) {
+            params.set('mainSessionId', opts.mainSessionId.trim())
+        }
+        const query = params.toString()
         const response = await axios.get(
-            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/status`,
+            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/status${query ? `?${query}` : ''}`,
             {
                 headers: {
                     Authorization: `Bearer ${this.token}`,
@@ -478,7 +491,7 @@ export class ApiClient {
         return response.data
     }
 
-    async getSessionInspect(sessionId: string): Promise<{
+    async getSessionInspect(sessionId: string, opts?: { mainSessionId?: string }): Promise<{
         sessionId: string
         status: 'offline' | 'running' | 'idle'
         active: boolean
@@ -542,10 +555,22 @@ export class ApiClient {
             machineId: string | null
             flavor: string | null
             mainSessionId: string | null
+            selfSystemEnabled: boolean | null
+            selfProfileId: string | null
+            selfProfileName: string | null
+            selfProfileResolved: boolean | null
+            selfMemoryProvider: 'yoho-memory' | 'none' | null
+            selfMemoryAttached: boolean | null
+            selfMemoryStatus: 'disabled' | 'skipped' | 'attached' | 'empty' | 'error' | null
         }
     }> {
+        const params = new URLSearchParams()
+        if (opts?.mainSessionId?.trim()) {
+            params.set('mainSessionId', opts.mainSessionId.trim())
+        }
+        const query = params.toString()
         const response = await axios.get(
-            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/inspect`,
+            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/inspect${query ? `?${query}` : ''}`,
             {
                 headers: {
                     Authorization: `Bearer ${this.token}`,
@@ -557,7 +582,7 @@ export class ApiClient {
         return response.data
     }
 
-    async getSessionTail(sessionId: string, opts?: { limit?: number }): Promise<{
+    async getSessionTail(sessionId: string, opts?: { limit?: number; mainSessionId?: string }): Promise<{
         sessionId: string
         items: Array<{
             seq: number
@@ -577,6 +602,9 @@ export class ApiClient {
         const params = new URLSearchParams()
         if (opts?.limit !== undefined) {
             params.set('limit', String(opts.limit))
+        }
+        if (opts?.mainSessionId?.trim()) {
+            params.set('mainSessionId', opts.mainSessionId.trim())
         }
         const query = params.toString()
         const response = await axios.get(
@@ -625,6 +653,13 @@ export class ApiClient {
                 machineId: string | null
                 flavor: string | null
                 mainSessionId: string | null
+                selfSystemEnabled: boolean | null
+                selfProfileId: string | null
+                selfProfileName: string | null
+                selfProfileResolved: boolean | null
+                selfMemoryProvider: 'yoho-memory' | 'none' | null
+                selfMemoryAttached: boolean | null
+                selfMemoryStatus: 'disabled' | 'skipped' | 'attached' | 'empty' | 'error' | null
             }
             match: {
                 source: 'turn-summary' | 'brain-summary' | 'title' | 'path'

@@ -209,6 +209,70 @@ describe('ApiSessionClient.sendClaudeSessionMessage', () => {
 })
 
 describe('ApiSessionClient.handleIncomingMessage', () => {
+    it('treats brain callbacks and regular user messages as the same queueable user input', () => {
+        const enqueued: unknown[] = []
+        const client = Object.create(ApiSessionClient.prototype) as any
+
+        client.lastSeenMessageSeq = null
+        client.enqueueUserMessage = vi.fn((message: unknown) => {
+            enqueued.push(message)
+        })
+        client.emit = vi.fn()
+
+        client.handleIncomingMessage({
+            seq: 10,
+            content: {
+                role: 'user',
+                content: {
+                    type: 'text',
+                    text: '[子 session 任务完成]\\nSession: child-1'
+                },
+                meta: {
+                    sentFrom: 'brain-callback'
+                }
+            }
+        })
+
+        client.handleIncomingMessage({
+            seq: 11,
+            content: {
+                role: 'user',
+                content: {
+                    type: 'text',
+                    text: '用户补充了一条新消息'
+                },
+                meta: {
+                    sentFrom: 'webapp'
+                }
+            }
+        })
+
+        expect(client.enqueueUserMessage).toHaveBeenCalledTimes(2)
+        expect(enqueued).toEqual([
+            {
+                role: 'user',
+                content: {
+                    type: 'text',
+                    text: '[子 session 任务完成]\\nSession: child-1'
+                },
+                meta: {
+                    sentFrom: 'brain-callback'
+                }
+            },
+            {
+                role: 'user',
+                content: {
+                    type: 'text',
+                    text: '用户补充了一条新消息'
+                },
+                meta: {
+                    sentFrom: 'webapp'
+                }
+            }
+        ])
+        expect(client.lastSeenMessageSeq).toBe(11)
+    })
+
     it('keeps the last seen sequence unchanged for malformed messages', () => {
         const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
         const emitSpy = vi.fn()

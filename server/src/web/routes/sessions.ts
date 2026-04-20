@@ -18,9 +18,21 @@ import {
     buildBrainSessionPreferences,
     extractBrainChildModelDefaults,
     extractBrainSessionPreferencesFromMetadata,
+    resolveBrainSpawnPermissionMode,
 } from '../../brain/brainSessionPreferences'
+import {
+    filterBrainChildModelsByRuntimeAvailability,
+    resolveBrainChildRuntimeAvailability,
+} from '../../brain/brainChildRuntimeSupport'
+import { SESSION_PERMISSION_MODE_VALUES, normalizeSessionPermissionMode } from '../../sessionPermissionMode'
 import { getUnsupportedSessionSourceError, isSupportedSessionSource } from '../../sessionSourcePolicy'
-import { extractResumeSpawnExtras, extractResumeSpawnMetadata, resolveResumeTokenSourceSpawnOptions } from '../../resumeSpawnMetadata'
+import {
+    extractResumeSpawnExtras,
+    extractResumeSpawnMetadata,
+    hasInvalidResumeBrainPreferences,
+    resolveResumeTokenSourceSpawnOptions,
+} from '../../resumeSpawnMetadata'
+import { appendSelfSystemPrompt, resolveBrainSelfSystemContext } from '../../brain/selfSystem'
 
 /**
  * License 检查：如果指定了 orgId，校验是否可创建会话
@@ -57,6 +69,13 @@ type SessionSummaryMetadata = {
         createdAt?: number
     }
     privacyMode?: boolean  // 私密模式，true表示不分享给其他人
+    selfSystemEnabled?: boolean
+    selfProfileId?: string
+    selfProfileName?: string
+    selfProfileResolved?: boolean
+    selfMemoryProvider?: 'yoho-memory' | 'none'
+    selfMemoryAttached?: boolean
+    selfMemoryStatus?: 'disabled' | 'skipped' | 'attached' | 'empty' | 'error'
 }
 
 type SessionViewer = {
@@ -121,6 +140,19 @@ function toSessionSummary(session: Session): SessionSummary {
         runtimeModelReasoningEffort: session.metadata.runtimeModelReasoningEffort,
         worktree: session.metadata.worktree,
         privacyMode: session.metadata.privacyMode === true ? true : undefined,
+        selfSystemEnabled: session.metadata.selfSystemEnabled === true ? true : undefined,
+        selfProfileId: typeof session.metadata.selfProfileId === 'string' ? session.metadata.selfProfileId : undefined,
+        selfProfileName: typeof session.metadata.selfProfileName === 'string' ? session.metadata.selfProfileName : undefined,
+        selfProfileResolved: session.metadata.selfProfileResolved === true ? true : undefined,
+        selfMemoryProvider: session.metadata.selfMemoryProvider === 'none' ? 'none' : session.metadata.selfMemoryProvider === 'yoho-memory' ? 'yoho-memory' : undefined,
+        selfMemoryAttached: session.metadata.selfMemoryAttached === true ? true : undefined,
+        selfMemoryStatus: session.metadata.selfMemoryStatus === 'disabled'
+            || session.metadata.selfMemoryStatus === 'skipped'
+            || session.metadata.selfMemoryStatus === 'attached'
+            || session.metadata.selfMemoryStatus === 'empty'
+            || session.metadata.selfMemoryStatus === 'error'
+            ? session.metadata.selfMemoryStatus
+            : undefined,
     } : null
 
     const todoProgress = session.todos?.length ? {
@@ -181,7 +213,8 @@ function storedSessionToSummary(stored: StoredSession): SessionSummary {
     }
 }
 
-const permissionModeValues = ['bypassPermissions', 'read-only', 'safe-yolo', 'yolo'] as const
+const permissionModeValues = SESSION_PERMISSION_MODE_VALUES
+const createSessionPermissionModeValues = ['bypassPermissions', 'read-only', 'safe-yolo', 'yolo'] as const
 const modelModeValues = ['default', 'sonnet', 'opus', 'opus-4-7', 'glm-5.1', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2-codex', 'gpt-5.2', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini'] as const
 const reasoningEffortValues = ['low', 'medium', 'high', 'xhigh'] as const
 const claudeModelValues = ['sonnet', 'opus', 'opus-4-7'] as const
@@ -203,7 +236,7 @@ const createSessionSchema = z.object({
     tokenSourceId: z.string().min(1).optional(),
     claudeModel: z.enum(claudeModelValues).optional(),
     codexModel: z.string().min(1).optional(),
-    permissionMode: z.enum(permissionModeValues).optional(),
+    permissionMode: z.enum(createSessionPermissionModeValues).optional(),
     modelMode: z.enum(modelModeValues).optional(),
     modelReasoningEffort: z.enum(reasoningEffortValues).optional(),
     source: z.string().min(1).max(100).optional(),
@@ -404,15 +437,36 @@ async function waitForSessionInactive(engine: SyncEngine, sessionId: string, tim
     })
 }
 
-async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null): Promise<void> {
+async function sendInitPrompt(
+    engine: SyncEngine,
+    store: IStore,
+    sessionId: string,
+    role: UserRole,
+    userName?: string | null,
+): Promise<void> {
     const session = engine.getSession(sessionId)
     const projectRoot = session?.metadata?.path?.trim() || null
     const source = session?.metadata?.source
     const brainPreferences = extractBrainSessionPreferencesFromMetadata((session?.metadata as Record<string, unknown> | null | undefined) ?? null)
     console.log(`[sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}, source=${source}`)
-    const prompt = source === 'brain'
+    let prompt = source === 'brain'
         ? await buildBrainInitPrompt(role, { projectRoot, userName, brainPreferences })
         : await buildInitPrompt(role, { projectRoot, userName })
+
+    if (source === 'brain' && session) {
+        const selfSystem = await resolveBrainSelfSystemContext({
+            store,
+            namespace: session.namespace,
+        })
+        prompt = appendSelfSystemPrompt(prompt, selfSystem.prompt)
+        if (typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
+            const patchResult = await engine.patchSessionMetadata(sessionId, selfSystem.metadataPatch)
+            if (!patchResult.ok) {
+                console.warn(`[sendInitPrompt] Failed to patch self system metadata for session ${sessionId}: ${patchResult.error}`)
+            }
+        }
+    }
+
     if (!prompt.trim()) {
         console.warn(`[sendInitPrompt] Empty prompt for session ${sessionId}, skipping`)
         return
@@ -441,12 +495,18 @@ async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserR
     console.error(`[sendInitPrompt] Failed for session ${sessionId} after 3 attempts:`, lastError)
 }
 
-async function sendInitPromptAfterOnline(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null): Promise<void> {
+async function sendInitPromptAfterOnline(
+    engine: SyncEngine,
+    store: IStore,
+    sessionId: string,
+    role: UserRole,
+    userName?: string | null,
+): Promise<void> {
     const isOnline = await waitForSessionOnline(engine, sessionId, 60_000)
     if (!isOnline) {
         return
     }
-    await sendInitPrompt(engine, sessionId, role, userName)
+    await sendInitPrompt(engine, store, sessionId, role, userName)
 }
 
 export async function resolveSpawnTarget(
@@ -946,7 +1006,7 @@ export function createSessionsRoutes(
                 if (orgId) {
                     await store.setSessionOrgId(result.sessionId, orgId, namespace)
                 }
-                await sendInitPrompt(engine, result.sessionId, role, userName)
+                await sendInitPrompt(engine, store, result.sessionId, role, userName)
             })()
         }
 
@@ -982,14 +1042,14 @@ export function createSessionsRoutes(
                 ? (parsed.data.codexModel ?? brainConfig?.codexModel)
                 : undefined,
         })
-        const childClaudeModels = parsed.data.childClaudeModels ?? childModelDefaults.childClaudeModels
-        const childCodexModels = parsed.data.childCodexModels ?? childModelDefaults.childCodexModels
+        const childClaudeModels = parsed.data.childClaudeModels ?? childModelDefaults.childClaudeModels ?? []
+        const childCodexModels = parsed.data.childCodexModels ?? childModelDefaults.childCodexModels ?? []
 
         // License check
         const licenseError = await checkSessionLicense(c, orgId)
         if (licenseError) return licenseError
 
-        if ((childClaudeModels?.length ?? 0) === 0 && (childCodexModels?.length ?? 0) === 0) {
+        if (childClaudeModels.length === 0 && childCodexModels.length === 0) {
             return c.json({ type: 'error', message: 'At least one child-session model must be enabled for Brain.' }, 400)
         }
 
@@ -1025,6 +1085,9 @@ export function createSessionsRoutes(
             brainTokenSourceIds[requestedAgent] = parsed.data.tokenSourceId
         }
 
+        const localEnabled = orgId
+            ? await getLocalTokenSourceEnabledForOrg(store, orgId)
+            : true
         let resolvedTokenSource: Awaited<ReturnType<typeof resolveTokenSourceForAgent>> | null = null
         const ownTokenSourceId = brainTokenSourceIds[requestedAgent]
         if (ownTokenSourceId) {
@@ -1040,11 +1103,8 @@ export function createSessionsRoutes(
             if ('error' in resolvedTokenSource) {
                 return c.json({ error: resolvedTokenSource.error }, resolvedTokenSource.status as 400 | 404)
             }
-        } else if (orgId) {
-            const localEnabled = await getLocalTokenSourceEnabledForOrg(store, orgId)
-            if (!localEnabled) {
-                return c.json({ error: 'Local Token Source is disabled for this organization' }, 400)
-            }
+        } else if (!localEnabled) {
+            return c.json({ error: 'Local Token Source is disabled for this organization' }, 400)
         }
 
         const otherAgent: 'claude' | 'codex' = requestedAgent === 'claude' ? 'codex' : 'claude'
@@ -1065,14 +1125,35 @@ export function createSessionsRoutes(
         }
 
         let result: Awaited<ReturnType<typeof engine.spawnSession>> | null = null
+        let childCapabilityFailureMessage: string | null = null
         for (const machine of compatibleMachines) {
             const homeDir = machine.metadata?.homeDir || '/tmp'
             const brainDirectory = `${homeDir}/.yoho-remote/brain-workspace`
+            const runtimeAvailability = resolveBrainChildRuntimeAvailability({
+                // Child-session capability is a Brain-level allowlist. Do not bind it
+                // to the Brain host machine, or we silently break explicit cross-machine
+                // child spawning for agents that are runnable elsewhere.
+                machineSupportedAgents: null,
+                localTokenSourceEnabled: localEnabled,
+                tokenSourceIds: brainTokenSourceIds,
+            })
+            const effectiveChildModels = filterBrainChildModelsByRuntimeAvailability({
+                availability: runtimeAvailability,
+                childClaudeModels,
+                childCodexModels,
+            })
+            if (
+                effectiveChildModels.childClaudeModels.length === 0
+                && effectiveChildModels.childCodexModels.length === 0
+            ) {
+                childCapabilityFailureMessage = 'Current Token Source / Local configuration does not provide any runnable child-session agent for this Brain'
+                continue
+            }
             const brainPreferences = buildBrainSessionPreferences({
                 machineSelectionMode: requestedMachineId ? 'manual' : 'auto',
                 machineId: machine.id,
-                childClaudeModels,
-                childCodexModels,
+                childClaudeModels: effectiveChildModels.childClaudeModels,
+                childCodexModels: effectiveChildModels.childCodexModels,
             })
             const candidate = await engine.spawnSession(
                 machine.id,
@@ -1081,7 +1162,7 @@ export function createSessionsRoutes(
                 true,        // yolo
                 {
                     source: 'brain',
-                    permissionMode: 'bypassPermissions',
+                    permissionMode: resolveBrainSpawnPermissionMode(requestedAgent),
                     tokenSourceId: resolvedTokenSource?.tokenSource.id,
                     tokenSourceName: resolvedTokenSource?.tokenSource.name,
                     tokenSourceType: resolvedTokenSource?.tokenSource.supportedAgents.includes('codex') && requestedAgent === 'codex'
@@ -1110,6 +1191,9 @@ export function createSessionsRoutes(
         }
 
         if (!result) {
+            if (childCapabilityFailureMessage) {
+                return c.json({ type: 'error', message: childCapabilityFailureMessage }, requestedMachineId ? 400 : 503)
+            }
             return c.json({ type: 'error', message: `Failed to create Brain session with agent "${requestedAgent}"` }, 503)
         }
 
@@ -1130,7 +1214,7 @@ export function createSessionsRoutes(
                 if (orgId) {
                     await store.setSessionOrgId(result.sessionId, orgId, namespace)
                 }
-                await sendInitPrompt(engine, result.sessionId, role, userName)
+                await sendInitPrompt(engine, store, result.sessionId, role, userName)
             })()
         }
 
@@ -1357,12 +1441,20 @@ export function createSessionsRoutes(
             return sessionResult
         }
 
-        const shouldTerminate = sessionResult.session.active
         const forceParam = c.req.query('force')
         const force = forceParam === '1' || forceParam === 'true'
+        const purgeParam = c.req.query('purge')
+        const purge = purgeParam === '1' || purgeParam === 'true'
         try {
-            const deleted = await engine.deleteSession(sessionResult.sessionId, { terminateSession: shouldTerminate, force })
-            if (!deleted) {
+            const ok = purge
+                ? await engine.deleteSession(sessionResult.sessionId, { terminateSession: true, force })
+                : await engine.archiveSession(sessionResult.sessionId, {
+                    terminateSession: true,
+                    force,
+                    archivedBy: 'user',
+                    archiveReason: 'User archived session',
+                })
+            if (!ok) {
                 return c.json({ error: 'Session not found' }, 404)
             }
             return c.json({ ok: true })
@@ -1447,9 +1539,16 @@ export function createSessionsRoutes(
 
         // Preserve mode settings from original session
         const modeSettings = {
-            permissionMode: session.permissionMode,
+            permissionMode: normalizeSessionPermissionMode({
+                flavor: session.metadata?.flavor,
+                permissionMode: session.permissionMode,
+                metadata: session.metadata,
+            }),
             modelMode: session.modelMode,
             modelReasoningEffort: session.modelReasoningEffort
+        }
+        if (hasInvalidResumeBrainPreferences(session.metadata)) {
+            return c.json({ error: 'Session has invalid brainPreferences metadata; repair it before resuming' }, 409)
         }
         const resumeMetadata = extractResumeSpawnMetadata(session.metadata)
         const { yolo: resumeYolo, ...resumeExtras } = extractResumeSpawnExtras(session.metadata)
@@ -1561,7 +1660,7 @@ export function createSessionsRoutes(
 
         const role = c.get('role')  // Role from Keycloak token
         const userName = c.get('name')
-        await sendInitPrompt(engine, newSessionId, role, userName)
+        await sendInitPrompt(engine, store, newSessionId, role, userName)
 
         if (!resumeSessionId) {
             const page = await engine.getMessagesPage(sessionId, { limit: RESUME_CONTEXT_MAX_LINES * 2, beforeSeq: null })
@@ -1621,9 +1720,16 @@ export function createSessionsRoutes(
 
         // Preserve mode settings from original session
         const modeSettings = {
-            permissionMode: session.permissionMode,
+            permissionMode: normalizeSessionPermissionMode({
+                flavor: session.metadata?.flavor,
+                permissionMode: session.permissionMode,
+                metadata: session.metadata,
+            }),
             modelMode: session.modelMode,
             modelReasoningEffort: session.modelReasoningEffort
+        }
+        if (hasInvalidResumeBrainPreferences(session.metadata)) {
+            return c.json({ error: 'Session has invalid brainPreferences metadata; repair it before refreshing account' }, 409)
         }
         const resumeMetadata = extractResumeSpawnMetadata(session.metadata)
         const { yolo: refreshYolo, ...refreshExtras } = extractResumeSpawnExtras(session.metadata)
@@ -1715,7 +1821,7 @@ export function createSessionsRoutes(
         if (!resumeSessionId || !resumeVerified) {
             const role = c.get('role')
             const userName = c.get('name')
-            await sendInitPrompt(engine, sessionId, role, userName)
+            await sendInitPrompt(engine, store, sessionId, role, userName)
 
             const page = await engine.getMessagesPage(sessionId, { limit: RESUME_CONTEXT_MAX_LINES * 2, beforeSeq: null })
             const contextMessage = buildResumeContextMessage(session, page.messages)

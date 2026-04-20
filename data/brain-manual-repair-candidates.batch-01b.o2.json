@@ -1,0 +1,68 @@
+{
+  "generatedAt": "2026-04-18",
+  "decision": "B 组仅保留为候补，不进入本次 manifest",
+  "selectionRule": "Track A=medium 且 Track B=high 且 group=with-child-evidence",
+  "count": 12,
+  "items": [
+    {
+      "sessionId": "916165ae-fb01-4359-8468-d9fda0eaa3c6",
+      "summary": "飞书群: Yoho 技术 · 03/31 01:01",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+    },
+    {
+      "sessionId": "1be1fbb2-33a9-4ac9-9239-d3129a73df03",
+      "summary": "Yoho Remote Org API Key 关联记录",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+    },
+    {
+      "sessionId": "2843fd42-a0e9-418c-be13-75921260fc02",
+      "summary": "飞书群: AI硬件创业机会 · 03/31 22:37",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+    },
+    {
+      "sessionId": "c83d66d0-bf5d-47f1-819f-a4e4b3c7ee10",
+      "summary": "飞书: 与Hao Chen的对话 · 04/01 00:18",
+      "machineId": "e16b3653-ad9f-46a7-89fd-48a3d576cccb"
+    },
+    {
+      "sessionId": "372d3ff0-8563-4d9a-9ab5-03da850a82da",
+      "summary": "飞书: 与杨柳岸的对话 · 04/11 11:37",
+      "machineId": "a95e8107-9b9f-42d6-bd4d-09f2f9a4d497"
+    },
+    {
+      "sessionId": "cbfb6599-d424-4291-a0cd-3f3d6815de50",
+      "summary": "飞书: 与杨柳岸的对话 · 04/11 13:08",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+    },
+    {
+      "sessionId": "2d5c6fbd-a6a0-45f7-a6e5-8f0d9d26cc29",
+      "summary": "飞书群: Yoho 技术 · 04/11 14:37",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+    },
+    {
+      "sessionId": "da348251-c8ba-492a-9abf-5ec7eccff807",
+      "summary": "飞书群: K1魔鬼训练营 · 04/11 15:11",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+    },
+    {
+      "sessionId": "5361fa5d-7079-46c8-b720-c76b9c386865",
+      "summary": "飞书群: K1魔鬼训练营 · 04/11 15:35",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+    },
+    {
+      "sessionId": "cb352e49-90bd-469a-ae21-bc7de664587f",
+      "summary": "飞书群: K1魔鬼训练营 · 04/11 15:41",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+    },
+    {
+      "sessionId": "572f27a5-e7ea-4c78-94be-3fb19ff2cc11",
+      "summary": "飞书群: K1魔鬼训练营 · 04/11 21:07",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+    },
+    {
+      "sessionId": "9af4d046-cb18-44a7-8ab6-051cb596cc6d",
+      "summary": "飞书群: K1魔鬼训练营 · 04/12 11:39",
+      "machineId": "54d7dbe3-6035-4819-9613-1dbf510894d0"
+    }
+  ]
+}

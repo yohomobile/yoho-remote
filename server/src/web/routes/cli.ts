@@ -17,8 +17,20 @@ import {
     resolveSpawnTarget,
     waitForSessionOnline,
 } from './sessions'
-import { extractResumeSpawnExtras, extractResumeSpawnMetadata, resolveResumeTokenSourceSpawnOptions } from '../../resumeSpawnMetadata'
+import {
+    extractResumeSpawnExtras,
+    extractResumeSpawnMetadata,
+    hasInvalidResumeBrainPreferences,
+    resolveResumeTokenSourceSpawnOptions,
+} from '../../resumeSpawnMetadata'
+import {
+    getAllowedBrainChildAgents,
+    parseBrainSessionPreferences,
+    resolveBrainSpawnPermissionMode,
+} from '../../brain/brainSessionPreferences'
+import { SESSION_PERMISSION_MODE_VALUES, normalizeSessionPermissionMode } from '../../sessionPermissionMode'
 import { getLocalTokenSourceEnabledForOrg, resolveTokenSourceForAgent } from '../tokenSources'
+import { validatePermissionModeForSessionFlavor } from './sessionConfigPolicy'
 import {
     getUnsupportedSessionSourceError,
     getSessionSourceFromMetadata,
@@ -49,7 +61,8 @@ const createOrLoadMachineSchema = z.object({
 
 const cliSendMessageSchema = z.object({
     text: z.string().min(1),
-    sentFrom: z.string().optional()
+    sentFrom: z.string().optional(),
+    localId: z.string().min(1).optional(),
 })
 
 type SessionSendResponse =
@@ -62,7 +75,7 @@ type SessionSendResponse =
         ok: true
         status: 'queued'
         sessionId: string
-        queue: 'brain-child-init'
+        queue: 'brain-child-init' | 'brain-session-inbox'
         queueDepth: number
     }
     | {
@@ -79,11 +92,21 @@ const getMessagesQuerySchema = z.object({
     limit: z.coerce.number().int().min(1).max(200).optional()
 })
 
-const tailQuerySchema = z.object({
-    limit: z.coerce.number().int().min(1).max(20).optional()
+const brainChildScopeQuerySchema = z.object({
+    mainSessionId: z.string().trim().min(1),
 })
 
 const booleanQuerySchema = z.union([z.literal('true'), z.literal('false')]).transform((value) => value === 'true')
+
+const listSessionsQuerySchema = z.object({
+    includeOffline: booleanQuerySchema.optional(),
+    mainSessionId: z.string().trim().min(1).optional(),
+})
+
+const tailQuerySchema = z.object({
+    mainSessionId: z.string().trim().min(1),
+    limit: z.coerce.number().int().min(1).max(20).optional()
+})
 
 const sessionSearchQuerySchema = z.object({
     query: z.string().trim().min(1),
@@ -123,7 +146,7 @@ type CliEnv = {
 }
 
 const cliSessionConfigSchema = z.object({
-    permissionMode: z.enum(['bypassPermissions', 'read-only', 'safe-yolo', 'yolo']).optional(),
+    permissionMode: z.enum(SESSION_PERMISSION_MODE_VALUES).optional(),
     model: z.string().min(1).optional(),
     reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
     fastMode: z.boolean().optional(),
@@ -186,6 +209,13 @@ type BrainSessionInspectPayload = {
         machineId: string | null
         flavor: string | null
         mainSessionId: string | null
+        selfSystemEnabled: boolean | null
+        selfProfileId: string | null
+        selfProfileName: string | null
+        selfProfileResolved: boolean | null
+        selfMemoryProvider: 'yoho-memory' | 'none' | null
+        selfMemoryAttached: boolean | null
+        selfMemoryStatus: 'disabled' | 'skipped' | 'attached' | 'empty' | 'error' | null
     }
 }
 
@@ -224,6 +254,13 @@ type BrainSessionSearchPayload = {
             machineId: string | null
             flavor: string | null
             mainSessionId: string | null
+            selfSystemEnabled: boolean | null
+            selfProfileId: string | null
+            selfProfileName: string | null
+            selfProfileResolved: boolean | null
+            selfMemoryProvider: 'yoho-memory' | 'none' | null
+            selfMemoryAttached: boolean | null
+            selfMemoryStatus: 'disabled' | 'skipped' | 'attached' | 'empty' | 'error' | null
         }
         match: {
             source: 'turn-summary' | 'brain-summary' | 'title' | 'path'
@@ -233,6 +270,20 @@ type BrainSessionSearchPayload = {
             seqEnd: number | null
         }
     }>
+}
+
+type SpawnLogLike = {
+    timestamp: number
+    step: string
+    message: string
+    status: string
+}
+
+type SpawnPerfSummary = {
+    daemonTotalMs: number | null
+    daemonPrepMs: number | null
+    daemonCliSpawnMs: number | null
+    daemonWebhookMs: number | null
 }
 
 function getContextBudget(modelMode?: string): number {
@@ -249,6 +300,36 @@ function getContextBudget(modelMode?: string): number {
     return (windows[modelMode ?? 'default'] ?? 1_000_000) - HEADROOM
 }
 
+function getSelfSystemInspectMetadata(metadata: Record<string, unknown> | null | undefined): {
+    selfSystemEnabled: boolean | null
+    selfProfileId: string | null
+    selfProfileName: string | null
+    selfProfileResolved: boolean | null
+    selfMemoryProvider: 'yoho-memory' | 'none' | null
+    selfMemoryAttached: boolean | null
+    selfMemoryStatus: 'disabled' | 'skipped' | 'attached' | 'empty' | 'error' | null
+} {
+    return {
+        selfSystemEnabled: metadata?.selfSystemEnabled === true ? true : metadata?.selfSystemEnabled === false ? false : null,
+        selfProfileId: asNonEmptyString(metadata?.selfProfileId) ?? null,
+        selfProfileName: asNonEmptyString(metadata?.selfProfileName) ?? null,
+        selfProfileResolved: metadata?.selfProfileResolved === true ? true : metadata?.selfProfileResolved === false ? false : null,
+        selfMemoryProvider: metadata?.selfMemoryProvider === 'none'
+            ? 'none'
+            : metadata?.selfMemoryProvider === 'yoho-memory'
+                ? 'yoho-memory'
+                : null,
+        selfMemoryAttached: metadata?.selfMemoryAttached === true ? true : metadata?.selfMemoryAttached === false ? false : null,
+        selfMemoryStatus: metadata?.selfMemoryStatus === 'disabled'
+            || metadata?.selfMemoryStatus === 'skipped'
+            || metadata?.selfMemoryStatus === 'attached'
+            || metadata?.selfMemoryStatus === 'empty'
+            || metadata?.selfMemoryStatus === 'error'
+            ? metadata.selfMemoryStatus
+            : null,
+    }
+}
+
 function asNonEmptyString(value: unknown): string | undefined {
     if (typeof value !== 'string') {
         return undefined
@@ -262,6 +343,58 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
         return undefined
     }
     return { ...(value as Record<string, unknown>) }
+}
+
+function asSpawnLogs(value: unknown): SpawnLogLike[] {
+    if (!Array.isArray(value)) {
+        return []
+    }
+    return value.flatMap((item) => {
+        const entry = asRecord(item)
+        if (!entry) {
+            return []
+        }
+        const timestamp = typeof entry.timestamp === 'number' && Number.isFinite(entry.timestamp)
+            ? entry.timestamp
+            : null
+        const step = asNonEmptyString(entry.step) ?? null
+        const message = asNonEmptyString(entry.message) ?? null
+        const status = asNonEmptyString(entry.status) ?? null
+        if (timestamp === null || !step || !message || !status) {
+            return []
+        }
+        return [{ timestamp, step, message, status }]
+    })
+}
+
+function summarizeSpawnLogs(value: unknown): SpawnPerfSummary {
+    const logs = asSpawnLogs(value)
+    if (logs.length === 0) {
+        return {
+            daemonTotalMs: null,
+            daemonPrepMs: null,
+            daemonCliSpawnMs: null,
+            daemonWebhookMs: null,
+        }
+    }
+
+    const first = logs[0]
+    const last = logs[logs.length - 1]
+    const spawnStart = logs.find((entry) => entry.step === 'spawn' && entry.status === 'running')
+    const spawnEnd = logs.find((entry) => entry.step === 'spawn' && entry.status !== 'running')
+    const webhookStart = logs.find((entry) => entry.step === 'webhook' && entry.status === 'running')
+    const webhookEnd = logs.find((entry) => entry.step === 'webhook' && entry.status !== 'running')
+
+    return {
+        daemonTotalMs: Math.max(0, last.timestamp - first.timestamp),
+        daemonPrepMs: spawnStart ? Math.max(0, spawnStart.timestamp - first.timestamp) : null,
+        daemonCliSpawnMs: spawnStart && spawnEnd ? Math.max(0, spawnEnd.timestamp - spawnStart.timestamp) : null,
+        daemonWebhookMs: webhookStart && webhookEnd ? Math.max(0, webhookEnd.timestamp - webhookStart.timestamp) : null,
+    }
+}
+
+function formatPerfMs(value: number | null): string {
+    return value === null ? 'n/a' : `${value}ms`
 }
 
 function clipText(value: string, maxChars: number = 600): string {
@@ -786,6 +919,7 @@ async function buildBrainSessionInspectPayload(engine: SyncEngine, session: Sess
             remainingPercent: Math.max(0, Math.round((1 - lastUsage.contextSize / contextBudget) * 100)),
         }
         : null
+    const metadataRecord = asRecord(session.metadata)
 
     return {
         sessionId: session.id,
@@ -800,7 +934,11 @@ async function buildBrainSessionInspectPayload(engine: SyncEngine, session: Sess
         messageCount,
         pendingRequestsCount: pendingRequests.length,
         pendingRequests,
-        permissionMode: session.permissionMode,
+        permissionMode: normalizeSessionPermissionMode({
+            flavor: session.metadata?.flavor,
+            permissionMode: session.permissionMode,
+            metadata: session.metadata,
+        }),
         modelMode: session.modelMode,
         modelReasoningEffort: session.modelReasoningEffort,
         runtimeAgent: asNonEmptyString(session.metadata?.runtimeAgent) ?? asNonEmptyString(session.metadata?.flavor) ?? null,
@@ -816,12 +954,13 @@ async function buildBrainSessionInspectPayload(engine: SyncEngine, session: Sess
         metadata: {
             path: asNonEmptyString(session.metadata?.path) ?? null,
             summary: session.metadata?.summary ?? null,
-            brainSummary: asNonEmptyString(asRecord(session.metadata)?.brainSummary) ?? null,
+            brainSummary: asNonEmptyString(metadataRecord?.brainSummary) ?? null,
             source: asNonEmptyString(session.metadata?.source) ?? null,
-            caller: asNonEmptyString(asRecord(session.metadata)?.caller) ?? null,
+            caller: asNonEmptyString(metadataRecord?.caller) ?? null,
             machineId: asNonEmptyString(session.metadata?.machineId) ?? null,
             flavor: asNonEmptyString(session.metadata?.flavor) ?? null,
-            mainSessionId: asNonEmptyString(asRecord(session.metadata)?.mainSessionId) ?? null,
+            mainSessionId: asNonEmptyString(metadataRecord?.mainSessionId) ?? null,
+            ...getSelfSystemInspectMetadata(metadataRecord),
         },
     }
 }
@@ -872,10 +1011,14 @@ function buildBrainSessionSearchPayload(args: {
                 updatedAt: memorySession?.updatedAt ?? item.session.updatedAt,
                 lastMessageAt: memorySession?.lastMessageAt ?? item.session.lastMessageAt,
                 pendingRequestsCount: requests ? Object.keys(requests).length : 0,
-                permissionMode: memorySession?.permissionMode ?? item.session.permissionMode,
-                modelMode: memorySession?.modelMode ?? item.session.modelMode,
-                modelReasoningEffort: memorySession?.modelReasoningEffort ?? item.session.modelReasoningEffort,
-                fastMode: memorySession?.fastMode ?? item.session.fastMode,
+                permissionMode: normalizeSessionPermissionMode({
+                    flavor: metadata?.flavor,
+                    permissionMode: memorySession?.permissionMode ?? item.session.permissionMode,
+                    metadata,
+                }) ?? null,
+                modelMode: memorySession?.modelMode ?? item.session.modelMode ?? null,
+                modelReasoningEffort: memorySession?.modelReasoningEffort ?? item.session.modelReasoningEffort ?? null,
+                fastMode: memorySession?.fastMode ?? item.session.fastMode ?? null,
                 metadata: {
                     path: asNonEmptyString(metadata?.path) ?? null,
                     summary: summaryRecord && typeof summaryRecord.text === 'string'
@@ -890,6 +1033,7 @@ function buildBrainSessionSearchPayload(args: {
                     machineId: asNonEmptyString(metadata?.machineId) ?? null,
                     flavor: asNonEmptyString(metadata?.flavor) ?? null,
                     mainSessionId: asNonEmptyString(metadata?.mainSessionId) ?? null,
+                    ...getSelfSystemInspectMetadata(metadata),
                 },
                 match: {
                     source: item.match.source,
@@ -918,7 +1062,7 @@ async function checkCliSessionLicense(c: { json: (data: any, status: number) => 
 type CliSessionConfigInput = z.infer<typeof cliSessionConfigSchema>
 
 type CliSessionConfig = {
-    permissionMode?: 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
+    permissionMode?: typeof SESSION_PERMISSION_MODE_VALUES[number]
     modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'glm-5.1' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.2' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini'
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     fastMode?: boolean
@@ -934,13 +1078,15 @@ function validateCliSessionConfig(
     const flavor = session.metadata?.flavor ?? 'claude'
     const config: CliSessionConfig = {}
 
-    if (flavor === 'claude') {
-        if (input.permissionMode !== undefined) {
-            if (input.permissionMode !== 'bypassPermissions') {
-                return { ok: false, error: 'Claude sessions only support permissionMode=bypassPermissions' }
-            }
-            config.permissionMode = input.permissionMode
+    if (input.permissionMode !== undefined) {
+        const permissionModeValidation = validatePermissionModeForSessionFlavor(flavor, input.permissionMode)
+        if (!permissionModeValidation.ok) {
+            return permissionModeValidation
         }
+        config.permissionMode = input.permissionMode
+    }
+
+    if (flavor === 'claude') {
         if (input.model !== undefined) {
             if (!CLAUDE_CONFIG_MODELS.has(input.model)) {
                 return { ok: false, error: 'Invalid model for Claude sessions' }
@@ -957,12 +1103,6 @@ function validateCliSessionConfig(
     }
 
     if (flavor === 'codex') {
-        if (input.permissionMode !== undefined) {
-            if (input.permissionMode === 'bypassPermissions') {
-                return { ok: false, error: 'Codex sessions do not support permissionMode=bypassPermissions' }
-            }
-            config.permissionMode = input.permissionMode
-        }
         if (input.model !== undefined) {
             if (!CODEX_CONFIG_MODELS.has(input.model)) {
                 return { ok: false, error: 'Invalid model for Codex sessions' }
@@ -1042,6 +1182,52 @@ function resolveMachineForNamespace(
         return { ok: false, status: 403, error: 'Machine access denied' }
     }
     return { ok: false, status: 404, error: 'Machine not found' }
+}
+
+function getSessionMetadataSource(session: Session): string | undefined {
+    const metadata = asRecord(session.metadata)
+    return asNonEmptyString(metadata?.source)
+}
+
+function getSessionMetadataMainSessionId(session: Session): string | undefined {
+    const metadata = asRecord(session.metadata)
+    return asNonEmptyString(metadata?.mainSessionId)
+}
+
+function isBrainMainSession(session: Session): boolean {
+    return getSessionMetadataSource(session) === 'brain'
+}
+
+function isBrainChildSessionForMain(session: Session, mainSessionId: string): boolean {
+    return getSessionMetadataSource(session) === 'brain-child'
+        && getSessionMetadataMainSessionId(session) === mainSessionId
+}
+
+function resolveBrainChildSessionForMain(
+    engine: SyncEngine,
+    sessionId: string,
+    namespace: string,
+    mainSessionId: string,
+): { ok: true; session: Session } | { ok: false; status: 403 | 404; error: string } {
+    const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+    if (!resolved.ok) {
+        return resolved
+    }
+
+    const mainResolved = resolveSessionForNamespace(engine, mainSessionId, namespace)
+    if (!mainResolved.ok) {
+        return mainResolved
+    }
+
+    if (!isBrainMainSession(mainResolved.session)) {
+        return { ok: false, status: 403, error: 'mainSessionId must reference a brain session' }
+    }
+
+    if (!isBrainChildSessionForMain(resolved.session, mainSessionId)) {
+        return { ok: false, status: 403, error: 'Session access denied' }
+    }
+
+    return resolved
 }
 
 function toSessionSendResponse(sessionId: string, outcome: SendMessageOutcome): SessionSendResponse {
@@ -1216,7 +1402,21 @@ export function createCliRoutes(
             return c.json(offline)
         }
 
-        if (resolved.session.thinking) {
+        const sessionSource = getSessionSourceFromMetadata(resolved.session.metadata)
+        const allowBrainInboxQueue = sessionSource === 'brain'
+
+        const idempotencyKey = c.req.header('idempotency-key')?.trim()
+            || c.req.header('x-idempotency-key')?.trim()
+            || undefined
+        const requestLocalId = parsed.data.localId ?? idempotencyKey
+
+        if (resolved.session.thinking && !allowBrainInboxQueue) {
+            if (requestLocalId) {
+                const duplicateOutcome = engine.getSendOutcomeForCachedLocalId(sessionId, requestLocalId)
+                if (duplicateOutcome) {
+                    return c.json(toSessionSendResponse(sessionId, duplicateOutcome))
+                }
+            }
             const busy: SessionSendResponse = {
                 ok: false,
                 status: 'busy',
@@ -1228,6 +1428,7 @@ export function createCliRoutes(
 
         const outcome = await engine.sendMessage(sessionId, {
             text: parsed.data.text,
+            localId: requestLocalId,
             sentFrom: parsed.data.sentFrom || 'webapp'
         })
         const response: SessionSendResponse = toSessionSendResponse(sessionId, outcome)
@@ -1301,9 +1502,16 @@ export function createCliRoutes(
         }
 
         const modeSettings = {
-            permissionMode: session.permissionMode,
+            permissionMode: normalizeSessionPermissionMode({
+                flavor: session.metadata?.flavor,
+                permissionMode: session.permissionMode,
+                metadata: session.metadata,
+            }),
             modelMode: session.modelMode,
             modelReasoningEffort: session.modelReasoningEffort,
+        }
+        if (hasInvalidResumeBrainPreferences(session.metadata)) {
+            return c.json({ error: 'Session has invalid brainPreferences metadata; repair it before resuming' }, 409)
         }
         const resumeMetadata = extractResumeSpawnMetadata(session.metadata)
         const { yolo: resumeYolo, ...resumeExtras } = extractResumeSpawnExtras(session.metadata)
@@ -1610,13 +1818,32 @@ export function createCliRoutes(
         }
         const mainSessionMetadata = asRecord(mainSession?.metadata) ?? asRecord(liveMainSession?.metadata)
         const effectiveCaller = asNonEmptyString(parsed.data.caller) ?? asNonEmptyString(mainSessionMetadata?.caller)
-        const effectiveBrainPreferences = asRecord(parsed.data.brainPreferences) ?? asRecord(mainSessionMetadata?.brainPreferences)
+        const requestedBrainPreferences = parsed.data.brainPreferences === undefined
+            ? undefined
+            : parseBrainSessionPreferences(parsed.data.brainPreferences)
+        if (parsed.data.brainPreferences !== undefined && !requestedBrainPreferences) {
+            return c.json({ error: 'Invalid brainPreferences in request body' }, 400)
+        }
+        const inheritedBrainPreferences = mainSessionMetadata?.brainPreferences === undefined
+            ? undefined
+            : parseBrainSessionPreferences(mainSessionMetadata.brainPreferences)
+        if (requestedBrainPreferences === undefined && mainSessionMetadata?.brainPreferences !== undefined && !inheritedBrainPreferences) {
+            return c.json({ error: 'Parent brain session has invalid brainPreferences metadata; repair it before spawning children' }, 409)
+        }
+        const effectiveBrainPreferences = (requestedBrainPreferences ?? inheritedBrainPreferences) ?? undefined
+        const parsedBrainPreferences = effectiveBrainPreferences
 
         const childAgent: 'claude' | 'codex' = parsed.data.agent ?? 'claude'
         const brainOrgId = mainSession?.orgId ?? machineResolved.machine.orgId ?? null
 
         // brain-child only: spawned with `source: 'brain-child'`. Non-Brain callers skip token-source inheritance and Local-disabled checks.
         const isBrainChildSpawn = parsed.data.source === 'brain-child'
+        if (isBrainChildSpawn && parsedBrainPreferences) {
+            const allowedChildAgents = getAllowedBrainChildAgents(parsedBrainPreferences)
+            if (!allowedChildAgents.includes(childAgent)) {
+                return c.json({ error: `Brain does not allow child agent "${childAgent}"` }, 400)
+            }
+        }
 
         // Machine-agent compatibility guard: validate here rather than letting spawnSession fail late.
         // Even for non-brain-child flows this protects against inherited/selected agent mismatches.
@@ -1654,6 +1881,7 @@ export function createCliRoutes(
             // Legacy Brain (no brainTokenSourceIds) with no matching legacy TS: grandfathered — child falls back to Local.
         }
 
+        const spawnStartedAt = Date.now()
         const result = await engine.spawnSession(
             parsed.data.machineId,
             parsed.data.directory,
@@ -1663,8 +1891,8 @@ export function createCliRoutes(
                 source: parsed.data.source,
                 mainSessionId: parsed.data.mainSessionId,
                 caller: effectiveCaller,
-                brainPreferences: effectiveBrainPreferences,
-                permissionMode: 'bypassPermissions',
+                brainPreferences: effectiveBrainPreferences ?? undefined,
+                permissionMode: resolveBrainSpawnPermissionMode(childAgent),
                 modelMode: effectiveModelMode as any,
                 codexModel: parsed.data.codexModel,
                 tokenSourceId: inheritedTokenSource && 'tokenSource' in inheritedTokenSource ? inheritedTokenSource.tokenSource.id : undefined,
@@ -1674,6 +1902,27 @@ export function createCliRoutes(
                 tokenSourceApiKey: inheritedTokenSource && 'tokenSource' in inheritedTokenSource ? inheritedTokenSource.tokenSource.apiKey : undefined,
             }
         )
+        const engineSpawnMs = Date.now() - spawnStartedAt
+        const perf = summarizeSpawnLogs('logs' in result ? result.logs : undefined)
+        const rpcOverheadMs = perf.daemonTotalMs === null
+            ? null
+            : Math.max(0, engineSpawnMs - perf.daemonTotalMs)
+
+        if (result.type === 'success') {
+            console.log(
+                `[brain/spawn-perf] session=${result.sessionId} machine=${parsed.data.machineId.slice(0, 8)} ` +
+                `agent=${childAgent} engine=${engineSpawnMs}ms rpc_overhead=${formatPerfMs(rpcOverheadMs)} ` +
+                `daemon_total=${formatPerfMs(perf.daemonTotalMs)} daemon_prep=${formatPerfMs(perf.daemonPrepMs)} ` +
+                `daemon_cli_spawn=${formatPerfMs(perf.daemonCliSpawnMs)} daemon_webhook=${formatPerfMs(perf.daemonWebhookMs)}`
+            )
+        } else {
+            console.warn(
+                `[brain/spawn-perf] machine=${parsed.data.machineId.slice(0, 8)} agent=${childAgent} ` +
+                `outcome=${result.type} engine=${engineSpawnMs}ms rpc_overhead=${formatPerfMs(rpcOverheadMs)} ` +
+                `daemon_total=${formatPerfMs(perf.daemonTotalMs)} daemon_prep=${formatPerfMs(perf.daemonPrepMs)} ` +
+                `daemon_cli_spawn=${formatPerfMs(perf.daemonCliSpawnMs)} daemon_webhook=${formatPerfMs(perf.daemonWebhookMs)}`
+            )
+        }
 
         // Inherit org_id from main (brain) session
         if (result.type === 'success' && parsed.data.mainSessionId && store) {
@@ -1725,21 +1974,39 @@ export function createCliRoutes(
         return c.json(result)
     })
 
-    // Brain: list all sessions in namespace
+    // Brain: list sessions, optionally scoped to one main Brain's child sessions
     app.get('/sessions', async (c) => {
         const engine = getSyncEngine()
         if (!engine) {
             return c.json({ error: 'Not ready' }, 503)
         }
         const namespace = c.get('namespace')
-        const includeOffline = c.req.query('includeOffline') === 'true'
+        const parsed = listSessionsQuerySchema.safeParse(c.req.query())
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid query', details: parsed.error.issues }, 400)
+        }
+
         const allSessions = engine.getSessionsByNamespace(namespace)
-        const sessions = includeOffline ? allSessions : allSessions.filter(s => s.active)
+        let scopedSessions = allSessions
+
+        if (parsed.data.mainSessionId) {
+            const mainResolved = resolveSessionForNamespace(engine, parsed.data.mainSessionId, namespace)
+            if (!mainResolved.ok) {
+                return c.json({ error: mainResolved.error }, mainResolved.status)
+            }
+            if (!isBrainMainSession(mainResolved.session)) {
+                return c.json({ error: 'mainSessionId must reference a brain session' }, 403)
+            }
+            scopedSessions = allSessions.filter((session) => isBrainChildSessionForMain(session, parsed.data.mainSessionId!))
+        }
+
+        const sessions = parsed.data.includeOffline ? scopedSessions : scopedSessions.filter(s => s.active)
         const summaries = sessions.map(s => ({
             id: s.id,
             active: s.active,
             activeAt: s.activeAt,
             thinking: s.thinking ?? false,
+            initDone: s.metadata?.source === 'brain-child' ? engine.isBrainChildInitDone(s.id) : true,
             modelMode: s.modelMode ?? 'default',
             pendingRequestsCount: s.agentState?.requests ? Object.keys(s.agentState.requests).length : 0,
             metadata: s.metadata ? {
@@ -1767,8 +2034,17 @@ export function createCliRoutes(
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
-        const deleted = await engine.deleteSession(sessionId, { terminateSession: true, force: true })
-        return c.json({ ok: deleted })
+        const purgeParam = c.req.query('purge')
+        const purge = purgeParam === '1' || purgeParam === 'true'
+        const ok = purge
+            ? await engine.deleteSession(sessionId, { terminateSession: true, force: true })
+            : await engine.archiveSession(sessionId, {
+                terminateSession: true,
+                force: true,
+                archivedBy: 'brain',
+                archiveReason: 'Brain closed session',
+            })
+        return c.json({ ok })
     })
 
     // Brain: patch metadata on a child session
@@ -1842,7 +2118,11 @@ export function createCliRoutes(
         }
         const sessionId = c.req.param('id')
         const namespace = c.get('namespace')
-        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        const parsed = brainChildScopeQuerySchema.safeParse(c.req.query())
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid query', details: parsed.error.issues }, 400)
+        }
+        const resolved = resolveBrainChildSessionForMain(engine, sessionId, namespace, parsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
@@ -1858,14 +2138,14 @@ export function createCliRoutes(
         }
         const sessionId = c.req.param('id')
         const namespace = c.get('namespace')
-        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
-        if (!resolved.ok) {
-            return c.json({ error: resolved.error }, resolved.status)
-        }
-
         const parsed = tailQuerySchema.safeParse(c.req.query())
         if (!parsed.success) {
-            return c.json({ error: 'Invalid query' }, 400)
+            return c.json({ error: 'Invalid query', details: parsed.error.issues }, 400)
+        }
+
+        const resolved = resolveBrainChildSessionForMain(engine, sessionId, namespace, parsed.data.mainSessionId)
+        if (!resolved.ok) {
+            return c.json({ error: resolved.error }, resolved.status)
         }
 
         const limit = parsed.data.limit ?? 6
@@ -2074,7 +2354,11 @@ export function createCliRoutes(
         }
         const sessionId = c.req.param('id')
         const namespace = c.get('namespace')
-        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        const parsed = brainChildScopeQuerySchema.safeParse(c.req.query())
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid query', details: parsed.error.issues }, 400)
+        }
+        const resolved = resolveBrainChildSessionForMain(engine, sessionId, namespace, parsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }

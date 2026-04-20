@@ -183,6 +183,105 @@ describe('ApiClient.brainSpawnSession', () => {
         )
     })
 
+    it('accepts queued brain-session-inbox delivery verdicts from the CLI send endpoint', async () => {
+        const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({
+            data: {
+                ok: true,
+                status: 'queued',
+                sessionId: 'brain-session',
+                queue: 'brain-session-inbox',
+                queueDepth: 2,
+            },
+        } as any)
+
+        const client = Object.create(ApiClient.prototype) as ApiClient
+        ;(client as any).token = 'test-token'
+
+        const result = await client.sendMessageToSession('brain-session', '继续处理', 'webapp')
+
+        expect(result).toEqual({
+            ok: true,
+            status: 'queued',
+            sessionId: 'brain-session',
+            queue: 'brain-session-inbox',
+            queueDepth: 2,
+        })
+        expect(postSpy).toHaveBeenCalledWith(
+            expect.stringContaining('/cli/sessions/brain-session/messages'),
+            {
+                text: '继续处理',
+                sentFrom: 'webapp',
+            },
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer test-token',
+                    'Content-Type': 'application/json',
+                    'idempotency-key': expect.any(String),
+                }),
+            })
+        )
+    })
+
+    it('passes mainSessionId when listing child sessions for a brain', async () => {
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({
+            data: {
+                sessions: [],
+            },
+        } as any)
+
+        const client = Object.create(ApiClient.prototype) as ApiClient
+        ;(client as any).token = 'test-token'
+
+        const result = await client.listSessions({ includeOffline: true, mainSessionId: 'brain-main' })
+
+        expect(result).toEqual({ sessions: [] })
+        expect(getSpy).toHaveBeenCalledWith(
+            expect.stringContaining('/cli/sessions?includeOffline=true&mainSessionId=brain-main'),
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer test-token',
+                    'Content-Type': 'application/json',
+                }),
+            })
+        )
+    })
+
+    it('passes mainSessionId to the CLI status endpoint', async () => {
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({
+            data: {
+                active: true,
+                thinking: false,
+                initDone: true,
+                messageCount: 2,
+                lastUsage: null,
+                metadata: null,
+            },
+        } as any)
+
+        const client = Object.create(ApiClient.prototype) as ApiClient
+        ;(client as any).token = 'test-token'
+
+        const result = await client.getSessionStatus('child-session', { mainSessionId: 'brain-main' })
+
+        expect(result).toEqual({
+            active: true,
+            thinking: false,
+            initDone: true,
+            messageCount: 2,
+            lastUsage: null,
+            metadata: null,
+        })
+        expect(getSpy).toHaveBeenCalledWith(
+            expect.stringContaining('/cli/sessions/child-session/status?mainSessionId=brain-main'),
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer test-token',
+                    'Content-Type': 'application/json',
+                }),
+            })
+        )
+    })
+
     it('gets orchestration-focused inspect data from the CLI inspect endpoint', async () => {
         const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({
             data: {
@@ -196,7 +295,7 @@ describe('ApiClient.brainSpawnSession', () => {
         const client = Object.create(ApiClient.prototype) as ApiClient
         ;(client as any).token = 'test-token'
 
-        const result = await client.getSessionInspect('child-session')
+        const result = await client.getSessionInspect('child-session', { mainSessionId: 'brain-main' })
 
         expect(result).toEqual({
             sessionId: 'child-session',
@@ -205,7 +304,7 @@ describe('ApiClient.brainSpawnSession', () => {
             todoProgress: { completed: 1, total: 2 },
         })
         expect(getSpy).toHaveBeenCalledWith(
-            expect.stringContaining('/cli/sessions/child-session/inspect'),
+            expect.stringContaining('/cli/sessions/child-session/inspect?mainSessionId=brain-main'),
             expect.objectContaining({
                 headers: expect.objectContaining({
                     Authorization: 'Bearer test-token',
@@ -227,7 +326,7 @@ describe('ApiClient.brainSpawnSession', () => {
         const client = Object.create(ApiClient.prototype) as ApiClient
         ;(client as any).token = 'test-token'
 
-        const result = await client.getSessionTail('child-session', { limit: 3 })
+        const result = await client.getSessionTail('child-session', { limit: 3, mainSessionId: 'brain-main' })
 
         expect(result).toEqual({
             sessionId: 'child-session',
@@ -235,7 +334,7 @@ describe('ApiClient.brainSpawnSession', () => {
             returned: 1,
         })
         expect(getSpy).toHaveBeenCalledWith(
-            expect.stringContaining('/cli/sessions/child-session/tail?limit=3'),
+            expect.stringContaining('/cli/sessions/child-session/tail?limit=3&mainSessionId=brain-main'),
             expect.objectContaining({
                 headers: expect.objectContaining({
                     Authorization: 'Bearer test-token',

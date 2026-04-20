@@ -74,6 +74,7 @@ describe('codexDeveloperInstructions', () => {
         const instructions = buildCodexDeveloperInstructions({
             sessionSource: 'brain',
             runtimeFunctionTools: [
+                'functions.yoho_remote__ask_user_question',
                 'functions.yoho_remote__session_find_or_create',
                 'functions.yoho_remote__session_abort',
                 'functions.yoho_remote__session_stop',
@@ -92,7 +93,11 @@ describe('codexDeveloperInstructions', () => {
         expect(instructions).toContain('functions.yoho_remote__session_resume');
         expect(instructions).toContain('functions.yoho_remote__session_set_config');
         expect(instructions).toContain('functions.yoho_remote__session_update');
+        expect(instructions).toContain('functions.yoho_remote__ask_user_question');
         expect(instructions).toContain('dense collaboration');
+        expect(instructions).toContain('Brain is not a direct coding workstation');
+        expect(instructions).toContain('functions.exec_command');
+        expect(instructions).toContain('request_user_input');
         expect(instructions).toContain('at least two independent investigation or validation tracks');
         expect(instructions).toContain('Do not create meaningless parallel tracks');
         expect(instructions).toContain('stop every still-running child session');
@@ -123,6 +128,7 @@ describe('codexDeveloperInstructions', () => {
         expect(instructions).toContain('functions.yoho_vault__session_search');
         expect(instructions).toContain('functions.yoho_remote__ask_user_question');
         expect(instructions).toContain('structured user Q&A via functions.yoho_remote__ask_user_question');
+        expect(instructions).toContain('request_user_input');
         expect(instructions).toContain('Do not assume session orchestration or cross-session control functions');
         expect(instructions).toContain('tool_suggest');
         expect(instructions).not.toContain('functions.yoho_remote__session_send');

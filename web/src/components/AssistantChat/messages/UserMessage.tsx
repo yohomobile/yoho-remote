@@ -18,6 +18,11 @@ export function YohoRemoteUserMessage() {
         const custom = message.metadata.custom as Partial<YohoRemoteChatMessageMetadata> | undefined
         return custom?.status
     })
+    const brainDelivery = useAssistantState(({ message }) => {
+        if (message.role !== 'user') return undefined
+        const custom = message.metadata.custom as Partial<YohoRemoteChatMessageMetadata> | undefined
+        return custom?.brainDelivery
+    })
     const localId = useAssistantState(({ message }) => {
         if (message.role !== 'user') return null
         const custom = message.metadata.custom as Partial<YohoRemoteChatMessageMetadata> | undefined
@@ -54,9 +59,9 @@ export function YohoRemoteUserMessage() {
                 <div className="flex-1 min-w-0">
                     <LazyRainbowText text={text} />
                 </div>
-                {status ? (
+                {status || brainDelivery ? (
                     <div className="shrink-0 self-end pb-0.5">
-                        <MessageStatusIndicator status={status} onRetry={onRetry} />
+                        <MessageStatusIndicator status={status} brainDelivery={brainDelivery} onRetry={onRetry} />
                     </div>
                 ) : null}
             </div>
