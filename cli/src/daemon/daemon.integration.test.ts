@@ -192,6 +192,48 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     await waitFor(async () => !existsSync(configuration.daemonStateFile), 1000);
   });
 
+  it('should keep daemon-spawned sessions alive across daemon restart', async () => {
+    const response = await spawnDaemonSession('/tmp', 'daemon-session-survives-stop');
+    const sessionId = response.sessionId;
+
+    const sessionsBeforeStop = await listDaemonSessions();
+    const trackedBeforeStop = sessionsBeforeStop.find(
+      (session: any) => session.yohoRemoteSessionId === sessionId
+    );
+
+    expect(trackedBeforeStop).toBeDefined();
+    expect(trackedBeforeStop.pid).toBeDefined();
+    const sessionPid = trackedBeforeStop.pid;
+
+    await stopDaemonHttp();
+    await waitFor(async () => !existsSync(configuration.daemonStateFile), 2_000);
+    await waitFor(async () => !isProcessAlive(daemonPid), 4_000);
+
+    expect(isProcessAlive(sessionPid)).toBe(true);
+
+    void spawnYohoRemoteCLI(['daemon', 'start'], {
+      stdio: 'ignore'
+    });
+
+    await waitFor(async () => {
+      const state = await readDaemonState();
+      return state !== null;
+    }, 10_000, 250);
+
+    const restartedState = await readDaemonState();
+    if (!restartedState) {
+      throw new Error('Daemon failed to restart within timeout');
+    }
+    daemonPid = restartedState.pid;
+
+    await waitFor(async () => {
+      const sessions = await listDaemonSessions();
+      return sessions.some((session: any) => session.yohoRemoteSessionId === sessionId && session.pid === sessionPid);
+    }, 10_000, 250);
+
+    await stopDaemonSession(sessionId);
+  });
+
   it('should track both daemon-spawned and terminal sessions', async () => {
     // Spawn a real yoho-remote process that looks like it was started from terminal
     const terminalYohoRemoteProcess = spawnYohoRemoteCLI([

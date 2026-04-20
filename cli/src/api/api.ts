@@ -19,6 +19,7 @@ import { configuration } from '@/configuration'
 import { getAuthToken } from '@/api/auth'
 import { ApiMachineClient } from './apiMachine'
 import { ApiSessionClient } from './apiSession'
+import { buildBrainChildScopeQuery } from './brainChildScope'
 
 const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 
@@ -42,16 +43,6 @@ const SendMessageToSessionResponseSchema = z.object({
 })
 
 export type SendMessageToSessionResult = z.infer<typeof SendMessageToSessionResponseSchema>
-
-function buildBrainChildScopeQuery(opts?: { mainSessionId?: string }): string {
-    const mainSessionId = opts?.mainSessionId?.trim()
-    if (!mainSessionId) {
-        return ''
-    }
-    const params = new URLSearchParams()
-    params.set('mainSessionId', mainSessionId)
-    return `?${params.toString()}`
-}
 
 export class ApiClient {
     static async create(): Promise<ApiClient> {

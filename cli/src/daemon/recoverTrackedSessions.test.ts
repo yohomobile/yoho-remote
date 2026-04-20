@@ -121,6 +121,45 @@ describe('recoverTrackedSessionsFromServer', () => {
         expect(api.getSession).toHaveBeenCalledTimes(2);
     });
 
+    it('restores daemon temp dirs from persisted metadata so a new daemon can clean them later', async () => {
+        const api = {
+            listSessions: vi.fn().mockResolvedValue({
+                sessions: [
+                    { id: 'session-tempdirs', active: true, metadata: { machineId: 'machine-1' } },
+                ],
+            }),
+            getSession: vi.fn().mockResolvedValue(createSession('session-tempdirs', {
+                path: '/tmp/tempdirs',
+                host: 'host-tempdirs',
+                homeDir: '/tmp',
+                yohoRemoteHomeDir: '/tmp/.yr',
+                yohoRemoteLibDir: '/tmp/.yr/lib',
+                yohoRemoteToolsDir: '/tmp/.yr/tools',
+                machineId: 'machine-1',
+                hostPid: 222,
+                hostProcessStartedAt: 2_000,
+                startedBy: 'daemon',
+                daemonTempDirs: ['/tmp/yr-codex-a', ' /tmp/yr-codex-b '],
+            })),
+        } satisfies Pick<ApiClient, 'listSessions' | 'getSession'>;
+
+        (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
+        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(2_000);
+
+        const tracked = new Map<number, TrackedSession>();
+        const recovered = await recoverTrackedSessionsFromServer({
+            api,
+            machineId: 'machine-1',
+            pidToTrackedSession: tracked,
+        });
+
+        expect(recovered).toBe(1);
+        expect(tracked.get(222)).toMatchObject({
+            pid: 222,
+            tempDirs: ['/tmp/yr-codex-a', '/tmp/yr-codex-b'],
+        });
+    });
+
     it('updates an existing tracked pid instead of duplicating it', async () => {
         const api = {
             listSessions: vi.fn().mockResolvedValue({

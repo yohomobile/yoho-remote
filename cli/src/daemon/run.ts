@@ -20,6 +20,7 @@ import { resolveClaudeModelArg } from '@/utils/claudeModelArg';
 import { cleanupDaemonState, getInstalledCliMtimeMs, isDaemonRunningCurrentlyInstalledVersion, stopDaemon } from './controlClient';
 import { startDaemonControlServer } from './controlServer';
 import { EXTERNAL_TRACKED_SESSION_LABEL, getTrackedSessionStartedBy, recoverTrackedSessionsFromServer } from './recoverTrackedSessions';
+import { serializeDaemonTempDirsForEnv } from './tempDirs';
 import { normalizeSessionProcessIdentity, isTrackedSessionProcessCurrent } from './trackedSessionIdentity';
 import { buildClaudeTokenSourceEnv } from './tokenSourceEnv';
 import { createWorktree, removeWorktree, type WorktreeInfo } from './worktree';
@@ -194,6 +195,39 @@ export async function startDaemon(): Promise<void> {
 
     // Helper functions
     const getCurrentChildren = () => Array.from(pidToTrackedSession.values());
+    const cleanupTrackedSessionTempDirs = (tracked: TrackedSession | undefined) => {
+      if (!tracked?.tempDirs) {
+        return;
+      }
+
+      for (const dir of tracked.tempDirs) {
+        fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+      }
+    };
+    const dropTrackedSession = (
+      pid: number,
+      reason: string,
+      options?: {
+        cleanupTempDirs?: boolean;
+      }
+    ): TrackedSession | undefined => {
+      const tracked = pidToTrackedSession.get(pid);
+      pidToTrackedSession.delete(pid);
+      const sessionLabel = tracked?.yohoRemoteSessionId ?? `PID-${pid}`;
+      if (options?.cleanupTempDirs) {
+        if (tracked?.tempDirs?.length) {
+          logger.debug('[DAEMON RUN] Cleaning daemon temp dirs', {
+            sessionId: tracked.yohoRemoteSessionId ?? null,
+            pid,
+            tempDirs: tracked.tempDirs,
+            reason,
+          });
+        }
+        cleanupTrackedSessionTempDirs(tracked);
+      }
+      logger.debug(`[DAEMON RUN] Removed tracked session ${sessionLabel} (pid=${pid}, reason=${reason}, cleanupTempDirs=${options?.cleanupTempDirs === true})`);
+      return tracked;
+    };
 
     // Handle webhook from YR session reporting itself
     const onYohoRemoteSessionWebhook = (sessionId: string, sessionMetadata: Metadata) => {
@@ -305,7 +339,7 @@ export async function startDaemon(): Promise<void> {
           if (tracked.yohoRemoteSessionId === sessionId) {
             if (!isTrackedSessionProcessCurrent(tracked)) {
               logger.debug(`[DAEMON RUN] Removing stale tracked session PID ${pid} for ${sessionId} before respawn`);
-              pidToTrackedSession.delete(pid);
+              dropTrackedSession(pid, `stale-before-respawn:${sessionId}`, { cleanupTempDirs: true });
               continue;
             }
             logger.debug(`[DAEMON RUN] Session ${sessionId} already running as PID ${pid}, killing old process before respawn`);
@@ -321,7 +355,7 @@ export async function startDaemon(): Promise<void> {
             } catch (error) {
               logger.debug(`[DAEMON RUN] Failed to kill existing process PID ${pid}:`, error);
             }
-            pidToTrackedSession.delete(pid);
+            dropTrackedSession(pid, `dedup-before-respawn:${sessionId}`, { cleanupTempDirs: true });
             addLog('dedup', `Killed and removed existing process PID ${pid}`, 'success');
             break;
           }
@@ -563,6 +597,14 @@ export async function startDaemon(): Promise<void> {
         if (options.claudeSettingsType) {
           extraEnv = { ...extraEnv, YR_CLAUDE_SETTINGS_TYPE: options.claudeSettingsType };
         }
+        const serializedDaemonTempDirs = serializeDaemonTempDirsForEnv(tempDirs);
+        if (serializedDaemonTempDirs) {
+          extraEnv = { ...extraEnv, YR_DAEMON_TEMP_DIRS: serializedDaemonTempDirs };
+          logger.debug('[DAEMON RUN] Persisting daemon temp dirs into session metadata env', {
+            tempDirCount: tempDirs.length,
+            tempDirs,
+          });
+        }
         // Mark yolo mode so CLI can persist it in session metadata for resume backfill
         if (yolo) {
           extraEnv = { ...extraEnv, YR_YOLO: '1' };
@@ -720,8 +762,11 @@ export async function startDaemon(): Promise<void> {
 
         cliProcess = spawnYohoRemoteCLI(args, {
           cwd: safeSpawnCwd,
-          detached: true,  // Sessions stay alive when daemon stops
-          stdio: ['ignore', 'ignore', 'pipe'],  // stdout ignored to prevent pipe buffer blocking
+          detached: true,
+          // Keep stdio detached from the daemon so sessions can survive daemon restart/stop.
+          // Session processes already write their own logs; daemon-side stderr tailing is not
+          // worth coupling child lifetime to the daemon process.
+          stdio: ['ignore', 'ignore', 'ignore'],
           env: childEnv
         });
 
@@ -882,7 +927,7 @@ export async function startDaemon(): Promise<void> {
           (sessionId.startsWith('PID-') && pid === parseInt(sessionId.replace('PID-', '')))) {
           if (!isTrackedSessionProcessCurrent(session)) {
             logger.debug(`[DAEMON RUN] Session ${sessionId} matched stale PID ${pid}, removing without killing`);
-            pidToTrackedSession.delete(pid);
+            dropTrackedSession(pid, `stop-session-stale:${sessionId}`, { cleanupTempDirs: true });
             continue;
           }
 
@@ -908,8 +953,7 @@ export async function startDaemon(): Promise<void> {
             logger.debug(`[DAEMON RUN] Failed to kill session ${sessionId}:`, error);
             return false;
           } finally {
-            pidToTrackedSession.delete(pid);
-            logger.debug(`[DAEMON RUN] Removed session ${sessionId} from tracking`);
+            dropTrackedSession(pid, `stop-session:${sessionId}`, { cleanupTempDirs: true });
           }
         }
       }
@@ -921,15 +965,7 @@ export async function startDaemon(): Promise<void> {
     // Handle child process exit
     const onChildExited = (pid: number) => {
       logger.debug(`[DAEMON RUN] Removing exited process PID ${pid} from tracking`);
-      const tracked = pidToTrackedSession.get(pid);
-      pidToTrackedSession.delete(pid);
-
-      // Clean up temporary directories (codex auth, etc.)
-      if (tracked?.tempDirs) {
-        for (const dir of tracked.tempDirs) {
-          fs.rm(dir, { recursive: true, force: true }).catch(() => {});
-        }
-      }
+      dropTrackedSession(pid, 'child-exited', { cleanupTempDirs: true });
     };
 
     // Start control server
@@ -1032,7 +1068,7 @@ export async function startDaemon(): Promise<void> {
       for (const [pid, tracked] of pidToTrackedSession.entries()) {
         if (!isTrackedSessionProcessCurrent(tracked)) {
           logger.debug(`[DAEMON RUN] Removing stale session with PID ${pid} (process no longer exists or identity changed)`);
-          pidToTrackedSession.delete(pid);
+          dropTrackedSession(pid, 'heartbeat-prune-stale', { cleanupTempDirs: true });
         }
       }
 
@@ -1170,16 +1206,15 @@ export async function startDaemon(): Promise<void> {
 
         const trackedSessions = Array.from(pidToTrackedSession.values());
         pidToAwaiter.clear();
-        for (const tracked of trackedSessions) {
-          try {
-            if (tracked.childProcess) {
-              await killProcessByChildProcess(tracked.childProcess, { timeout: 3000 });
-            } else {
-              await killProcess(tracked.pid, { timeout: 3000 });
-            }
-          } catch (error) {
-            logger.debug('[DAEMON RUN] Failed to kill tracked session during shutdown', error);
-          }
+        if (trackedSessions.length > 0) {
+          logger.debug(`[DAEMON RUN] Leaving ${trackedSessions.length} tracked session(s) running during daemon shutdown for later recovery`);
+          logger.debugLargeJson('[DAEMON RUN] Leave-alive sessions', trackedSessions.map((tracked) => ({
+            sessionId: tracked.yohoRemoteSessionId ?? null,
+            pid: tracked.pid,
+            startedBy: tracked.startedBy,
+            hasChildProcess: Boolean(tracked.childProcess),
+            tempDirs: tracked.tempDirs ?? [],
+          })));
         }
         pidToTrackedSession.clear();
 

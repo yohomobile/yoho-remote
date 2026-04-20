@@ -406,4 +406,40 @@ describe('claudeRemoteLauncher overload fallback', () => {
             })
         }));
     });
+
+    it('does not fall back to a new session when resume transcript lookup fails', async () => {
+        const initialMode: EnhancedMode = {
+            permissionMode: 'bypassPermissions',
+            model: 'opus'
+        };
+
+        const { session, client, rpcHandlers } = createSessionStub(initialMode);
+
+        claudeRemoteMock
+            .mockImplementationOnce(async (opts: any) => {
+                await opts.nextMessage();
+                throw new Error('Claude resume transcript not found for session session-1 at /tmp/.claude/projects/-tmp/session-1.jsonl');
+            })
+            .mockImplementationOnce(async () => {
+                const switchHandler = rpcHandlers.get('switch');
+                if (switchHandler) {
+                    void switchHandler();
+                }
+            });
+
+        const result = await claudeRemoteLauncher(session as any);
+        expect(result).toBe('switch');
+        expect(client.sendSessionEvent).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'message',
+                message: expect.stringContaining('Claude resume transcript not found')
+            })
+        );
+        expect(session.clearSessionId).not.toHaveBeenCalled();
+        expect(client.sendSessionEvent).not.toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: 'Previous session not found. Starting a new session...'
+            })
+        );
+    });
 });

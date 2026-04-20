@@ -2,6 +2,7 @@ import type { ApiClient } from '@/api/api';
 import type { Metadata } from '@/api/types';
 import { logger } from '@/ui/logger';
 import type { TrackedSession } from './types';
+import { getDaemonTempDirsFromMetadata } from './tempDirs';
 import { isDaemonOwnedSession, normalizeSessionProcessIdentity } from './trackedSessionIdentity';
 
 export const EXTERNAL_TRACKED_SESSION_LABEL = 'yr directly - likely by user from terminal';
@@ -64,14 +65,29 @@ export async function recoverTrackedSessionsFromServer({
                 : EXTERNAL_TRACKED_SESSION_LABEL;
             existing.yohoRemoteSessionId = session.id;
             existing.yohoRemoteSessionMetadataFromLocalWebhook = normalizedMetadata;
+            existing.tempDirs = getDaemonTempDirsFromMetadata(metadata);
+            logger.debug('[DAEMON RUN] Refreshed recovered tracked session', {
+                sessionId: session.id,
+                pid,
+                startedBy: existing.startedBy,
+                tempDirCount: existing.tempDirs?.length ?? 0,
+            });
             continue;
         }
 
-        pidToTrackedSession.set(pid, {
+        const recoveredTrackedSession: TrackedSession = {
             startedBy: getTrackedSessionStartedBy(metadata),
             yohoRemoteSessionId: session.id,
             yohoRemoteSessionMetadataFromLocalWebhook: normalizedMetadata,
+            tempDirs: getDaemonTempDirsFromMetadata(metadata),
             pid
+        };
+        pidToTrackedSession.set(pid, recoveredTrackedSession);
+        logger.debug('[DAEMON RUN] Recovered live session from server state', {
+            sessionId: session.id,
+            pid,
+            startedBy: recoveredTrackedSession.startedBy,
+            tempDirCount: recoveredTrackedSession.tempDirs?.length ?? 0,
         });
         recovered++;
     }

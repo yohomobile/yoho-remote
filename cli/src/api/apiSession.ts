@@ -32,6 +32,7 @@ import {
     TerminalResizePayloadSchema,
     TerminalWritePayloadSchema
 } from '@/terminal/types'
+import { getBrainChildScopeParamsFromMetadata } from './brainChildScope'
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object'
@@ -364,10 +365,19 @@ export class ApiSessionClient extends EventEmitter {
         const run = async () => {
             let cursor = startSeq
             while (true) {
+                const scopeParams = getBrainChildScopeParamsFromMetadata(this.metadata)
+                if (scopeParams) {
+                    logger.debug('[API] Backfilling brain-child messages with scoped mainSessionId', {
+                        sessionId: this.sessionId,
+                        mainSessionId: scopeParams.mainSessionId,
+                        afterSeq: cursor,
+                        limit,
+                    })
+                }
                 const response = await axios.get(
                     `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(this.sessionId)}/messages`,
                     {
-                        params: { afterSeq: cursor, limit },
+                        params: { afterSeq: cursor, limit, ...(scopeParams ?? {}) },
                         headers: {
                             Authorization: `Bearer ${this.token}`,
                             'Content-Type': 'application/json'

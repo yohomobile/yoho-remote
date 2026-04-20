@@ -1,6 +1,6 @@
 import { EnhancedMode, PermissionMode } from "./loop";
 import { query, type QueryOptions as Options, type SDKMessage, type SDKSystemMessage, type SDKResultMessage, AbortError, SDKUserMessage } from '@/claude/sdk'
-import { claudeCheckSession } from "./utils/claudeCheckSession";
+import { assertClaudeSessionExists, findExplicitClaudeResumeSessionId } from "./utils/claudeCheckSession";
 import { join } from 'node:path';
 import { parseSpecialCommand } from "@/parsers/specialCommands";
 import { logger } from "@/lib";
@@ -53,33 +53,20 @@ export async function claudeRemote(opts: {
 
     // Check if session is valid
     let startFrom = opts.sessionId;
-    if (opts.sessionId && !claudeCheckSession(opts.sessionId, opts.path)) {
-        startFrom = null;
+    if (opts.sessionId) {
+        assertClaudeSessionExists(opts.sessionId, opts.path);
     }
-    
+
     // Extract --resume from claudeArgs if present (for first spawn)
     if (!startFrom && opts.claudeArgs) {
-        for (let i = 0; i < opts.claudeArgs.length; i++) {
-            if (opts.claudeArgs[i] === '--resume') {
-                // Check if next arg exists and looks like a session ID
-                if (i + 1 < opts.claudeArgs.length) {
-                    const nextArg = opts.claudeArgs[i + 1];
-                    // If next arg doesn't start with dash and contains dashes, it's likely a UUID
-                    if (!nextArg.startsWith('-') && nextArg.includes('-')) {
-                        startFrom = nextArg;
-                        logger.debug(`[claudeRemote] Found --resume with session ID: ${startFrom}`);
-                        break;
-                    } else {
-                        // Just --resume without UUID - SDK doesn't support this
-                        logger.debug('[claudeRemote] Found --resume without session ID - not supported in remote mode');
-                        break;
-                    }
-                } else {
-                    // --resume at end of args - SDK doesn't support this
-                    logger.debug('[claudeRemote] Found --resume without session ID - not supported in remote mode');
-                    break;
-                }
-            }
+        const explicitResumeSessionId = findExplicitClaudeResumeSessionId(opts.claudeArgs);
+        if (explicitResumeSessionId) {
+            assertClaudeSessionExists(explicitResumeSessionId, opts.path);
+            startFrom = explicitResumeSessionId;
+            logger.debug(`[claudeRemote] Found --resume with session ID: ${startFrom}`);
+        } else if (opts.claudeArgs.includes('--resume')) {
+            // Just --resume without UUID - SDK doesn't support this
+            logger.debug('[claudeRemote] Found --resume without session ID - not supported in remote mode');
         }
     }
 

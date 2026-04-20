@@ -16,6 +16,7 @@ import { parseSpecialCommand } from '@/parsers/specialCommands';
 import { getEnvironmentInfo } from '@/ui/doctor';
 import { configuration } from '@/configuration';
 import { initialMachineMetadata } from '@/daemon/run';
+import { getDaemonTempDirsFromEnv } from '@/daemon/tempDirs';
 import { startDaemonSessionReporter } from '@/daemon/sessionReporter';
 import { startYohoRemoteServer } from '@/claude/utils/startYohoRemoteServer';
 import { startHookServer } from '@/claude/utils/startHookServer';
@@ -34,6 +35,7 @@ import { mergeResumeMetadata } from '@/utils/mergeResumeMetadata';
 import { readClaudeSettingsMcpServers } from '@/claude/utils/claudeSettings';
 import { getDefaultClaudeCodePath } from '@/claude/sdk/utils';
 import { buildRuntimeMcpSystemPrompt } from '@/claude/utils/systemPrompt';
+import { loadOrCreateRuntimeSession } from '@/utils/runtimeSessionBootstrap';
 
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
 
@@ -90,11 +92,18 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     const rawTokenSourceType = process.env.YR_TOKEN_SOURCE_TYPE?.trim();
     const tokenSourceType: 'claude' | 'codex' | undefined =
         rawTokenSourceType === 'claude' || rawTokenSourceType === 'codex' ? rawTokenSourceType : undefined;
+    const daemonTempDirs = getDaemonTempDirsFromEnv();
     const yolo = process.env.YR_YOLO === '1' ? true : undefined;
     const rawClaudeSettingsType = process.env.YR_CLAUDE_SETTINGS_TYPE?.trim();
     const claudeSettingsTypeForMetadata: 'litellm' | 'claude' | undefined =
         rawClaudeSettingsType === 'litellm' || rawClaudeSettingsType === 'claude' ? rawClaudeSettingsType : undefined;
     logger.debug(`[START] sessionSource=${sessionSource}, mainSessionId=${mainSessionId}, caller=${sessionCaller}`);
+    if (daemonTempDirs?.length) {
+        logger.debug('[START] Restored daemon temp dirs from env', {
+            tempDirCount: daemonTempDirs.length,
+            tempDirs: daemonTempDirs,
+        });
+    }
 
     // Log environment info at startup
     logger.debugLargeJson('[START] YR process started', getEnvironmentInfo());
@@ -154,21 +163,21 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         ...(brainPreferences ? { brainPreferences } : {}),
         ...(tokenSourceId ? { tokenSourceId } : {}),
         ...(tokenSourceType ? { tokenSourceType } : {}),
+        ...(daemonTempDirs?.length ? { daemonTempDirs } : {}),
         ...(yolo ? { yolo: true } : {}),
         ...(claudeSettingsTypeForMetadata ? { claudeSettingsType: claudeSettingsTypeForMetadata } : {}),
     };
-    let response: Awaited<ReturnType<typeof api.getOrCreateSession>> | null = null;
     const yohoRemoteSessionId = options.yohoRemoteSessionId?.trim() || null;
-    if (yohoRemoteSessionId) {
-        try {
-            response = await api.getSession(yohoRemoteSessionId);
-            logger.debug(`Session loaded: ${response.id}`);
-        } catch (error) {
-            logger.debug(`[START] Failed to load session ${yohoRemoteSessionId}, creating new one`, error);
-        }
-    }
-    if (!response) {
-        response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
+    const response = await loadOrCreateRuntimeSession({
+        api,
+        tag: sessionTag,
+        metadata,
+        state,
+        yohoRemoteSessionId,
+        mainSessionId,
+        logPrefix: '[START]',
+    });
+    if (!yohoRemoteSessionId) {
         logger.debug(`Session created: ${response.id}`);
     }
 

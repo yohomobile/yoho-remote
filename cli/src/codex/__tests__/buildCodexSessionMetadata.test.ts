@@ -29,4 +29,15 @@ describe('buildCodexSessionMetadata', () => {
         expect(metadata.source).toBe('webapp');
         expect(metadata.mainSessionId).toBeUndefined();
     });
+
+    it('preserves daemon temp dirs in metadata so recovered sessions can clean them later', () => {
+        const metadata = buildCodexSessionMetadata({
+            workingDirectory: '/tmp/project',
+            machineId: 'machine-1',
+            startedBy: 'daemon',
+            daemonTempDirs: ['/tmp/yr-codex-a', '/tmp/yr-codex-b'],
+        });
+
+        expect(metadata.daemonTempDirs).toEqual(['/tmp/yr-codex-a', '/tmp/yr-codex-b']);
+    });
 });

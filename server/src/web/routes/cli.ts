@@ -1401,6 +1401,7 @@ export function createCliRoutes(
         }
         const resolved = resolveSessionForReadScope(engine, sessionId, namespace, queryParsed.data.mainSessionId)
         if (!resolved.ok) {
+            console.warn(`[cli/read] GET /cli/sessions/${sessionId} rejected: ${resolved.error} (mainSessionId=${queryParsed.data.mainSessionId ?? 'NONE'})`)
             return c.json({ error: resolved.error }, resolved.status)
         }
         return c.json({ session: resolved.session })
@@ -1419,6 +1420,7 @@ export function createCliRoutes(
         }
         const resolved = resolveSessionForReadScope(engine, sessionId, namespace, scopeParsed.data.mainSessionId)
         if (!resolved.ok) {
+            console.warn(`[cli/read] GET /cli/sessions/${sessionId}/messages rejected: ${resolved.error} (mainSessionId=${scopeParsed.data.mainSessionId ?? 'NONE'})`)
             return c.json({ error: resolved.error }, resolved.status)
         }
 
@@ -1609,6 +1611,12 @@ export function createCliRoutes(
             return typeof value === 'string' && value.trim() ? value : undefined
         })()
 
+        console.log(
+            `[cli/resume] Begin resume session=${sessionId} source=${getSessionSourceFromMetadata(session.metadata) ?? 'unknown'} ` +
+            `mainSessionId=${getBrainChildMainSessionId(session.metadata) ?? 'NONE'} flavor=${flavor} ` +
+            `machineId=${machineId} resumeSessionId=${resumeSessionId ?? 'NONE'}`
+        )
+
         const now = Date.now()
         await store.setSessionActive(sessionId, true, now, namespace)
         session.active = true
@@ -1627,6 +1635,7 @@ export function createCliRoutes(
         if (resumeAttempt.type === 'success') {
             const online = await waitForSessionOnline(engine, sessionId, RESUME_TIMEOUT_MS)
             if (online) {
+                console.log(`[cli/resume] In-place resume succeeded for session=${sessionId}`)
                 return c.json({ type: 'resumed', sessionId })
             }
         }
@@ -1654,6 +1663,12 @@ export function createCliRoutes(
         if (!online) {
             return c.json({ error: 'Session resume timed out' }, 409)
         }
+
+        console.warn(
+            `[cli/resume] Fallback created replacement session old=${sessionId} new=${newSessionId} ` +
+            `source=${getSessionSourceFromMetadata(session.metadata) ?? 'unknown'} ` +
+            `mainSessionId=${getBrainChildMainSessionId(session.metadata) ?? 'NONE'}`
+        )
 
         if (storedSession?.orgId) {
             await store.setSessionOrgId(newSessionId, storedSession.orgId, namespace).catch(() => {})

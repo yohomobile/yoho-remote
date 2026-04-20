@@ -65,6 +65,7 @@ export type Metadata = {
     brainPreferences?: Record<string, unknown>
     tokenSourceId?: string
     tokenSourceType?: 'claude' | 'codex'
+    daemonTempDirs?: string[]
     yolo?: boolean
     claudeSettingsType?: 'litellm' | 'claude'
 }
@@ -105,6 +106,7 @@ export const MetadataSchema = z.object({
     brainPreferences: z.record(z.string(), z.unknown()).optional(),
     tokenSourceId: z.string().optional(),
     tokenSourceType: z.enum(['claude', 'codex']).optional(),
+    daemonTempDirs: z.array(z.string()).optional(),
     yolo: z.boolean().optional(),
     claudeSettingsType: z.enum(['litellm', 'claude']).optional(),
     worktree: z.object({

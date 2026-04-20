@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { logger } from "@/ui/logger";
 import { restoreTerminalState } from "@/ui/terminalState";
-import { claudeCheckSession } from "./utils/claudeCheckSession";
+import { assertClaudeSessionExists, findExplicitClaudeResumeSessionId } from "./utils/claudeCheckSession";
 import { getProjectPath } from "./utils/path";
 import { appendMcpConfigArg } from "./utils/mcpConfig";
 import { systemPrompt } from "./utils/systemPrompt";
@@ -40,8 +40,13 @@ export async function claudeLocal(opts: {
     // - If resuming an existing session: use --resume (unless user already supplied session control)
     // - If starting fresh: let Claude create a new session ID (reported via SessionStart hook)
     let startFrom = opts.sessionId;
-    if (opts.sessionId && !claudeCheckSession(opts.sessionId, opts.path)) {
-        startFrom = null;
+    if (opts.sessionId) {
+        assertClaudeSessionExists(opts.sessionId, opts.path);
+    }
+
+    const explicitResumeSessionId = findExplicitClaudeResumeSessionId(opts.claudeArgs);
+    if (explicitResumeSessionId) {
+        assertClaudeSessionExists(explicitResumeSessionId, opts.path);
     }
 
     if (opts.abort.aborted) {

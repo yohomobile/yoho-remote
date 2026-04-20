@@ -11,6 +11,7 @@ import { hashObject } from '@/utils/deterministicJson';
 import { readSettings } from '@/persistence';
 import { configuration } from '@/configuration';
 import { initialMachineMetadata } from '@/daemon/run';
+import { getDaemonTempDirsFromEnv } from '@/daemon/tempDirs';
 import { startDaemonSessionReporter } from '@/daemon/sessionReporter';
 import { registerKillSessionHandler } from '@/claude/registerKillSessionHandler';
 import type { AgentState, Metadata, SessionModelMode, SessionModelReasoningEffort } from '@/api/types';
@@ -22,6 +23,7 @@ import { readModeEnv } from '@/utils/modeEnv';
 import { getCurrentProcessStartedAtMs } from '@/utils/process';
 import { getBrainSessionPreferencesFromEnv } from '@/utils/brainSessionPreferences';
 import { mergeResumeMetadata } from '@/utils/mergeResumeMetadata';
+import { loadOrCreateRuntimeSession } from '@/utils/runtimeSessionBootstrap';
 
 export { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 
@@ -35,6 +37,7 @@ export function buildCodexSessionMetadata(opts: {
     brainPreferences?: Record<string, unknown> | null;
     tokenSourceId?: string | null;
     tokenSourceType?: 'claude' | 'codex' | null;
+    daemonTempDirs?: string[] | null;
     yolo?: boolean | null;
 }): Metadata {
     return {
@@ -60,6 +63,7 @@ export function buildCodexSessionMetadata(opts: {
         ...(opts.brainPreferences ? { brainPreferences: opts.brainPreferences } : {}),
         ...(opts.tokenSourceId ? { tokenSourceId: opts.tokenSourceId } : {}),
         ...(opts.tokenSourceType ? { tokenSourceType: opts.tokenSourceType } : {}),
+        ...(opts.daemonTempDirs?.length ? { daemonTempDirs: opts.daemonTempDirs } : {}),
         ...(opts.yolo ? { yolo: true } : {}),
     };
 }
@@ -88,9 +92,16 @@ export async function runCodex(opts: {
     const rawTokenSourceType = process.env.YR_TOKEN_SOURCE_TYPE?.trim();
     const tokenSourceType: 'claude' | 'codex' | undefined =
         rawTokenSourceType === 'claude' || rawTokenSourceType === 'codex' ? rawTokenSourceType : undefined;
+    const daemonTempDirs = getDaemonTempDirsFromEnv();
     const yolo = process.env.YR_YOLO === '1' ? true : undefined;
 
     logger.debug(`[codex] Starting with options: startedBy=${startedBy}, source=${sessionSource}, caller=${sessionCaller}, mainSessionId=${mainSessionId}`);
+    if (daemonTempDirs?.length) {
+        logger.debug('[codex] Restored daemon temp dirs from env', {
+            tempDirCount: daemonTempDirs.length,
+            tempDirs: daemonTempDirs,
+        });
+    }
 
     const api = await ApiClient.create();
 
@@ -121,22 +132,20 @@ export async function runCodex(opts: {
         brainPreferences,
         tokenSourceId,
         tokenSourceType,
+        daemonTempDirs,
         yolo,
     });
 
-    let response: Awaited<ReturnType<typeof api.getOrCreateSession>> | null = null;
     const yohoRemoteSessionId = opts.yohoRemoteSessionId?.trim() || null;
-    if (yohoRemoteSessionId) {
-        try {
-            response = await api.getSession(yohoRemoteSessionId);
-            logger.debug(`Session loaded: ${response.id}`);
-        } catch (error) {
-            logger.debug(`[codex] Failed to load session ${yohoRemoteSessionId}, creating new one`, error);
-        }
-    }
-    if (!response) {
-        response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
-    }
+    const response = await loadOrCreateRuntimeSession({
+        api,
+        tag: sessionTag,
+        metadata,
+        state,
+        yohoRemoteSessionId,
+        mainSessionId,
+        logPrefix: '[codex]',
+    });
     const session = api.sessionSyncClient(response);
     if (yohoRemoteSessionId) {
         session.updateMetadata((current) => mergeResumeMetadata(current, metadata));

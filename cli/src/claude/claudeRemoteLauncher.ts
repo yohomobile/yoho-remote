@@ -623,18 +623,6 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     continue;
                 }
 
-                // Handle failed --resume (session file not found / conversation not found)
-                if (!exitReason && /no conversation found/i.test(errorMessage)) {
-                    logger.debug('[remote]: Resume failed - conversation not found, clearing resume and retrying as new session');
-                    session.consumeOneTimeFlags(); // Strip --resume from claudeArgs
-                    session.clearSessionId();      // Start fresh
-                    session.client.sendSessionEvent({
-                        type: 'message',
-                        message: 'Previous session not found. Starting a new session...'
-                    });
-                    continue;
-                }
-
                 if (!exitReason && e instanceof ClaudeLimitError) {
                     session.client.sendSessionEvent({
                         type: 'message',
