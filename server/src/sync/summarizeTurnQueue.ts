@@ -38,6 +38,7 @@ type QueueOptions = {
 
 type SendOptions = {
     singletonKey?: string
+    startAfter?: number  // seconds to delay before the job becomes available
 }
 
 export interface SummarizeTurnQueuePublisher {
@@ -181,8 +182,11 @@ export async function createSummarizeTurnQueuePublisher(
                     idempotencyKey: singletonKey,
                     payload: { sessionId, namespace, scheduledAtMs: Date.now() },
                 }
+                // Delay 30s so the last in-flight L1 job has time to write
+                // before L3 runs (mirrors the +3s turn-enqueue pattern).
                 return boss.send(SUMMARIZE_SESSION_QUEUE_NAME, data as unknown as SummarizeTurnJobData, {
                     singletonKey,
+                    startAfter: 30,
                 })
             },
             stop() {

@@ -94,22 +94,17 @@ export async function handleSummarizeSegment(
         }
 
         try {
-            const inserted = await ctx.summaryStore.insertL2({
-                sessionId: payload.sessionId,
-                namespace: sessionNamespace,
-                seqStart,
-                seqEnd,
-                summary: llmResult.summary,
-                metadata: summaryMetadata,
-            })
-
-            const l2Id = inserted.id
-            if (l2Id) {
-                await ctx.summaryStore.markL1sAsSegmented(
-                    l1Summaries.map(s => s.id),
-                    l2Id
-                )
-            }
+            const { id: l2Id } = await ctx.summaryStore.insertL2AndMarkL1s(
+                {
+                    sessionId: payload.sessionId,
+                    namespace: sessionNamespace,
+                    seqStart,
+                    seqEnd,
+                    summary: llmResult.summary,
+                    metadata: summaryMetadata,
+                },
+                l1Summaries.map(s => s.id)
+            )
 
             await recordRun({
                 status: 'success',
@@ -119,7 +114,6 @@ export async function handleSummarizeSegment(
                 metadata: {
                     l1_count: l1Summaries.length,
                     l2_id: l2Id,
-                    inserted: inserted.inserted,
                     seq_start: seqStart,
                     seq_end: seqEnd,
                 },

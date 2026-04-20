@@ -35,12 +35,14 @@ function createContext(options?: {
     sessionSnapshot?: { id: string; namespace: string; thinking: boolean } | null
     l2Summaries?: StoredL2Summary[]
     l1Summaries?: StoredL1Summary[]
+    orphanL1s?: StoredL1Summary[]
     llmError?: Error
     upsertError?: Error
 }) {
     const insertedRuns: InsertRunInput[] = []
     let llmCalls = 0
     let upsertCalls = 0
+    let bossSendCalls = 0
 
     const ctx = {
         config: {
@@ -49,7 +51,9 @@ function createContext(options?: {
         } as WorkerContext['config'],
         worker: { host: 'worker-a', version: '0.1.0-test' },
         pool: {} as WorkerContext['pool'],
-        boss: {} as WorkerContext['boss'],
+        boss: {
+            send: async () => { bossSendCalls += 1; return null },
+        } as unknown as WorkerContext['boss'],
         sessionStore: {
             getSessionSnapshot: async () =>
                 options && 'sessionSnapshot' in options
@@ -59,7 +63,8 @@ function createContext(options?: {
         summaryStore: {
             getSegmentSummaries: async () => options?.l2Summaries ?? [],
             getTurnSummaries: async () => options?.l1Summaries ?? [],
-            upsertL3: async (input: unknown) => {
+            getUnassignedL1Summaries: async () => options?.orphanL1s ?? [],
+            upsertL3: async (_input: unknown) => {
                 upsertCalls += 1
                 if (options?.upsertError) throw options.upsertError
                 return { id: 'l3-id' }
@@ -98,6 +103,7 @@ function createContext(options?: {
         insertedRuns,
         getLlmCalls: () => llmCalls,
         getUpsertCalls: () => upsertCalls,
+        getBossSendCalls: () => bossSendCalls,
     }
 }
 
@@ -111,15 +117,24 @@ describe('handleSummarizeSession', () => {
         expect(getLlmCalls()).toBe(1)
         expect(getUpsertCalls()).toBe(1)
         expect(insertedRuns).toHaveLength(1)
-        expect(insertedRuns[0]).toMatchObject({
-            status: 'success',
-            level: 3,
-        })
+        expect(insertedRuns[0]).toMatchObject({ status: 'success', level: 3 })
         expect(insertedRuns[0]?.metadata).toMatchObject({ source_level: 2, source_count: 2 })
     })
 
-    it('falls back to L1 when no L2 summaries exist', async () => {
-        const l1s = [makeL1('l1-a', 10), makeL1('l1-b', 20)]
+    it('includes orphan L1s when L2s exist', async () => {
+        const l2s = [makeL2('l2-1', 0)]
+        const orphans = [makeL1('orphan-1', 100)]
+        const { ctx, insertedRuns, getLlmCalls } = createContext({ l2Summaries: l2s, orphanL1s: orphans })
+
+        await handleSummarizeSession(payload, createJob(), ctx)
+
+        expect(getLlmCalls()).toBe(1)
+        expect(insertedRuns[0]).toMatchObject({ status: 'success' })
+        expect(insertedRuns[0]?.metadata).toMatchObject({ source_level: 2, source_count: 2, orphan_l1_count: 1 })
+    })
+
+    it('falls back to L1 when no L2 summaries exist (non-trivial: 7 turns)', async () => {
+        const l1s = Array.from({ length: 7 }, (_, i) => makeL1(`l1-${i}`, i * 10))
         const { ctx, insertedRuns, getLlmCalls } = createContext({ l2Summaries: [], l1Summaries: l1s })
 
         await handleSummarizeSession(payload, createJob(), ctx)
@@ -127,7 +142,36 @@ describe('handleSummarizeSession', () => {
         expect(getLlmCalls()).toBe(1)
         expect(insertedRuns).toHaveLength(1)
         expect(insertedRuns[0]).toMatchObject({ status: 'success', level: 3 })
-        expect(insertedRuns[0]?.metadata).toMatchObject({ source_level: 1, source_count: 2 })
+        expect(insertedRuns[0]?.metadata).toMatchObject({ source_level: 1, source_count: 7 })
+    })
+
+    it('trivial session writes L3 without calling DeepSeek (< 6 turns)', async () => {
+        const l1s = [makeL1('l1-a', 10), makeL1('l1-b', 20), makeL1('l1-c', 30)]
+        const { ctx, insertedRuns, getLlmCalls, getUpsertCalls } = createContext({
+            l2Summaries: [],
+            l1Summaries: l1s,
+        })
+
+        await handleSummarizeSession(payload, createJob(), ctx)
+
+        expect(getLlmCalls()).toBe(0)
+        expect(getUpsertCalls()).toBe(1)
+        expect(insertedRuns).toHaveLength(1)
+        expect(insertedRuns[0]).toMatchObject({ status: 'success', level: 3 })
+        expect(insertedRuns[0]?.metadata).toMatchObject({ trivial: true, source_level: 1, source_count: 3 })
+    })
+
+    it('defers L3 and records skipped when session is still thinking', async () => {
+        const { ctx, insertedRuns, getLlmCalls, getBossSendCalls } = createContext({
+            sessionSnapshot: { id: payload.sessionId, namespace: payload.namespace, thinking: true },
+        })
+
+        await handleSummarizeSession(payload, createJob(), ctx)
+
+        expect(getLlmCalls()).toBe(0)
+        expect(getBossSendCalls()).toBe(1)
+        expect(insertedRuns).toHaveLength(1)
+        expect(insertedRuns[0]).toMatchObject({ status: 'skipped', errorCode: 'session_still_active' })
     })
 
     it('skips when no L1 or L2 summaries found', async () => {

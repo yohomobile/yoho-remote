@@ -27,18 +27,21 @@ function makeL1(id: string, seqStart: number): StoredL1Summary {
     return { id, seqStart, seqEnd: seqStart + 5, summary: `Turn ${id} summary`, topic: 'Test', tools: [], entities: [] }
 }
 
+const DEFAULT_L1S = [makeL1('l1-1', 10), makeL1('l1-2', 20), makeL1('l1-3', 30)]
+
 function createContext(options?: {
     sessionSnapshot?: { id: string; namespace: string; thinking: boolean } | null
     unassignedL1s?: StoredL1Summary[]
-    insertL2Result?: { id: string | null; inserted: boolean }
+    insertL2AndMarkL1sError?: Error
     llmError?: Error
 }) {
     const insertedRuns: InsertRunInput[] = []
     let llmCalls = 0
-    let l2InsertCalls = 0
-    let markedL1Ids: string[] = []
-    let markedL2Id: string | null = null
+    let l2AndMarkCalls = 0
+    let capturedL1Ids: string[] = []
     let bossSendCalls = 0
+
+    const l1s = options?.unassignedL1s ?? DEFAULT_L1S
 
     const ctx = {
         config: {
@@ -58,16 +61,13 @@ function createContext(options?: {
                     : { id: payload.sessionId, namespace: payload.namespace, thinking: false },
         },
         summaryStore: {
-            getUnassignedL1Summaries: async () =>
-                options?.unassignedL1s ?? [makeL1('l1-1', 10), makeL1('l1-2', 20), makeL1('l1-3', 30)],
-            countUnassignedL1: async () => (options?.unassignedL1s ?? []).length,
-            insertL2: async () => {
-                l2InsertCalls += 1
-                return options?.insertL2Result ?? { id: 'l2-inserted', inserted: true }
-            },
-            markL1sAsSegmented: async (ids: string[], l2Id: string) => {
-                markedL1Ids = ids
-                markedL2Id = l2Id
+            getUnassignedL1Summaries: async () => l1s,
+            countUnassignedL1: async () => l1s.length,
+            insertL2AndMarkL1s: async (_input: unknown, ids: string[]) => {
+                l2AndMarkCalls += 1
+                capturedL1Ids = ids
+                if (options?.insertL2AndMarkL1sError) throw options.insertL2AndMarkL1sError
+                return { id: 'l2-inserted' }
             },
         },
         runStore: {
@@ -102,27 +102,26 @@ function createContext(options?: {
         ctx,
         insertedRuns,
         getLlmCalls: () => llmCalls,
-        getL2InsertCalls: () => l2InsertCalls,
-        getMarkedL1Ids: () => markedL1Ids,
-        getMarkedL2Id: () => markedL2Id,
+        getL2AndMarkCalls: () => l2AndMarkCalls,
+        getCapturedL1Ids: () => capturedL1Ids,
         getBossSendCalls: () => bossSendCalls,
     }
 }
 
 describe('handleSummarizeSegment', () => {
-    it('happy path: calls LLM, inserts L2, marks L1s as segmented', async () => {
+    it('happy path: calls LLM, inserts L2, marks L1s atomically', async () => {
         const l1s = [makeL1('l1-a', 10), makeL1('l1-b', 20), makeL1('l1-c', 30)]
-        const { ctx, insertedRuns, getLlmCalls, getL2InsertCalls, getMarkedL1Ids, getMarkedL2Id } =
+        const { ctx, insertedRuns, getLlmCalls, getL2AndMarkCalls, getCapturedL1Ids } =
             createContext({ unassignedL1s: l1s })
 
         await handleSummarizeSegment(payload, createJob(), ctx)
 
         expect(getLlmCalls()).toBe(1)
-        expect(getL2InsertCalls()).toBe(1)
-        expect(getMarkedL1Ids()).toEqual(['l1-a', 'l1-b', 'l1-c'])
-        expect(getMarkedL2Id()).toBe('l2-inserted')
+        expect(getL2AndMarkCalls()).toBe(1)
+        expect(getCapturedL1Ids()).toEqual(['l1-a', 'l1-b', 'l1-c'])
         expect(insertedRuns).toHaveLength(1)
         expect(insertedRuns[0]).toMatchObject({ status: 'success', level: 2 })
+        expect(insertedRuns[0]?.metadata).toMatchObject({ l2_id: 'l2-inserted', l1_count: 3 })
     })
 
     it('skips when fewer than MIN_L1_TO_SEGMENT unassigned L1s', async () => {
@@ -148,17 +147,40 @@ describe('handleSummarizeSegment', () => {
         expect(insertedRuns[0]).toMatchObject({ status: 'error_permanent', errorCode: 'session_not_found' })
     })
 
-    it('records transient error and rethrows on DB write failure', async () => {
+    it('records transient error and rethrows when atomic insert+mark fails', async () => {
         const l1s = [makeL1('l1-x', 10), makeL1('l1-y', 20), makeL1('l1-z', 30)]
-        const { ctx, insertedRuns, getLlmCalls } = createContext({ unassignedL1s: l1s })
-
-        // Patch insertL2 to throw
-        ;(ctx.summaryStore as any).insertL2 = async () => { throw new Error('DB connection lost') }
+        const { ctx, insertedRuns, getLlmCalls } = createContext({
+            unassignedL1s: l1s,
+            insertL2AndMarkL1sError: new Error('DB connection lost'),
+        })
 
         await expect(handleSummarizeSegment(payload, createJob(), ctx)).rejects.toThrow('DB connection lost')
 
         expect(getLlmCalls()).toBe(1)
         expect(insertedRuns).toHaveLength(1)
         expect(insertedRuns[0]).toMatchObject({ status: 'error_transient', level: 2 })
+    })
+
+    it('retry: second invocation succeeds after first insertL2AndMarkL1s failure', async () => {
+        const l1s = [makeL1('l1-r1', 10), makeL1('l1-r2', 20), makeL1('l1-r3', 30)]
+        let callCount = 0
+        const { ctx, getLlmCalls } = createContext({ unassignedL1s: l1s })
+
+        ;(ctx.summaryStore as any).insertL2AndMarkL1s = async (_input: unknown, _ids: string[]) => {
+            callCount += 1
+            if (callCount === 1) throw new Error('Transient DB error')
+            return { id: 'l2-retry-ok' }
+        }
+
+        // First attempt fails
+        await expect(handleSummarizeSegment(payload, createJob(), ctx)).rejects.toThrow('Transient DB error')
+
+        // Second attempt (pg-boss retry) succeeds
+        const runs2: InsertRunInput[] = []
+        ;(ctx.runStore as any).insert = async (input: InsertRunInput) => { runs2.push(input) }
+        await handleSummarizeSegment(payload, createJob(), ctx)
+
+        expect(getLlmCalls()).toBe(2)
+        expect(runs2[0]).toMatchObject({ status: 'success', level: 2 })
     })
 })

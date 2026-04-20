@@ -108,52 +108,72 @@ export class SummaryStore {
         return (result.rows as Record<string, unknown>[]).map(rowToL1)
     }
 
-    async insertL2(input: {
-        sessionId: string
-        namespace: string
-        seqStart: number | null
-        seqEnd: number | null
-        summary: string
-        metadata: Record<string, unknown>
-    }): Promise<InsertSummaryResult> {
-        const id = randomUUID()
-        const createdAt = Date.now()
+    // Atomically insert L2 and mark the supplied L1 ids as segmented.
+    // Uses a transaction + UPSERT so that on retry the existing L2 id is
+    // returned and the mark step is always re-executed — preventing orphan L1s
+    // even if the mark step failed on a prior attempt.
+    async insertL2AndMarkL1s(
+        input: {
+            sessionId: string
+            namespace: string
+            seqStart: number | null
+            seqEnd: number | null
+            summary: string
+            metadata: Record<string, unknown>
+        },
+        l1Ids: string[]
+    ): Promise<{ id: string }> {
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
 
-        if (input.seqStart != null) {
-            const result = await this.pool.query(
-                `INSERT INTO session_summaries (
-                    id, session_id, namespace, level, seq_start, seq_end, summary, metadata, created_at
+            const id = randomUUID()
+            const createdAt = Date.now()
+            let l2Id: string
+
+            if (input.seqStart != null) {
+                // UPSERT: on conflict return the existing row's id so the mark
+                // step can still run even on a retry after a previous partial failure.
+                const result = await client.query<{ id: string }>(
+                    `INSERT INTO session_summaries (
+                        id, session_id, namespace, level, seq_start, seq_end, summary, metadata, created_at
+                    )
+                    VALUES ($1, $2, $3, 2, $4, $5, $6, $7, $8)
+                    ON CONFLICT (session_id, level, seq_start) WHERE level IN (1, 2)
+                    DO UPDATE SET id = session_summaries.id
+                    RETURNING id`,
+                    [id, input.sessionId, input.namespace, input.seqStart, input.seqEnd,
+                        input.summary, input.metadata, createdAt]
                 )
-                VALUES ($1, $2, $3, 2, $4, $5, $6, $7, $8)
-                ON CONFLICT (session_id, level, seq_start) WHERE level IN (1, 2)
-                DO NOTHING
-                RETURNING id`,
-                [id, input.sessionId, input.namespace, input.seqStart, input.seqEnd,
-                    input.summary, input.metadata, createdAt]
-            )
-            const insertedId = result.rows[0]?.id as string | undefined
-            return insertedId
-                ? { id: insertedId, inserted: true }
-                : { id: null, inserted: false }
+                l2Id = String(result.rows[0]!.id)
+            } else {
+                // No dedup key: unconditional insert
+                await client.query(
+                    `INSERT INTO session_summaries (
+                        id, session_id, namespace, level, seq_start, seq_end, summary, metadata, created_at
+                    )
+                    VALUES ($1, $2, $3, 2, NULL, NULL, $4, $5, $6)`,
+                    [id, input.sessionId, input.namespace, input.summary, input.metadata, createdAt]
+                )
+                l2Id = id
+            }
+
+            if (l1Ids.length > 0) {
+                await client.query(
+                    `UPDATE session_summaries SET parent_id = $1
+                     WHERE id = ANY($2::text[]) AND level = 1`,
+                    [l2Id, l1Ids]
+                )
+            }
+
+            await client.query('COMMIT')
+            return { id: l2Id }
+        } catch (error) {
+            await client.query('ROLLBACK')
+            throw error
+        } finally {
+            client.release()
         }
-
-        // No seq_start: unconditional insert (no dedup key)
-        await this.pool.query(
-            `INSERT INTO session_summaries (
-                id, session_id, namespace, level, seq_start, seq_end, summary, metadata, created_at
-            )
-            VALUES ($1, $2, $3, 2, NULL, NULL, $4, $5, $6)`,
-            [id, input.sessionId, input.namespace, input.summary, input.metadata, createdAt]
-        )
-        return { id, inserted: true }
-    }
-
-    async markL1sAsSegmented(l1Ids: string[], l2Id: string): Promise<void> {
-        if (l1Ids.length === 0) return
-        await this.pool.query(
-            `UPDATE session_summaries SET parent_id = $1 WHERE id = ANY($2::text[]) AND level = 1`,
-            [l2Id, l1Ids]
-        )
     }
 
     async getSegmentSummaries(sessionId: string): Promise<StoredL2Summary[]> {
