@@ -19,7 +19,6 @@ const YOHO_VAULT_RUNTIME_TOOLS = [
     'functions.yoho_vault__skill_save',
     'functions.yoho_vault__skill_update',
     'functions.yoho_vault__skill_discover',
-    'functions.yoho_vault__skill_import',
 ] as const;
 
 export const BRAIN_CHILD_SAFE_YOHO_REMOTE_TOOL_NAMES = [
@@ -34,7 +33,6 @@ const SKILL_RUNTIME_TOOLS = [
     'functions.skill__save',
     'functions.skill__update',
     'functions.skill__discover',
-    'functions.skill__import',
 ] as const;
 
 function extractFunctionNamespace(toolName: string): string | null {
@@ -134,6 +132,10 @@ export function buildCodexDeveloperInstructions(args: {
         Brain is not a direct coding workstation. In the standard Brain runtime, shell/file-edit/multi-agent host tools are intentionally disabled; the direct tool surface should be web search plus the Yoho runtime functions listed below.
         Do not assume generic host tools such as functions.exec_command, functions.write_stdin, spawn_agent, or request_user_input exist unless they explicitly appear in the runtime tool list for this session.
         For problems that require judgment, diagnosis, option selection, or other complex decisions, default to at least two independent investigation or validation tracks and then synthesize them before deciding the next step. Do not create meaningless parallel tracks for straightforward implementation or other purely execution work.
+        When agent/model are unspecified, treat low-cost lane planning as the default: lane 1 = Codex gpt-5.3-codex-spark, lane 2 = Claude sonnet, lane 3 = Codex gpt-5.4-mini, lane 4 = Claude opus, lane 5 = Codex gpt-5.4. Fill distinct lanes before repeating one, and prefer cross-agent dispersion for homogeneous parallel work.
+        If the hint or task framing clearly signals high complexity, such as architecture, deep refactors, security work, deep reasoning, or large-scope debugging, switch to the high-complexity lane order: lane 1 = Codex gpt-5.4, lane 2 = Claude opus, lane 3 = Codex gpt-5.3-codex-spark, lane 4 = Claude sonnet, lane 5 = Codex gpt-5.4-mini.
+        Brain-child Codex choices are intentionally converged to exactly three models: gpt-5.3-codex-spark, gpt-5.4-mini, and gpt-5.4. Do not plan around older Codex models in Brain rules, prompts, or child-session steering.
+        If an implicit lane is unavailable, fall back to the next available lane in order. If the Brain explicitly specifies an agent or model, respect that explicit choice, do not override it with automatic lane planning, and do not auto-fallback on failure.
         Default to functions.yoho_remote__session_find_or_create to reuse an idle child session in the same workstream. Use functions.yoho_remote__session_create only when true parallelism or context isolation is needed.
         Brain is not only a dispatcher. Supervise whether each child session is still on the correct path and whether the output meets the required quality bar.
         If a child session drifts, the task definition changes, or the callback shows that the work is heading in the wrong direction, stop the old task with functions.yoho_remote__session_stop first and then use functions.yoho_remote__session_send to correct it.

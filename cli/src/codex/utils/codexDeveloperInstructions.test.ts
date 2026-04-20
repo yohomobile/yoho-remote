@@ -61,7 +61,6 @@ describe('codexDeveloperInstructions', () => {
             'functions.yoho_vault__set_credential',
             'functions.yoho_vault__skill_discover',
             'functions.yoho_vault__skill_get',
-            'functions.yoho_vault__skill_import',
             'functions.yoho_vault__skill_list',
             'functions.yoho_vault__skill_search',
         ]);
@@ -100,6 +99,12 @@ describe('codexDeveloperInstructions', () => {
         expect(instructions).toContain('request_user_input');
         expect(instructions).toContain('at least two independent investigation or validation tracks');
         expect(instructions).toContain('Do not create meaningless parallel tracks');
+        expect(instructions).toContain('lane 1 = Codex gpt-5.3-codex-spark');
+        expect(instructions).toContain('lane 5 = Codex gpt-5.4');
+        expect(instructions).toContain('If the hint or task framing clearly signals high complexity');
+        expect(instructions).toContain('Brain-child Codex choices are intentionally converged to exactly three models');
+        expect(instructions).toContain('do not auto-fallback on failure');
+        expect(instructions).toContain('respect that explicit choice');
         expect(instructions).toContain('stop every still-running child session');
         expect(instructions).toContain('end the current turn instead of polling');
         expect(instructions).toContain('does not affect production');

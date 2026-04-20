@@ -289,14 +289,12 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
             'mcp__yoho-vault__skill_save',
             'mcp__yoho-vault__skill_update',
             'mcp__yoho-vault__skill_discover',
-            'mcp__yoho-vault__skill_import',
             'mcp__skill__search',
             'mcp__skill__get',
             'mcp__skill__list',
             'mcp__skill__save',
             'mcp__skill__update',
             'mcp__skill__discover',
-            'mcp__skill__import',
         ];
     const brainChildAllowedTools = buildBrainChildClaudeAllowedTools({
         yohoRemoteToolNames: yohoRemoteServer.toolNames,
