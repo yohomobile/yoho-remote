@@ -27,6 +27,8 @@ import { createLicensesRoutes } from './routes/licenses'
 import { createCodexOpenAIRoutes } from './routes/codex-openai'
 import { createDownloadCliRoutes, createDownloadApiRoutes } from './routes/downloads'
 import { createControlPlaneRoutes } from './routes/control-plane'
+import { createWorkerMcpRoutes } from './routes/worker-mcp'
+import { internalAuthMiddleware } from './middleware/internal-auth'
 import type { SSEManager } from '../sse/sseManager'
 import type { Server as BunServer } from 'bun'
 import type { Server as SocketEngine } from '@socket.io/bun-engine'
@@ -104,6 +106,15 @@ function createWebApp(options: {
     // Keycloak SSO authentication routes (public)
     app.route('/api', createKeycloakAuthRoutes())
     app.route('/api', createVersionRoutes(options.embeddedAssetMap))  // Public, no auth required
+
+    // Internal worker routes — service-account token auth, must be before Keycloak middleware
+    const workerToken = process.env.YOHO_WORKER_INTERNAL_TOKEN
+    if (workerToken) {
+        app.use('/api/internal/*', internalAuthMiddleware(workerToken))
+        app.route('/api/internal', createWorkerMcpRoutes(options.getSyncEngine, options.store))
+    } else {
+        console.warn('[Server] YOHO_WORKER_INTERNAL_TOKEN not set — /api/internal routes not mounted')
+    }
 
     // Auth middleware - verifies Keycloak JWT tokens and loads org info
     app.use('/api/*', createAuthMiddleware(options.store))

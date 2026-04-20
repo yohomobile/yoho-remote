@@ -10,7 +10,7 @@ import { SessionStore } from './db/sessionStore'
 import { SummaryStore } from './db/summaryStore'
 import { enqueueSegmentIfNeeded } from './handlers/summarizeSegment'
 import { handleAiTask, aiTaskPayloadSchema } from './handlers/aiTask'
-// handleAiTaskDispatch imported once Path 3 delivers aiTaskDispatcher.ts
+import { handleAiTaskDispatcher } from './handlers/aiTaskDispatcher'
 import { registerWorkerJobs } from './jobs/core'
 import { workerJobDefinitions } from './jobs/summarizeTurn'
 import { DeepSeekClient } from './llm/deepseek'
@@ -120,12 +120,13 @@ async function main(): Promise<void> {
         retentionSeconds: 7 * 86_400,
     })
 
-    // TODO(Path 3): uncomment once aiTaskDispatcher.ts is delivered
-    // await boss.work(AI_TASK_DISPATCH_QUEUE, async (jobs) => {
-    //     for (const job of jobs) {
-    //         await handleAiTaskDispatch([job], ctx).catch(...)
-    //     }
-    // })
+    await boss.work(AI_TASK_DISPATCH_QUEUE, async (jobs) => {
+        for (const job of jobs) {
+            await handleAiTaskDispatcher(job.data, ctx).catch((err: unknown) => {
+                console.error('[Worker] aiTaskDispatcher error:', err)
+            })
+        }
+    })
 
     await boss.work(AI_TASK_RUN_QUEUE, async (jobs) => {
         for (const job of jobs) {
