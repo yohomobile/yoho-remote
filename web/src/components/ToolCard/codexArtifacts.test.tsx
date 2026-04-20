@@ -79,6 +79,24 @@ describe('codexArtifacts', () => {
 })
 
 describe('Codex tool presentation', () => {
+    test('summarizes ReadBatch groups with a count and file list', () => {
+        const presentation = getToolPresentation({
+            toolName: 'ReadBatch',
+            input: {
+                count: 3,
+                files: ['README.md', 'web/src/app.ts', 'web/src/chat/reducer.ts']
+            },
+            result: null,
+            childrenCount: 3,
+            description: null,
+            metadata: null
+        })
+
+        expect(presentation.minimal).toBe(true)
+        expect(presentation.title).toBe('Read 3 files')
+        expect(presentation.subtitle).toBe('README.md, web/src/app.ts, web/src/chat/reducer.ts')
+    })
+
     test('keeps CodexPatch inline when a diff is available', () => {
         const presentation = getToolPresentation({
             toolName: 'CodexPatch',

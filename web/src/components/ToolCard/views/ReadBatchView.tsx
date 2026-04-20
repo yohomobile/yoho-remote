@@ -22,8 +22,8 @@ export function ReadBatchView(props: ToolViewProps) {
 
     return (
         <div className="flex flex-col gap-1">
-            {files.map((file) => (
-                <div key={file} className="text-sm font-mono text-[var(--app-fg)] break-all">
+            {files.map((file, index) => (
+                <div key={`${file}:${index}`} className="text-sm font-mono text-[var(--app-fg)] break-all">
                     {resolveDisplayPath(file, props.metadata)}
                 </div>
             ))}

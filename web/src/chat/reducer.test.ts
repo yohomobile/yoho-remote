@@ -4,6 +4,177 @@ import { renderEventLabel } from './presentation'
 import type { NormalizedMessage } from './types'
 
 describe('reduceChatBlocks duplicate handling', () => {
+    test('wraps even a single read tool in a ReadBatch block', () => {
+        const reduced = reduceChatBlocks([
+            {
+                id: 'read-call',
+                localId: null,
+                createdAt: 1,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'read-1',
+                    name: 'Read',
+                    input: { file_path: 'README.md' },
+                    description: null,
+                    uuid: 'read-call',
+                    parentUUID: null
+                }]
+            },
+            {
+                id: 'read-result',
+                localId: null,
+                createdAt: 2,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'read-1',
+                    content: {
+                        file: {
+                            filePath: 'README.md',
+                            content: '# Hello'
+                        }
+                    },
+                    is_error: false,
+                    uuid: 'read-result',
+                    parentUUID: null
+                }]
+            }
+        ] satisfies NormalizedMessage[], null)
+
+        expect(reduced.blocks).toHaveLength(1)
+        const block = reduced.blocks[0]
+        expect(block?.kind).toBe('tool-call')
+        if (!block || block.kind !== 'tool-call') {
+            throw new Error('Expected ReadBatch block')
+        }
+        expect(block.tool.name).toBe('ReadBatch')
+        expect(block.children).toHaveLength(1)
+        expect(block.children[0]?.kind).toBe('tool-call')
+        if (block.children[0]?.kind !== 'tool-call') {
+            throw new Error('Expected nested read tool')
+        }
+        expect(block.children[0].tool.name).toBe('Read')
+        expect(block.children[0].tool.result).toEqual({
+            file: {
+                filePath: 'README.md',
+                content: '# Hello'
+            }
+        })
+    })
+
+    test('groups consecutive read-like tools into a single ReadBatch until another block breaks the run', () => {
+        const reduced = reduceChatBlocks([
+            {
+                id: 'read-call-1',
+                localId: null,
+                createdAt: 1,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'read-1',
+                    name: 'Read',
+                    input: { file_path: 'README.md' },
+                    description: null,
+                    uuid: 'read-call-1',
+                    parentUUID: null
+                }]
+            },
+            {
+                id: 'read-call-2',
+                localId: null,
+                createdAt: 2,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'read-2',
+                    name: 'CodexBash',
+                    input: {
+                        command: 'sed -n \"1,20p\" web/src/app.ts',
+                        parsed_cmd: [{
+                            type: 'read',
+                            name: 'web/src/app.ts'
+                        }]
+                    },
+                    description: null,
+                    uuid: 'read-call-2',
+                    parentUUID: null
+                }]
+            },
+            {
+                id: 'read-result-2',
+                localId: null,
+                createdAt: 3,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'read-2',
+                    content: {
+                        output: 'const app = true'
+                    },
+                    is_error: false,
+                    uuid: 'read-result-2',
+                    parentUUID: null
+                }]
+            },
+            {
+                id: 'event-between',
+                localId: null,
+                createdAt: 4,
+                role: 'event',
+                isSidechain: false,
+                content: {
+                    type: 'message',
+                    message: 'Scanning complete'
+                }
+            },
+            {
+                id: 'read-call-3',
+                localId: null,
+                createdAt: 5,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'read-3',
+                    name: 'NotebookRead',
+                    input: { notebook_path: 'notes.ipynb' },
+                    description: null,
+                    uuid: 'read-call-3',
+                    parentUUID: null
+                }]
+            }
+        ] satisfies NormalizedMessage[], null)
+
+        expect(reduced.blocks.map((block) => block.kind)).toEqual(['tool-call', 'agent-event', 'tool-call'])
+
+        const first = reduced.blocks[0]
+        const second = reduced.blocks[2]
+        if (!first || first.kind !== 'tool-call' || !second || second.kind !== 'tool-call') {
+            throw new Error('Expected ReadBatch blocks')
+        }
+
+        expect(first.tool.name).toBe('ReadBatch')
+        expect(first.children).toHaveLength(2)
+        expect(first.children.map((child) => child.kind === 'tool-call' ? child.tool.name : null)).toEqual(['Read', 'CodexBash'])
+        expect(first.tool.input).toEqual({
+            count: 2,
+            files: ['README.md', 'web/src/app.ts']
+        })
+
+        expect(second.tool.name).toBe('ReadBatch')
+        expect(second.children).toHaveLength(1)
+        expect(second.tool.input).toEqual({
+            count: 1,
+            files: ['notes.ipynb']
+        })
+    })
+
     test('dedupes webapp user message and Claude cli echo with the same text', () => {
         const reduced = reduceChatBlocks([
             {
