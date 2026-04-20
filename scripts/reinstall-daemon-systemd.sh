@@ -57,40 +57,6 @@ load_current_daemon_env() {
 
 load_current_daemon_env
 
-wait_for_systemd_active() {
-    local service_name="$1"
-    local timeout_seconds="${2:-30}"
-    local waited=0
-    local last_state=""
-    local last_substate=""
-
-    while (( waited < timeout_seconds )); do
-        if systemctl is-active --quiet "$service_name"; then
-            local active_state=""
-            local sub_state=""
-            active_state="$(systemctl show "$service_name" -p ActiveState --value 2>/dev/null || true)"
-            sub_state="$(systemctl show "$service_name" -p SubState --value 2>/dev/null || true)"
-            echo "[daemon-deploy] $service_name is active (state=${active_state:-unknown}, substate=${sub_state:-unknown}) after ${waited}s"
-            return 0
-        fi
-
-        local active_state=""
-        local sub_state=""
-        active_state="$(systemctl show "$service_name" -p ActiveState --value 2>/dev/null || true)"
-        sub_state="$(systemctl show "$service_name" -p SubState --value 2>/dev/null || true)"
-        if [[ "$active_state" != "$last_state" || "$sub_state" != "$last_substate" ]]; then
-            echo "[daemon-deploy] Waiting for $service_name: state=${active_state:-unknown}, substate=${sub_state:-unknown}, elapsed=${waited}s"
-            last_state="$active_state"
-            last_substate="$sub_state"
-        fi
-
-        sleep 1
-        waited=$(( waited + 1 ))
-    done
-
-    return 1
-}
-
 if [[ -z "${CLI_API_TOKEN:-}" ]]; then
     echo "[daemon-deploy] Error: CLI_API_TOKEN is missing from the current daemon environment" >&2
     exit 1
@@ -106,12 +72,10 @@ echo "[daemon-deploy] Reinstalling managed daemon unit via: $CLI_BIN daemon inst
 
 echo "[daemon-deploy] Restarting $SYSTEMD_SERVICE_NAME to load the deployed binary"
 systemctl restart "$SYSTEMD_SERVICE_NAME"
+sleep 2
 
-if ! wait_for_systemd_active "$SYSTEMD_SERVICE_NAME" 30; then
-    active_state="$(systemctl show "$SYSTEMD_SERVICE_NAME" -p ActiveState --value 2>/dev/null || true)"
-    sub_state="$(systemctl show "$SYSTEMD_SERVICE_NAME" -p SubState --value 2>/dev/null || true)"
-    echo "[daemon-deploy] Error: $SYSTEMD_SERVICE_NAME did not become active within 30s (state=${active_state:-unknown}, substate=${sub_state:-unknown})" >&2
-    systemctl status "$SYSTEMD_SERVICE_NAME" --no-pager || true
+if ! systemctl is-active --quiet "$SYSTEMD_SERVICE_NAME"; then
+    echo "[daemon-deploy] Error: $SYSTEMD_SERVICE_NAME is not active after restart" >&2
     journalctl -u "$SYSTEMD_SERVICE_NAME" -n 40 --no-pager || true
     exit 1
 fi

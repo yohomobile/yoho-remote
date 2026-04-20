@@ -9,6 +9,10 @@ NCU_REPO="/home/workspaces/repos/yoho-remote"
 NCU_EXE_DIR="$NCU_REPO/cli/dist-exe"
 NCU_SUDO_PASS="guang"
 
+MACMINI_SSH="guang@192.168.0.236"
+MACMINI_DAEMON_ENV="CLI_API_TOKEN=rDhnX0JCPIki0s6t1kNsHJkSLCvpAEt3wNCb_dkEyOc YOHO_REMOTE_URL=https://remote.yohomobile.dev YOHO_MACHINE_NAME=macmini-daemon YOHO_MACHINE_IP=192.168.0.236"
+
+INSTALL_DIR="/opt/yoho-remote"
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3"
 LOCAL_REINSTALL_DAEMON_SCRIPT="$(pwd)/scripts/reinstall-daemon-systemd.sh"
 
@@ -119,7 +123,7 @@ force_kill_process() {
 
 # ==================== Parse arguments ====================
 # 所有合法的 daemon 目标名
-ALL_DAEMON_TARGET_NAMES="ncu"
+ALL_DAEMON_TARGET_NAMES="ncu macmini"
 
 MODE="${1:-}"
 shift 2>/dev/null || true
@@ -136,10 +140,12 @@ Usage: deploy.sh <server|daemon|all> [target...]
 
 Daemon targets:
   ncu             ncu 本机 (systemd)
+  macmini         macOS (darwin-arm64, LAN)
 
 Examples:
-  deploy.sh daemon                        # 部署到全部 daemon 目标
+  deploy.sh daemon                        # 部署到全部 2 台
   deploy.sh daemon ncu                    # 只部署到 ncu
+  deploy.sh daemon ncu macmini            # 部署到 ncu 和 macmini
 USAGE
     exit 1
 fi
@@ -170,6 +176,12 @@ should_deploy_daemon() {
     done
     return 1
 }
+
+# 是否需要构建 darwin-arm64 二进制（macmini）
+NEED_DARWIN_BUILD=false
+if should_deploy_daemon macmini; then
+    NEED_DARWIN_BUILD=true
+fi
 
 # 显示信息
 DEPLOY_INFO="$MODE"
@@ -252,6 +264,11 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
         log "Building daemon (linux-x64)..."
         ncu_exec "cd $NCU_REPO/cli && $BUN run build:exe:daemon"
     fi
+
+    if [[ "$NEED_DARWIN_BUILD" == "true" ]]; then
+        log "Building daemon + CLI (darwin-arm64) for macmini..."
+        ncu_exec "cd $NCU_REPO/cli && $BUN run scripts/build-executable.ts --name yoho-remote-daemon --target bun-darwin-arm64 && $BUN run scripts/build-executable.ts --name yoho-remote --target bun-darwin-arm64"
+    fi
 fi
 
 # ==================== Step 5: Verify builds ====================
@@ -264,86 +281,94 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
     if should_deploy_daemon ncu; then
         VERIFY_FILES="$VERIFY_FILES bun-linux-x64/yoho-remote-daemon"
     fi
+    if [[ "$NEED_DARWIN_BUILD" == "true" ]]; then
+        VERIFY_FILES="$VERIFY_FILES bun-darwin-arm64/yoho-remote-daemon bun-darwin-arm64/yoho-remote"
+    fi
 fi
 
 ncu_exec "cd $NCU_EXE_DIR && NOW=\$(date +%s) && ALL_OK=true && for f in $VERIFY_FILES; do if [ ! -f \"\$f\" ]; then echo \"  ✗ \$f not found\"; ALL_OK=false; elif [ \$(( NOW - \$(stat -c %Y \"\$f\") )) -gt 120 ]; then echo \"  ✗ \$f is stale\"; ALL_OK=false; else echo \"  ✓ \$f\"; fi; done && \$ALL_OK"
 
 # ==================== Step 6: Deploy ====================
-SELF_DAEMON_HANDLES_SERVER=false
 
 # --- 6a: Deploy daemon ---
 if [[ "$DEPLOY_DAEMON" == "true" ]]; then
-    # 6a-1: Deploy daemon to ncu
+
+    # 6a-1: Deploy to macmini
+    if should_deploy_daemon macmini; then
+        log "Deploying daemon to macmini..."
+        if ncu_exec "ssh $SSH_OPTS -o BatchMode=yes $MACMINI_SSH 'true'" 2>/dev/null; then
+            # Stop old daemon and detached session children (处理假死/僵尸 — macOS，无 sudo)
+            ncu_exec "ssh $SSH_OPTS $MACMINI_SSH '
+                list_pids() {
+                    { pgrep -x yoho-remote-daemon 2>/dev/null || true; pgrep -x yoho-remote 2>/dev/null || true; } | sort -u
+                }
+                for p in \$(list_pids); do kill -TERM \$p 2>/dev/null || true; done
+                sleep 3
+                R=\$(list_pids)
+                if [ -n \"\$R\" ]; then
+                    echo \"  ⚠ SIGTERM failed, SIGKILL...\"
+                    for p in \$R; do kill -9 \$p 2>/dev/null || true; done
+                    sleep 2
+                fi
+                R=\$(list_pids)
+                if [ -n \"\$R\" ]; then
+                    for p in \$R; do kill -9 \$p 2>/dev/null || true; done
+                    sleep 1
+                fi
+                R=\$(list_pids)
+                [ -n \"\$R\" ] && echo \"  ✗ WARNING: yoho-remote processes still alive\" || echo \"  ✓ Fully stopped\"
+            '"
+
+            # Copy new binaries
+            ncu_exec "rsync -az -e 'ssh $SSH_OPTS' $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote-daemon $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote $MACMINI_SSH:$INSTALL_DIR/"
+
+            # macOS 要求重新 ad-hoc 签名（SCP 后签名失效，LaunchAgent 会 SIGKILL 未签名二进制）
+            ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'codesign --force --sign - $INSTALL_DIR/yoho-remote-daemon && codesign --force --sign - $INSTALL_DIR/yoho-remote'"
+
+            # 暂时跳过 macmini daemon 重启，避免部署过程中把它拉起。
+            # ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'launchctl unload /Users/guang/Library/LaunchAgents/com.hapi.daemon.plist 2>/dev/null; launchctl load /Users/guang/Library/LaunchAgents/com.hapi.daemon.plist'"
+            # sleep 4
+            # ALIVE=$(ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'pgrep -x yoho-remote-daemon >/dev/null && echo yes || echo no'")
+            # if [[ "$ALIVE" == *"yes"* ]]; then
+            #     ok "macmini daemon restarted"
+            # else
+            #     fail "macmini daemon failed to start — check /tmp/yoho-remote-daemon.log"
+            # fi
+            warn "macmini daemon restart skipped (binaries copied and signed only)"
+        else
+            warn "macmini is unreachable — skipping"
+        fi
+    fi
+
+    # 6a-2: Deploy daemon to ncu
     if should_deploy_daemon ncu && ! is_ncu; then
         log "Reinstalling daemon on ncu..."
         ncu_exec "echo $NCU_SUDO_PASS | sudo -SE bash $NCU_REPO/scripts/reinstall-daemon-systemd.sh $NCU_EXE_DIR/bun-linux-x64/yoho-remote"
         ok "ncu daemon unit reinstalled and restarted"
     fi
 
-    # 6a-2: If running on ncu, restart ncu daemon before server deploy (may kill session)
+    # 6a-3: If running on ncu, restart ncu daemon before server deploy (may kill session)
     if is_ncu && should_deploy_daemon ncu; then
         log "Restarting daemon on ncu (self) before server deploy — session may restart..."
 
         RESTART_SCRIPT=$(mktemp /tmp/yr-restart-XXXXXX.sh)
         cat > "$RESTART_SCRIPT" << RESTART_EOF
 #!/bin/bash
-set -euo pipefail
 exec > /tmp/yr-restart.log 2>&1
 echo "\$(date): Reinstalling managed ncu daemon unit..."
 DAEMON_SERVICE_USER="$SELF_USER" bash "$LOCAL_REINSTALL_DAEMON_SCRIPT" "$NCU_EXE_DIR/bun-linux-x64/yoho-remote"
-if [[ "\${YR_DEPLOY_SERVER_AFTER_DAEMON:-0}" == "1" ]]; then
-    echo "\$(date): Daemon reinstall finished and service is active, restarting server..."
-    SERVICE_FILE="/etc/systemd/system/yoho-remote-server.service"
-    ENV_FILE="$NCU_REPO/.env"
-    if ! grep -q 'EnvironmentFile=' "\$SERVICE_FILE" 2>/dev/null; then
-        sed -i "/^ExecStart=/i EnvironmentFile=\$ENV_FILE" "\$SERVICE_FILE"
-        systemctl daemon-reload
-        echo "  ✓ Added EnvironmentFile to server service"
-    fi
-
-    systemctl stop yoho-remote-server.service 2>/dev/null || true
-    sleep 2
-    pkill -x yoho-remote-server 2>/dev/null || true
-    sleep 3
-    if pgrep -x yoho-remote-server >/dev/null 2>&1; then
-        echo "  ⚠ SIGTERM failed, SIGKILL..."
-        pkill -9 -x yoho-remote-server 2>/dev/null || true
-        sleep 2
-    fi
-    R=\$(pgrep -x yoho-remote-server 2>/dev/null || true)
-    if [ -n "\$R" ]; then
-        for p in \$R; do
-            kill -9 "\$p" 2>/dev/null || true
-        done
-        sleep 1
-    fi
-    pgrep -x yoho-remote-server >/dev/null 2>&1 && echo "  ✗ WARNING: still alive" || echo "  ✓ Fully stopped"
-    systemctl start yoho-remote-server.service
-    sleep 2
-    systemctl is-active --quiet yoho-remote-server.service && echo "  ✓ Server restarted" || echo "  ✗ Server failed to start"
-fi
 rm -f "\$0"
 RESTART_EOF
         chmod +x "$RESTART_SCRIPT"
 
-        DEPLOY_SERVER_AFTER_DAEMON=0
-        if [[ "$DEPLOY_SERVER" == "true" ]]; then
-            DEPLOY_SERVER_AFTER_DAEMON=1
-            SELF_DAEMON_HANDLES_SERVER=true
-        fi
-
         echo "$NCU_SUDO_PASS" | sudo -S systemctl reset-failed yr-daemon-restart.service 2>/dev/null || true
-        echo "$NCU_SUDO_PASS" | sudo -S systemd-run --unit=yr-daemon-restart --setenv=YR_DEPLOY_SERVER_AFTER_DAEMON=$DEPLOY_SERVER_AFTER_DAEMON bash "$RESTART_SCRIPT"
-        if [[ "$SELF_DAEMON_HANDLES_SERVER" == "true" ]]; then
-            ok "Restart dispatched; server will restart after daemon is active (log: /tmp/yr-restart.log)"
-        else
-            ok "Restart dispatched (log: /tmp/yr-restart.log)"
-        fi
+        echo "$NCU_SUDO_PASS" | sudo -S systemd-run --unit=yr-daemon-restart bash "$RESTART_SCRIPT"
+        ok "Restart dispatched (log: /tmp/yr-restart.log)"
     fi
 fi
 
 # --- 6b: Deploy server to ncu ---
-if [[ "$DEPLOY_SERVER" == "true" && "$SELF_DAEMON_HANDLES_SERVER" != "true" ]]; then
+if [[ "$DEPLOY_SERVER" == "true" ]]; then
     log "Deploying server to ncu..."
 
     # Ensure systemd EnvironmentFile is configured
