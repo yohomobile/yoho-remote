@@ -61,6 +61,7 @@ import type {
     ApprovalDecisionResult,
     CapabilityGrantStatus,
 } from './types'
+import { normalizeSessionSource } from '../sessionSourcePolicy'
 import { isRealActivityMessage, isTurnStartUserMessage } from './messageUtils'
 
 function parseTimestampCandidate(value: unknown): number | null {
@@ -1171,7 +1172,7 @@ export class PostgresStore implements IStore {
         if (orgId) {
             // Include brain/brain-child sessions regardless of org_id (they may have org_id=NULL)
             const result = await this.pool.query(
-                `SELECT * FROM sessions WHERE org_id = $1 OR (metadata->>'source' IN ('brain', 'brain-child') AND org_id IS NULL) ORDER BY COALESCE(last_message_at, updated_at) DESC`,
+                `SELECT * FROM sessions WHERE org_id = $1 OR (LOWER(COALESCE(metadata->>'source', '')) IN ('brain', 'brain-child') AND org_id IS NULL) ORDER BY COALESCE(last_message_at, updated_at) DESC`,
                 [orgId]
             )
             return result.rows.map(row => this.toStoredSession(row))
@@ -1217,6 +1218,7 @@ export class PostgresStore implements IStore {
             conditions.push('s.active = true')
         }
         if (input.mainSessionId) {
+            conditions.push(`LOWER(COALESCE(s.metadata->>'source', '')) = 'brain-child'`)
             conditions.push(`s.metadata->>'mainSessionId' = $${paramIndex++}`)
             params.push(input.mainSessionId)
         }
@@ -1229,8 +1231,8 @@ export class PostgresStore implements IStore {
             params.push(input.flavor)
         }
         if (input.source) {
-            conditions.push(`s.metadata->>'source' = $${paramIndex++}`)
-            params.push(input.source)
+            conditions.push(`LOWER(COALESCE(s.metadata->>'source', '')) = $${paramIndex++}`)
+            params.push(normalizeSessionSource(input.source) ?? input.source.trim().toLowerCase())
         }
 
         const patternParam = paramIndex++

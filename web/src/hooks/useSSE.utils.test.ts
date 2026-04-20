@@ -190,6 +190,29 @@ describe('useSSE utils', () => {
         })
     })
 
+    test('does not expose stale mainSessionId in summaries when SSE payload is not a brain-child session', () => {
+        const summary = toSessionSummaryFromSsePayload({
+            id: 'session-plain',
+            createdAt: 1,
+            updatedAt: 2,
+            activeAt: 3,
+            lastMessageAt: 4,
+            active: true,
+            thinking: false,
+            metadata: {
+                path: '/tmp/project',
+                source: 'manual',
+                mainSessionId: 'brain-1',
+            },
+            agentState: null,
+        })
+
+        expect(summary.metadata).toEqual({
+            path: '/tmp/project',
+            source: 'manual',
+        })
+    })
+
     test('upserts session summaries while preserving list-only fields not present in SSE payload', () => {
         const previous = {
             sessions: [{

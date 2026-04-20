@@ -25,13 +25,18 @@ import {
     resolveBrainChildRuntimeAvailability,
 } from '../../brain/brainChildRuntimeSupport'
 import { SESSION_PERMISSION_MODE_VALUES, normalizeSessionPermissionMode } from '../../sessionPermissionMode'
-import { getUnsupportedSessionSourceError, isSupportedSessionSource } from '../../sessionSourcePolicy'
+import {
+    getBrainChildMainSessionId,
+    getUnsupportedSessionSourceError,
+    isSupportedSessionSource,
+} from '../../sessionSourcePolicy'
 import {
     extractResumeSpawnExtras,
     extractResumeSpawnMetadata,
-    hasInvalidResumeBrainPreferences,
+    getInvalidResumeMetadataReason,
     resolveResumeTokenSourceSpawnOptions,
 } from '../../resumeSpawnMetadata'
+import { getSessionSourceFromMetadata } from '../../sessionSourcePolicy'
 import { appendSelfSystemPrompt, resolveBrainSelfSystemContext } from '../../brain/selfSystem'
 
 /**
@@ -113,17 +118,6 @@ function getStoredActiveMonitorCount(stored: StoredSession): number | undefined 
     return parsed.data.length
 }
 
-function getMainSessionId(metadata: unknown | null | undefined): string | undefined {
-    if (!metadata || typeof metadata !== 'object') {
-        return undefined
-    }
-
-    const mainSessionId = (metadata as { mainSessionId?: unknown }).mainSessionId
-    return typeof mainSessionId === 'string' && mainSessionId.trim().length > 0
-        ? mainSessionId
-        : undefined
-}
-
 function toSessionSummary(session: Session): SessionSummary {
     const pendingRequestsCount = session.agentState?.requests ? Object.keys(session.agentState.requests).length : 0
 
@@ -131,7 +125,7 @@ function toSessionSummary(session: Session): SessionSummary {
         name: session.metadata.name,
         path: session.metadata.path,
         machineId: session.metadata.machineId ?? undefined,
-        mainSessionId: getMainSessionId(session.metadata),
+        mainSessionId: getBrainChildMainSessionId(session.metadata),
         source: session.metadata.source,
         summary: session.metadata.summary ? { text: session.metadata.summary.text } : undefined,
         flavor: session.metadata.flavor ?? null,
@@ -200,7 +194,7 @@ function storedSessionToSummary(stored: StoredSession): SessionSummary {
         createdBy: stored.createdBy ?? undefined,
         metadata: meta ? {
             ...meta,
-            mainSessionId: getMainSessionId(meta),
+            mainSessionId: getBrainChildMainSessionId(meta),
         } : null,
         todoProgress,
         pendingRequestsCount: 0,  // Offline sessions have no pending requests
@@ -446,7 +440,7 @@ async function sendInitPrompt(
 ): Promise<void> {
     const session = engine.getSession(sessionId)
     const projectRoot = session?.metadata?.path?.trim() || null
-    const source = session?.metadata?.source
+    const source = getSessionSourceFromMetadata(session?.metadata)
     const brainPreferences = extractBrainSessionPreferencesFromMetadata((session?.metadata as Record<string, unknown> | null | undefined) ?? null)
     console.log(`[sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}, source=${source}`)
     let prompt = source === 'brain'
@@ -1547,8 +1541,9 @@ export function createSessionsRoutes(
             modelMode: session.modelMode,
             modelReasoningEffort: session.modelReasoningEffort
         }
-        if (hasInvalidResumeBrainPreferences(session.metadata)) {
-            return c.json({ error: 'Session has invalid brainPreferences metadata; repair it before resuming' }, 409)
+        const invalidResumeMetadataReason = getInvalidResumeMetadataReason(session.metadata)
+        if (invalidResumeMetadataReason) {
+            return c.json({ error: invalidResumeMetadataReason }, 409)
         }
         const resumeMetadata = extractResumeSpawnMetadata(session.metadata)
         const { yolo: resumeYolo, ...resumeExtras } = extractResumeSpawnExtras(session.metadata)
@@ -1643,11 +1638,11 @@ export function createSessionsRoutes(
             void store.setSessionOrgId(newSessionId, originalStored.orgId, namespace)
         }
 
-        const resumedSource = session.metadata?.source
+        const resumedSource = getSessionSourceFromMetadata(session.metadata)
         if (resumedSource === 'brain' && newSessionId !== sessionId) {
             const childSessions = engine.getSessionsByNamespace(namespace).filter((candidate) => {
                 const metadata = candidate.metadata as { source?: unknown; mainSessionId?: unknown } | null | undefined
-                return metadata?.source === 'brain-child' && metadata?.mainSessionId === sessionId
+                return getSessionSourceFromMetadata(metadata) === 'brain-child' && metadata?.mainSessionId === sessionId
             })
 
             for (const child of childSessions) {
@@ -1728,8 +1723,13 @@ export function createSessionsRoutes(
             modelMode: session.modelMode,
             modelReasoningEffort: session.modelReasoningEffort
         }
-        if (hasInvalidResumeBrainPreferences(session.metadata)) {
-            return c.json({ error: 'Session has invalid brainPreferences metadata; repair it before refreshing account' }, 409)
+        const invalidRefreshMetadataReason = getInvalidResumeMetadataReason(session.metadata)
+        if (invalidRefreshMetadataReason) {
+            return c.json({
+                error: invalidRefreshMetadataReason === 'Session has invalid brainPreferences metadata; repair it before resuming'
+                    ? 'Session has invalid brainPreferences metadata; repair it before refreshing account'
+                    : invalidRefreshMetadataReason
+            }, 409)
         }
         const resumeMetadata = extractResumeSpawnMetadata(session.metadata)
         const { yolo: refreshYolo, ...refreshExtras } = extractResumeSpawnExtras(session.metadata)

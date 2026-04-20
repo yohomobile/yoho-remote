@@ -7,9 +7,11 @@ import { extractTodoWriteTodosFromMessageContent } from '../../sync/todos'
 import type { SocketServer, SocketWithData } from '../socketTypes'
 import { getLicenseService } from '../../license/licenseService'
 import {
-    getUnsupportedSessionSourceError,
+    getSessionMetadataPersistenceError,
     getSessionSourceFromMetadata,
+    getUnsupportedSessionSourceError,
     isSupportedSessionSource,
+    normalizeSessionMetadataInvariants,
 } from '../../sessionSourcePolicy'
 import type { SessionPermissionMode } from '../../sessionPermissionMode'
 import type { StoredMessage } from '../../store/types'
@@ -507,8 +509,14 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
                 cb({ result: 'error', reason: getUnsupportedSessionSourceError(source) })
                 return
             }
+            const metadataError = getSessionMetadataPersistenceError(metadata)
+            if (metadataError) {
+                cb({ result: 'error', reason: metadataError })
+                return
+            }
+            const normalizedMetadata = normalizeSessionMetadataInvariants(metadata)
 
-            const result = await store.updateSessionMetadata(sid, metadata, expectedVersion, sessionAccess.value.namespace)
+            const result = await store.updateSessionMetadata(sid, normalizedMetadata, expectedVersion, sessionAccess.value.namespace)
             if (result.result === 'success') {
                 cb({ result: 'success', version: result.version, metadata: result.value })
             } else if (result.result === 'version-mismatch') {
@@ -525,7 +533,7 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
                     body: {
                         t: 'update-session' as const,
                         sid,
-                        metadata: { version: result.version, value: metadata },
+                        metadata: { version: result.version, value: normalizedMetadata },
                         agentState: null
                     }
                 }

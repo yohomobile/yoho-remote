@@ -238,4 +238,224 @@ describe('registerCliHandlers', () => {
             }
         ])
     })
+
+    test('normalizes stray brain linkage fields in update-metadata for non-brain sessions', async () => {
+        const handlers = new Map<string, (...args: any[]) => unknown>()
+        const updateCalls: Array<{ sid: string; metadata: unknown }> = []
+
+        const socket = {
+            id: 'socket-metadata-normalize',
+            data: { namespace: 'default' },
+            handshake: { auth: {} },
+            join: () => undefined,
+            on: (event: string, handler: (...args: any[]) => unknown) => {
+                handlers.set(event, handler)
+            },
+            emit: () => {},
+            to: () => ({ emit: () => {} }),
+            disconnect: () => {},
+        }
+
+        const store = {
+            getSessionByNamespace: async (id: string, namespace: string) => (
+                id === 'session-metadata' && namespace === 'default'
+                    ? { id, namespace }
+                    : null
+            ),
+            getSession: async () => null,
+            getMachineByNamespace: async () => null,
+            getMachine: async () => null,
+            updateSessionMetadata: async (sid: string, metadata: unknown) => {
+                updateCalls.push({ sid, metadata })
+                return { result: 'success', version: 2, value: metadata }
+            },
+        }
+
+        const io = {
+            of: () => ({
+                sockets: new Map<string, { disconnect: (close?: boolean) => void }>(),
+            }),
+        }
+
+        registerCliHandlers(socket as any, {
+            io: io as any,
+            store: store as any,
+            rpcRegistry: new RpcRegistry(),
+        })
+
+        const updateMetadataHandler = handlers.get('update-metadata')
+        expect(updateMetadataHandler).toBeDefined()
+
+        let ackPayload: unknown = null
+        await updateMetadataHandler!(
+            {
+                sid: 'session-metadata',
+                expectedVersion: 1,
+                metadata: {
+                    source: 'MANUAL',
+                    mainSessionId: 'brain-main',
+                    brainPreferences: {
+                        machineSelection: { mode: 'manual', machineId: 'machine-1' },
+                    },
+                },
+            },
+            (answer: unknown) => {
+                ackPayload = answer
+            },
+        )
+
+        expect(updateCalls).toEqual([{
+            sid: 'session-metadata',
+            metadata: {
+                source: 'manual',
+            },
+        }])
+        expect(ackPayload).toEqual({
+            result: 'success',
+            version: 2,
+            metadata: {
+                source: 'manual',
+            },
+        })
+    })
+
+    test('rejects update-metadata when brainPreferences is invalid for a brain-linked session', async () => {
+        const handlers = new Map<string, (...args: any[]) => unknown>()
+        let updateCalled = false
+
+        const socket = {
+            id: 'socket-metadata-invalid-brain-preferences',
+            data: { namespace: 'default' },
+            handshake: { auth: {} },
+            join: () => undefined,
+            on: (event: string, handler: (...args: any[]) => unknown) => {
+                handlers.set(event, handler)
+            },
+            emit: () => {},
+            to: () => ({ emit: () => {} }),
+            disconnect: () => {},
+        }
+
+        const store = {
+            getSessionByNamespace: async (id: string, namespace: string) => (
+                id === 'session-metadata' && namespace === 'default'
+                    ? { id, namespace }
+                    : null
+            ),
+            getSession: async () => null,
+            getMachineByNamespace: async () => null,
+            getMachine: async () => null,
+            updateSessionMetadata: async () => {
+                updateCalled = true
+                return { result: 'success', version: 2, value: null }
+            },
+        }
+
+        const io = {
+            of: () => ({
+                sockets: new Map<string, { disconnect: (close?: boolean) => void }>(),
+            }),
+        }
+
+        registerCliHandlers(socket as any, {
+            io: io as any,
+            store: store as any,
+            rpcRegistry: new RpcRegistry(),
+        })
+
+        const updateMetadataHandler = handlers.get('update-metadata')
+        expect(updateMetadataHandler).toBeDefined()
+
+        let ackPayload: unknown = null
+        await updateMetadataHandler!(
+            {
+                sid: 'session-metadata',
+                expectedVersion: 1,
+                metadata: {
+                    source: 'BRAIN',
+                    brainPreferences: {
+                        machineSelection: { mode: 'manual' },
+                    },
+                },
+            },
+            (answer: unknown) => {
+                ackPayload = answer
+            },
+        )
+
+        expect(updateCalled).toBe(false)
+        expect(ackPayload).toEqual({
+            result: 'error',
+            reason: 'Invalid brainPreferences in session metadata',
+        })
+    })
+
+    test('rejects update-metadata when brain-child mainSessionId is missing', async () => {
+        const handlers = new Map<string, (...args: any[]) => unknown>()
+        let updateCalled = false
+
+        const socket = {
+            id: 'socket-metadata-invalid',
+            data: { namespace: 'default' },
+            handshake: { auth: {} },
+            join: () => undefined,
+            on: (event: string, handler: (...args: any[]) => unknown) => {
+                handlers.set(event, handler)
+            },
+            emit: () => {},
+            to: () => ({ emit: () => {} }),
+            disconnect: () => {},
+        }
+
+        const store = {
+            getSessionByNamespace: async (id: string, namespace: string) => (
+                id === 'session-metadata' && namespace === 'default'
+                    ? { id, namespace }
+                    : null
+            ),
+            getSession: async () => null,
+            getMachineByNamespace: async () => null,
+            getMachine: async () => null,
+            updateSessionMetadata: async () => {
+                updateCalled = true
+                return { result: 'success', version: 2, value: null }
+            },
+        }
+
+        const io = {
+            of: () => ({
+                sockets: new Map<string, { disconnect: (close?: boolean) => void }>(),
+            }),
+        }
+
+        registerCliHandlers(socket as any, {
+            io: io as any,
+            store: store as any,
+            rpcRegistry: new RpcRegistry(),
+        })
+
+        const updateMetadataHandler = handlers.get('update-metadata')
+        expect(updateMetadataHandler).toBeDefined()
+
+        let ackPayload: unknown = null
+        await updateMetadataHandler!(
+            {
+                sid: 'session-metadata',
+                expectedVersion: 1,
+                metadata: {
+                    source: 'brain-child',
+                    caller: 'feishu',
+                },
+            },
+            (answer: unknown) => {
+                ackPayload = answer
+            },
+        )
+
+        expect(updateCalled).toBe(false)
+        expect(ackPayload).toEqual({
+            result: 'error',
+            reason: 'brain-child sessions require mainSessionId',
+        })
+    })
 })

@@ -1,5 +1,9 @@
 import type { IStore } from './store/interface'
 import { parseBrainSessionPreferences, type BrainSessionPreferences } from './brain/brainSessionPreferences'
+import {
+    getSessionMetadataInvariantError,
+    normalizeSessionMetadataInvariants,
+} from './sessionSourcePolicy'
 import { resolveTokenSourceForAgent } from './web/tokenSources'
 
 function asNonEmptyString(value: unknown): string | undefined {
@@ -23,14 +27,20 @@ export type ResumeSpawnMetadata = {
 }
 
 export function extractResumeSpawnMetadata(metadata: unknown): ResumeSpawnMetadata {
-    if (!isRecord(metadata)) {
+    const invariantError = getSessionMetadataInvariantError(metadata)
+    if (invariantError) {
         return {}
     }
 
-    const source = asNonEmptyString(metadata.source)
-    const caller = asNonEmptyString(metadata.caller)
-    const mainSessionId = asNonEmptyString(metadata.mainSessionId)
-    const rawBrainPreferences = metadata.brainPreferences
+    const normalizedMetadata = normalizeSessionMetadataInvariants(metadata)
+    if (!isRecord(normalizedMetadata)) {
+        return {}
+    }
+
+    const source = asNonEmptyString(normalizedMetadata.source)
+    const caller = asNonEmptyString(normalizedMetadata.caller)
+    const mainSessionId = asNonEmptyString(normalizedMetadata.mainSessionId)
+    const rawBrainPreferences = normalizedMetadata.brainPreferences
     const brainPreferences = rawBrainPreferences === undefined
         ? undefined
         : parseBrainSessionPreferences(rawBrainPreferences) ?? undefined
@@ -44,10 +54,22 @@ export function extractResumeSpawnMetadata(metadata: unknown): ResumeSpawnMetada
 }
 
 export function hasInvalidResumeBrainPreferences(metadata: unknown): boolean {
-    if (!isRecord(metadata) || metadata.brainPreferences === undefined) {
+    const normalizedMetadata = normalizeSessionMetadataInvariants(metadata)
+    if (!isRecord(normalizedMetadata) || normalizedMetadata.brainPreferences === undefined) {
         return false
     }
-    return parseBrainSessionPreferences(metadata.brainPreferences) === null
+    return parseBrainSessionPreferences(normalizedMetadata.brainPreferences) === null
+}
+
+export function getInvalidResumeMetadataReason(metadata: unknown): string | null {
+    const invariantError = getSessionMetadataInvariantError(metadata)
+    if (invariantError) {
+        return invariantError
+    }
+    if (hasInvalidResumeBrainPreferences(metadata)) {
+        return 'Session has invalid brainPreferences metadata; repair it before resuming'
+    }
+    return null
 }
 
 export type ResumeSpawnExtras = {

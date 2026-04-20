@@ -20,7 +20,7 @@ import {
 import {
     extractResumeSpawnExtras,
     extractResumeSpawnMetadata,
-    hasInvalidResumeBrainPreferences,
+    getInvalidResumeMetadataReason,
     resolveResumeTokenSourceSpawnOptions,
 } from '../../resumeSpawnMetadata'
 import {
@@ -32,9 +32,12 @@ import { SESSION_PERMISSION_MODE_VALUES, normalizeSessionPermissionMode } from '
 import { getLocalTokenSourceEnabledForOrg, resolveTokenSourceForAgent } from '../tokenSources'
 import { validatePermissionModeForSessionFlavor } from './sessionConfigPolicy'
 import {
+    getBrainChildMainSessionId,
+    getSessionMetadataPersistenceError,
     getUnsupportedSessionSourceError,
     getSessionSourceFromMetadata,
     isSupportedSessionSource,
+    normalizeSessionMetadataInvariants,
 } from '../../sessionSourcePolicy'
 
 /** Derive a PascalCase project name from an absolute path's basename. e.g. "yoho-remote" → "YohoRemote" */
@@ -959,7 +962,7 @@ async function buildBrainSessionInspectPayload(engine: SyncEngine, session: Sess
             caller: asNonEmptyString(metadataRecord?.caller) ?? null,
             machineId: asNonEmptyString(session.metadata?.machineId) ?? null,
             flavor: asNonEmptyString(session.metadata?.flavor) ?? null,
-            mainSessionId: asNonEmptyString(metadataRecord?.mainSessionId) ?? null,
+            mainSessionId: getBrainChildMainSessionId(metadataRecord) ?? null,
             ...getSelfSystemInspectMetadata(metadataRecord),
         },
     }
@@ -1032,7 +1035,7 @@ function buildBrainSessionSearchPayload(args: {
                     caller: asNonEmptyString(metadata?.caller) ?? null,
                     machineId: asNonEmptyString(metadata?.machineId) ?? null,
                     flavor: asNonEmptyString(metadata?.flavor) ?? null,
-                    mainSessionId: asNonEmptyString(metadata?.mainSessionId) ?? null,
+                    mainSessionId: getBrainChildMainSessionId(metadata) ?? null,
                     ...getSelfSystemInspectMetadata(metadata),
                 },
                 match: {
@@ -1291,9 +1294,14 @@ export function createCliRoutes(
         if (!isSupportedSessionSource(source)) {
             return c.json({ error: getUnsupportedSessionSourceError(source) }, 400)
         }
+        const metadataError = getSessionMetadataPersistenceError(parsed.data.metadata)
+        if (metadataError) {
+            return c.json({ error: metadataError }, 400)
+        }
 
         const namespace = c.get('namespace')
-        const session = await engine.getOrCreateSession(parsed.data.tag, parsed.data.metadata, parsed.data.agentState ?? null, namespace)
+        const normalizedMetadata = normalizeSessionMetadataInvariants(parsed.data.metadata)
+        const session = await engine.getOrCreateSession(parsed.data.tag, normalizedMetadata, parsed.data.agentState ?? null, namespace)
         return c.json({ session })
     })
 
@@ -1304,6 +1312,10 @@ export function createCliRoutes(
         }
         if (!store) {
             return c.json({ error: 'Store not available' }, 503)
+        }
+        const requestedSource = parsed.data.source ? getSessionSourceFromMetadata({ source: parsed.data.source }) : null
+        if (parsed.data.mainSessionId && requestedSource && requestedSource !== 'brain-child') {
+            return c.json({ error: 'mainSessionId filter requires source=brain-child when source is provided' }, 400)
         }
 
         const namespace = c.get('namespace')
@@ -1510,8 +1522,9 @@ export function createCliRoutes(
             modelMode: session.modelMode,
             modelReasoningEffort: session.modelReasoningEffort,
         }
-        if (hasInvalidResumeBrainPreferences(session.metadata)) {
-            return c.json({ error: 'Session has invalid brainPreferences metadata; repair it before resuming' }, 409)
+        const invalidResumeMetadataReason = getInvalidResumeMetadataReason(session.metadata)
+        if (invalidResumeMetadataReason) {
+            return c.json({ error: invalidResumeMetadataReason }, 409)
         }
         const resumeMetadata = extractResumeSpawnMetadata(session.metadata)
         const { yolo: resumeYolo, ...resumeExtras } = extractResumeSpawnExtras(session.metadata)
@@ -1575,11 +1588,11 @@ export function createCliRoutes(
             await store.setSessionOrgId(newSessionId, storedSession.orgId, namespace).catch(() => {})
         }
 
-        const resumedSource = session.metadata?.source
+        const resumedSource = getSessionSourceFromMetadata(session.metadata)
         if (resumedSource === 'brain' && newSessionId !== sessionId) {
             const childSessions = engine.getSessionsByNamespace(namespace).filter((candidate) => {
                 const metadata = candidate.metadata as { source?: unknown; mainSessionId?: unknown } | null | undefined
-                return metadata?.source === 'brain-child' && metadata?.mainSessionId === sessionId
+                return getSessionSourceFromMetadata(metadata) === 'brain-child' && metadata?.mainSessionId === sessionId
             })
 
             for (const child of childSessions) {
@@ -2015,7 +2028,7 @@ export function createCliRoutes(
                 machineId: s.metadata.machineId,
                 flavor: s.metadata.flavor,
                 summary: s.metadata.summary,
-                mainSessionId: (s.metadata as any).mainSessionId,
+                mainSessionId: getBrainChildMainSessionId(s.metadata),
                 brainSummary: (s.metadata as any).brainSummary,
             } : null,
         }))

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { buildBrainSessionPreferences } from '../brain/brainSessionPreferences'
 import { SyncEngine, type Machine, type Session } from './syncEngine'
 
 function createSession(id: string, metadata: Record<string, unknown>): Session {
@@ -204,9 +205,10 @@ describe('SyncEngine auto-resume', () => {
             source: 'brain-child',
             caller: 'feishu',
             mainSessionId: 'brain-session-1',
-            brainPreferences: {
-                machineSelection: { mode: 'manual', machineId: machine.id },
-            },
+            brainPreferences: buildBrainSessionPreferences({
+                machineSelectionMode: 'manual',
+                machineId: machine.id,
+            }),
         })
 
         ;(engine as any).machines.set(machine.id, machine)
@@ -235,9 +237,10 @@ describe('SyncEngine auto-resume', () => {
             source: 'brain-child',
             caller: 'feishu',
             mainSessionId: 'brain-session-1',
-            brainPreferences: {
-                machineSelection: { mode: 'manual', machineId: machine.id },
-            },
+            brainPreferences: buildBrainSessionPreferences({
+                machineSelectionMode: 'manual',
+                machineId: machine.id,
+            }),
         })])
     })
 

@@ -20,9 +20,10 @@ import { getWebPushService } from '../services/webPush'
 import {
     extractResumeSpawnExtras,
     extractResumeSpawnMetadata,
-    hasInvalidResumeBrainPreferences,
+    getInvalidResumeMetadataReason,
     resolveResumeTokenSourceSpawnOptions,
 } from '../resumeSpawnMetadata'
+import { getBrainChildMainSessionId, getSessionSourceFromMetadata } from '../sessionSourcePolicy'
 import { normalizeSessionPermissionMode, type SessionPermissionMode } from '../sessionPermissionMode'
 import {
     SUMMARIZE_TURN_QUEUE_NAME,
@@ -948,6 +949,14 @@ export class SyncEngine {
     }
 
     private buildSessionPayload(session: Session): Record<string, unknown> {
+        const metadata = session.metadata && typeof session.metadata === 'object'
+            ? {
+                ...session.metadata,
+                ...(getBrainChildMainSessionId(session.metadata) !== undefined
+                    ? { mainSessionId: getBrainChildMainSessionId(session.metadata) }
+                    : { mainSessionId: undefined }),
+            }
+            : session.metadata
         return {
             id: session.id,
             namespace: session.namespace,
@@ -958,7 +967,7 @@ export class SyncEngine {
             active: session.active,
             activeAt: session.activeAt,
             createdBy: session.createdBy,
-            metadata: session.metadata,
+            metadata,
             metadataVersion: session.metadataVersion,
             agentState: session.agentState,
             agentStateVersion: session.agentStateVersion,
@@ -1062,11 +1071,11 @@ export class SyncEngine {
             session = await this.refreshSession(sessionId, { silent: true }) ?? undefined
         }
 
-        const source = (session?.metadata as any)?.source
+        const source = getSessionSourceFromMetadata(session?.metadata)
         if (source === 'brain') {
             const childSessions = this.getSessions().filter(s => {
                 const meta = s.metadata as any
-                return meta?.source === 'brain-child' && meta?.mainSessionId === sessionId
+                return getSessionSourceFromMetadata(meta) === 'brain-child' && meta?.mainSessionId === sessionId
             })
             for (const child of childSessions) {
                 try {
@@ -1154,11 +1163,11 @@ export class SyncEngine {
         const session = this.sessions.get(sessionId)
 
         // Cascade: if this is a Brain session, delete all its child sessions first
-        const source = (session?.metadata as any)?.source
+        const source = getSessionSourceFromMetadata(session?.metadata)
         if (source === 'brain') {
             const childSessions = this.getSessions().filter(s => {
                 const meta = s.metadata as any
-                return meta?.source === 'brain-child' && meta?.mainSessionId === sessionId
+                return getSessionSourceFromMetadata(meta) === 'brain-child' && meta?.mainSessionId === sessionId
             })
             for (const child of childSessions) {
                 try {
@@ -1279,7 +1288,7 @@ export class SyncEngine {
     }
 
     private isBrainSession(session: Session | undefined): boolean {
-        return session?.metadata?.source === 'brain'
+        return getSessionSourceFromMetadata(session?.metadata) === 'brain'
     }
 
     private getBrainSessionInboundSource(
@@ -2673,7 +2682,7 @@ export class SyncEngine {
                     .filter(reason => reason !== 'already-active' && reason !== 'wrong-machine' && reason !== 'wrong-namespace')
                 const key = reasons.length === 0 ? '(candidate)' : reasons.sort().join('|')
                 skipHistogram.set(key, (skipHistogram.get(key) ?? 0) + 1)
-                const source = (s.metadata as Record<string, unknown>)?.source
+                const source = getSessionSourceFromMetadata(s.metadata)
                 if (source === 'brain' || source === 'brain-child') {
                     brainTotal++
                     if (reasons.length === 0) brainCandidates++
@@ -2717,8 +2726,9 @@ export class SyncEngine {
                     const flavor = session.metadata!.flavor as string
                     const rawId = flavor === 'claude' ? session.metadata?.claudeSessionId : session.metadata?.codexSessionId
                     if (typeof rawId !== 'string' || !rawId) return
-                    if (hasInvalidResumeBrainPreferences(session.metadata)) {
-                        console.warn(`[auto-resume] skip session ${session.id}: invalid brainPreferences metadata`)
+                    const invalidResumeMetadataReason = getInvalidResumeMetadataReason(session.metadata)
+                    if (invalidResumeMetadataReason) {
+                        console.warn(`[auto-resume] skip session ${session.id}: ${invalidResumeMetadataReason}`)
                         return
                     }
 
@@ -3097,7 +3107,7 @@ export class SyncEngine {
                 .filter(s => {
                     if (s.active) {
                         activeInDb++
-                        const source = (s.metadata as Record<string, unknown>)?.source
+                        const source = getSessionSourceFromMetadata(s.metadata)
                         if (source === 'brain' || source === 'brain-child') brainInDbActive++
                         return true
                     }
@@ -3105,7 +3115,7 @@ export class SyncEngine {
                     if (!startedByDaemon) return false
                     if (startupNow - s.activeAt > STARTUP_DAEMON_RESUME_WINDOW_MS) return false
                     daemonRecentlyActive++
-                    const source = (s.metadata as Record<string, unknown>)?.source
+                    const source = getSessionSourceFromMetadata(s.metadata)
                     if (source === 'brain' || source === 'brain-child') brainInDbActive++
                     return true
                 })
@@ -3288,7 +3298,7 @@ export class SyncEngine {
         // If this is a brain-sent message and the brain-child hasn't finished its init prompt yet,
         // buffer it and deliver it once the init prompt completes.
         if ((payload.sentFrom as string) === 'brain') {
-            const isBrainChild = session?.metadata?.source === 'brain-child'
+            const isBrainChild = getSessionSourceFromMetadata(session?.metadata) === 'brain-child'
             if (isBrainChild && !this.brainChildInitCompleted.has(sessionId)) {
                 const recovered = await this.recoverBrainChildInitFromHistory(sessionId, session)
                 if (recovered) {

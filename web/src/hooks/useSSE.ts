@@ -25,6 +25,10 @@ type SSESubscription = {
     machineId?: string
 }
 
+type SessionCacheInvalidator = {
+    invalidateQueries: (filters: { queryKey: readonly unknown[] }) => Promise<unknown>
+}
+
 function buildEventsUrl(baseUrl: string, token: string, subscription: SSESubscription): string {
     const params = new URLSearchParams()
     params.set('token', token)
@@ -47,6 +51,14 @@ function buildEventsUrl(baseUrl: string, token: string, subscription: SSESubscri
     } catch {
         return path
     }
+}
+
+export function invalidateSessionCachesForSidOnlyUpdate(
+    queryClient: SessionCacheInvalidator,
+    sessionId: string
+): void {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+    void queryClient.invalidateQueries({ queryKey: queryKeys.session(sessionId) })
 }
 
 export function useSSE(options: {
@@ -235,12 +247,12 @@ export function useSSE(options: {
                                 }
                             )
                         } else if (isSidOnlyUpdate) {
-                            // metadata/todos/agentState 更新：不刷新 session 列表，但必须刷新单个 session 详情
-                            // 否则 agentState.requests 不会更新，AskUserQuestion 等权限组件会卡在 loading
+                            // sid-only update 可能来自 metadata 更新（source/mainSessionId/lifecycleState 等），
+                            // 这些字段会影响 session 列表分组与筛选；同时详情也必须刷新。
                             if (import.meta.env.DEV) {
-                                console.log('[sse] metadata-only update, invalidating session detail', event.sessionId)
+                                console.log('[sse] sid-only update, invalidating session detail + list', event.sessionId)
                             }
-                            void queryClient.invalidateQueries({ queryKey: queryKeys.session(event.sessionId) })
+                            invalidateSessionCachesForSidOnlyUpdate(queryClient, event.sessionId)
                         } else {
                             // No status fields and no sid in event, fallback to invalidation
                             if (import.meta.env.DEV) {

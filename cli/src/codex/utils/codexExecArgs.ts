@@ -100,13 +100,7 @@ export function buildCodexExecArgs(opts: {
     prompt: string;
     skipGitRepoCheck?: boolean;
 }): string[] {
-    const args: string[] = [];
-
-    if (opts.threadId) {
-        args.push('exec', 'resume', opts.threadId);
-    } else {
-        args.push('exec');
-    }
+    const args: string[] = ['exec'];
 
     args.push('--json');
 
@@ -143,6 +137,10 @@ export function buildCodexExecArgs(opts: {
 
     if (opts.startConfig.service_tier) {
         args.push(...buildCodexServiceTierArgs(opts.startConfig.service_tier));
+    }
+
+    if (opts.threadId) {
+        args.push('resume', opts.threadId);
     }
 
     args.push(opts.prompt);

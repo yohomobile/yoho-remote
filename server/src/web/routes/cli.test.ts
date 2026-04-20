@@ -184,6 +184,177 @@ describe('createCliRoutes projects', () => {
         })
     })
 
+    it('normalizes stray brain linkage fields when creating a non-brain session through the CLI route', async () => {
+        let capturedMetadata: unknown = null
+        const engine = {
+            getOrCreateSession: async (_tag: string, metadata: unknown) => {
+                capturedMetadata = metadata
+                return {
+                    id: 'session-1',
+                    metadata,
+                }
+            },
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/sessions', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                tag: 'session-1',
+                metadata: {
+                    path: '/tmp/task',
+                    host: 'localhost',
+                    homeDir: '/tmp',
+                    yohoRemoteHomeDir: '/tmp/.yoho-remote',
+                    yohoRemoteLibDir: '/tmp/.yoho-remote/lib',
+                    yohoRemoteToolsDir: '/tmp/.yoho-remote/tools',
+                    source: 'MANUAL',
+                    mainSessionId: 'brain-main',
+                    brainPreferences: createBrainPreferences(),
+                },
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        expect(capturedMetadata).toEqual({
+            path: '/tmp/task',
+            host: 'localhost',
+            homeDir: '/tmp',
+            yohoRemoteHomeDir: '/tmp/.yoho-remote',
+            yohoRemoteLibDir: '/tmp/.yoho-remote/lib',
+            yohoRemoteToolsDir: '/tmp/.yoho-remote/tools',
+            source: 'manual',
+        })
+    })
+
+    it('canonicalizes mixed-case brain-child source before persisting session metadata', async () => {
+        let capturedMetadata: unknown = null
+        const engine = {
+            getOrCreateSession: async (_tag: string, metadata: unknown) => {
+                capturedMetadata = metadata
+                return {
+                    id: 'brain-child-1',
+                    metadata,
+                }
+            },
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/sessions', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                tag: 'brain-child-1',
+                metadata: {
+                    path: '/tmp/task',
+                    host: 'localhost',
+                    homeDir: '/tmp',
+                    yohoRemoteHomeDir: '/tmp/.yoho-remote',
+                    yohoRemoteLibDir: '/tmp/.yoho-remote/lib',
+                    yohoRemoteToolsDir: '/tmp/.yoho-remote/tools',
+                    source: 'BRAIN-CHILD',
+                    mainSessionId: 'brain-main',
+                    caller: 'feishu',
+                    brainPreferences: createBrainPreferences(),
+                },
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        expect(capturedMetadata).toEqual({
+            path: '/tmp/task',
+            host: 'localhost',
+            homeDir: '/tmp',
+            yohoRemoteHomeDir: '/tmp/.yoho-remote',
+            yohoRemoteLibDir: '/tmp/.yoho-remote/lib',
+            yohoRemoteToolsDir: '/tmp/.yoho-remote/tools',
+            source: 'brain-child',
+            mainSessionId: 'brain-main',
+            caller: 'feishu',
+            brainPreferences: createBrainPreferences(),
+        })
+    })
+
+    it('rejects brain-child session create/load when mainSessionId is missing', async () => {
+        let createCalled = false
+        const engine = {
+            getOrCreateSession: async () => {
+                createCalled = true
+                return { id: 'session-1' }
+            },
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/sessions', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                tag: 'session-1',
+                metadata: {
+                    path: '/tmp/task',
+                    host: 'localhost',
+                    homeDir: '/tmp',
+                    yohoRemoteHomeDir: '/tmp/.yoho-remote',
+                    yohoRemoteLibDir: '/tmp/.yoho-remote/lib',
+                    yohoRemoteToolsDir: '/tmp/.yoho-remote/tools',
+                    source: 'brain-child',
+                },
+            }),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'brain-child sessions require mainSessionId',
+        })
+        expect(createCalled).toBe(false)
+    })
+
+    it('rejects invalid brainPreferences when creating brain-linked sessions through the CLI route', async () => {
+        let createCalled = false
+        const engine = {
+            getOrCreateSession: async () => {
+                createCalled = true
+                return { id: 'session-1' }
+            },
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/sessions', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                tag: 'session-1',
+                metadata: {
+                    path: '/tmp/task',
+                    host: 'localhost',
+                    homeDir: '/tmp',
+                    yohoRemoteHomeDir: '/tmp/.yoho-remote',
+                    yohoRemoteLibDir: '/tmp/.yoho-remote/lib',
+                    yohoRemoteToolsDir: '/tmp/.yoho-remote/tools',
+                    source: 'brain',
+                    brainPreferences: {
+                        machineSelection: { mode: 'manual' },
+                    },
+                },
+            }),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'Invalid brainPreferences in session metadata',
+        })
+        expect(createCalled).toBe(false)
+    })
+
     it('archives brain sessions by default and still requests runtime shutdown for inactive sessions', async () => {
         const archiveCalls: Array<{ sessionId: string; options: Record<string, unknown> }> = []
         let hardDeleteCalls = 0
@@ -2038,6 +2209,54 @@ describe('createCliRoutes projects', () => {
         })
     })
 
+    it('does not expose stale mainSessionId in CLI session summaries for non-brain-child sessions', async () => {
+        const dirtySession = {
+            id: 'manual-dirty',
+            namespace: 'default',
+            active: true,
+            activeAt: 40,
+            thinking: false,
+            modelMode: 'default',
+            agentState: { requests: {} },
+            metadata: {
+                path: '/tmp/plain',
+                source: 'manual',
+                mainSessionId: 'brain-main',
+            },
+        }
+
+        const engine = {
+            getSessionsByNamespace: () => [dirtySession],
+            getSessionByNamespace: () => null,
+            getSession: () => null,
+            isBrainChildInitDone: () => true,
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/sessions?includeOffline=true', {
+            method: 'GET',
+            headers: authHeaders(),
+        })
+
+        expect(response.status).toBe(200)
+        const payload = await response.json() as {
+            sessions: Array<{
+                id: string
+                metadata: Record<string, unknown> | null
+            }>
+        }
+        expect(payload.sessions[0]).toMatchObject({
+            id: 'manual-dirty',
+            metadata: {
+                path: '/tmp/plain',
+                source: 'manual',
+            },
+        })
+        expect(payload.sessions[0]?.metadata).not.toHaveProperty('mainSessionId')
+    })
+
     it('rejects status lookups outside the requested brain child scope', async () => {
         const mainSession = {
             id: 'brain-main',
@@ -2236,6 +2455,30 @@ describe('createCliRoutes projects', () => {
                 },
             }],
         })
+    })
+
+    it('rejects conflicting source filters when session search also scopes by mainSessionId', async () => {
+        let searchCalled = false
+        const store = {
+            searchSessionHistory: async () => {
+                searchCalled = true
+                return []
+            },
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => null, undefined, store as any))
+
+        const response = await app.request('/cli/sessions/search?query=publisher&mainSessionId=brain-main&source=manual', {
+            method: 'GET',
+            headers: authHeaders(),
+        })
+
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({
+            error: 'mainSessionId filter requires source=brain-child when source is provided',
+        })
+        expect(searchCalled).toBe(false)
     })
 
     it('hides invalid stored permissionMode values in search results when normalization fails', async () => {

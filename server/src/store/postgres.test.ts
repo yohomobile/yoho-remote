@@ -470,6 +470,72 @@ describe('PostgresStore control plane persistence', () => {
     })
 })
 
+describe('PostgresStore session history search', () => {
+    it('scopes mainSessionId searches to brain-child sessions only', async () => {
+        const calls: MockQueryCall[] = []
+        const sessionRow = createSessionRow({
+            metadata: {
+                source: 'brain-child',
+                mainSessionId: 'brain-main-1',
+                path: '/tmp/brain-child',
+                summary: { text: 'publisher worker' },
+            },
+            active: false,
+        })
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            return {
+                rows: [{
+                    ...sessionRow,
+                    matched_summary: null,
+                    matched_summary_created_at: null,
+                    matched_summary_seq_start: null,
+                    matched_summary_seq_end: null,
+                }],
+            }
+        })
+
+        await store.searchSessionHistory({
+            namespace: 'ns-a',
+            query: 'publisher worker',
+            limit: 5,
+            includeOffline: true,
+            mainSessionId: 'brain-main-1',
+        })
+
+        expect(calls).toHaveLength(1)
+        expect(calls[0]?.sql).toContain(`LOWER(COALESCE(s.metadata->>'source', '')) = 'brain-child'`)
+        expect(calls[0]?.sql).toContain(`s.metadata->>'mainSessionId' = $2`)
+        expect(calls[0]?.params?.[1]).toBe('brain-main-1')
+    })
+
+    it('normalizes source filters so mixed-case brain queries still match exact-match SQL paths', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            return { rows: [] }
+        })
+
+        await store.searchSessionHistory({
+            namespace: 'ns-a',
+            query: 'publisher worker',
+            limit: 5,
+            includeOffline: true,
+            source: 'BRAIN-CHILD',
+        })
+
+        expect(calls).toHaveLength(1)
+        expect(calls[0]?.sql).toContain(`LOWER(COALESCE(s.metadata->>'source', '')) = $2`)
+        expect(calls[0]?.params?.[1]).toBe('brain-child')
+    })
+})
+
 describe('PostgresStore session thinking read mapping', () => {
     it('maps thinking and thinkingAt in toStoredSession()', () => {
         const store = createStore(async () => ({ rows: [] }))

@@ -316,7 +316,7 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
     const TURN_TIMEOUT_MS = parseTimeoutEnv('YR_CODEX_TURN_TIMEOUT_MS', 3 * 60 * 60 * 1000);
 
     // ----- State -----
-    let threadId: string | null = null;
+    let threadId: string | null = getInitialExecThreadId(session);
     let currentModeHash: string | null = null;
     let pending: { message: string; mode: EnhancedMode; isolate: boolean; hash: string } | null = null;
     let first = true;
@@ -519,6 +519,7 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
     });
 
     let resultThreadId: string | null = threadId;
+    let pendingReplacementThreadId: string | null = null;
 
     // Generate a unique prefix per turn so callIds (item_0, item_1, ...) don't
     // collide across turns in the frontend's toolBlocksById map.
@@ -547,6 +548,23 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
         // stderr which often contains only benign chatter like "Reading
         // additional input from stdin...".
         let lastEventError: string | null = null;
+
+        const commitPendingReplacementThreadId = (): string | null => {
+            if (!pendingReplacementThreadId) {
+                return null;
+            }
+
+            const replacementThreadId = pendingReplacementThreadId;
+            pendingReplacementThreadId = null;
+            resultThreadId = replacementThreadId;
+            onThreadId(replacementThreadId);
+            session.onSessionFound(replacementThreadId);
+            logger.warn('[codex-exec] Promoting replacement thread ID after successful resume turn', {
+                previousThreadId: threadId,
+                nextThreadId: replacementThreadId,
+            });
+            return replacementThreadId;
+        };
 
         const turnTimer = turnTimeoutMs > 0
             ? setTimeout(() => {
@@ -614,6 +632,11 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
                 messageBuffer,
                 turnPrefix,
                 announcedToolCalls,
+                currentThreadId: () => resultThreadId,
+                queueReplacementThreadId: (id) => {
+                    pendingReplacementThreadId = id;
+                },
+                commitPendingReplacementThreadId,
                 onThreadId: (id) => {
                     resultThreadId = id;
                     onThreadId(id);
@@ -651,6 +674,7 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
             }
 
             if (code !== 0 && code !== null) {
+                pendingReplacementThreadId = null;
                 const msg = lastEventError
                     ? `codex exec exited with code ${code}: ${lastEventError.slice(0, 500)}`
                     : stderr
@@ -661,6 +685,7 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
                 return;
             }
 
+            commitPendingReplacementThreadId();
             logger.debug('[codex-exec] Process exited normally', { exitCode: code, eventCount });
             finish();
         });
@@ -677,25 +702,48 @@ interface EventHandlerContext {
     turnPrefix: string;
     onThreadId: (id: string) => void;
     announcedToolCalls: Set<string>;
+    currentThreadId?: () => string | null;
+    queueReplacementThreadId?: (id: string) => void;
+    commitPendingReplacementThreadId?: () => string | null;
     emittedReasoningItemIds?: Set<string>;
     lastStreamErrorMessage?: string | null;
     workspaceGitRoot?: string | null;
     patchArtifactResolvers?: PatchArtifactResolvers;
 }
 
+function getInitialExecThreadId(session: Pick<CodexSession, 'sessionId'>): string | null {
+    return session.sessionId;
+}
+
+function handleThreadStartedEvent(threadId: string, ctx: EventHandlerContext): void {
+    if (!threadId) {
+        return;
+    }
+
+    const previousThreadId = ctx.currentThreadId?.() ?? null;
+    if (previousThreadId && previousThreadId !== threadId) {
+        logger.warn('[codex-exec] Thread ID changed during exec stream; deferring replacement until success', {
+            previousThreadId,
+            nextThreadId: threadId,
+        });
+        ctx.queueReplacementThreadId?.(threadId);
+        return;
+    }
+
+    ctx.onThreadId(threadId);
+    ctx.session.onSessionFound(threadId);
+    logger.debug(`[codex-exec] Thread started: ${threadId}`);
+}
+
 function handleExecEvent(event: ExecEvent, ctx: EventHandlerContext): void {
-    const { session, messageBuffer, onThreadId } = ctx;
+    const { session, messageBuffer } = ctx;
 
     logger.debug(`[codex-exec:event] ${event.type} ${JSON.stringify(event).slice(0, 300)}`);
 
     switch (event.type) {
         case 'thread.started': {
             const threadId = (event as { thread_id: string }).thread_id;
-            if (threadId) {
-                onThreadId(threadId);
-                session.onSessionFound(threadId);
-                logger.debug(`[codex-exec] Thread started: ${threadId}`);
-            }
+            handleThreadStartedEvent(threadId, ctx);
             break;
         }
 
@@ -724,6 +772,7 @@ function handleExecEvent(event: ExecEvent, ctx: EventHandlerContext): void {
         }
 
         case 'turn.completed': {
+            ctx.commitPendingReplacementThreadId?.();
             const usage = (event as { usage?: { input_tokens?: number; cached_input_tokens?: number; output_tokens?: number } }).usage;
             messageBuffer.addMessage('Task completed', 'status');
 
@@ -1305,6 +1354,7 @@ function parseTimeoutEnv(name: string, fallback: number): number {
 }
 
 export const __testOnly = {
+    getInitialExecThreadId,
     handleExecEvent,
     buildCodexPlanPayload,
     buildWebSearchPayload,

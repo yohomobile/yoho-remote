@@ -288,6 +288,53 @@ describe('createSessionsRoutes', () => {
         })
     })
 
+    it('does not expose stale mainSessionId for non-brain-child session summaries', async () => {
+        const storedSessions = [
+            createStoredSession({
+                id: 'manual-session',
+                metadata: {
+                    path: '/tmp/manual',
+                    source: 'manual',
+                    mainSessionId: 'brain-session',
+                },
+            }),
+        ]
+
+        const fakeEngine = {
+            getSessionsByNamespace: () => [],
+        }
+
+        const fakeStore = {
+            getSessionsByNamespace: async () => storedSessions,
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'ns-test')
+            c.set('role', 'developer')
+            c.set('orgs', [])
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/sessions')
+        expect(response.status).toBe(200)
+
+        const payload = await response.json() as {
+            sessions: Array<{
+                id: string
+                metadata: { source?: string; mainSessionId?: string } | null
+            }>
+        }
+        expect(payload.sessions[0]).toMatchObject({
+            id: 'manual-session',
+            metadata: {
+                source: 'manual',
+            },
+        })
+        expect(payload.sessions[0]?.metadata).not.toHaveProperty('mainSessionId')
+    })
+
     it('includes self system troubleshooting metadata in brain session summaries', async () => {
         const storedSessions = [
             createStoredSession({
@@ -1279,7 +1326,7 @@ describe('createSessionsRoutes', () => {
                 path: '/tmp/brain-main',
                 machineId: 'machine-1',
                 flavor: 'claude',
-                source: 'brain',
+                source: 'BRAIN',
                 caller: 'feishu',
                 brainPreferences: createBrainPreferences(),
                 claudeSessionId: 'claude-brain-main',
@@ -1307,7 +1354,7 @@ describe('createSessionsRoutes', () => {
             namespace: 'default',
             metadata: {
                 path: '/tmp/brain-child',
-                source: 'brain-child',
+                source: 'BRAIN-CHILD',
                 mainSessionId: session.id,
             },
         }

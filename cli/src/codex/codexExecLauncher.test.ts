@@ -8,6 +8,7 @@ import { __testOnly } from './codexExecLauncher';
 type SentCodexMessage = Record<string, unknown>;
 
 function createHarness(opts: {
+    currentThreadId?: string | null;
     patchArtifactResolvers?: {
         resolveUnifiedDiff?: (change: { path: string; kind: 'add' | 'delete' | 'update' }) => string | null;
         resolveContent?: (change: { path: string; kind: 'add' | 'delete' | 'update' }) => string | null;
@@ -16,6 +17,8 @@ function createHarness(opts: {
     const sent: SentCodexMessage[] = [];
     const onThreadId = vi.fn();
     const onSessionFound = vi.fn();
+    let currentThreadId = opts.currentThreadId ?? null;
+    let pendingReplacementThreadId: string | null = null;
     const session = {
         sendCodexMessage: vi.fn((message: SentCodexMessage) => {
             sent.push(message);
@@ -29,6 +32,21 @@ function createHarness(opts: {
         turnPrefix: 'turn-1',
         onThreadId,
         announcedToolCalls: new Set<string>(),
+        currentThreadId: () => currentThreadId,
+        queueReplacementThreadId: (id: string) => {
+            pendingReplacementThreadId = id;
+        },
+        commitPendingReplacementThreadId: () => {
+            if (!pendingReplacementThreadId) {
+                return null;
+            }
+            const replacementThreadId = pendingReplacementThreadId;
+            pendingReplacementThreadId = null;
+            currentThreadId = replacementThreadId;
+            onThreadId(replacementThreadId);
+            onSessionFound(replacementThreadId);
+            return replacementThreadId;
+        },
         patchArtifactResolvers: opts.patchArtifactResolvers,
     };
 
@@ -41,6 +59,13 @@ function createHarness(opts: {
 }
 
 describe('codexExecLauncher event bridge', () => {
+    it('starts first remote turn from an existing session id', () => {
+        expect(__testOnly.getInitialExecThreadId({ sessionId: 'thread-existing' } as Pick<CodexSession, 'sessionId'>))
+            .toBe('thread-existing');
+        expect(__testOnly.getInitialExecThreadId({ sessionId: null } as Pick<CodexSession, 'sessionId'>))
+            .toBeNull();
+    });
+
     it('bridges todo_list start and update without duplicating tool-call', () => {
         const { ctx, sent } = createHarness();
         const item = {
@@ -304,6 +329,52 @@ describe('codexExecLauncher event bridge', () => {
                 },
             }),
         ]);
+    });
+
+    it('defers replacement thread id until the resumed turn succeeds', () => {
+        const { ctx, onThreadId, onSessionFound } = createHarness({
+            currentThreadId: 'thread-existing',
+        });
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+        __testOnly.handleExecEvent({ type: 'thread.started', thread_id: 'thread-new' }, ctx);
+
+        expect(warnSpy).toHaveBeenCalledWith('[codex-exec] Thread ID changed during exec stream; deferring replacement until success', {
+            previousThreadId: 'thread-existing',
+            nextThreadId: 'thread-new',
+        });
+        expect(onThreadId).not.toHaveBeenCalled();
+        expect(onSessionFound).not.toHaveBeenCalled();
+
+        __testOnly.handleExecEvent({ type: 'turn.completed' }, ctx);
+
+        expect(onThreadId).toHaveBeenCalledWith('thread-new');
+        expect(onSessionFound).toHaveBeenCalledWith('thread-new');
+
+        warnSpy.mockRestore();
+    });
+
+    it('accepts thread.started when it matches the existing thread id', () => {
+        const { ctx, onThreadId, onSessionFound } = createHarness({
+            currentThreadId: 'thread-existing',
+        });
+
+        __testOnly.handleExecEvent({ type: 'thread.started', thread_id: 'thread-existing' }, ctx);
+
+        expect(onThreadId).toHaveBeenCalledWith('thread-existing');
+        expect(onSessionFound).toHaveBeenCalledWith('thread-existing');
+    });
+
+    it('does not promote a replacement thread id when the resumed turn fails', () => {
+        const { ctx, onThreadId, onSessionFound } = createHarness({
+            currentThreadId: 'thread-existing',
+        });
+
+        __testOnly.handleExecEvent({ type: 'thread.started', thread_id: 'thread-new' }, ctx);
+        __testOnly.handleExecEvent({ type: 'turn.failed', error: { message: 'resume failed' } }, ctx);
+
+        expect(onThreadId).not.toHaveBeenCalled();
+        expect(onSessionFound).not.toHaveBeenCalled();
     });
 
     it('bridges error items as non-fatal notices', () => {
