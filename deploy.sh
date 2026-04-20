@@ -288,7 +288,9 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
         cat > "$RESTART_SCRIPT" << RESTART_EOF
 #!/bin/bash
 set -euo pipefail
-exec > /tmp/yr-restart.log 2>&1
+LOG_FILE="\${YR_RESTART_LOG:-/tmp/yr-daemon-restart.log}"
+exec > "\$LOG_FILE" 2>&1
+echo "\$(date): Logging to \$LOG_FILE"
 echo "\$(date): Reinstalling managed ncu daemon unit..."
 DAEMON_SERVICE_USER="$SELF_USER" bash "$LOCAL_REINSTALL_DAEMON_SCRIPT" "$NCU_EXE_DIR/bun-linux-x64/yoho-remote"
 if [[ "\${YR_DEPLOY_SERVER_AFTER_DAEMON:-0}" == "1" ]]; then
@@ -332,12 +334,18 @@ RESTART_EOF
             SELF_DAEMON_HANDLES_SERVER=true
         fi
 
+        RESTART_LOG="/tmp/yr-daemon-restart.$(date +%s).$$.log"
+        echo "$NCU_SUDO_PASS" | sudo -S install -o root -g root -m 0644 /dev/null "$RESTART_LOG"
         echo "$NCU_SUDO_PASS" | sudo -S systemctl reset-failed yr-daemon-restart.service 2>/dev/null || true
-        echo "$NCU_SUDO_PASS" | sudo -S systemd-run --unit=yr-daemon-restart --setenv=YR_DEPLOY_SERVER_AFTER_DAEMON=$DEPLOY_SERVER_AFTER_DAEMON bash "$RESTART_SCRIPT"
+        echo "$NCU_SUDO_PASS" | sudo -S systemd-run \
+            --unit=yr-daemon-restart \
+            --setenv=YR_DEPLOY_SERVER_AFTER_DAEMON=$DEPLOY_SERVER_AFTER_DAEMON \
+            --setenv=YR_RESTART_LOG=$RESTART_LOG \
+            bash "$RESTART_SCRIPT"
         if [[ "$SELF_DAEMON_HANDLES_SERVER" == "true" ]]; then
-            ok "Restart dispatched; server will restart after daemon is active (log: /tmp/yr-restart.log)"
+            ok "Restart dispatched; server will restart after daemon is active (log: $RESTART_LOG)"
         else
-            ok "Restart dispatched (log: /tmp/yr-restart.log)"
+            ok "Restart dispatched (log: $RESTART_LOG)"
         fi
     fi
 fi
