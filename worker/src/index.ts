@@ -2,17 +2,24 @@ import { hostname } from 'node:os'
 import { Pool } from 'pg'
 import { PgBoss } from 'pg-boss'
 import packageJson from '../package.json'
-import { QUEUE } from './boss'
+import { QUEUE, AI_TASK_DISPATCH_QUEUE, AI_TASK_RUN_QUEUE } from './boss'
 import { loadConfig } from './config'
 import { RunStore } from './db/runStore'
 import { ensureWorkerSchema } from './db/schema'
 import { SessionStore } from './db/sessionStore'
 import { SummaryStore } from './db/summaryStore'
 import { enqueueSegmentIfNeeded } from './handlers/summarizeSegment'
+import { handleAiTask, aiTaskPayloadSchema } from './handlers/aiTask'
+// handleAiTaskDispatch imported once Path 3 delivers aiTaskDispatcher.ts
 import { registerWorkerJobs } from './jobs/core'
 import { workerJobDefinitions } from './jobs/summarizeTurn'
 import { DeepSeekClient } from './llm/deepseek'
 import type { WorkerContext } from './types'
+import {
+    AI_TASK_SCHEDULES_DDL,
+    AI_TASK_RUNS_DDL,
+    AI_TASK_INDEXES_DDL,
+} from '../../server/src/store/ai-tasks-ddl'
 
 const CATCHUP_ORPHAN_AGE_MS = 10 * 60 * 1000 // 10 minutes
 
@@ -66,6 +73,9 @@ async function main(): Promise<void> {
     })
 
     await ensureWorkerSchema(pool)
+    await pool.query(AI_TASK_SCHEDULES_DDL)
+    await pool.query(AI_TASK_RUNS_DDL)
+    await pool.query(AI_TASK_INDEXES_DDL)
 
     const boss = new PgBoss({
         connectionString: config.pg.connectionString,
@@ -100,6 +110,38 @@ async function main(): Promise<void> {
 
     await boss.start()
     await registerWorkerJobs(boss, ctx, workerJobDefinitions)
+
+    // Register AI task handlers
+    await boss.createQueue(AI_TASK_DISPATCH_QUEUE, { retentionSeconds: 86_400 })
+    await boss.createQueue(AI_TASK_RUN_QUEUE, {
+        retryLimit: 2,
+        retryDelay: 60,
+        retryBackoff: false,
+        retentionSeconds: 7 * 86_400,
+    })
+
+    // TODO(Path 3): uncomment once aiTaskDispatcher.ts is delivered
+    // await boss.work(AI_TASK_DISPATCH_QUEUE, async (jobs) => {
+    //     for (const job of jobs) {
+    //         await handleAiTaskDispatch([job], ctx).catch(...)
+    //     }
+    // })
+
+    await boss.work(AI_TASK_RUN_QUEUE, async (jobs) => {
+        for (const job of jobs) {
+            const parsed = aiTaskPayloadSchema.safeParse(job.data)
+            if (!parsed.success) {
+                console.error('[Worker] Invalid aiTask payload:', parsed.error.flatten())
+                continue
+            }
+            await handleAiTask(parsed.data, ctx).catch((err: unknown) => {
+                console.error('[Worker] aiTask handler error:', err)
+                throw err
+            })
+        }
+    })
+
+    await boss.schedule(AI_TASK_DISPATCH_QUEUE, '* * * * *', {}, { retryLimit: 0 })
 
     // Run catch-up scan on startup then on interval
     void runCatchup(ctx)

@@ -3,6 +3,7 @@ import { Pool, PoolClient } from 'pg'
 import { randomUUID } from 'node:crypto'
 import type { IStore } from './interface'
 import { SESSION_SUMMARIES_DDL, SUMMARIZATION_RUNS_DDL } from './session-summaries-ddl'
+import { AI_TASK_SCHEDULES_DDL, AI_TASK_RUNS_DDL, AI_TASK_INDEXES_DDL } from './ai-tasks-ddl'
 import type {
     StoredSession,
     StoredMachine,
@@ -847,6 +848,9 @@ export class PostgresStore implements IStore {
 
         await this.pool.query(SESSION_SUMMARIES_DDL)
         await this.pool.query(SUMMARIZATION_RUNS_DDL)
+        await this.pool.query(AI_TASK_SCHEDULES_DDL)
+        await this.pool.query(AI_TASK_RUNS_DDL)
+        await this.pool.query(AI_TASK_INDEXES_DDL)
     }
 
     // ========== Session 操作 ==========

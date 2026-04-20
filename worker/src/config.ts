@@ -57,6 +57,9 @@ function buildConnectionString(input: {
 
 const envSchema = z.object({
     PG_SSL: z.string().optional(),
+    YOHO_REMOTE_INTERNAL_URL: z.string().default('http://localhost:3000'),
+    YOHO_WORKER_INTERNAL_TOKEN: z.string().min(1, 'YOHO_WORKER_INTERNAL_TOKEN is required'),
+    AI_TASK_TIMEOUT_MS: z.string().optional(),
     DEEPSEEK_API_KEY: z.string().min(1, 'DEEPSEEK_API_KEY is required'),
     DEEPSEEK_BASE_URL: z.string().default('https://api.deepseek.com'),
     DEEPSEEK_MODEL: z.literal('deepseek-chat').default('deepseek-chat'),
@@ -110,6 +113,9 @@ export type WorkerConfig = {
         model: string
         timeoutMs: number
     }
+    yohoRemoteInternalUrl: string
+    workerInternalToken: string
+    aiTaskTimeoutMs: number
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
@@ -147,6 +153,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
 
     const l2SegmentThreshold = Math.max(2, parseNumber(parsed.L2_SEGMENT_THRESHOLD, 5, 'L2_SEGMENT_THRESHOLD'))
     const catchupIntervalMs = Math.max(60_000, parseNumber(parsed.CATCHUP_INTERVAL_MS, 3_600_000, 'CATCHUP_INTERVAL_MS'))
+    const aiTaskTimeoutMs = Math.max(60_000, parseNumber(parsed.AI_TASK_TIMEOUT_MS, 30 * 60 * 1_000, 'AI_TASK_TIMEOUT_MS'))
 
     const pg = {
         host: pgHost,
@@ -171,6 +178,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
         summarizationRunRetentionMs: retentionDays * 24 * 60 * 60 * 1000,
         l2SegmentThreshold,
         catchupIntervalMs,
+        yohoRemoteInternalUrl: stripTrailingSlash(parsed.YOHO_REMOTE_INTERNAL_URL),
+        workerInternalToken: parsed.YOHO_WORKER_INTERNAL_TOKEN,
+        aiTaskTimeoutMs,
         summarizeTurnQueue: {
             retryLimit: summarizeTurnRetryLimit,
             retryDelaySeconds: summarizeTurnRetryDelaySeconds,
