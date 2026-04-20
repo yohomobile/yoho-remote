@@ -67,7 +67,24 @@ const envSchema = z.object({
     SUMMARIZE_TURN_RETRY_DELAY_SECONDS: z.string().optional(),
     SUMMARIZE_TURN_RETRY_BACKOFF: z.string().optional(),
     SUMMARIZE_TURN_RETRY_DELAY_MAX_SECONDS: z.string().optional(),
+    SUMMARIZE_SEGMENT_RETRY_LIMIT: z.string().optional(),
+    SUMMARIZE_SEGMENT_RETRY_DELAY_SECONDS: z.string().optional(),
+    SUMMARIZE_SEGMENT_RETRY_BACKOFF: z.string().optional(),
+    SUMMARIZE_SEGMENT_RETRY_DELAY_MAX_SECONDS: z.string().optional(),
+    SUMMARIZE_SESSION_RETRY_LIMIT: z.string().optional(),
+    SUMMARIZE_SESSION_RETRY_DELAY_SECONDS: z.string().optional(),
+    SUMMARIZE_SESSION_RETRY_BACKOFF: z.string().optional(),
+    SUMMARIZE_SESSION_RETRY_DELAY_MAX_SECONDS: z.string().optional(),
+    L2_SEGMENT_THRESHOLD: z.string().optional(),
+    CATCHUP_INTERVAL_MS: z.string().optional(),
 })
+
+type QueueConfig = {
+    retryLimit: number
+    retryDelaySeconds: number
+    retryBackoff: boolean
+    retryDelayMaxSeconds: number
+}
 
 export type WorkerConfig = {
     pg: {
@@ -82,12 +99,11 @@ export type WorkerConfig = {
     bossSchema: string
     workerConcurrency: number
     summarizationRunRetentionMs: number
-    summarizeTurnQueue: {
-        retryLimit: number
-        retryDelaySeconds: number
-        retryBackoff: boolean
-        retryDelayMaxSeconds: number
-    }
+    l2SegmentThreshold: number
+    catchupIntervalMs: number
+    summarizeTurnQueue: QueueConfig
+    summarizeSegmentQueue: QueueConfig
+    summarizeSessionQueue: QueueConfig
     deepseek: {
         apiKey: string
         baseUrl: string
@@ -119,6 +135,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     )
     const summarizeTurnRetryBackoff = parseBoolean(parsed.SUMMARIZE_TURN_RETRY_BACKOFF, true)
 
+    const summarizeSegmentRetryLimit = Math.max(0, parseNumber(parsed.SUMMARIZE_SEGMENT_RETRY_LIMIT, 4, 'SUMMARIZE_SEGMENT_RETRY_LIMIT'))
+    const summarizeSegmentRetryDelaySeconds = Math.max(0, parseNumber(parsed.SUMMARIZE_SEGMENT_RETRY_DELAY_SECONDS, 30, 'SUMMARIZE_SEGMENT_RETRY_DELAY_SECONDS'))
+    const summarizeSegmentRetryDelayMaxSeconds = Math.max(0, parseNumber(parsed.SUMMARIZE_SEGMENT_RETRY_DELAY_MAX_SECONDS, 600, 'SUMMARIZE_SEGMENT_RETRY_DELAY_MAX_SECONDS'))
+    const summarizeSegmentRetryBackoff = parseBoolean(parsed.SUMMARIZE_SEGMENT_RETRY_BACKOFF, true)
+
+    const summarizeSessionRetryLimit = Math.max(0, parseNumber(parsed.SUMMARIZE_SESSION_RETRY_LIMIT, 3, 'SUMMARIZE_SESSION_RETRY_LIMIT'))
+    const summarizeSessionRetryDelaySeconds = Math.max(0, parseNumber(parsed.SUMMARIZE_SESSION_RETRY_DELAY_SECONDS, 60, 'SUMMARIZE_SESSION_RETRY_DELAY_SECONDS'))
+    const summarizeSessionRetryDelayMaxSeconds = Math.max(0, parseNumber(parsed.SUMMARIZE_SESSION_RETRY_DELAY_MAX_SECONDS, 900, 'SUMMARIZE_SESSION_RETRY_DELAY_MAX_SECONDS'))
+    const summarizeSessionRetryBackoff = parseBoolean(parsed.SUMMARIZE_SESSION_RETRY_BACKOFF, true)
+
+    const l2SegmentThreshold = Math.max(2, parseNumber(parsed.L2_SEGMENT_THRESHOLD, 5, 'L2_SEGMENT_THRESHOLD'))
+    const catchupIntervalMs = Math.max(60_000, parseNumber(parsed.CATCHUP_INTERVAL_MS, 3_600_000, 'CATCHUP_INTERVAL_MS'))
+
     const pg = {
         host: pgHost,
         port: pgPort,
@@ -140,11 +169,25 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
         bossSchema: pgBossSchema,
         workerConcurrency,
         summarizationRunRetentionMs: retentionDays * 24 * 60 * 60 * 1000,
+        l2SegmentThreshold,
+        catchupIntervalMs,
         summarizeTurnQueue: {
             retryLimit: summarizeTurnRetryLimit,
             retryDelaySeconds: summarizeTurnRetryDelaySeconds,
             retryBackoff: summarizeTurnRetryBackoff,
             retryDelayMaxSeconds: summarizeTurnRetryDelayMaxSeconds,
+        },
+        summarizeSegmentQueue: {
+            retryLimit: summarizeSegmentRetryLimit,
+            retryDelaySeconds: summarizeSegmentRetryDelaySeconds,
+            retryBackoff: summarizeSegmentRetryBackoff,
+            retryDelayMaxSeconds: summarizeSegmentRetryDelayMaxSeconds,
+        },
+        summarizeSessionQueue: {
+            retryLimit: summarizeSessionRetryLimit,
+            retryDelaySeconds: summarizeSessionRetryDelaySeconds,
+            retryBackoff: summarizeSessionRetryBackoff,
+            retryDelayMaxSeconds: summarizeSessionRetryDelayMaxSeconds,
         },
         deepseek: {
             apiKey: parsed.DEEPSEEK_API_KEY,

@@ -67,6 +67,9 @@ describe('SyncEngine summarize-turn publisher contract', () => {
                 sendCalls.push({ queueName, payload, options })
                 return 'job-1'
             },
+            async sendSessionSummary(_sessionId, _namespace) {
+                return 'job-session'
+            },
             async stop() {}
         }
 

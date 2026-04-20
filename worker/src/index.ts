@@ -8,10 +8,43 @@ import { RunStore } from './db/runStore'
 import { ensureWorkerSchema } from './db/schema'
 import { SessionStore } from './db/sessionStore'
 import { SummaryStore } from './db/summaryStore'
+import { enqueueSegmentIfNeeded } from './handlers/summarizeSegment'
 import { registerWorkerJobs } from './jobs/core'
 import { workerJobDefinitions } from './jobs/summarizeTurn'
 import { DeepSeekClient } from './llm/deepseek'
 import type { WorkerContext } from './types'
+
+const CATCHUP_ORPHAN_AGE_MS = 10 * 60 * 1000 // 10 minutes
+
+async function runCatchup(ctx: WorkerContext): Promise<void> {
+    try {
+        const cutoff = Date.now() - CATCHUP_ORPHAN_AGE_MS
+        const result = await ctx.pool.query(
+            `SELECT session_id, namespace, COUNT(*)::int AS cnt
+             FROM session_summaries
+             WHERE level = 1 AND parent_id IS NULL AND created_at < $1
+             GROUP BY session_id, namespace
+             HAVING COUNT(*) >= $2`,
+            [cutoff, ctx.config.l2SegmentThreshold]
+        )
+        const rows = result.rows as Array<{ session_id: string; namespace: string; cnt: number }>
+        if (rows.length === 0) return
+
+        console.log(`[Worker] catch-up: ${rows.length} session(s) with orphaned L1s`)
+        for (const row of rows) {
+            await enqueueSegmentIfNeeded(
+                row.session_id,
+                row.namespace,
+                ctx,
+                ctx.config.l2SegmentThreshold
+            ).catch((err: unknown) => {
+                console.error(`[Worker] catch-up enqueue failed for session ${row.session_id}:`, err)
+            })
+        }
+    } catch (err) {
+        console.error('[Worker] catch-up scan failed:', err)
+    }
+}
 
 async function main(): Promise<void> {
     const config = loadConfig()
@@ -65,26 +98,23 @@ async function main(): Promise<void> {
         })
     }, 24 * 60 * 60 * 1000)
 
-    const queueOptions = {
-        retryLimit: config.summarizeTurnQueue.retryLimit,
-        retryDelay: config.summarizeTurnQueue.retryDelaySeconds,
-        retryBackoff: config.summarizeTurnQueue.retryBackoff,
-        retryDelayMax: config.summarizeTurnQueue.retryDelayMaxSeconds,
-    }
-
     await boss.start()
     await registerWorkerJobs(boss, ctx, workerJobDefinitions)
 
+    // Run catch-up scan on startup then on interval
+    void runCatchup(ctx)
+    const catchupTimer = setInterval(() => {
+        void runCatchup(ctx)
+    }, config.catchupIntervalMs)
+
+    const queueNames = workerJobDefinitions.map(d => d.queueName).join(', ')
     console.log(
-        '[Worker] Started.'
-        + ` queue=${QUEUE.SUMMARIZE_TURN}`
+        `[Worker] Started. queues=[${queueNames}]`
         + ` schema=${config.bossSchema}`
         + ` host=${worker.host}`
         + ` version=${worker.version}`
-        + ` retryLimit=${queueOptions.retryLimit}`
-        + ` retryDelay=${queueOptions.retryDelay}s`
-        + ` retryBackoff=${queueOptions.retryBackoff}`
-        + ` retryDelayMax=${queueOptions.retryDelayMax}s`
+        + ` concurrency=${config.workerConcurrency}`
+        + ` l2Threshold=${config.l2SegmentThreshold}`
     )
 
     let shuttingDown = false
@@ -94,6 +124,7 @@ async function main(): Promise<void> {
         }
         shuttingDown = true
         clearInterval(pruneTimer)
+        clearInterval(catchupTimer)
         console.log(`[Worker] Shutting down on ${signal}`)
         await boss.stop().catch((error: unknown) => {
             console.error('[Worker] Failed to stop pg-boss:', error)

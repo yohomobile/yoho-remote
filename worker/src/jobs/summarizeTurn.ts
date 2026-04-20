@@ -6,6 +6,8 @@ import {
     summarizeTurnJobDataSchema,
 } from '../boss'
 import { handleSummarizeTurn } from '../handlers/summarizeTurn'
+import { summarizeSegmentJobDefinition } from './summarizeSegment'
+import { summarizeSessionJobDefinition } from './summarizeSession'
 import type { WorkerJobDefinition } from './core'
 
 export const summarizeTurnJobDefinition: WorkerJobDefinition<SummarizeTurnJobData> = {
@@ -29,4 +31,6 @@ export const summarizeTurnJobDefinition: WorkerJobDefinition<SummarizeTurnJobDat
 
 export const workerJobDefinitions = [
     summarizeTurnJobDefinition,
+    summarizeSegmentJobDefinition,
+    summarizeSessionJobDefinition,
 ] as const

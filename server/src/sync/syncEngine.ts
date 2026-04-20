@@ -23,7 +23,12 @@ import {
     getInvalidResumeMetadataReason,
     resolveResumeTokenSourceSpawnOptions,
 } from '../resumeSpawnMetadata'
-import { getBrainChildMainSessionId, getSessionSourceFromMetadata } from '../sessionSourcePolicy'
+import {
+    applyArchiveProtectionOnPatch,
+    getBrainChildMainSessionId,
+    getSessionSourceFromMetadata,
+    isProtectedArchivedSession,
+} from '../sessionSourcePolicy'
 import { normalizeSessionPermissionMode, type SessionPermissionMode } from '../sessionPermissionMode'
 import {
     SUMMARIZE_TURN_QUEUE_NAME,
@@ -217,6 +222,11 @@ export type RpcCommandResponse = {
     exitCode?: number
     error?: string
 }
+
+export type PermissionApprovalResult =
+    | { status: 'applied' }
+    | { status: 'buffered' }
+    | { status: 'ignored'; reason: string }
 
 export type RpcReadFileResponse = {
     success: boolean
@@ -633,6 +643,9 @@ export class SyncEngine {
     private readonly brainChildLastDeliveredCallbackKeyBySessionId: Map<string, string> = new Map()
     // Callback currently being delivered per brain-child session to avoid duplicate concurrent sends.
     private readonly brainChildInFlightCallbackKeyBySessionId: Map<string, string> = new Map()
+    // Callback currently queued for retry per brain-child session.
+    private readonly brainChildPendingRetryCallbackKeyBySessionId: Map<string, string> = new Map()
+    private brainCallbackRetryDelaysMs = [5_000, 10_000, 30_000, 60_000, 120_000]
     private _dbActiveSessionIds: Set<string> = new Set() // Sessions that were active in DB at startup
     private inactivityTimer: NodeJS.Timeout | null = null
     private orphanCleanupTimer: NodeJS.Timeout | null = null
@@ -1126,6 +1139,7 @@ export class SyncEngine {
             this.pendingMonitorCallsBySessionId.delete(session.id)
             this.brainSessionPendingWakeDepthBySessionId.delete(session.id)
             this.brainChildPendingMessages.delete(session.id)
+            this.brainChildPendingRetryCallbackKeyBySessionId.delete(session.id)
             this.brainChildInFlightCallbackKeyBySessionId.delete(session.id)
 
             const metadataPatch = {
@@ -1233,6 +1247,7 @@ export class SyncEngine {
         this.brainSessionPendingWakeDepthBySessionId.delete(sessionId)
         this.brainChildLastDeliveredCallbackKeyBySessionId.delete(sessionId)
         this.brainChildInFlightCallbackKeyBySessionId.delete(sessionId)
+        this.brainChildPendingRetryCallbackKeyBySessionId.delete(sessionId)
         this.emit({ type: 'session-removed', sessionId })
         return deleted || Boolean(session)
     }
@@ -1510,13 +1525,46 @@ export class SyncEngine {
             return { ok: false, error: 'Session not found' }
         }
 
-        const success = await this.store.patchSessionMetadata(sessionId, patch, session.namespace)
+        const { metadata: protectedPatch, preserved } = applyArchiveProtectionOnPatch(session.metadata, patch)
+        if (preserved) {
+            console.warn(`[archive-guard] patchSessionMetadata stripped unarchive fields for ${sessionId.slice(0, 8)}; archivedBy=${(session.metadata as Record<string, unknown> | null | undefined)?.archivedBy}`)
+        }
+
+        if (Object.keys(protectedPatch).length === 0) {
+            return { ok: true }
+        }
+
+        const success = await this.store.patchSessionMetadata(sessionId, protectedPatch, session.namespace)
         if (!success) {
             return { ok: false, error: 'Database update failed' }
         }
 
         // Refresh in-memory session from DB
         await this.refreshSession(sessionId)
+        return { ok: true }
+    }
+
+    async unarchiveSession(sessionId: string, options?: { actor?: string }): Promise<{ ok: true } | { ok: false; error: string }> {
+        const session = this.sessions.get(sessionId)
+        if (!session) {
+            return { ok: false, error: 'Session not found' }
+        }
+        if (!isProtectedArchivedSession(session.metadata) && session.metadata?.lifecycleState !== 'archived') {
+            return { ok: true }
+        }
+        const cleaned = { ...(session.metadata as Record<string, unknown>) }
+        delete cleaned.archivedBy
+        delete cleaned.archiveReason
+        cleaned.lifecycleState = 'active'
+        cleaned.lifecycleStateSince = Date.now()
+        const result = await this.store.updateSessionMetadata(sessionId, cleaned, session.metadataVersion, session.namespace)
+        if (result.result !== 'success') {
+            await this.refreshSession(sessionId)
+            return { ok: false, error: 'Metadata version mismatch during unarchive' }
+        }
+        session.metadata = cleaned as Session['metadata']
+        session.metadataVersion = result.version
+        console.log(`[archive-guard] unarchiveSession ${sessionId.slice(0, 8)} by ${options?.actor ?? 'unknown'}`)
         return { ok: true }
     }
 
@@ -1979,13 +2027,17 @@ export class SyncEngine {
         return sawInitPrompt
     }
 
+    private isBrainSessionOnline(mainSessionId: string): boolean {
+        return this.getSession(mainSessionId)?.active === true
+    }
+
     private buildBrainCallbackDeliveryKey(
         mainSessionId: string,
-        messageCount: number,
+        childSessionId: string,
         resultSource: BrainChildCallbackEnvelope['result']['source'],
         resultSeq: number | null,
     ): string {
-        return `${mainSessionId}:${messageCount}:${resultSource}:${resultSeq ?? 'none'}`
+        return `${mainSessionId}:${childSessionId}:${resultSeq ?? `none:${resultSource}`}`
     }
 
     private async sendBrainCallbackIfNeeded(session: Session): Promise<void> {
@@ -1993,16 +2045,6 @@ export class SyncEngine {
             const source = (session.metadata as any)?.source
             const mainSessionId = (session.metadata as any)?.mainSessionId
             if (source !== 'brain-child' || !mainSessionId) {
-                return
-            }
-
-            // Check Brain session exists and is online. Offline parents cannot consume
-            // queued callbacks reliably without a fresh runtime backfill.
-            const brainSession = this.getSession(mainSessionId)
-            if (!brainSession?.active) {
-                console.warn(`[brain-callback] Brain session ${mainSessionId} unavailable (active=${brainSession?.active ?? false}), will retry`)
-                // Brain may be temporarily offline (restarting, etc.) - retry with delay
-                await this.retryBrainCallback(session, mainSessionId, 'brain session unavailable')
                 return
             }
 
@@ -2155,7 +2197,7 @@ export class SyncEngine {
             const messageCount = await this.store.getMessageCount(session.id)
             const callbackDeliveryKey = this.buildBrainCallbackDeliveryKey(
                 mainSessionId,
-                messageCount,
+                session.id,
                 resultSource,
                 resultSeq,
             )
@@ -2172,6 +2214,23 @@ export class SyncEngine {
                     `(key=${callbackDeliveryKey})`
                 )
                 return
+            }
+            if (!this.isBrainSessionOnline(mainSessionId)) {
+                const pendingRetryKey = this.brainChildPendingRetryCallbackKeyBySessionId.get(session.id)
+                if (pendingRetryKey === callbackDeliveryKey) {
+                    console.log(
+                        `[brain-callback] Retry already pending for ${shortId(session.id)} ` +
+                        `(key=${callbackDeliveryKey})`
+                    )
+                    return
+                }
+                this.brainChildPendingRetryCallbackKeyBySessionId.set(session.id, callbackDeliveryKey)
+                console.warn(`[brain-callback] Brain session ${mainSessionId} unavailable, will retry (key=${callbackDeliveryKey})`)
+                void this.retryBrainCallback(session.id, mainSessionId, callbackDeliveryKey, 'brain session unavailable')
+                return
+            }
+            if (this.brainChildPendingRetryCallbackKeyBySessionId.get(session.id) === callbackDeliveryKey) {
+                this.brainChildPendingRetryCallbackKeyBySessionId.delete(session.id)
             }
 
             const CONTEXT_BUDGET = getContextBudget(session.modelMode)
@@ -2228,7 +2287,7 @@ export class SyncEngine {
                     try {
                         await this.sendMessage(mainSessionId, {
                             text: callbackMessage,
-                            localId: `brain-callback:${session.id}:${callbackDeliveryKey}`,
+                            localId: `brain-callback:${callbackDeliveryKey}`,
                             sentFrom: 'brain-callback',
                             meta: {
                                 brainChildCallback: callbackEnvelope,
@@ -2259,22 +2318,35 @@ export class SyncEngine {
     /**
      * Retry brain callback with delay - used when Brain session is temporarily unavailable
      */
-    private async retryBrainCallback(childSession: Session, mainSessionId: string, reason: string): Promise<void> {
-        const MAX_RETRIES = 5
-        const RETRY_DELAYS = [5_000, 10_000, 30_000, 60_000, 120_000] // 5s, 10s, 30s, 1m, 2m
+    private async retryBrainCallback(
+        childSessionId: string,
+        mainSessionId: string,
+        callbackDeliveryKey: string,
+        reason: string,
+    ): Promise<void> {
+        const maxRetries = this.brainCallbackRetryDelaysMs.length
 
-        for (let i = 0; i < MAX_RETRIES; i++) {
-            await new Promise(r => setTimeout(r, RETRY_DELAYS[i]))
-            const brainSession = this.getSession(mainSessionId)
-            if (brainSession) {
+        for (let i = 0; i < maxRetries; i++) {
+            await new Promise(r => setTimeout(r, this.brainCallbackRetryDelaysMs[i]))
+            if (this.brainChildPendingRetryCallbackKeyBySessionId.get(childSessionId) !== callbackDeliveryKey) {
+                return
+            }
+            if (this.isBrainSessionOnline(mainSessionId)) {
+                const childSession = this.getSession(childSessionId)
+                if (!childSession) {
+                    this.brainChildPendingRetryCallbackKeyBySessionId.delete(childSessionId)
+                    return
+                }
                 console.log(`[brain-callback] Brain session ${shortId(mainSessionId)} came back online (retry ${i + 1}), re-sending callback`)
-                // Re-invoke the full callback logic
                 await this.sendBrainCallbackIfNeeded(childSession)
                 return
             }
-            console.log(`[brain-callback] Brain session ${shortId(mainSessionId)} still offline (retry ${i + 1}/${MAX_RETRIES}, reason: ${reason})`)
+            console.log(`[brain-callback] Brain session ${shortId(mainSessionId)} still offline (retry ${i + 1}/${maxRetries}, reason: ${reason})`)
         }
-        console.error(`[brain-callback] Gave up waiting for brain session ${shortId(mainSessionId)} after ${MAX_RETRIES} retries. Child session: ${shortId(childSession.id)}`)
+        if (this.brainChildPendingRetryCallbackKeyBySessionId.get(childSessionId) === callbackDeliveryKey) {
+            this.brainChildPendingRetryCallbackKeyBySessionId.delete(childSessionId)
+        }
+        console.error(`[brain-callback] Gave up waiting for brain session ${shortId(mainSessionId)} after ${maxRetries} retries. Child session: ${shortId(childSessionId)}`)
     }
 
     /**
@@ -2409,6 +2481,13 @@ export class SyncEngine {
         }
         if (clearedActiveMonitors) {
             this.emitSessionActiveMonitors(session)
+        }
+
+        // Enqueue L3 session summary (delayed 30s to let the last L1 finish first)
+        if (this.boss) {
+            this.boss.sendSessionSummary(session.id, session.namespace).catch(err => {
+                console.error(`[syncEngine] failed to enqueue session summary for ${session.id}:`, err)
+            })
         }
     }
 
@@ -3541,7 +3620,7 @@ export class SyncEngine {
         allowTools?: string[],
         decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort',
         answers?: Record<string, string[]>
-    ): Promise<void> {
+    ): Promise<PermissionApprovalResult | void> {
         console.log(`[AskUserQuestion] approvePermission`, {
             sessionId,
             requestId,
@@ -3549,14 +3628,14 @@ export class SyncEngine {
             answersKeys: answers ? Object.keys(answers) : [],
             decision,
         })
-        await this.sessionRpc(sessionId, 'permission', {
+        const rpcResult = await this.sessionRpc(sessionId, 'permission', {
             id: requestId,
             approved: true,
             mode,
             allowTools,
             decision,
             answers
-        })
+        }) as PermissionApprovalResult | void
 
         // Update server-side permissionMode when mode is changed via permission approval
         if (mode !== undefined) {
@@ -3566,6 +3645,8 @@ export class SyncEngine {
                 this.emit({ type: 'session-updated', sessionId, data: { permissionMode: mode } })
             }
         }
+
+        return rpcResult
     }
 
     async denyPermission(

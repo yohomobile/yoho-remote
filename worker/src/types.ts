@@ -43,6 +43,37 @@ export type L1SummaryResult = L1SummaryRecord & {
     provider: ProviderTelemetry
 }
 
+export type StoredL1Summary = {
+    id: string
+    seqStart: number | null
+    seqEnd: number | null
+    summary: string
+    topic: string | null
+    tools: string[]
+    entities: string[]
+}
+
+export type StoredL2Summary = {
+    id: string
+    seqStart: number | null
+    seqEnd: number | null
+    summary: string
+    topic: string | null
+    tools: string[]
+    entities: string[]
+}
+
+export type LLMSummaryResult = {
+    summary: string
+    topic: string
+    tools: string[]
+    entities: string[]
+    tokensIn: number | null
+    tokensOut: number | null
+    rawResponse: string
+    provider: ProviderTelemetry
+}
+
 export type WorkerIdentity = {
     host: string
     version: string

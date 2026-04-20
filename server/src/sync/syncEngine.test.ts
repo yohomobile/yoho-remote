@@ -2514,4 +2514,263 @@ describe('SyncEngine', () => {
         expect(deletedIds).toHaveLength(0)
         expect(engine.getSession(recent.id)).toBeDefined()
     })
+
+    test('patchSessionMetadata archive-guard strips unarchive fields for user-archived sessions', async () => {
+        const patchCalls: Array<{ id: string; patch: Record<string, unknown> }> = []
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            patchSessionMetadata: async (id: string, patch: Record<string, unknown>) => {
+                patchCalls.push({ id, patch })
+                return true
+            },
+            getSessionByNamespace: async () => null,
+        } as any
+
+        const io = {
+            of: () => ({ to: () => ({ emit() {} }), emit() {} }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const archived = createSession('archived-child', {
+            source: 'brain-child',
+            mainSessionId: 'brain-1',
+            lifecycleState: 'archived',
+            lifecycleStateSince: 100,
+            archivedBy: 'user',
+            archiveReason: 'User archived session',
+        })
+        ;(engine as any).sessions.set(archived.id, archived)
+        ;(engine as any).refreshSession = async () => archived
+
+        const result = await engine.patchSessionMetadata(archived.id, {
+            lifecycleState: 'running',
+            lifecycleStateSince: 999,
+            hostPid: 42,
+        })
+
+        expect(result).toEqual({ ok: true })
+        expect(patchCalls).toHaveLength(1)
+        expect(patchCalls[0].patch).toEqual({ hostPid: 42 })
+    })
+
+    test('patchSessionMetadata archive-guard skips store call when patch becomes empty after stripping', async () => {
+        let storeCalls = 0
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            patchSessionMetadata: async () => {
+                storeCalls += 1
+                return true
+            },
+        } as any
+
+        const io = {
+            of: () => ({ to: () => ({ emit() {} }), emit() {} }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const archived = createSession('archived-child-2', {
+            source: 'brain-child',
+            mainSessionId: 'brain-1',
+            lifecycleState: 'archived',
+            lifecycleStateSince: 100,
+            archivedBy: 'brain',
+        })
+        ;(engine as any).sessions.set(archived.id, archived)
+
+        const result = await engine.patchSessionMetadata(archived.id, {
+            lifecycleState: 'running',
+            archivedBy: null,
+        })
+
+        expect(result).toEqual({ ok: true })
+        expect(storeCalls).toBe(0)
+    })
+
+    test('patchSessionMetadata archive-guard is a no-op for cli-archived sessions', async () => {
+        const patchCalls: Array<{ patch: Record<string, unknown> }> = []
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            patchSessionMetadata: async (_id: string, patch: Record<string, unknown>) => {
+                patchCalls.push({ patch })
+                return true
+            },
+        } as any
+
+        const io = {
+            of: () => ({ to: () => ({ emit() {} }), emit() {} }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const cliArchived = createSession('cli-archived', {
+            source: 'brain-child',
+            mainSessionId: 'brain-1',
+            lifecycleState: 'archived',
+            lifecycleStateSince: 100,
+            archivedBy: 'cli',
+        })
+        ;(engine as any).sessions.set(cliArchived.id, cliArchived)
+        ;(engine as any).refreshSession = async () => cliArchived
+
+        const result = await engine.patchSessionMetadata(cliArchived.id, {
+            lifecycleState: 'running',
+            hostPid: 42,
+        })
+
+        expect(result).toEqual({ ok: true })
+        expect(patchCalls).toHaveLength(1)
+        expect(patchCalls[0].patch).toEqual({ lifecycleState: 'running', hostPid: 42 })
+    })
+
+    test('unarchiveSession clears archive stamps and bumps metadata version', async () => {
+        const updateCalls: Array<{ id: string; metadata: unknown; expectedVersion: number }> = []
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            updateSessionMetadata: async (id: string, metadata: unknown, expectedVersion: number) => {
+                updateCalls.push({ id, metadata, expectedVersion })
+                return { result: 'success', version: expectedVersion + 1, value: metadata }
+            },
+        } as any
+
+        const io = {
+            of: () => ({ to: () => ({ emit() {} }), emit() {} }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const archived = createSession('archived-child-3', {
+            source: 'brain-child',
+            mainSessionId: 'brain-1',
+            lifecycleState: 'archived',
+            lifecycleStateSince: 100,
+            archivedBy: 'user',
+            archiveReason: 'User archived session',
+        })
+        ;(engine as any).sessions.set(archived.id, archived)
+
+        const result = await engine.unarchiveSession(archived.id, { actor: 'resume' })
+
+        expect(result).toEqual({ ok: true })
+        expect(updateCalls).toHaveLength(1)
+        expect(updateCalls[0].expectedVersion).toBe(1)
+        const persisted = updateCalls[0].metadata as Record<string, unknown>
+        expect(persisted.source).toBe('brain-child')
+        expect(persisted.mainSessionId).toBe('brain-1')
+        expect(persisted.lifecycleState).toBe('active')
+        expect(persisted.archivedBy).toBeUndefined()
+        expect(persisted.archiveReason).toBeUndefined()
+        const after = engine.getSession(archived.id)?.metadata as Record<string, unknown>
+        expect(after.lifecycleState).toBe('active')
+        expect(after.archivedBy).toBeUndefined()
+        expect(engine.getSession(archived.id)?.metadataVersion).toBe(2)
+    })
+
+    test('unarchiveSession returns version-mismatch error when store reports stale version', async () => {
+        let storeCalls = 0
+        let refreshCalls = 0
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            updateSessionMetadata: async () => {
+                storeCalls += 1
+                return { result: 'version-mismatch', version: 99, value: {} }
+            },
+        } as any
+
+        const io = {
+            of: () => ({ to: () => ({ emit() {} }), emit() {} }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const archived = createSession('archived-child-4', {
+            source: 'brain-child',
+            mainSessionId: 'brain-1',
+            lifecycleState: 'archived',
+            lifecycleStateSince: 100,
+            archivedBy: 'user',
+        })
+        ;(engine as any).sessions.set(archived.id, archived)
+        ;(engine as any).refreshSession = async () => {
+            refreshCalls += 1
+            return archived
+        }
+
+        const result = await engine.unarchiveSession(archived.id)
+
+        expect(result).toEqual({ ok: false, error: 'Metadata version mismatch during unarchive' })
+        expect(storeCalls).toBe(1)
+        expect(refreshCalls).toBe(1)
+    })
+
+    test('unarchiveSession is a no-op for non-archived sessions', async () => {
+        let storeCalls = 0
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            updateSessionMetadata: async () => {
+                storeCalls += 1
+                return { result: 'success', version: 2, value: {} }
+            },
+        } as any
+
+        const io = {
+            of: () => ({ to: () => ({ emit() {} }), emit() {} }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const running = createSession('running-session', {
+            source: 'brain-child',
+            mainSessionId: 'brain-1',
+            lifecycleState: 'running',
+        })
+        ;(engine as any).sessions.set(running.id, running)
+
+        const result = await engine.unarchiveSession(running.id)
+
+        expect(result).toEqual({ ok: true })
+        expect(storeCalls).toBe(0)
+    })
 })

@@ -1,5 +1,6 @@
 import type { SummarizeTurnPayload } from '../boss'
 import { extractTurnContent, isMidStreamToolUse, isTurnStartUserMessage } from '../extract/messageExtractor'
+import { enqueueSegmentIfNeeded } from './summarizeSegment'
 import { PermanentLLMError, safeLLMCall } from '../llm/errors'
 import { extractJobErrorCode, PermanentJobError, TransientJobError } from '../jobs/errors'
 import type { WorkerJobMetadata } from '../jobs/core'
@@ -439,6 +440,17 @@ export async function handleSummarizeTurn(
                     insertedSummary: inserted.inserted,
                 }),
             }))
+
+            // Trigger L2 segment summarization if enough unassigned L1s have accumulated
+            enqueueSegmentIfNeeded(
+                payload.sessionId,
+                sessionNamespace,
+                ctx,
+                ctx.config.l2SegmentThreshold
+            ).catch(err => {
+                console.error(`[summarizeTurn] failed to enqueue segment for session ${payload.sessionId}:`, err)
+            })
+
             return
         } catch (error) {
             const transientError = error as Error

@@ -1,6 +1,9 @@
 export const SUMMARIZE_TURN_QUEUE_NAME = 'summarize-turn'
 export const SUMMARIZE_TURN_JOB_VERSION = 1 as const
 
+export const SUMMARIZE_SESSION_QUEUE_NAME = 'summarize-session'
+export const SUMMARIZE_SESSION_JOB_VERSION = 1 as const
+
 export type SummarizeTurnJobPayload = {
     sessionId: string
     namespace: string
@@ -12,6 +15,18 @@ export type SummarizeTurnJobData = {
     version: typeof SUMMARIZE_TURN_JOB_VERSION
     idempotencyKey: string
     payload: SummarizeTurnJobPayload
+}
+
+export type SummarizeSessionJobPayload = {
+    sessionId: string
+    namespace: string
+    scheduledAtMs: number
+}
+
+export type SummarizeSessionJobData = {
+    version: typeof SUMMARIZE_SESSION_JOB_VERSION
+    idempotencyKey: string
+    payload: SummarizeSessionJobPayload
 }
 
 type QueueOptions = {
@@ -30,6 +45,10 @@ export interface SummarizeTurnQueuePublisher {
         queueName: string,
         payload: SummarizeTurnJobData,
         options?: SendOptions
+    ): Promise<unknown>
+    sendSessionSummary(
+        sessionId: string,
+        namespace: string,
     ): Promise<unknown>
     stop(): Promise<void>
 }
@@ -143,6 +162,9 @@ export async function createSummarizeTurnQueuePublisher(
         await boss.start()
         await boss.createQueue(SUMMARIZE_TURN_QUEUE_NAME, queueOptions)
         await boss.updateQueue(SUMMARIZE_TURN_QUEUE_NAME, queueOptions)
+        // Pre-create the session summary queue so enqueue never races with worker startup
+        const sessionQueueOptions: QueueOptions = { retryLimit: 3, retryDelay: 60, retryBackoff: true, retryDelayMax: 900 }
+        await boss.createQueue(SUMMARIZE_SESSION_QUEUE_NAME, sessionQueueOptions).catch(() => {})
         console.log(
             '[Server] summarize-turn queue publisher: enabled'
             + ` (schema=${config.bossSchema}, retryLimit=${queueOptions.retryLimit}, retryDelay=${queueOptions.retryDelay}s,`
@@ -151,6 +173,17 @@ export async function createSummarizeTurnQueuePublisher(
         return {
             send(queueName, payload, options) {
                 return boss.send(queueName, payload, options)
+            },
+            sendSessionSummary(sessionId: string, namespace: string) {
+                const singletonKey = `session:${sessionId}`
+                const data: SummarizeSessionJobData = {
+                    version: SUMMARIZE_SESSION_JOB_VERSION,
+                    idempotencyKey: singletonKey,
+                    payload: { sessionId, namespace, scheduledAtMs: Date.now() },
+                }
+                return boss.send(SUMMARIZE_SESSION_QUEUE_NAME, data as unknown as SummarizeTurnJobData, {
+                    singletonKey,
+                })
             },
             stop() {
                 return boss.stop()

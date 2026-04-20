@@ -2,6 +2,7 @@
 import { Pool, PoolClient } from 'pg'
 import { randomUUID } from 'node:crypto'
 import type { IStore } from './interface'
+import { SESSION_SUMMARIES_DDL, SUMMARIZATION_RUNS_DDL } from './session-summaries-ddl'
 import type {
     StoredSession,
     StoredMachine,
@@ -843,6 +844,9 @@ export class PostgresStore implements IStore {
             ALTER TABLE machines ADD COLUMN IF NOT EXISTS supported_agents JSONB;
 
         `)
+
+        await this.pool.query(SESSION_SUMMARIES_DDL)
+        await this.pool.query(SUMMARIZATION_RUNS_DDL)
     }
 
     // ========== Session 操作 ==========
