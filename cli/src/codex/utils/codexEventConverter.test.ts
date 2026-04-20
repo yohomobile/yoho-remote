@@ -157,4 +157,55 @@ describe('convertCodexEvent', () => {
             type: 'compact-boundary'
         });
     });
+
+    it('converts item/completed contextCompaction notifications', () => {
+        const result = convertCodexEvent({
+            method: 'item/completed',
+            params: {
+                threadId: 'thread-1',
+                turnId: 'turn-1',
+                item: {
+                    type: 'contextCompaction',
+                    id: 'item-1'
+                }
+            }
+        });
+
+        expect(result?.message).toMatchObject({
+            type: 'compact-boundary'
+        });
+    });
+
+    it('converts item/started contextCompaction notifications into compacting status', () => {
+        const result = convertCodexEvent({
+            method: 'item/started',
+            params: {
+                threadId: 'thread-1',
+                turnId: 'turn-1',
+                item: {
+                    type: 'contextCompaction',
+                    id: 'item-1'
+                }
+            }
+        });
+
+        expect(result?.message).toMatchObject({
+            type: 'status',
+            status: 'compacting'
+        });
+    });
+
+    it('converts legacy thread/compacted notifications', () => {
+        const result = convertCodexEvent({
+            method: 'thread/compacted',
+            params: {
+                threadId: 'thread-1',
+                turnId: 'turn-1'
+            }
+        });
+
+        expect(result?.message).toMatchObject({
+            type: 'compact-boundary'
+        });
+    });
 });

@@ -366,6 +366,8 @@ function clampAliveTime(t: number): number | null {
 
 const DEBUG_THINKING = process.env.DEBUG_THINKING === '1'
 const INIT_PROMPT_PREFIX = '#InitPrompt-'
+const AUTO_RESUME_CONTINUE_SOCKET_WAIT_MS = 2_000
+const AUTO_RESUME_CONTINUE_MESSAGE = '请继续刚才被 daemon 重启打断的任务，避免重复已完成步骤；如果任务实际上已经完成，请直接总结当前结果。'
 
 function shortId(id: string): string {
     return id.length <= 8 ? id : id.slice(0, 8)
@@ -3184,6 +3186,9 @@ export class SyncEngine {
                         }
                         this.markSessionResumeReady(session.id, 'auto-resume')
                         console.log(`[auto-resume] Resumed session ${session.id.slice(0, 8)}`)
+                        if (previousThinking) {
+                            await this.sendAutoResumeContinueMessage(session, previousActiveAt)
+                        }
                     } else {
                         await this.store.setSessionActive(session.id, false, previousActiveAt, namespace)
                         this._dbActiveSessionIds.delete(session.id)
@@ -3671,6 +3676,27 @@ export class SyncEngine {
             await new Promise(resolve => setTimeout(resolve, 50))
         }
         return false
+    }
+
+    private async sendAutoResumeContinueMessage(session: Session, previousActiveAt: number): Promise<void> {
+        try {
+            const socketReady = await this.waitForSocketInRoom(session.id, AUTO_RESUME_CONTINUE_SOCKET_WAIT_MS)
+            if (!socketReady) {
+                console.warn(
+                    `[auto-resume] Session ${shortId(session.id)} socket room not ready within ` +
+                    `${AUTO_RESUME_CONTINUE_SOCKET_WAIT_MS}ms; sending continue message via persisted history`
+                )
+            }
+
+            await this.sendMessage(session.id, {
+                text: AUTO_RESUME_CONTINUE_MESSAGE,
+                localId: `auto-resume-continue-${previousActiveAt}`,
+                sentFrom: 'auto-resume'
+            })
+            console.log(`[auto-resume] Sent continue recovery message to ${shortId(session.id)}`)
+        } catch (err) {
+            console.warn(`[auto-resume] Failed to send continue recovery message to ${shortId(session.id)}:`, err)
+        }
     }
 
     // Marks a brain-child as having finished its init prompt, both in the

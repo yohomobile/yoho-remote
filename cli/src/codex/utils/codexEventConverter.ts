@@ -4,9 +4,13 @@ import { logger } from '@/ui/logger';
 
 const CodexSessionEventSchema = z.object({
     timestamp: z.string().optional(),
-    type: z.string(),
-    payload: z.unknown().optional()
-}).passthrough();
+    type: z.string().optional(),
+    method: z.string().optional(),
+    payload: z.unknown().optional(),
+    params: z.unknown().optional()
+}).passthrough().refine((value) => typeof value.type === 'string' || typeof value.method === 'string', {
+    message: 'Codex event requires either type or method'
+});
 
 export type CodexSessionEvent = z.infer<typeof CodexSessionEventSchema>;
 
@@ -131,15 +135,51 @@ function extractModelInfo(payload: Record<string, unknown>): CodexModelInfo | nu
     return { model, reasoningEffort };
 }
 
+function isCompactionItemType(itemType: string | null): boolean {
+    return itemType === 'contextCompaction' || itemType === 'context_compaction' || itemType === 'compaction';
+}
+
 export function convertCodexEvent(rawEvent: unknown): CodexConversionResult | null {
     const parsed = CodexSessionEventSchema.safeParse(rawEvent);
     if (!parsed.success) {
         return null;
     }
 
-    const { type, payload } = parsed.data;
+    const { type, method, payload, params } = parsed.data;
     const payloadRecord = asRecord(payload);
+    const paramsRecord = asRecord(params);
     const eventRecord = asRecord(parsed.data);
+
+    if (method === 'thread/compacted') {
+        return {
+            message: {
+                type: 'compact-boundary',
+                id: randomUUID()
+            }
+        };
+    }
+
+    if (method === 'item/started' || method === 'item/completed') {
+        const item = asRecord(paramsRecord?.item);
+        const itemType = asString(item?.type);
+        if (isCompactionItemType(itemType)) {
+            if (method === 'item/started') {
+                return {
+                    message: {
+                        type: 'status',
+                        status: 'compacting',
+                        id: randomUUID()
+                    }
+                };
+            }
+            return {
+                message: {
+                    type: 'compact-boundary',
+                    id: randomUUID()
+                }
+            };
+        }
+    }
 
     if (type === 'session_meta') {
         const sessionId = payloadRecord ? extractSessionId(payloadRecord) : null;
@@ -267,7 +307,7 @@ export function convertCodexEvent(rawEvent: unknown): CodexConversionResult | nu
             return null;
         }
 
-        if (itemType === 'context_compaction' || itemType === 'compaction') {
+        if (isCompactionItemType(itemType)) {
             return {
                 message: {
                     type: 'compact-boundary',

@@ -51,6 +51,7 @@ describe('SyncEngine auto-resume', () => {
             getSessions: async () => [],
             getMachines: async () => [],
             setSessionActive: async () => true,
+            setSessionThinking: async () => true,
             getSession: async () => null,
         } as any
 
@@ -113,6 +114,7 @@ describe('SyncEngine auto-resume', () => {
             getSessions: async () => [],
             getMachines: async () => [],
             setSessionActive: async () => true,
+            setSessionThinking: async () => true,
             getSession: async () => null,
         } as any
 
@@ -556,6 +558,74 @@ describe('SyncEngine auto-resume', () => {
 
         expect(spawnCalled).toBe(true)
         expect(Date.now() - startedAt).toBeLessThan(50)
+    })
+
+    test('sends a continue recovery message for sessions that were interrupted while thinking', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActive: async () => true,
+            setSessionThinking: async () => true,
+            getSession: async () => null,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const rpcRegistry = {
+            getSocketIdForMethod: () => 'socket-1',
+        } as any
+
+        const engine = new SyncEngine(store, io, rpcRegistry, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const machine = createMachine('machine-1')
+        const session = createSession('session-thinking', {
+            machineId: machine.id,
+            path: '/tmp/project-thinking',
+            flavor: 'codex',
+            codexSessionId: 'thread-thinking',
+            startedFromDaemon: true,
+        })
+        const originalActiveAt = session.activeAt
+        session.thinking = true
+
+        ;(engine as any).machines.set(machine.id, machine)
+        ;(engine as any).sessions.set(session.id, session)
+        ;(engine as any)._dbActiveSessionIds = new Set([session.id])
+
+        const sendCalls: Array<{ sessionId: string; payload: Record<string, unknown> }> = []
+        ;(engine as any).spawnSession = async () => ({
+            type: 'success',
+            sessionId: session.id,
+        })
+        ;(engine as any).listDaemonLiveSessions = async () => []
+        ;(engine as any).waitForSessionHeartbeatAfter = async () => true
+        ;(engine as any).waitForSocketInRoom = async () => false
+        ;(engine as any).sendMessage = async (sessionId: string, payload: Record<string, unknown>) => {
+            sendCalls.push({ sessionId, payload })
+            return { status: 'delivered' }
+        }
+
+        await (engine as any).autoResumeSessions(machine.id, machine.namespace)
+
+        expect(sendCalls).toEqual([{
+            sessionId: session.id,
+            payload: {
+                text: '请继续刚才被 daemon 重启打断的任务，避免重复已完成步骤；如果任务实际上已经完成，请直接总结当前结果。',
+                localId: `auto-resume-continue-${originalActiveAt}`,
+                sentFrom: 'auto-resume',
+            }
+        }])
+        expect(session.thinking).toBe(false)
     })
 
     test('resumes daemon-claimed sessions after a short reconnect deadline when heartbeat never arrives', async () => {
