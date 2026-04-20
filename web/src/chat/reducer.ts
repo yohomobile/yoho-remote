@@ -168,10 +168,17 @@ function dedupeAgentEvents(blocks: ChatBlock[]): ChatBlock[] {
         if (event.type === 'task-notification') {
             const taskId = typeof event.taskId === 'string' ? event.taskId : undefined
             if (taskId) {
+                let merged = false
                 for (let i = result.length - 1; i >= 0; i--) {
                     const b = result[i]
                     if (b.kind !== 'agent-event') continue
-                    const e = b.event as { type: string; taskId?: unknown; status?: unknown; toolUseId?: unknown }
+                    const e = b.event as {
+                        type: string
+                        taskId?: unknown
+                        status?: unknown
+                        toolUseId?: unknown
+                        summary?: unknown
+                    }
                     if (e.type === 'task-started' && e.taskId === taskId) {
                         const notifToolUseId = typeof event.toolUseId === 'string' ? event.toolUseId : undefined
                         result[i] = {
@@ -179,13 +186,17 @@ function dedupeAgentEvents(blocks: ChatBlock[]): ChatBlock[] {
                             event: {
                                 ...e,
                                 status: typeof event.status === 'string' ? event.status : e.status,
-                                toolUseId: notifToolUseId ?? e.toolUseId
+                                toolUseId: notifToolUseId ?? e.toolUseId,
+                                summary: typeof event.summary === 'string' ? event.summary : e.summary
                             }
                         } as ChatBlock
+                        merged = true
                         break
                     }
                 }
-                continue
+                if (merged) {
+                    continue
+                }
             }
         }
 

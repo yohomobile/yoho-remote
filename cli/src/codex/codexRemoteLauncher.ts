@@ -30,6 +30,33 @@ function isInitPromptMessage(message: string): boolean {
     return message.trimStart().startsWith(INIT_PROMPT_PREFIX);
 }
 
+function normalizeText(value: unknown): string | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
+function getNormalizedMcpToolCallName(record: Record<string, unknown>): string | null {
+    const server = normalizeText(record.server) ?? normalizeText(record.server_name);
+    const tool = normalizeText(record.tool) ?? normalizeText(record.tool_name);
+    if (!tool) {
+        return null;
+    }
+    if (server === 'yoho_remote' && tool === 'ask_user_question') {
+        return 'ask_user_question';
+    }
+    if (server) {
+        return `${server}__${tool}`;
+    }
+    return tool;
+}
+
+export const __testOnly = {
+    getNormalizedMcpToolCallName,
+};
+
 export async function codexRemoteLauncher(session: CodexSession): Promise<'switch' | 'exit'> {
     // Warn if CLI args were passed that won't apply in remote mode
     if (session.codexArgs && session.codexArgs.length > 0) {

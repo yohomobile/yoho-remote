@@ -99,6 +99,10 @@ const brainChildScopeQuerySchema = z.object({
     mainSessionId: z.string().trim().min(1),
 })
 
+const optionalBrainChildScopeQuerySchema = z.object({
+    mainSessionId: z.string().trim().min(1).optional(),
+})
+
 const booleanQuerySchema = z.union([z.literal('true'), z.literal('false')]).transform((value) => value === 'true')
 
 const listSessionsQuerySchema = z.object({
@@ -1233,6 +1237,50 @@ function resolveBrainChildSessionForMain(
     return resolved
 }
 
+function resolveSessionForMutationScope(
+    engine: SyncEngine,
+    sessionId: string,
+    namespace: string,
+    mainSessionId?: string,
+): { ok: true; session: Session } | { ok: false; status: 400 | 403 | 404; error: string } {
+    const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+    if (!resolved.ok) {
+        return resolved
+    }
+
+    if (getSessionSourceFromMetadata(resolved.session.metadata) !== 'brain-child') {
+        return resolved
+    }
+
+    if (!mainSessionId) {
+        return { ok: false, status: 400, error: 'mainSessionId is required for brain-child sessions' }
+    }
+
+    return resolveBrainChildSessionForMain(engine, sessionId, namespace, mainSessionId)
+}
+
+function resolveSessionForReadScope(
+    engine: SyncEngine,
+    sessionId: string,
+    namespace: string,
+    mainSessionId?: string,
+): { ok: true; session: Session } | { ok: false; status: 400 | 403 | 404; error: string } {
+    const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+    if (!resolved.ok) {
+        return resolved
+    }
+
+    if (getSessionSourceFromMetadata(resolved.session.metadata) !== 'brain-child') {
+        return resolved
+    }
+
+    if (!mainSessionId) {
+        return { ok: false, status: 400, error: 'mainSessionId is required for brain-child sessions' }
+    }
+
+    return resolveBrainChildSessionForMain(engine, sessionId, namespace, mainSessionId)
+}
+
 function toSessionSendResponse(sessionId: string, outcome: SendMessageOutcome): SessionSendResponse {
     if (outcome.status === 'queued') {
         return {
@@ -1347,7 +1395,11 @@ export function createCliRoutes(
         }
         const sessionId = c.req.param('id')
         const namespace = c.get('namespace')
-        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        const queryParsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
+        if (!queryParsed.success) {
+            return c.json({ error: 'Invalid query', details: queryParsed.error.issues }, 400)
+        }
+        const resolved = resolveSessionForReadScope(engine, sessionId, namespace, queryParsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
@@ -1361,7 +1413,11 @@ export function createCliRoutes(
         }
         const sessionId = c.req.param('id')
         const namespace = c.get('namespace')
-        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        const scopeParsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
+        if (!scopeParsed.success) {
+            return c.json({ error: 'Invalid query', details: scopeParsed.error.issues }, 400)
+        }
+        const resolved = resolveSessionForReadScope(engine, sessionId, namespace, scopeParsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
@@ -1384,8 +1440,15 @@ export function createCliRoutes(
         }
         const sessionId = c.req.param('id')
         const namespace = c.get('namespace')
-        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        const scopeParsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
+        if (!scopeParsed.success) {
+            return c.json({ error: 'Invalid query', details: scopeParsed.error.issues }, 400)
+        }
+        const resolved = resolveSessionForMutationScope(engine, sessionId, namespace, scopeParsed.data.mainSessionId)
         if (!resolved.ok) {
+            if (resolved.status === 400) {
+                return c.json({ error: resolved.error }, 400)
+            }
             const status = resolved.status === 403 ? 'access_denied' : 'not_found'
             const body: SessionSendResponse = {
                 ok: false,
@@ -1454,7 +1517,11 @@ export function createCliRoutes(
         }
         const sessionId = c.req.param('id')
         const namespace = c.get('namespace')
-        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        const queryParsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
+        if (!queryParsed.success) {
+            return c.json({ error: 'Invalid query', details: queryParsed.error.issues }, 400)
+        }
+        const resolved = resolveSessionForMutationScope(engine, sessionId, namespace, queryParsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
@@ -1474,7 +1541,11 @@ export function createCliRoutes(
 
         const sessionId = c.req.param('id')
         const namespace = c.get('namespace')
-        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        const parsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid query', details: parsed.error.issues }, 400)
+        }
+        const resolved = resolveSessionForMutationScope(engine, sessionId, namespace, parsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
@@ -1633,18 +1704,22 @@ export function createCliRoutes(
         }
         const sessionId = c.req.param('id')
         const namespace = c.get('namespace')
-        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        const queryParsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
+        if (!queryParsed.success) {
+            return c.json({ error: 'Invalid query', details: queryParsed.error.issues }, 400)
+        }
+        const resolved = resolveSessionForMutationScope(engine, sessionId, namespace, queryParsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
 
         const body = await c.req.json().catch(() => null)
-        const parsed = cliSessionConfigSchema.safeParse(body)
-        if (!parsed.success) {
+        const bodyParsed = cliSessionConfigSchema.safeParse(body)
+        if (!bodyParsed.success) {
             return c.json({ error: 'Invalid body' }, 400)
         }
 
-        return await applyCliSessionConfig(c, engine, sessionId, resolved.session, parsed.data)
+        return await applyCliSessionConfig(c, engine, sessionId, resolved.session, bodyParsed.data)
     })
 
     // List online machines
@@ -2043,7 +2118,11 @@ export function createCliRoutes(
         }
         const sessionId = c.req.param('id')
         const namespace = c.get('namespace')
-        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        const parsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid query', details: parsed.error.issues }, 400)
+        }
+        const resolved = resolveSessionForMutationScope(engine, sessionId, namespace, parsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
@@ -2076,7 +2155,11 @@ export function createCliRoutes(
         }
         const sessionId = c.req.param('id')
         const namespace = c.get('namespace')
-        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        const queryParsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
+        if (!queryParsed.success) {
+            return c.json({ error: 'Invalid query', details: queryParsed.error.issues }, 400)
+        }
+        const resolved = resolveSessionForMutationScope(engine, sessionId, namespace, queryParsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
@@ -2107,7 +2190,11 @@ export function createCliRoutes(
         }
         const sessionId = c.req.param('id')
         const namespace = c.get('namespace')
-        const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+        const queryParsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
+        if (!queryParsed.success) {
+            return c.json({ error: 'Invalid query', details: queryParsed.error.issues }, 400)
+        }
+        const resolved = resolveSessionForMutationScope(engine, sessionId, namespace, queryParsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }

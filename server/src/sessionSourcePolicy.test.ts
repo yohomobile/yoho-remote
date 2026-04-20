@@ -1,10 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import {
+    applyArchiveProtectionOnPatch,
+    applyArchiveProtectionOnReplace,
     getBrainChildMainSessionId,
     getSessionMetadataInvariantError,
     getSessionMetadataPersistenceError,
     getUnsupportedSessionSourceError,
     getSessionSourceFromMetadata,
+    isProtectedArchivedSession,
     isSupportedSessionSource,
     normalizeSessionMetadataInvariants,
 } from './sessionSourcePolicy'
@@ -96,5 +99,100 @@ describe('sessionSourcePolicy', () => {
                 machineSelection: { mode: 'manual' },
             },
         })).toBe('Invalid brainPreferences in session metadata')
+    })
+
+    describe('archive protection', () => {
+        const archivedByUser = {
+            source: 'brain-child',
+            mainSessionId: 'brain-1',
+            lifecycleState: 'archived',
+            lifecycleStateSince: 100,
+            archivedBy: 'user',
+            archiveReason: 'User archived session',
+        }
+
+        test('isProtectedArchivedSession flags user / brain archives but not cli', () => {
+            expect(isProtectedArchivedSession(archivedByUser)).toBe(true)
+            expect(isProtectedArchivedSession({ ...archivedByUser, archivedBy: 'brain' })).toBe(true)
+            expect(isProtectedArchivedSession({ ...archivedByUser, archivedBy: 'cli' })).toBe(false)
+            expect(isProtectedArchivedSession({ ...archivedByUser, lifecycleState: 'running' })).toBe(false)
+            expect(isProtectedArchivedSession({ ...archivedByUser, archivedBy: '' })).toBe(false)
+            expect(isProtectedArchivedSession(null)).toBe(false)
+        })
+
+        test('applyArchiveProtectionOnReplace forces archived lifecycle and preserves stamp when CLI tries to revive', () => {
+            const incoming = {
+                source: 'brain-child',
+                mainSessionId: 'brain-1',
+                lifecycleState: 'running',
+                lifecycleStateSince: 999,
+                hostPid: 42,
+            }
+            const { metadata, preserved } = applyArchiveProtectionOnReplace(archivedByUser, incoming)
+            expect(preserved).toBe(true)
+            expect(metadata).toEqual({
+                source: 'brain-child',
+                mainSessionId: 'brain-1',
+                lifecycleState: 'archived',
+                lifecycleStateSince: 100,
+                archivedBy: 'user',
+                archiveReason: 'User archived session',
+                hostPid: 42,
+            })
+        })
+
+        test('applyArchiveProtectionOnReplace keeps archivedBy stamp even when incoming metadata already archived', () => {
+            const incoming = {
+                source: 'brain-child',
+                mainSessionId: 'brain-1',
+                lifecycleState: 'archived',
+                lifecycleStateSince: 200,
+            }
+            const { metadata, preserved } = applyArchiveProtectionOnReplace(archivedByUser, incoming)
+            expect(preserved).toBe(false)
+            expect(metadata).toMatchObject({
+                lifecycleState: 'archived',
+                lifecycleStateSince: 200,
+                archivedBy: 'user',
+                archiveReason: 'User archived session',
+            })
+        })
+
+        test('applyArchiveProtectionOnReplace is a no-op when session is not protected', () => {
+            const notArchived = { source: 'manual', lifecycleState: 'running' }
+            const incoming = { source: 'manual', lifecycleState: 'running', hostPid: 1 }
+            const { metadata, preserved } = applyArchiveProtectionOnReplace(notArchived, incoming)
+            expect(preserved).toBe(false)
+            expect(metadata).toBe(incoming)
+        })
+
+        test('applyArchiveProtectionOnPatch strips unarchive stamps on protected sessions', () => {
+            const patch = { lifecycleState: 'running', archivedBy: null, archiveReason: null, hostPid: 42 }
+            const { metadata, preserved } = applyArchiveProtectionOnPatch(archivedByUser, patch)
+            expect(preserved).toBe(true)
+            expect(metadata).toEqual({ hostPid: 42 })
+        })
+
+        test('applyArchiveProtectionOnPatch leaves non-archive patches untouched on protected sessions', () => {
+            const patch = { summary: 'hi' }
+            const { metadata, preserved } = applyArchiveProtectionOnPatch(archivedByUser, patch)
+            expect(preserved).toBe(false)
+            expect(metadata).toEqual({ summary: 'hi' })
+        })
+
+        test('applyArchiveProtectionOnPatch allows re-archiving (lifecycleState=archived) to pass through', () => {
+            const patch = { lifecycleState: 'archived', lifecycleStateSince: 999 }
+            const { metadata, preserved } = applyArchiveProtectionOnPatch(archivedByUser, patch)
+            expect(preserved).toBe(false)
+            expect(metadata).toEqual({ lifecycleState: 'archived', lifecycleStateSince: 999 })
+        })
+
+        test('applyArchiveProtectionOnPatch is a no-op for cli-archived sessions', () => {
+            const cliArchived = { ...archivedByUser, archivedBy: 'cli' }
+            const patch = { lifecycleState: 'running' }
+            const { metadata, preserved } = applyArchiveProtectionOnPatch(cliArchived, patch)
+            expect(preserved).toBe(false)
+            expect(metadata).toEqual({ lifecycleState: 'running' })
+        })
     })
 })

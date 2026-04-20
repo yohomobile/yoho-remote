@@ -1,0 +1,296 @@
+[
+  {
+    "id": "q001",
+    "query": "根据用户历史画像选择合适的表达方式和沟通配置",
+    "expected_skill_id": "conversation-style-profile",
+    "query_type": "exact",
+    "note": "直接来自 description 关键词"
+  },
+  {
+    "id": "q002",
+    "query": "跟不同风格的人沟通时怎么调整说话方式",
+    "expected_skill_id": "conversation-style-profile",
+    "query_type": "near_synonym",
+    "note": "近义：沟通方式调整"
+  },
+  {
+    "id": "q003",
+    "query": "用户喜欢简洁还是详细，怎么在回复中体现个性化",
+    "expected_skill_id": "conversation-style-profile",
+    "query_type": "fuzzy",
+    "note": "模糊：个性化回复风格，不直接提沟通配置"
+  },
+  {
+    "id": "q004",
+    "query": "高摩擦对话中提取情绪证据和沟通调整建议",
+    "expected_skill_id": "emotion-evidence-extract",
+    "query_type": "exact",
+    "note": "直接来自 description 关键词"
+  },
+  {
+    "id": "q005",
+    "query": "用户在反复纠正或催促时如何检测其当前状态",
+    "expected_skill_id": "emotion-evidence-extract",
+    "query_type": "near_synonym",
+    "note": "近义：检测用户焦虑/催促状态"
+  },
+  {
+    "id": "q006",
+    "query": "对话中感觉对方不耐烦，应该怎么处理和调整",
+    "expected_skill_id": "emotion-evidence-extract",
+    "query_type": "fuzzy",
+    "note": "模糊：不提情绪证据，只描述现象"
+  },
+  {
+    "id": "q007",
+    "query": "把 openId email keycloakId 等多个标识归并到同一个人",
+    "expected_skill_id": "identity-bridge",
+    "query_type": "exact",
+    "note": "直接来自 description 字段名"
+  },
+  {
+    "id": "q008",
+    "query": "用户有多个别名和账号，如何统一其身份",
+    "expected_skill_id": "identity-bridge",
+    "query_type": "near_synonym",
+    "note": "近义：统一身份"
+  },
+  {
+    "id": "q009",
+    "query": "新来的团队成员信息和已有档案有重叠，如何合并避免重复记录",
+    "expected_skill_id": "identity-bridge",
+    "query_type": "fuzzy",
+    "note": "模糊：不提身份桥接，只描述合并问题"
+  },
+  {
+    "id": "q010",
+    "query": "从会议记录中提取关键决策待办事项和责任人生成结构化纪要",
+    "expected_skill_id": "meeting-notes",
+    "query_type": "exact",
+    "note": "直接来自 description"
+  },
+  {
+    "id": "q011",
+    "query": "整理一次团队会议的结论和后续行动项",
+    "expected_skill_id": "meeting-notes",
+    "query_type": "near_synonym",
+    "note": "近义：会议行动项整理"
+  },
+  {
+    "id": "q012",
+    "query": "开完会之后有哪些信息需要记录和分发给团队",
+    "expected_skill_id": "meeting-notes",
+    "query_type": "fuzzy",
+    "note": "模糊：不提会议纪要，问开会后怎么记录"
+  },
+  {
+    "id": "q013",
+    "query": "用 OfficeCLI 命令行工具创建包含公式和图表的 Excel 表格",
+    "expected_skill_id": "officecli-制作-excel-表格",
+    "query_type": "exact",
+    "note": "直接来自 name + description"
+  },
+  {
+    "id": "q014",
+    "query": "命令行生成带数据透视表的 xlsx 文件",
+    "expected_skill_id": "officecli-制作-excel-表格",
+    "query_type": "near_synonym",
+    "note": "近义：命令行 xlsx 数据透视"
+  },
+  {
+    "id": "q015",
+    "query": "需要自动生成一份销售数据统计表，里面有图表",
+    "expected_skill_id": "officecli-制作-excel-表格",
+    "query_type": "fuzzy",
+    "note": "模糊：不提 OfficeCLI，只说需要数据表格"
+  },
+  {
+    "id": "q016",
+    "query": "用 OfficeCLI 创建 PowerPoint 演示文稿支持深色主题和多页幻灯片",
+    "expected_skill_id": "officecli-制作-ppt",
+    "query_type": "exact",
+    "note": "直接来自 description"
+  },
+  {
+    "id": "q017",
+    "query": "命令行工具制作 pptx 幻灯片文件，不用图形界面",
+    "expected_skill_id": "officecli-制作-ppt",
+    "query_type": "near_synonym",
+    "note": "近义：命令行 pptx"
+  },
+  {
+    "id": "q018",
+    "query": "需要程序化批量生成 PPT 文件，内容是产品功能说明",
+    "expected_skill_id": "officecli-制作-ppt",
+    "query_type": "fuzzy",
+    "note": "模糊：批量生成 PPT，不提 OfficeCLI"
+  },
+  {
+    "id": "q019",
+    "query": "用 OfficeCLI 创建 Word 文档 docx，支持标题段落表格和图片",
+    "expected_skill_id": "officecli-制作-word-文档",
+    "query_type": "exact",
+    "note": "直接来自 description"
+  },
+  {
+    "id": "q020",
+    "query": "命令行工具生成 Word 格式报告，有页眉页脚",
+    "expected_skill_id": "officecli-制作-word-文档",
+    "query_type": "near_synonym",
+    "note": "近义：命令行 docx 报告"
+  },
+  {
+    "id": "q021",
+    "query": "自动生成一份包含多个章节和表格的文字文档",
+    "expected_skill_id": "officecli-制作-word-文档",
+    "query_type": "fuzzy",
+    "note": "模糊：文字文档，不提 OfficeCLI 或 docx"
+  },
+  {
+    "id": "q022",
+    "query": "建立用户画像区分事实层经验层推断层建立持续建模纠错闭环",
+    "expected_skill_id": "person-modeling",
+    "query_type": "exact",
+    "note": "直接来自 description"
+  },
+  {
+    "id": "q023",
+    "query": "为团队成员建立持续更新的档案，不同证据层次分开存储",
+    "expected_skill_id": "person-modeling",
+    "query_type": "near_synonym",
+    "note": "近义：成员档案分层"
+  },
+  {
+    "id": "q024",
+    "query": "如何记录一个人的工作偏好和行为模式并能随时纠正",
+    "expected_skill_id": "person-modeling",
+    "query_type": "fuzzy",
+    "note": "模糊：不提建模或分层"
+  },
+  {
+    "id": "q025",
+    "query": "基于金字塔原理和 assertion-evidence 方法论制作专业 PPT 自动评分",
+    "expected_skill_id": "ppt-creator-金字塔原理",
+    "query_type": "exact",
+    "note": "直接来自 description"
+  },
+  {
+    "id": "q026",
+    "query": "用结构化叙事方式制作 Marp 格式幻灯片并生成演讲稿",
+    "expected_skill_id": "ppt-creator-金字塔原理",
+    "query_type": "near_synonym",
+    "note": "近义：Marp 结构化幻灯片"
+  },
+  {
+    "id": "q027",
+    "query": "要做一个能说服老板的提案演示，需要有逻辑的 PPT 框架",
+    "expected_skill_id": "ppt-creator-金字塔原理",
+    "query_type": "fuzzy",
+    "note": "模糊：说服性提案，不提金字塔原理"
+  },
+  {
+    "id": "q028",
+    "query": "5个 Agent 协作 PPT 全流程生产线故事结构到幻灯片制作",
+    "expected_skill_id": "presentation-designer-多agent协作",
+    "query_type": "exact",
+    "note": "直接来自 description"
+  },
+  {
+    "id": "q029",
+    "query": "多 AI 角色协作完成演示文稿的交叉审查和信息设计",
+    "expected_skill_id": "presentation-designer-多agent协作",
+    "query_type": "near_synonym",
+    "note": "近义：多 AI 协作演示文稿审查"
+  },
+  {
+    "id": "q030",
+    "query": "需要高质量演示文稿，有多个步骤和专家审核环节",
+    "expected_skill_id": "presentation-designer-多agent协作",
+    "query_type": "fuzzy",
+    "note": "模糊：多步骤 PPT，不提多 Agent"
+  },
+  {
+    "id": "q031",
+    "query": "从消息和历史画像中抽取用户 profile claim 分成事实层经验层推断层",
+    "expected_skill_id": "user-profile-extract",
+    "query_type": "exact",
+    "note": "直接来自 description"
+  },
+  {
+    "id": "q032",
+    "query": "识别用户说的话中哪些信息值得写入 candidate 或 active 档案",
+    "expected_skill_id": "user-profile-extract",
+    "query_type": "near_synonym",
+    "note": "近义：candidate/active 写入决策"
+  },
+  {
+    "id": "q033",
+    "query": "用户提到了一些关于他工作方式和偏好的细节，应该怎么记录",
+    "expected_skill_id": "user-profile-extract",
+    "query_type": "fuzzy",
+    "note": "模糊：不提 claim/profile，只描述问题"
+  },
+  {
+    "id": "q034",
+    "query": "排查 Yoho Remote 前端仍显示已删除机器区分缓存和 PostgreSQL 数据",
+    "expected_skill_id": "yoho-remote-机器残留排查",
+    "query_type": "exact",
+    "note": "直接来自 description"
+  },
+  {
+    "id": "q035",
+    "query": "SyncEngine 内存态显示机器存在但数据库已删除，如何清理",
+    "expected_skill_id": "yoho-remote-机器残留排查",
+    "query_type": "near_synonym",
+    "note": "近义：SyncEngine 状态与 DB 不一致"
+  },
+  {
+    "id": "q036",
+    "query": "删了一台服务器但前端页面还能看到它，怎么让它消失",
+    "expected_skill_id": "yoho-remote-机器残留排查",
+    "query_type": "fuzzy",
+    "note": "模糊：不提 Yoho Remote，只描述现象"
+  },
+  {
+    "id": "q037",
+    "query": "论文答辩和学术会议演讲 PPT action title ghost deck 引用规范",
+    "expected_skill_id": "学术演讲-ppt-academic-pptx",
+    "query_type": "exact",
+    "note": "直接来自 description"
+  },
+  {
+    "id": "q038",
+    "query": "研讨会报告 PPT 如何符合学术规范，有 communication-first 设计",
+    "expected_skill_id": "学术演讲-ppt-academic-pptx",
+    "query_type": "near_synonym",
+    "note": "近义：学术 PPT 规范"
+  },
+  {
+    "id": "q039",
+    "query": "明天要去大会上做研究报告，需要一套专业的幻灯片模板",
+    "expected_skill_id": "学术演讲-ppt-academic-pptx",
+    "query_type": "fuzzy",
+    "note": "模糊：学术报告幻灯片，不提 academic-pptx"
+  },
+  {
+    "id": "q040",
+    "query": "系统化分析竞争对手产品生成结构化对比报告",
+    "expected_skill_id": "竞品分析报告",
+    "query_type": "exact",
+    "note": "直接来自 description"
+  },
+  {
+    "id": "q041",
+    "query": "对标分析同行业主要产品的功能特性和定价差异",
+    "expected_skill_id": "竞品分析报告",
+    "query_type": "near_synonym",
+    "note": "近义：同行业产品对标分析"
+  },
+  {
+    "id": "q042",
+    "query": "产品经理想知道我们的产品相比市场上其他类似方案有什么优劣",
+    "expected_skill_id": "竞品分析报告",
+    "query_type": "fuzzy",
+    "note": "模糊：不提竞品分析，描述 PM 需求"
+  }
+]

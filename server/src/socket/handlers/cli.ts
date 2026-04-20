@@ -7,6 +7,7 @@ import { extractTodoWriteTodosFromMessageContent } from '../../sync/todos'
 import type { SocketServer, SocketWithData } from '../socketTypes'
 import { getLicenseService } from '../../license/licenseService'
 import {
+    applyArchiveProtectionOnReplace,
     getSessionMetadataPersistenceError,
     getSessionSourceFromMetadata,
     getUnsupportedSessionSourceError,
@@ -515,8 +516,9 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
                 return
             }
             const normalizedMetadata = normalizeSessionMetadataInvariants(metadata)
+            const protectedReplace = applyArchiveProtectionOnReplace(sessionAccess.value.metadata, normalizedMetadata)
 
-            const result = await store.updateSessionMetadata(sid, normalizedMetadata, expectedVersion, sessionAccess.value.namespace)
+            const result = await store.updateSessionMetadata(sid, protectedReplace.metadata, expectedVersion, sessionAccess.value.namespace)
             if (result.result === 'success') {
                 cb({ result: 'success', version: result.version, metadata: result.value })
             } else if (result.result === 'version-mismatch') {
@@ -533,7 +535,7 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
                     body: {
                         t: 'update-session' as const,
                         sid,
-                        metadata: { version: result.version, value: normalizedMetadata },
+                        metadata: { version: result.version, value: result.value },
                         agentState: null
                     }
                 }

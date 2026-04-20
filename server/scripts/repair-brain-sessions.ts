@@ -48,6 +48,11 @@ Manifest schema (version 1):
         "sessionId": "brain-child-2",
         "action": "set-permissionMode",
         "permissionMode": "yolo"
+      },
+      {
+        "sessionId": "brain-child-3",
+        "action": "set-mainSessionId",
+        "mainSessionId": "brain-main"
       }
     ]
   }

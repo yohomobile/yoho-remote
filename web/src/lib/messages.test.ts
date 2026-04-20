@@ -49,4 +49,41 @@ describe('mergeMessages', () => {
 
         expect(messages.map((message) => message.id)).toEqual(['c', 'a', 'b'])
     })
+
+    test('keeps persisted monitor events ahead of later optimistic user bubbles', () => {
+        const messages = mergeMessages([
+            createMessage({
+                id: 'local-user-1',
+                seq: null,
+                localId: 'local-user-1',
+                createdAt: 200,
+                status: 'sending',
+                content: { role: 'user', content: 'next prompt' },
+                originalText: 'next prompt',
+            })
+        ], [
+            createMessage({
+                id: 'monitor-result',
+                seq: 150,
+                createdAt: 150,
+                content: {
+                    role: 'agent',
+                    content: {
+                        type: 'output',
+                        data: {
+                            type: 'system',
+                            subtype: 'task_notification',
+                            status: 'completed',
+                            summary: 'monitor completed'
+                        }
+                    }
+                }
+            })
+        ])
+
+        expect(messages.map((message) => message.id)).toEqual([
+            'monitor-result',
+            'local-user-1'
+        ])
+    })
 })

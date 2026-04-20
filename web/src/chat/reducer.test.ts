@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { reduceChatBlocks } from './reducer'
+import { renderEventLabel } from './presentation'
 import type { NormalizedMessage } from './types'
 
 describe('reduceChatBlocks duplicate handling', () => {
@@ -280,5 +281,86 @@ describe('reduceChatBlocks duplicate handling', () => {
         const agentBlocks = reduced.blocks.filter((block) => block.kind === 'agent-text')
         expect(agentBlocks).toHaveLength(1)
         expect(agentBlocks[0]?.kind === 'agent-text' ? agentBlocks[0].text : '').toBe('Hello world')
+    })
+
+    test('preserves task_notification summary when folding into task_started', () => {
+        const reduced = reduceChatBlocks([
+            {
+                id: 'task-started',
+                localId: null,
+                createdAt: 1,
+                role: 'event',
+                isSidechain: false,
+                content: {
+                    type: 'task-started',
+                    taskId: 'task-1',
+                    toolUseId: 'monitor-1',
+                    description: 'watch logs'
+                }
+            },
+            {
+                id: 'task-completed',
+                localId: null,
+                createdAt: 2,
+                role: 'event',
+                isSidechain: false,
+                content: {
+                    type: 'task-notification',
+                    taskId: 'task-1',
+                    toolUseId: 'monitor-1',
+                    status: 'completed',
+                    summary: '日志监控结束，发现端口已恢复'
+                }
+            }
+        ] satisfies NormalizedMessage[], null)
+
+        expect(reduced.blocks).toHaveLength(1)
+        const block = reduced.blocks[0]
+        expect(block?.kind).toBe('agent-event')
+        if (!block || block.kind !== 'agent-event') {
+            throw new Error('Expected merged agent-event block')
+        }
+        expect(block.event).toMatchObject({
+            type: 'task-started',
+            taskId: 'task-1',
+            toolUseId: 'monitor-1',
+            status: 'completed',
+            summary: '日志监控结束，发现端口已恢复'
+        })
+        expect(renderEventLabel(block.event)).toBe('日志监控结束，发现端口已恢复')
+    })
+
+    test('keeps standalone task_notification when no matching task_started exists', () => {
+        const reduced = reduceChatBlocks([
+            {
+                id: 'task-completed',
+                localId: null,
+                createdAt: 2,
+                role: 'event',
+                isSidechain: false,
+                content: {
+                    type: 'task-notification',
+                    taskId: 'task-2',
+                    toolUseId: 'monitor-2',
+                    status: 'completed',
+                    summary: '后台命令已完成'
+                }
+            }
+        ] satisfies NormalizedMessage[], null)
+
+        expect(reduced.blocks).toHaveLength(1)
+        const block = reduced.blocks[0]
+        expect(block?.kind).toBe('agent-event')
+        if (!block || block.kind !== 'agent-event') {
+            throw new Error('Expected task-notification block to be preserved')
+        }
+        expect(block.event).toMatchObject({
+            type: 'task-notification',
+            taskId: 'task-2',
+            toolUseId: 'monitor-2',
+            status: 'completed',
+            summary: '后台命令已完成'
+        })
+        expect(renderEventLabel(block.event)).toBe('后台命令已完成')
     })
 })

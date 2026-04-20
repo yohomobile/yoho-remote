@@ -118,6 +118,72 @@ export function getBrainChildMainSessionId(metadata: unknown): string | undefine
     return asNonEmptyString(metadata.mainSessionId) ?? undefined
 }
 
+const ARCHIVE_STAMP_FIELDS = ['lifecycleState', 'lifecycleStateSince', 'archivedBy', 'archiveReason'] as const
+
+export function isProtectedArchivedSession(metadata: unknown): boolean {
+    if (!isRecord(metadata)) {
+        return false
+    }
+    if (metadata.lifecycleState !== 'archived') {
+        return false
+    }
+    const archivedBy = asNonEmptyString(metadata.archivedBy)
+    if (!archivedBy) {
+        return false
+    }
+    return archivedBy !== 'cli'
+}
+
+export type ArchiveProtectionResult<T> = {
+    metadata: T
+    preserved: boolean
+}
+
+export function applyArchiveProtectionOnReplace(
+    currentMetadata: unknown,
+    nextMetadata: unknown
+): ArchiveProtectionResult<unknown> {
+    if (!isProtectedArchivedSession(currentMetadata) || !isRecord(nextMetadata)) {
+        return { metadata: nextMetadata, preserved: false }
+    }
+    const current = currentMetadata as Record<string, unknown>
+    const merged: Record<string, unknown> = { ...nextMetadata }
+    const nextLifecycle = nextMetadata.lifecycleState
+    const preservingBecauseUnarchive = nextLifecycle !== 'archived'
+    merged.lifecycleState = 'archived'
+    if (preservingBecauseUnarchive && current.lifecycleStateSince !== undefined) {
+        merged.lifecycleStateSince = current.lifecycleStateSince
+    }
+    if (current.archivedBy !== undefined) {
+        merged.archivedBy = current.archivedBy
+    }
+    if (current.archiveReason !== undefined) {
+        merged.archiveReason = current.archiveReason
+    }
+    return { metadata: merged, preserved: preservingBecauseUnarchive }
+}
+
+export function applyArchiveProtectionOnPatch(
+    currentMetadata: unknown,
+    patch: unknown
+): ArchiveProtectionResult<Record<string, unknown>> {
+    const asRecordPatch = isRecord(patch) ? { ...patch } : {}
+    if (!isProtectedArchivedSession(currentMetadata) || !isRecord(patch)) {
+        return { metadata: asRecordPatch, preserved: false }
+    }
+    const touchesArchive = ARCHIVE_STAMP_FIELDS.some((field) => hasOwn(asRecordPatch, field))
+    if (!touchesArchive) {
+        return { metadata: asRecordPatch, preserved: false }
+    }
+    if (asRecordPatch.lifecycleState === 'archived') {
+        return { metadata: asRecordPatch, preserved: false }
+    }
+    for (const field of ARCHIVE_STAMP_FIELDS) {
+        delete asRecordPatch[field]
+    }
+    return { metadata: asRecordPatch, preserved: true }
+}
+
 export function normalizeSessionMetadataInvariants(metadata: unknown): unknown {
     if (!isRecord(metadata)) {
         return metadata

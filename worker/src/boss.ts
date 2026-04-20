@@ -5,7 +5,7 @@ export const QUEUE = {
     SUMMARIZE_SEGMENT: 'summarize-segment',
     SUMMARIZE_SESSION: 'summarize-session',
     AI_TASK_DISPATCH: 'ai-task-dispatch',
-    AI_TASK_RUN: 'ai-task-run',
+    AI_TASK_RUN: 'ai-task',
 } as const
 
 export const AI_TASK_DISPATCH_QUEUE = QUEUE.AI_TASK_DISPATCH

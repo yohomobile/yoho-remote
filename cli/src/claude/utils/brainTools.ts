@@ -607,7 +607,7 @@ export function registerBrainTools(
                         }
                     }
 
-                    const resumed = await api.resumeSession(searchResult.sessionId)
+                    const resumed = await api.resumeSession(searchResult.sessionId, childSessionScope)
                     const resumedLabel = resumed.type === 'created'
                         ? `原 session ${searchResult.sessionId} 已转为新的恢复 session`
                         : '已恢复历史 Session'
@@ -734,7 +734,7 @@ export function registerBrainTools(
         try {
             let session = null
             try {
-                session = await api.getSession(args.sessionId)
+                session = await api.getSession(args.sessionId, childSessionScope)
             } catch {
                 session = null
             }
@@ -742,7 +742,13 @@ export function registerBrainTools(
             const metadataPatch: Record<string, unknown> = {}
             if (session?.metadata?.source === 'brain-child') {
                 if (!session.metadata?.mainSessionId) {
-                    metadataPatch.mainSessionId = brainSessionId
+                    return {
+                        content: [{
+                            type: 'text' as const,
+                            text: `Invariant violation: brain-child session ${args.sessionId} 缺少 mainSessionId，已拒绝发送。请先修复该 session 的元数据再重试。`,
+                        }],
+                        isError: true,
+                    }
                 }
                 if (!session.metadata?.caller && sessionCaller) {
                     metadataPatch.caller = sessionCaller
@@ -752,11 +758,11 @@ export function registerBrainTools(
                 }
             }
             if (Object.keys(metadataPatch).length > 0) {
-                await api.patchSessionMetadata(args.sessionId, metadataPatch)
+                await api.patchSessionMetadata(args.sessionId, metadataPatch, childSessionScope)
                 logger.debug(`[brain] Repaired missing brain metadata for child session ${args.sessionId}`)
             }
 
-            const delivery = await api.sendMessageToSession(args.sessionId, args.message, 'brain')
+            const delivery = await api.sendMessageToSession(args.sessionId, args.message, 'brain', childSessionScope)
 
             if (delivery.status === 'delivered') {
                 logger.debug(`[brain] Message delivered to session ${args.sessionId}, returning immediately (async callback mode)`)
@@ -913,7 +919,7 @@ export function registerBrainTools(
                 }
             }
 
-            const result = await api.abortSession(args.sessionId)
+            const result = await api.abortSession(args.sessionId, childSessionScope)
             if (result.ok) {
                 return {
                     content: [{
@@ -963,7 +969,7 @@ export function registerBrainTools(
         inputSchema: resumeSchema,
     }, async (args: { sessionId: string }) => {
         try {
-            const result = await api.resumeSession(args.sessionId)
+            const result = await api.resumeSession(args.sessionId, childSessionScope)
             if (result.type === 'already-active') {
                 return {
                     content: [{
@@ -1010,7 +1016,7 @@ export function registerBrainTools(
         inputSchema: closeSchema,
     }, async (args: { sessionId: string }) => {
         try {
-            const result = await api.deleteSession(args.sessionId)
+            const result = await api.deleteSession(args.sessionId, childSessionScope)
             if (result.ok) {
                 return {
                     content: [{
@@ -1051,7 +1057,7 @@ export function registerBrainTools(
         try {
             await api.patchSessionMetadata(args.sessionId, {
                 brainSummary: args.brainSummary,
-            })
+            }, childSessionScope)
             return {
                 content: [{
                     type: 'text' as const,
@@ -1218,7 +1224,7 @@ export function registerBrainTools(
                 ...(args.reasoningEffort !== undefined ? { reasoningEffort: args.reasoningEffort } : {}),
                 ...(args.permissionMode !== undefined ? { permissionMode: args.permissionMode } : {}),
                 ...(args.fastMode !== undefined ? { fastMode: args.fastMode } : {}),
-            })
+            }, childSessionScope)
 
             const appliedLines = [
                 result.applied?.model !== undefined ? `model: ${result.applied.model}` : null,

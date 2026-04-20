@@ -228,6 +228,42 @@ describe('convertBlocksToThreadMessages', () => {
         })
     })
 
+    test('rekeys system event thread messages when the visible event content changes', () => {
+        const before: ChatBlock[] = [{
+            kind: 'agent-event',
+            id: 'event-monitor',
+            createdAt: 2,
+            event: {
+                type: 'task-started',
+                taskId: 'task-1',
+                toolUseId: 'monitor-1',
+                description: 'watch logs'
+            }
+        }]
+        const after: ChatBlock[] = [{
+            kind: 'agent-event',
+            id: 'event-monitor',
+            createdAt: 2,
+            event: {
+                type: 'task-started',
+                taskId: 'task-1',
+                toolUseId: 'monitor-1',
+                status: 'completed',
+                summary: '日志监控结束，发现端口已恢复'
+            }
+        }]
+
+        const beforeMessages = convertBlocksToThreadMessages(before)
+        const afterMessages = convertBlocksToThreadMessages(after)
+
+        expect(beforeMessages).toHaveLength(1)
+        expect(afterMessages).toHaveLength(1)
+        expect(beforeMessages[0]?.id).not.toBe(afterMessages[0]?.id)
+        expect(getMessageParts(afterMessages[0]!)).toEqual([
+            { type: 'text', text: '日志监控结束，发现端口已恢复' }
+        ])
+    })
+
     test('surfaces queued brain delivery on inactive brain sessions', () => {
         const blocks: ChatBlock[] = [
             {

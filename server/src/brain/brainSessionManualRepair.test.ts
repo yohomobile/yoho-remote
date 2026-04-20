@@ -60,6 +60,132 @@ describe('brainSessionManualRepair', () => {
         })).toBeNull()
     })
 
+    test('plan builds mainSessionId fixes only for brain-child sessions with valid main brain sessions', () => {
+        const main = createStoredSession({
+            id: 'brain-main',
+            metadata: {
+                source: 'brain',
+                flavor: 'codex',
+                brainPreferences: buildBrainSessionPreferences({
+                    machineSelectionMode: 'auto',
+                    machineId: 'machine-1',
+                }),
+            },
+        })
+        const legacyChild = createStoredSession({
+            id: 'brain-child-legacy',
+            metadata: {
+                source: 'brain-child',
+                flavor: 'codex',
+            },
+        })
+        const nonBrainChild = createStoredSession({
+            id: 'manual-session',
+            metadata: {
+                source: 'manual',
+                path: '/tmp/manual',
+            },
+        })
+
+        const manifest = parseBrainSessionManualRepairManifest({
+            version: 1,
+            items: [
+                {
+                    sessionId: legacyChild.id,
+                    action: 'set-mainSessionId',
+                    mainSessionId: main.id,
+                },
+                {
+                    sessionId: nonBrainChild.id,
+                    action: 'set-mainSessionId',
+                    mainSessionId: main.id,
+                },
+            ],
+        })
+        expect(manifest).not.toBeNull()
+
+        const plan = buildBrainSessionManualRepairPlan([main, legacyChild, nonBrainChild], manifest!)
+
+        expect(plan.summary).toEqual({
+            manifestItems: 2,
+            plannedWrites: 1,
+            skippedActive: 0,
+            skippedNoop: 0,
+            rejected: 1,
+        })
+        expect(plan.planned).toEqual([
+            expect.objectContaining({
+                sessionId: legacyChild.id,
+                action: 'set-mainSessionId',
+                mainSessionId: main.id,
+            }),
+        ])
+        expect(plan.rejected).toEqual([
+            {
+                manifestIndex: 1,
+                sessionId: nonBrainChild.id,
+                reason: 'set-mainSessionId 只允许用于 brain-child 会话',
+            },
+        ])
+    })
+
+    test('plan rejects illegal set-mainSessionId target main sessions', () => {
+        const child = createStoredSession({
+            id: 'brain-child-1',
+            metadata: {
+                source: 'brain-child',
+                flavor: 'claude',
+                mainSessionId: 'old-main',
+            },
+        })
+        const codexSibling = createStoredSession({
+            id: 'codex-session',
+            metadata: {
+                source: 'brain-child',
+                flavor: 'codex',
+            },
+        })
+
+        const manifest = parseBrainSessionManualRepairManifest({
+            version: 1,
+            items: [
+                {
+                    sessionId: child.id,
+                    action: 'set-mainSessionId',
+                    mainSessionId: 'missing-main',
+                },
+                {
+                    sessionId: child.id,
+                    action: 'set-mainSessionId',
+                    mainSessionId: codexSibling.id,
+                },
+            ],
+        })
+        expect(manifest).not.toBeNull()
+
+        const plan = buildBrainSessionManualRepairPlan([child, codexSibling], manifest!)
+
+        expect(plan.summary).toEqual({
+            manifestItems: 2,
+            plannedWrites: 0,
+            skippedActive: 0,
+            skippedNoop: 0,
+            rejected: 2,
+        })
+        expect(plan.rejected).toEqual([
+            {
+                manifestIndex: 0,
+                sessionId: child.id,
+                reason: 'mainSessionId=missing-main 不存在于当前 store 扫描结果中',
+            },
+            {
+                manifestIndex: 1,
+                sessionId: child.id,
+                reason: 'mainSessionId=codex-session 必须指向 source=brain 会话',
+            },
+        ])
+    })
+
     test('plan builds validated changes and always skips active sessions', () => {
         const parent = createStoredSession({
             id: 'brain-parent',
@@ -190,6 +316,139 @@ describe('brainSessionManualRepair', () => {
             },
         ])
         expect(setSessionModelConfigCalls).toEqual([])
+    })
+
+    test('apply sets mainSessionId for brain-child after validation of target brain session', async () => {
+        const target = createStoredSession({
+            id: 'brain-child-repair',
+            metadata: {
+                source: 'brain-child',
+                flavor: 'claude',
+            },
+        })
+        const mainBrain = createStoredSession({
+            id: 'brain-main',
+            metadata: {
+                source: 'brain',
+                flavor: 'claude',
+            },
+        })
+        const manifest = parseBrainSessionManualRepairManifest({
+            version: 1,
+            items: [{
+                sessionId: target.id,
+                action: 'set-mainSessionId',
+                mainSessionId: mainBrain.id,
+            }],
+        })
+        expect(manifest).not.toBeNull()
+
+        const plan = buildBrainSessionManualRepairPlan([target, mainBrain], manifest!)
+        const patchSessionMetadataCalls: Array<Record<string, unknown>> = []
+        const store = {
+            getSession: async (id: string) => id === target.id
+                ? target
+                : id === mainBrain.id
+                    ? mainBrain
+                    : null,
+            setSessionModelConfig: async () => true,
+            patchSessionMetadata: async (_id: string, patch: Record<string, unknown>) => {
+                patchSessionMetadataCalls.push(patch)
+                return true
+            },
+        } as any
+
+        const result = await applyBrainSessionManualRepairs(store, plan)
+
+        expect(result).toEqual({
+            applied: [{
+                manifestIndex: 0,
+                sessionId: target.id,
+                namespace: target.namespace,
+                action: 'set-mainSessionId',
+            }],
+            skippedActive: [],
+            skippedDrifted: [],
+            failed: [],
+        })
+        expect(patchSessionMetadataCalls).toEqual([
+            {
+                mainSessionId: mainBrain.id,
+            },
+        ])
+    })
+
+    test('apply skips set-mainSessionId when target brain session becomes invalid', async () => {
+        const target = createStoredSession({
+            id: 'brain-child-repair',
+            metadata: {
+                source: 'brain-child',
+                flavor: 'claude',
+                mainSessionId: 'old-main',
+            },
+        })
+        const mainBrain = createStoredSession({
+            id: 'old-main',
+            metadata: {
+                source: 'brain',
+                flavor: 'claude',
+            },
+        })
+        const newMain = createStoredSession({
+            id: 'new-main',
+            metadata: {
+                source: 'brain',
+                flavor: 'claude',
+            },
+        })
+        const manifest = parseBrainSessionManualRepairManifest({
+            version: 1,
+            items: [{
+                sessionId: target.id,
+                action: 'set-mainSessionId',
+                mainSessionId: 'new-main',
+            }],
+        })
+        expect(manifest).not.toBeNull()
+
+        const plan = buildBrainSessionManualRepairPlan([mainBrain, newMain, target], manifest!)
+        const store = {
+            getSession: async (id: string) => id === target.id
+                ? {
+                    ...target,
+                    metadata: {
+                        source: 'brain-child',
+                        flavor: 'claude',
+                        mainSessionId: 'old-main',
+                    },
+                }
+                : id === 'new-main'
+                    ? {
+                        ...newMain,
+                        metadata: {
+                            source: 'brain-child',
+                            flavor: 'claude',
+                            mainSessionId: 'brain-main',
+                        },
+                    }
+                    : id === mainBrain.id
+                        ? mainBrain
+                        : null,
+            setSessionModelConfig: async () => true,
+            patchSessionMetadata: async () => true,
+        } as any
+
+        const result = await applyBrainSessionManualRepairs(store, plan)
+
+        expect(result.skippedDrifted).toEqual([
+            {
+                manifestIndex: 0,
+                sessionId: target.id,
+                namespace: target.namespace,
+                reason: 'apply 前发现 mainSessionId 引用会话不再是 brain，已跳过',
+            },
+        ])
+        expect(result.applied).toEqual([])
     })
 
     test('plan treats reordered brainPreferences keys as noop', () => {

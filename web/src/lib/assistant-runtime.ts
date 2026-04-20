@@ -5,6 +5,7 @@ import { deriveStableMessageId } from '@/chat/ids'
 import { renderEventLabel } from '@/chat/presentation'
 import type { ChatBlock, CliOutputBlock, UserTextBlock } from '@/chat/types'
 import type { AgentEvent, ToolCallBlock } from '@/chat/types'
+import { hashStableValueSync } from '@/lib/hash'
 import type { BrainMessageDelivery, MessageStatus as YohoRemoteMessageStatus, Session } from '@/types/api'
 import { canQueueMessagesWhenInactive } from '@/lib/sessionActivity'
 
@@ -160,11 +161,16 @@ function createUserThreadMessage(
 }
 
 function createEventThreadMessage(block: Extract<ChatBlock, { kind: 'agent-event' }>): ThreadMessageLike {
+    const eventText = renderEventLabel(block.event)
+    const eventVersion = hashStableValueSync({
+        event: block.event,
+        text: eventText,
+    })
     return {
         role: 'system',
-        id: `event:${block.id}`,
+        id: `event:${block.id}:${eventVersion}`,
         createdAt: new Date(block.createdAt),
-        content: [{ type: 'text', text: renderEventLabel(block.event) }],
+        content: [{ type: 'text', text: eventText }],
         metadata: {
             custom: { kind: 'event', event: block.event } satisfies YohoRemoteChatMessageMetadata
         }

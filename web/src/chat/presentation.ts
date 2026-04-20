@@ -113,8 +113,16 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
     if (event.type === 'task-started') {
         const e = event as Record<string, unknown>
         const desc = e.description
+        const summary = e.summary
         const status = typeof e.status === 'string' ? e.status : null
-        const text = typeof desc === 'string' && desc ? truncateEventText(desc) : 'Background task started'
+        const terminal = status === 'completed' || status === 'failed' || status === 'stopped' || status === 'killed'
+        const text = terminal && typeof summary === 'string' && summary
+            ? truncateEventText(summary)
+            : typeof desc === 'string' && desc
+                ? truncateEventText(desc)
+                : terminal
+                    ? `Task ${status}`
+                    : 'Background task started'
         const icon = status === 'completed' ? '✅' : status === 'failed' ? '❌' : '🚀'
         return { icon, text }
     }

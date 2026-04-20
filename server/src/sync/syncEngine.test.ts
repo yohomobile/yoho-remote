@@ -767,12 +767,13 @@ describe('SyncEngine', () => {
         const childMessages = [
             createAgentResultMessage(1, '同一轮子任务结果'),
         ]
+        let messageCount = childMessages.length
 
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
             getMessages: async () => childMessages,
-            getMessageCount: async () => childMessages.length,
+            getMessageCount: async () => messageCount,
             addMessage: async (sessionId: string, content: unknown, localId?: string) => {
                 seq += 1
                 added.push({ sessionId, content, localId })
@@ -814,6 +815,7 @@ describe('SyncEngine', () => {
         ;(engine as any).waitForSessionMessagesToSettle = async () => {}
 
         await (engine as any).sendBrainCallbackIfNeeded(childSession)
+        messageCount = 99
         await (engine as any).sendBrainCallbackIfNeeded(childSession)
 
         const callbackMessages = added.filter(item =>
@@ -822,7 +824,7 @@ describe('SyncEngine', () => {
         )
 
         expect(callbackMessages).toHaveLength(1)
-        expect(callbackMessages[0]?.localId).toBe('brain-callback:child-session:main-session:1:result:1')
+        expect(callbackMessages[0]?.localId).toBe('brain-callback:main-session:child-session:1')
         expect((callbackMessages[0]?.content as any)?.meta?.brainChildCallback?.result?.text).toBe('同一轮子任务结果')
     })
 
@@ -894,9 +896,221 @@ describe('SyncEngine', () => {
 
         expect(callbackMessages).toHaveLength(2)
         expect(callbackMessages.map(item => item.localId)).toEqual([
-            'brain-callback:child-1:main-session:1:result:1',
-            'brain-callback:child-2:main-session:1:result:1',
+            'brain-callback:main-session:child-1:1',
+            'brain-callback:main-session:child-2:1',
         ])
+    })
+
+    test('retries brain callback for an inactive main session and delivers once it comes back online', async () => {
+        const childMessages = [createAgentResultMessage(1, '离线主 session 恢复后的结果')]
+        const sent: Array<{ sessionId: string; localId?: string; meta?: unknown }> = []
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getMessages: async () => childMessages,
+            getMessageCount: async () => childMessages.length,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        mainSession.active = false
+        const childSession = createSession('child-session', {
+            source: 'brain-child',
+            mainSessionId: 'main-session',
+            summary: { text: 'Child', updatedAt: 0 },
+        })
+
+        ;(engine as any).sessions.set(mainSession.id, mainSession)
+        ;(engine as any).sessions.set(childSession.id, childSession)
+        ;(engine as any).sessionMessages.set(childSession.id, childMessages)
+        ;(engine as any).waitForSessionMessagesToSettle = async () => {}
+        ;(engine as any).brainCallbackRetryDelaysMs = [1, 1, 1]
+        ;(engine as any).sendMessage = async (sessionId: string, message: any) => {
+            sent.push({ sessionId, localId: message.localId, meta: message.meta })
+            return { status: 'sent' }
+        }
+
+        await (engine as any).sendBrainCallbackIfNeeded(childSession)
+        expect(sent).toHaveLength(0)
+
+        setTimeout(() => {
+            mainSession.active = true
+        }, 2)
+
+        await new Promise(resolve => setTimeout(resolve, 15))
+
+        expect(sent).toHaveLength(1)
+        expect(sent[0]?.sessionId).toBe(mainSession.id)
+        expect(sent[0]?.localId).toBe('brain-callback:main-session:child-session:1')
+        expect((sent[0]?.meta as any)?.brainChildCallback?.result?.text).toBe('离线主 session 恢复后的结果')
+        expect((engine as any).brainChildPendingRetryCallbackKeyBySessionId.get(childSession.id)).toBeUndefined()
+    })
+
+    test('does not recursively re-enter callback sending while the main session stays inactive during retry backoff', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        mainSession.active = false
+        ;(engine as any).sessions.set(mainSession.id, mainSession)
+        ;(engine as any).brainCallbackRetryDelaysMs = [1, 1, 1]
+        ;(engine as any).brainChildPendingRetryCallbackKeyBySessionId.set('child-session', 'main-session:child-session:1')
+
+        let sendAttempts = 0
+        ;(engine as any).sendBrainCallbackIfNeeded = async () => {
+            sendAttempts += 1
+        }
+
+        await (engine as any).retryBrainCallback(
+            'child-session',
+            'main-session',
+            'main-session:child-session:1',
+            'brain session unavailable',
+        )
+
+        expect(sendAttempts).toBe(0)
+        expect((engine as any).brainChildPendingRetryCallbackKeyBySessionId.get('child-session')).toBeUndefined()
+    })
+
+    test('persists a pending callback marker when the main brain session is offline', async () => {
+        const childMessages = [createAgentResultMessage(1, '等待主 Brain 恢复')]
+        const patchCalls: Array<Record<string, unknown>> = []
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getMessages: async () => childMessages,
+            getMessageCount: async () => childMessages.length,
+            patchSessionMetadata: async (_sessionId: string, patch: Record<string, unknown>) => {
+                patchCalls.push(patch)
+                return true
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const mainSession = createSession('brain-main', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        mainSession.active = false
+        const childSession = createSession('child-session', {
+            source: 'brain-child',
+            mainSessionId: 'brain-main',
+            summary: { text: 'Child', updatedAt: 0 },
+        })
+
+        ;(engine as any).sessions.set(mainSession.id, mainSession)
+        ;(engine as any).sessions.set(childSession.id, childSession)
+        ;(engine as any).sessionMessages.set(childSession.id, childMessages)
+        ;(engine as any).waitForSessionMessagesToSettle = async () => {}
+        ;(engine as any).retryBrainCallback = async () => {}
+
+        await (engine as any).sendBrainCallbackIfNeeded(childSession)
+
+        expect(patchCalls).toContainEqual({ brainCallbackPending: true })
+        expect((childSession.metadata as any).brainCallbackPending).toBe(true)
+    })
+
+    test('reconciles persisted pending brain callbacks when the parent brain session comes back online', async () => {
+        const childMessages = [createAgentResultMessage(1, '重启后待补发的结果')]
+        const patchCalls: Array<Record<string, unknown>> = []
+        const sent: Array<{ sessionId: string; localId?: string; meta?: unknown }> = []
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getSession: async () => ({ active: true }),
+            getMessages: async () => childMessages,
+            getMessageCount: async () => childMessages.length,
+            patchSessionMetadata: async (_sessionId: string, patch: Record<string, unknown>) => {
+                patchCalls.push(patch)
+                return true
+            },
+            setSessionActive: async () => true,
+            setSessionThinking: async () => undefined,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const mainSession = createSession('brain-main', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        mainSession.active = false
+        const childSession = createSession('child-session', {
+            source: 'brain-child',
+            mainSessionId: 'brain-main',
+            brainCallbackPending: true,
+            summary: { text: 'Child', updatedAt: 0 },
+        })
+
+        ;(engine as any).sessions.set(mainSession.id, mainSession)
+        ;(engine as any).sessions.set(childSession.id, childSession)
+        ;(engine as any).sessionMessages.set(childSession.id, childMessages)
+        ;(engine as any).waitForSessionMessagesToSettle = async () => {}
+        ;(engine as any).sendMessage = async (sessionId: string, message: any) => {
+            sent.push({ sessionId, localId: message.localId, meta: message.meta })
+            return { status: 'sent' }
+        }
+
+        await engine.handleSessionAlive({ sid: mainSession.id, time: Date.now(), thinking: false })
+        await new Promise(resolve => setTimeout(resolve, 10))
+
+        expect(sent).toHaveLength(1)
+        expect(sent[0]?.sessionId).toBe(mainSession.id)
+        expect(sent[0]?.localId).toBe('brain-callback:brain-main:child-session:1')
+        expect((sent[0]?.meta as any)?.brainChildCallback?.result?.text).toBe('重启后待补发的结果')
+        expect(patchCalls).toContainEqual({ brainCallbackPending: false })
+        expect((childSession.metadata as any).brainCallbackPending).toBe(false)
     })
 
     test('still forwards a later child completion after deduplicating the previous callback replay', async () => {
@@ -2102,6 +2316,80 @@ describe('SyncEngine', () => {
                 remaining: 2
             })
         }))
+    })
+
+    test('clearSessionMessages clears pending brain callback retry state and cancels stale retry loops', async () => {
+        const patchCalls: Array<{ sessionId: string; patch: Record<string, unknown>; namespace: string }> = []
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            clearMessages: async (_sessionId: string, _keepCount: number) => ({
+                deleted: 4,
+                remaining: 1,
+            }),
+            patchSessionMetadata: async (sessionId: string, patch: Record<string, unknown>, namespace: string) => {
+                patchCalls.push({ sessionId, patch, namespace })
+                return true
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const mainSession = createSession('brain-main', {
+            source: 'brain',
+        })
+        mainSession.active = false
+        const childSession = createSession('child-session', {
+            source: 'brain-child',
+            mainSessionId: 'brain-main',
+            brainCallbackPending: true,
+        })
+
+        ;(engine as any).sessions.set(mainSession.id, mainSession)
+        ;(engine as any).sessions.set(childSession.id, childSession)
+        ;(engine as any).brainChildLastDeliveredCallbackKeyBySessionId.set(childSession.id, 'brain-main:child-session:0')
+        ;(engine as any).brainChildInFlightCallbackKeyBySessionId.set(childSession.id, 'brain-main:child-session:0')
+        ;(engine as any).brainChildPendingRetryCallbackKeyBySessionId.set(childSession.id, 'brain-main:child-session:1')
+        ;(engine as any).brainCallbackRetryDelaysMs = [25]
+
+        let resendAttempts = 0
+        ;(engine as any).sendBrainCallbackIfNeeded = async () => {
+            resendAttempts += 1
+        }
+
+        const retryPromise = (engine as any).retryBrainCallback(
+            childSession.id,
+            mainSession.id,
+            'brain-main:child-session:1',
+            'brain session unavailable',
+        )
+
+        await engine.clearSessionMessages(childSession.id, 10)
+        await retryPromise
+
+        expect(resendAttempts).toBe(0)
+        expect((engine as any).brainChildLastDeliveredCallbackKeyBySessionId.get(childSession.id)).toBeUndefined()
+        expect((engine as any).brainChildInFlightCallbackKeyBySessionId.get(childSession.id)).toBeUndefined()
+        expect((engine as any).brainChildPendingRetryCallbackKeyBySessionId.get(childSession.id)).toBeUndefined()
+        expect(patchCalls).toEqual([
+            {
+                sessionId: childSession.id,
+                patch: { brainCallbackPending: false },
+                namespace: 'default',
+            },
+        ])
     })
 
     test('machine disconnect creates an offline-to-online edge for auto-resume', async () => {

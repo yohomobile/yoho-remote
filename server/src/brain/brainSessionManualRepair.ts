@@ -32,11 +32,20 @@ const SetPermissionModeManifestItemSchema = z.object({
     permissionMode: z.string().min(1),
 })
 
+const SetMainSessionIdManifestItemSchema = z.object({
+    sessionId: z.string().min(1),
+    namespace: z.string().min(1).optional(),
+    reason: z.string().trim().min(1).optional(),
+    action: z.literal('set-mainSessionId'),
+    mainSessionId: z.string().min(1),
+})
+
 const BrainSessionManualRepairManifestSchema = z.object({
     version: z.literal(1),
     items: z.array(z.union([
         SetBrainPreferencesManifestItemSchema,
         SetPermissionModeManifestItemSchema,
+        SetMainSessionIdManifestItemSchema,
     ])).min(1),
 })
 
@@ -53,6 +62,11 @@ export type BrainSessionManualRepairFieldDiff =
         field: 'permissionMode'
         before: string | null
         after: SessionPermissionMode
+    }
+    | {
+        field: 'mainSessionId'
+        before: string | null
+        after: string
     }
 
 type PlannedChangeBase = {
@@ -76,9 +90,15 @@ export type SetPermissionModePlannedChange = PlannedChangeBase & {
     permissionMode: SessionPermissionMode
 }
 
+export type SetMainSessionIdPlannedChange = PlannedChangeBase & {
+    action: 'set-mainSessionId'
+    mainSessionId: string
+}
+
 export type BrainSessionManualRepairPlannedChange =
     | SetBrainPreferencesPlannedChange
     | SetPermissionModePlannedChange
+    | SetMainSessionIdPlannedChange
 
 export type BrainSessionManualRepairSkippedItem = {
     manifestIndex: number
@@ -169,6 +189,22 @@ function getBrainPreferencesValue(session: StoredSession): unknown {
     return metadata?.brainPreferences
 }
 
+function getBrainChildMainSessionId(session: StoredSession): string | null {
+    const metadata = asRecord(session.metadata)
+    const source = getSessionSourceFromMetadata(metadata)
+    if (source !== 'brain-child') {
+        return null
+    }
+
+    const candidate = metadata?.mainSessionId
+    if (typeof candidate !== 'string') {
+        return null
+    }
+
+    const trimmed = candidate.trim()
+    return trimmed.length > 0 ? trimmed : null
+}
+
 function getValidBrainPreferencesFromSession(session: StoredSession | undefined): BrainSessionPreferences | null {
     if (!session) {
         return null
@@ -223,7 +259,18 @@ export function buildBrainSessionManualRepairPlan(
             rejected.push({
                 manifestIndex,
                 sessionId: item.sessionId,
-                reason: '只允许修复 metadata.source=brain 或 brain-child 的会话',
+                reason: item.action === 'set-mainSessionId'
+                    ? 'set-mainSessionId 只允许用于 brain-child 会话'
+                    : '只允许修复 metadata.source=brain 或 brain-child 的会话',
+            })
+            continue
+        }
+
+        if (item.action === 'set-mainSessionId' && source !== 'brain-child') {
+            rejected.push({
+                manifestIndex,
+                sessionId: item.sessionId,
+                reason: 'set-mainSessionId 只允许用于 brain-child 会话',
             })
             continue
         }
@@ -285,6 +332,73 @@ export function buildBrainSessionManualRepairPlan(
                     field: 'brainPreferences',
                     before: beforeValue,
                     after: nextBrainPreferences,
+                },
+            })
+            continue
+        }
+
+        if (item.action === 'set-mainSessionId') {
+            if (source !== 'brain-child') {
+                rejected.push({
+                    manifestIndex,
+                    sessionId: item.sessionId,
+                    reason: 'set-mainSessionId 只允许用于 brain-child 会话',
+                })
+                continue
+            }
+
+            const mainSession = sessionsById.get(item.mainSessionId)
+            if (!mainSession) {
+                rejected.push({
+                    manifestIndex,
+                    sessionId: item.sessionId,
+                    reason: `mainSessionId=${item.mainSessionId} 不存在于当前 store 扫描结果中`,
+                })
+                continue
+            }
+
+            if (mainSession.namespace !== session.namespace) {
+                rejected.push({
+                    manifestIndex,
+                    sessionId: item.sessionId,
+                    reason: `mainSessionId=${item.mainSessionId} 与当前会话 namespace 不一致`,
+                })
+                continue
+            }
+
+            if (extractBrainSource(mainSession) !== 'brain') {
+                rejected.push({
+                    manifestIndex,
+                    sessionId: item.sessionId,
+                    reason: `mainSessionId=${item.mainSessionId} 必须指向 source=brain 会话`,
+                })
+                continue
+            }
+
+            const beforeMainSessionId = getBrainChildMainSessionId(session)
+            if (beforeMainSessionId === item.mainSessionId) {
+                skippedNoop.push({
+                    manifestIndex,
+                    sessionId: session.id,
+                    namespace: session.namespace,
+                    reason: 'mainSessionId 已经与目标值一致',
+                })
+                continue
+            }
+
+            planned.push({
+                manifestIndex,
+                sessionId: session.id,
+                namespace: session.namespace,
+                source,
+                action: 'set-mainSessionId',
+                reason,
+                beforeSession: session,
+                mainSessionId: item.mainSessionId,
+                diff: {
+                    field: 'mainSessionId',
+                    before: beforeMainSessionId,
+                    after: item.mainSessionId,
                 },
             })
             continue
@@ -447,7 +561,14 @@ export async function applyBrainSessionManualRepairs(
                 })
                 continue
             }
-        } else {
+            applied.push({
+                manifestIndex: item.manifestIndex,
+                sessionId: item.sessionId,
+                namespace: item.namespace,
+                action: item.action,
+            })
+            continue
+        } else if (item.action === 'set-permissionMode') {
             if (current.permissionMode !== item.beforeSession.permissionMode) {
                 skippedDrifted.push({
                     manifestIndex: item.manifestIndex,
@@ -488,14 +609,78 @@ export async function applyBrainSessionManualRepairs(
                 })
                 continue
             }
-        }
+            applied.push({
+                manifestIndex: item.manifestIndex,
+                sessionId: item.sessionId,
+                namespace: item.namespace,
+                action: item.action,
+            })
+            continue
+        } else {
+            if (source !== 'brain-child') {
+                skippedDrifted.push({
+                    manifestIndex: item.manifestIndex,
+                    sessionId: item.sessionId,
+                    namespace: item.namespace,
+                    reason: 'apply 前发现 session source 已不再是 brain-child，已跳过',
+                })
+                continue
+            }
 
-        applied.push({
-            manifestIndex: item.manifestIndex,
-            sessionId: item.sessionId,
-            namespace: item.namespace,
-            action: item.action,
-        })
+            const currentMainSessionId = getBrainChildMainSessionId(current)
+            if (!sameJsonValue(currentMainSessionId, item.diff.before)) {
+                skippedDrifted.push({
+                    manifestIndex: item.manifestIndex,
+                    sessionId: item.sessionId,
+                    namespace: item.namespace,
+                    reason: 'apply 前发现 mainSessionId 已发生漂移，已跳过',
+                })
+                continue
+            }
+
+            const mainSession = await store.getSession(item.mainSessionId)
+            if (!mainSession || mainSession.namespace !== item.namespace) {
+                skippedDrifted.push({
+                    manifestIndex: item.manifestIndex,
+                    sessionId: item.sessionId,
+                    namespace: item.namespace,
+                    reason: 'apply 前发现 mainSessionId 引用的会话不存在，已跳过',
+                })
+                continue
+            }
+
+            if (extractBrainSource(mainSession) !== 'brain') {
+                skippedDrifted.push({
+                    manifestIndex: item.manifestIndex,
+                    sessionId: item.sessionId,
+                    namespace: item.namespace,
+                    reason: 'apply 前发现 mainSessionId 引用会话不再是 brain，已跳过',
+                })
+                continue
+            }
+
+            const success = await store.patchSessionMetadata(
+                item.sessionId,
+                { mainSessionId: item.mainSessionId },
+                item.namespace
+            )
+            if (!success) {
+                failed.push({
+                    manifestIndex: item.manifestIndex,
+                    sessionId: item.sessionId,
+                    namespace: item.namespace,
+                    reason: 'patchSessionMetadata 返回 false',
+                })
+                continue
+            }
+            applied.push({
+                manifestIndex: item.manifestIndex,
+                sessionId: item.sessionId,
+                namespace: item.namespace,
+                action: item.action,
+            })
+            continue
+        }
     }
 
     return {

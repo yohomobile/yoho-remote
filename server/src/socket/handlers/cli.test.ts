@@ -319,6 +319,114 @@ describe('registerCliHandlers', () => {
         })
     })
 
+    test('preserves protected archive metadata on update-metadata full replace writes', async () => {
+        const handlers = new Map<string, (...args: any[]) => unknown>()
+        const updateCalls: Array<{ sid: string; metadata: unknown }> = []
+        const emittedUpdates: Array<unknown> = []
+
+        const socket = {
+            id: 'socket-metadata-archive-protect',
+            data: { namespace: 'default' },
+            handshake: { auth: {} },
+            join: () => undefined,
+            on: (event: string, handler: (...args: any[]) => unknown) => {
+                handlers.set(event, handler)
+            },
+            emit: () => {},
+            to: () => ({
+                emit: (_event: string, payload: unknown) => {
+                    emittedUpdates.push(payload)
+                },
+            }),
+            disconnect: () => {},
+        }
+
+        const currentMetadata = {
+            source: 'brain-child',
+            mainSessionId: 'brain-main',
+            lifecycleState: 'archived',
+            lifecycleStateSince: 100,
+            archivedBy: 'user',
+            archiveReason: 'User archived session',
+        }
+
+        const store = {
+            getSessionByNamespace: async (id: string, namespace: string) => (
+                id === 'session-metadata' && namespace === 'default'
+                    ? { id, namespace, metadata: currentMetadata }
+                    : null
+            ),
+            getSession: async () => null,
+            getMachineByNamespace: async () => null,
+            getMachine: async () => null,
+            updateSessionMetadata: async (sid: string, metadata: unknown) => {
+                updateCalls.push({ sid, metadata })
+                return { result: 'success', version: 2, value: metadata }
+            },
+        }
+
+        const io = {
+            of: () => ({
+                sockets: new Map<string, { disconnect: (close?: boolean) => void }>(),
+            }),
+        }
+
+        registerCliHandlers(socket as any, {
+            io: io as any,
+            store: store as any,
+            rpcRegistry: new RpcRegistry(),
+        })
+
+        const updateMetadataHandler = handlers.get('update-metadata')
+        expect(updateMetadataHandler).toBeDefined()
+
+        let ackPayload: unknown = null
+        await updateMetadataHandler!(
+            {
+                sid: 'session-metadata',
+                expectedVersion: 1,
+                metadata: {
+                    source: 'brain-child',
+                    mainSessionId: 'brain-main',
+                    lifecycleState: 'running',
+                    lifecycleStateSince: 999,
+                    hostPid: 42,
+                },
+            },
+            (answer: unknown) => {
+                ackPayload = answer
+            },
+        )
+
+        const protectedMetadata = {
+            source: 'brain-child',
+            mainSessionId: 'brain-main',
+            lifecycleState: 'archived',
+            lifecycleStateSince: 100,
+            archivedBy: 'user',
+            archiveReason: 'User archived session',
+            hostPid: 42,
+        }
+
+        expect(updateCalls).toEqual([{
+            sid: 'session-metadata',
+            metadata: protectedMetadata,
+        }])
+        expect(ackPayload).toEqual({
+            result: 'success',
+            version: 2,
+            metadata: protectedMetadata,
+        })
+        expect(emittedUpdates).toEqual([expect.objectContaining({
+            body: expect.objectContaining({
+                metadata: {
+                    version: 2,
+                    value: protectedMetadata,
+                },
+            }),
+        })])
+    })
+
     test('rejects update-metadata when brainPreferences is invalid for a brain-linked session', async () => {
         const handlers = new Map<string, (...args: any[]) => unknown>()
         let updateCalled = false

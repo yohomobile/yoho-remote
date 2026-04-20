@@ -8,8 +8,8 @@ export type AiTaskSchedule = {
     namespace: string
     machineId: string
     label: string | null
-    cronExpr: string
-    payloadPrompt: string
+    cron: string
+    prompt: string
     directory: string
     agent: string
     mode: string | null
@@ -42,8 +42,8 @@ export type CreateScheduleInput = {
     namespace: string
     machineId: string
     label?: string | null
-    cronExpr: string
-    payloadPrompt: string
+    cron: string
+    prompt: string
     directory: string
     agent: string
     mode?: string | null
@@ -54,9 +54,12 @@ export type CreateScheduleInput = {
 }
 
 export type InsertRunInput = {
+    id?: string
     scheduleId?: string | null
     machineId: string
     namespace: string
+    status?: AiTaskRunStatus
+    startedAt?: number
     metadata?: Record<string, unknown> | null
 }
 
@@ -73,8 +76,8 @@ function rowToSchedule(row: Record<string, unknown>): AiTaskSchedule {
         namespace: String(row.namespace),
         machineId: String(row.machine_id),
         label: row.label != null ? String(row.label) : null,
-        cronExpr: String(row.cron_expr),
-        payloadPrompt: String(row.payload_prompt),
+        cron: String(row.cron_expr),
+        prompt: String(row.payload_prompt),
         directory: String(row.directory),
         agent: String(row.agent),
         mode: row.mode != null ? String(row.mode) : null,
@@ -109,10 +112,16 @@ function rowToRun(row: Record<string, unknown>): AiTaskRun {
 export class AiTaskStore {
     constructor(private readonly pool: Pool) {}
 
-    async listEnabledSchedules(machineId: string): Promise<AiTaskSchedule[]> {
+    async listEnabledSchedules(machineId?: string): Promise<AiTaskSchedule[]> {
+        if (machineId != null) {
+            const result = await this.pool.query(
+                `SELECT * FROM ai_task_schedules WHERE machine_id = $1 AND enabled = TRUE ORDER BY created_at ASC`,
+                [machineId]
+            )
+            return (result.rows as Record<string, unknown>[]).map(rowToSchedule)
+        }
         const result = await this.pool.query(
-            `SELECT * FROM ai_task_schedules WHERE machine_id = $1 AND enabled = TRUE ORDER BY created_at ASC`,
-            [machineId]
+            `SELECT * FROM ai_task_schedules WHERE enabled = TRUE ORDER BY created_at ASC`
         )
         return (result.rows as Record<string, unknown>[]).map(rowToSchedule)
     }
@@ -141,8 +150,8 @@ export class AiTaskStore {
                 input.namespace,
                 input.machineId,
                 input.label ?? null,
-                input.cronExpr,
-                input.payloadPrompt,
+                input.cron,
+                input.prompt,
                 input.directory,
                 input.agent,
                 input.mode ?? null,
@@ -196,8 +205,9 @@ export class AiTaskStore {
     }
 
     async insertRun(input: InsertRunInput): Promise<AiTaskRun> {
-        const id = randomUUID()
-        const now = Date.now()
+        const id = input.id ?? randomUUID()
+        const startedAt = input.startedAt ?? Date.now()
+        const status = input.status ?? 'pending'
         const result = await this.pool.query(
             `INSERT INTO ai_task_runs (
                 id, schedule_id, machine_id, namespace, status, started_at, metadata
@@ -208,8 +218,8 @@ export class AiTaskStore {
                 input.scheduleId ?? null,
                 input.machineId,
                 input.namespace,
-                'pending',
-                now,
+                status,
+                startedAt,
                 input.metadata ? JSON.stringify(input.metadata) : null,
             ]
         )

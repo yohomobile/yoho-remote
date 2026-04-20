@@ -1147,6 +1147,7 @@ export class SyncEngine {
                 lifecycleStateSince: now,
                 archivedBy,
                 archiveReason,
+                brainCallbackPending: false,
             }
             session.metadata = {
                 ...((session.metadata ?? {}) as Record<string, unknown>),
@@ -1499,12 +1500,17 @@ export class SyncEngine {
     }
 
     async clearSessionMessages(sessionId: string, keepCount: number = 30): Promise<{ deleted: number; remaining: number }> {
+        const session = this.sessions.get(sessionId)
         const result = await this.store.clearMessages(sessionId, keepCount)
 
         // Clear the in-memory cache for this session
         this.sessionMessages.delete(sessionId)
         this.brainChildLastDeliveredCallbackKeyBySessionId.delete(sessionId)
         this.brainChildInFlightCallbackKeyBySessionId.delete(sessionId)
+        this.brainChildPendingRetryCallbackKeyBySessionId.delete(sessionId)
+        if (session && getSessionSourceFromMetadata(session.metadata) === 'brain-child') {
+            await this.persistBrainCallbackPending(session, false)
+        }
 
         this.io.of('/cli').to(`session:${sessionId}`).emit('update', buildSessionClearMessagesUpdate({
             sessionId,
@@ -1777,6 +1783,14 @@ export class SyncEngine {
                 console.error(`[handleSessionAlive] Failed to persist active=true for session ${session.id}:`, err)
             })
         }
+        if (!wasActive && this.isBrainSession(session)) {
+            void this.reconcilePendingBrainCallbacksForMain(session.id, session.namespace).catch(error => {
+                console.error(
+                    `[brain-callback] Failed to reconcile pending callbacks for brain ${shortId(session.id)}:`,
+                    error
+                )
+            })
+        }
 
         // Persist model config if updated from heartbeat
         if (needsPersist) {
@@ -2040,6 +2054,56 @@ export class SyncEngine {
         return `${mainSessionId}:${childSessionId}:${resultSeq ?? `none:${resultSource}`}`
     }
 
+    private isBrainCallbackPendingPersisted(session: Session | undefined): boolean {
+        return (session?.metadata as { brainCallbackPending?: unknown } | null | undefined)?.brainCallbackPending === true
+    }
+
+    private async persistBrainCallbackPending(session: Session, pending: boolean): Promise<void> {
+        const currentMetadata = session.metadata && typeof session.metadata === 'object'
+            ? session.metadata as Record<string, unknown>
+            : {}
+        if (currentMetadata.brainCallbackPending === pending) {
+            return
+        }
+        const patchSessionMetadata = (this.store as Partial<IStore>).patchSessionMetadata
+        if (typeof patchSessionMetadata !== 'function') {
+            return
+        }
+        try {
+            await patchSessionMetadata(
+                session.id,
+                { brainCallbackPending: pending },
+                session.namespace
+            )
+            session.metadata = {
+                ...currentMetadata,
+                brainCallbackPending: pending,
+            } as unknown as Session['metadata']
+        } catch (error) {
+            console.warn(
+                `[brain-callback] Failed to persist pending=${pending} for ${shortId(session.id)}:`,
+                error
+            )
+        }
+    }
+
+    private async reconcilePendingBrainCallbacksForMain(mainSessionId: string, namespace: string): Promise<void> {
+        const pendingChildren = this.getSessionsByNamespace(namespace).filter((session) =>
+            getSessionSourceFromMetadata(session.metadata) === 'brain-child'
+            && getBrainChildMainSessionId(session.metadata) === mainSessionId
+            && this.isBrainCallbackPendingPersisted(session)
+        )
+        if (pendingChildren.length === 0) {
+            return
+        }
+        console.log(
+            `[brain-callback] Reconciling ${pendingChildren.length} pending child callback(s) for brain ${shortId(mainSessionId)}`
+        )
+        for (const childSession of pendingChildren) {
+            await this.sendBrainCallbackIfNeeded(childSession)
+        }
+    }
+
     private async sendBrainCallbackIfNeeded(session: Session): Promise<void> {
         try {
             const source = (session.metadata as any)?.source
@@ -2224,6 +2288,7 @@ export class SyncEngine {
                     )
                     return
                 }
+                await this.persistBrainCallbackPending(session, true)
                 this.brainChildPendingRetryCallbackKeyBySessionId.set(session.id, callbackDeliveryKey)
                 console.warn(`[brain-callback] Brain session ${mainSessionId} unavailable, will retry (key=${callbackDeliveryKey})`)
                 void this.retryBrainCallback(session.id, mainSessionId, callbackDeliveryKey, 'brain session unavailable')
@@ -2294,6 +2359,7 @@ export class SyncEngine {
                             },
                         })
                         this.brainChildLastDeliveredCallbackKeyBySessionId.set(session.id, callbackDeliveryKey)
+                        await this.persistBrainCallbackPending(session, false)
                         return // success
                     } catch (e) {
                         lastError = e as Error

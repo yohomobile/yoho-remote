@@ -116,7 +116,17 @@ describe('brainTools descriptions', () => {
             message: '修复问题',
         })
 
-        expect(apiClient.sendMessageToSession).toHaveBeenCalledWith('child-session', '修复问题', 'brain')
+        expect(apiClient.patchSessionMetadata).toHaveBeenCalledWith(
+            'child-session',
+            { caller: 'webapp' },
+            { mainSessionId: 'brain-session' }
+        )
+        expect(apiClient.sendMessageToSession).toHaveBeenCalledWith(
+            'child-session',
+            '修复问题',
+            'brain',
+            { mainSessionId: 'brain-session' }
+        )
         expect(result?.isError).toBeUndefined()
         expect(result).toMatchObject({
             structuredContent: {
@@ -187,6 +197,50 @@ describe('brainTools descriptions', () => {
                 text: expect.stringContaining('消费队列'),
             }],
         })
+    })
+
+    it('rejects session_send invariant violations instead of auto-claiming a brain-child without mainSessionId', async () => {
+        const handlers = new Map<string, (args: any) => Promise<any>>()
+        const fakeMcp = {
+            registerTool: (name: string, _meta: { description?: string }, handler: (args: any) => Promise<any>) => {
+                handlers.set(name, handler)
+            },
+        }
+        const apiClient = {
+            getSession: vi.fn(async () => ({
+                id: 'child-session',
+                active: true,
+                thinking: false,
+                metadata: {
+                    source: 'brain-child',
+                },
+            })),
+            patchSessionMetadata: vi.fn(async () => undefined),
+            sendMessageToSession: vi.fn(async () => ({
+                ok: true,
+                status: 'delivered',
+                sessionId: 'child-session',
+            })),
+        }
+
+        registerBrainTools(fakeMcp as any, [], {
+            apiClient: apiClient as any,
+            machineId: 'machine-1',
+            brainSessionId: 'brain-session',
+            sessionCaller: 'webapp',
+            brainPreferences: null,
+        })
+
+        const handler = handlers.get('session_send')
+        const result = await handler?.({
+            sessionId: 'child-session',
+            message: '修复问题',
+        })
+
+        expect(apiClient.patchSessionMetadata).not.toHaveBeenCalled()
+        expect(apiClient.sendMessageToSession).not.toHaveBeenCalled()
+        expect(result?.isError).toBe(true)
+        expect(result?.content?.[0]?.text).toContain('Invariant violation: brain-child session child-session 缺少 mainSessionId')
     })
 
     it('defaults omitted child agent to a machine-supported agent instead of always forcing claude', async () => {
@@ -679,7 +733,7 @@ describe('brainTools descriptions', () => {
             flavor: 'claude',
             source: 'brain-child',
         })
-        expect(apiClient.resumeSession).toHaveBeenCalledWith('child-old')
+        expect(apiClient.resumeSession).toHaveBeenCalledWith('child-old', { mainSessionId: 'brain-session' })
         expect(apiClient.brainSpawnSession).not.toHaveBeenCalled()
         expect(result).toMatchObject({
             content: [{
@@ -802,5 +856,70 @@ describe('brainTools descriptions', () => {
                 text: expect.stringContaining('sessionId: child-new'),
             }],
         })
+    })
+
+    it('passes childSessionScope to stop/resume/close/update/config mutating APIs', async () => {
+        const handlers = new Map<string, (args: any) => Promise<any>>()
+        const fakeMcp = {
+            registerTool: (name: string, _meta: { description?: string }, handler: (args: any) => Promise<any>) => {
+                handlers.set(name, handler)
+            },
+        }
+        const apiClient = {
+            getSessionStatus: vi.fn(async () => ({
+                active: true,
+                thinking: true,
+                initDone: true,
+                messageCount: 1,
+                lastUsage: null,
+                metadata: null,
+            })),
+            abortSession: vi.fn(async () => ({ ok: true })),
+            resumeSession: vi.fn(async () => ({ type: 'resumed' as const, sessionId: 'child-session' })),
+            deleteSession: vi.fn(async () => ({ ok: true })),
+            patchSessionMetadata: vi.fn(async () => undefined),
+            setSessionConfig: vi.fn(async () => ({
+                ok: true,
+                applied: {
+                    model: 'gpt-5.4-mini',
+                    reasoningEffort: 'high',
+                },
+            })),
+        }
+
+        registerBrainTools(fakeMcp as any, [], {
+            apiClient: apiClient as any,
+            machineId: 'machine-1',
+            brainSessionId: 'brain-session',
+            sessionCaller: 'webapp',
+            brainPreferences: null,
+        })
+
+        await handlers.get('session_stop')?.({ sessionId: 'child-session' })
+        await handlers.get('session_resume')?.({ sessionId: 'child-session' })
+        await handlers.get('session_close')?.({ sessionId: 'child-session' })
+        await handlers.get('session_update')?.({ sessionId: 'child-session', brainSummary: 'done' })
+        await handlers.get('session_set_config')?.({
+            sessionId: 'child-session',
+            model: 'gpt-5.4-mini',
+            reasoningEffort: 'high',
+        })
+
+        expect(apiClient.abortSession).toHaveBeenCalledWith('child-session', { mainSessionId: 'brain-session' })
+        expect(apiClient.resumeSession).toHaveBeenCalledWith('child-session', { mainSessionId: 'brain-session' })
+        expect(apiClient.deleteSession).toHaveBeenCalledWith('child-session', { mainSessionId: 'brain-session' })
+        expect(apiClient.patchSessionMetadata).toHaveBeenCalledWith(
+            'child-session',
+            { brainSummary: 'done' },
+            { mainSessionId: 'brain-session' }
+        )
+        expect(apiClient.setSessionConfig).toHaveBeenCalledWith(
+            'child-session',
+            {
+                model: 'gpt-5.4-mini',
+                reasoningEffort: 'high',
+            },
+            { mainSessionId: 'brain-session' }
+        )
     })
 })

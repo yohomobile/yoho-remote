@@ -1,0 +1,229 @@
+================================================================================
+           yoho-remote 端到端集成测试 - 完整参考文档
+================================================================================
+
+已为你生成以下文档文件（共 4 份）：
+
+1. E2E_INTEGRATION_TEST_REFERENCE.md
+   ├─ 详尽的系统设计文档
+   ├─ 包含：
+   │  ├─ L1/L2/L3 触发条件和阈值（第 1 节）
+   │  ├─ 完整 DDL 表结构（session_summaries 和 summarization_runs）（第 2 节）
+   │  ├─ metadata 字段示例（JSON 格式）
+   │  ├─ 幂等性机制详解（singletonKey 生成规则）（第 3 节）
+   │  ├─ Catch-up 孤儿扫描逻辑（第 4 节）
+   │  ├─ pg-boss 队列配置和重试策略（第 5 节）
+   │  ├─ 环境变量完整清单（第 6 节）
+   │  ├─ DeepSeek Client 接口签名和错误处理（第 7 节）
+   │  ├─ summarizeTurnQueue 工作流（第 8 节）
+   │  ├─ 现有测试文件列表（第 9 节）
+   │  └─ E2E 测试编写指南和 Mock 模板（第 10 节）
+   │
+   │ 📍 用途：作为测试编写的全面参考，可随时查阅细节
+
+2. E2E_TEST_SNIPPETS.md
+   ├─ 立即可用的代码片段库
+   ├─ 包含：
+   │  ├─ .env.test 配置文件模板
+   │  ├─ 数据库初始化函数（initTestDatabase）
+   │  ├─ WorkerContext Mock 工厂（createMockWorkerContext）
+   │  ├─ 测试会话创建助手（createTestSession、insertTestMessage）
+   │  ├─ DeepSeek 响应 Mock 工厂（mockDeepseekL1Response 等）
+   │  ├─ JobMetadata 工厂（createMockJobMetadata）
+   │  ├─ 标准测试用例模板（describe/beforeEach/afterEach）
+   │  ├─ L1 handler 测试完整示例
+   │  ├─ L2 trigger 测试示例
+   │  ├─ 缓存命中测试示例
+   │  └─ Catch-up 机制测试示例
+   │
+   │ 📍 用途：复制粘贴到你的 .test.ts 文件中直接使用
+
+3. INTEGRATION_TEST_CHECKLIST.md
+   ├─ 快速检查清单
+   ├─ 包含：
+   │  ├─ 基础设置检查项（✅）
+   │  ├─ L1/L2/L3 各层的测试场景清单
+   │  ├─ 幂等性验证检查
+   │  ├─ 数据库约束验证
+   │  ├─ 错误处理和错误代码清单
+   │  ├─ 边界情况测试
+   │  ├─ Teardown 清理步骤
+   │  └─ 配置验证和命令示例
+   │
+   │ 📍 用途：开发过程中逐项检查，确保测试覆盖完整
+
+4. E2E_TEST_OVERVIEW.txt
+   ├─ 本文件（元信息）
+   ├─ 包含：
+   │  ├─ 4 份文档的快速导航
+   │  ├─ 关键数据快速查阅
+   │  └─ 测试编写流程指导
+   │
+   │ 📍 用途：了解总体结构，快速定位需要的信息
+
+================================================================================
+                             关键数据速查
+================================================================================
+
+🔷 三层摘要阈值与触发条件
+┌──────────────┬──────────────────┬────────────────┬──────────────────┐
+│    阶段      │  触发事件        │  关键阈值      │ 幂等性 Key       │
+├──────────────┼──────────────────┼────────────────┼──────────────────┤
+│ L1 (Turn)    │ 新消息 userSeq   │ realMsg >= 2   │ sessId:userSeq:v1│
+│              │ + valid start    │ + txt >= 200   │                  │
+│              │                  │ OR has tools   │                  │
+├──────────────┼──────────────────┼────────────────┼──────────────────┤
+│ L2 (Segment) │ L1 完成后        │ unassignedL1   │ segment:sessId   │
+│              │ enqueueIfNeeded()│ >= 5 (config)  │                  │
+├──────────────┼──────────────────┼────────────────┼──────────────────┤
+│ L3 (Session) │ 手动触发         │ L2 > 0 or      │ session:sessId   │
+│              │ sendSessionSum   │ L1 > 0         │                  │
+└──────────────┴──────────────────┴────────────────┴──────────────────┘
+
+🔷 pg-boss 队列配置
+┌──────────────────────┬──────────┬──────────┬─────────┬────────────────┐
+│    队列名            │ 重试次数 │ 初始延迟 │ 退避    │ 最大延迟       │
+├──────────────────────┼──────────┼──────────┼─────────┼────────────────┤
+│ summarize-turn (L1)  │ 4        │ 15s      │ true    │ 300s (5min)    │
+├──────────────────────┼──────────┼──────────┼─────────┼────────────────┤
+│ summarize-segment(L2)│ 4        │ 30s      │ true    │ 600s (10min)   │
+├──────────────────────┼──────────┼──────────┼─────────┼────────────────┤
+│ summarize-session(L3)│ 3        │ 60s      │ true    │ 900s (15min)   │
+└──────────────────────┴──────────┴──────────┴─────────┴────────────────┘
+
+🔷 LLM 响应约束
+┌──────────────┬────────────┬──────────────────────────────────────────┐
+│   字段       │ 最大长度   │ 备注                                     │
+├──────────────┼────────────┼──────────────────────────────────────────┤
+│ summary      │ 1500 字符  │ 所有层通用                               │
+│ topic        │ 80 字符    │ 简短主题标签                             │
+│ tools        │ 20 项      │ 每项最多 120 字符，自动去重              │
+│ entities     │ 30 项      │ 每项最多 160 字符，自动去重              │
+│ tokens_in    │ —          │ DeepSeek 返回，可为 null                 │
+│ tokens_out   │ —          │ DeepSeek 返回，可为 null                 │
+└──────────────┴────────────┴──────────────────────────────────────────┘
+
+🔷 Catch-up 扫描规则
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 孤儿年龄：10 分钟（CATCHUP_ORPHAN_AGE_MS）                             │
+│ 扫描间隔：1 小时（CATCHUP_INTERVAL_MS，环境变量可配）                 │
+│ 扫描条件：level=1 AND parent_id IS NULL AND created_at < cutoff       │
+│ 触发条件：按 session 分组，COUNT(*) >= L2_SEGMENT_THRESHOLD (default: 5)│
+│ 动作：自动调用 enqueueSegmentIfNeeded() 发送 L2 任务                  │
+└─────────────────────────────────────────────────────────────────────────┘
+
+🔷 错误分类
+
+永久性错误（不重试）：
+  - session_not_found
+  - invalid_turn_start_message
+  - LLM 400/401/403（模型拒绝）
+  - PermanentLLMError
+
+暂时性错误（重试）：
+  - session_still_thinking
+  - turn_incomplete_mid_tool_use
+  - 网络错误、超时、5xx
+  - 数据库写入失败
+
+跳过（不重试，不算错误）：
+  - insufficient_real_messages (realMessageCount < 2)
+  - trivial_turn (assistantText < 200 && no tools)
+  - insufficient_l1_summaries (l1_count < 2)
+  - no_source_summaries (无 L1 或 L2)
+
+================================================================================
+                            快速开始流程
+================================================================================
+
+第 1 步：准备环境
+  ├─ 复制 E2E_TEST_SNIPPETS.md 中的 .env.test 配置
+  ├─ 创建或启动测试 PostgreSQL 数据库
+  └─ npm install 安装依赖
+
+第 2 步：初始化测试基础设施
+  ├─ 在 beforeEach 中调用 initTestDatabase(pool)
+  ├─ 创建 MockWorkerContext
+  ├─ 设置 DeepSeek mock（mockDeepseekClient）
+  └─ 插入测试数据（session、messages）
+
+第 3 步：编写测试用例
+  ├─ 根据 INTEGRATION_TEST_CHECKLIST.md 的场景清单
+  ├─ 参考 E2E_TEST_SNIPPETS.md 的代码模板
+  ├─ 逐层测试：L1 → L2 → L3
+  └─ 验证 summarization_runs 记录和 session_summaries 数据
+
+第 4 步：验证集成流程
+  ├─ 单独测试各层 handler
+  ├─ 测试层级之间的触发关系（L1→L2、L2→L3）
+  ├─ 测试缓存、幂等性、重试机制
+  ├─ 测试 Catch-up 扫描
+  └─ 运行 npm test -- --coverage 检查覆盖率
+
+第 5 步：Teardown
+  ├─ 调用 cleanupTestDatabase(pool)
+  ├─ 关闭 pool 连接
+  └─ 验证无遗留数据
+
+================================================================================
+                              文件导航
+================================================================================
+
+需要快速了解系统？
+  → 阅读 E2E_INTEGRATION_TEST_REFERENCE.md 第 1-3 节
+
+需要具体的 mock 和初始化代码？
+  → 复制 E2E_TEST_SNIPPETS.md 的片段 1-6
+
+需要写 L1 测试？
+  → 参考 E2E_TEST_SNIPPETS.md 片段 7，检查 CHECKLIST "L1 测试场景"
+
+需要验证错误处理？
+  → 查阅 E2E_INTEGRATION_TEST_REFERENCE.md 第 7 节 + CHECKLIST "错误代码清单"
+
+需要测试 Catch-up？
+  → 参考 E2E_TEST_SNIPPETS.md 片段 10，对应 CHECKLIST "Catch-up 机制测试"
+
+需要验证边界情况？
+  → 查看 INTEGRATION_TEST_CHECKLIST.md "边界情况" 部分
+
+需要全局视图？
+  → 关键数据速查表（上面）+ E2E_INTEGRATION_TEST_REFERENCE.md 快速参考表（最后）
+
+================================================================================
+                            常见问题快答
+================================================================================
+
+Q: 幂等性如何保证？
+A: 通过 idempotencyKey（插入约束）和 singletonKey（pg-boss）双重机制
+   - L1: ON CONFLICT (session_id, level, seq_start) DO NOTHING
+   - L2/L3: pg-boss singletonKey 确保同一 key 只有一个 pending 任务
+
+Q: 缓存什么时候生效？
+A: 仅当 L1 handler 中 status='error_transient' 且 metadata.cached_result 存在
+   下次执行同一 userSeq 时调用 getLatestCachedL1Result()，跳过 LLM 调用
+
+Q: 如何确认 L1→L2 被触发？
+A: L1 成功后立即调用 enqueueSegmentIfNeeded()，检查：
+   ├─ countUnassignedL1() >= threshold
+   ├─ boss.send() 被调用且 queue=SUMMARIZE_SEGMENT
+   └─ mock 验证 singletonKey=segment:{sessionId}
+
+Q: Catch-up 何时触发？
+A: 启动时运行一次，后续每隔 CATCHUP_INTERVAL_MS（默认 1h）运行
+   查找：level=1 AND parent_id IS NULL AND created_at < (now - 10min)
+
+Q: 错误什么时候重试？
+A: 暂时性错误自动重试（transient），永久性错误直接返回（permanent）
+   重试次数和延迟由队列配置决定，指数退避最多延迟 5min(L1)/10min(L2)/15min(L3)
+
+Q: 如何 mock DeepSeek 而不调用真实 API？
+A: 见 E2E_TEST_SNIPPETS.md 片段 5
+   设置 ctx.deepseekClient.summarizeTurn = vi.fn().mockResolvedValue(mockResponse)
+
+================================================================================
+
+祝你编写测试愉快！有任何问题参考上面的文档。
+最后一遍完整性检查：用 INTEGRATION_TEST_CHECKLIST.md！
+
+================================================================================

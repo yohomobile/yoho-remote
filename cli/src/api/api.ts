@@ -43,6 +43,16 @@ const SendMessageToSessionResponseSchema = z.object({
 
 export type SendMessageToSessionResult = z.infer<typeof SendMessageToSessionResponseSchema>
 
+function buildBrainChildScopeQuery(opts?: { mainSessionId?: string }): string {
+    const mainSessionId = opts?.mainSessionId?.trim()
+    if (!mainSessionId) {
+        return ''
+    }
+    const params = new URLSearchParams()
+    params.set('mainSessionId', mainSessionId)
+    return `?${params.toString()}`
+}
+
 export class ApiClient {
     static async create(): Promise<ApiClient> {
         return new ApiClient(getAuthToken())
@@ -50,9 +60,10 @@ export class ApiClient {
 
     private constructor(private readonly token: string) { }
 
-    async getSession(sessionId: string): Promise<Session> {
+    async getSession(sessionId: string, opts?: { mainSessionId?: string }): Promise<Session> {
+        const query = buildBrainChildScopeQuery(opts)
         const response = await axios.get<CreateSessionResponse>(
-            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}`,
+            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}${query}`,
             {
                 headers: {
                     Authorization: `Bearer ${this.token}`,
@@ -214,13 +225,16 @@ export class ApiClient {
         return new ApiMachineClient(this.token, machine)
     }
 
-    async getSessionMessages(sessionId: string, opts?: { afterSeq?: number; limit?: number }): Promise<StoredMessage[]> {
+    async getSessionMessages(sessionId: string, opts?: { afterSeq?: number; limit?: number; mainSessionId?: string }): Promise<StoredMessage[]> {
         const params: Record<string, unknown> = {}
         if (opts?.afterSeq !== undefined) {
             params.afterSeq = opts.afterSeq
         }
         if (opts?.limit !== undefined) {
             params.limit = opts.limit
+        }
+        if (opts?.mainSessionId?.trim()) {
+            params.mainSessionId = opts.mainSessionId.trim()
         }
 
         const response = await axios.get<CliMessagesResponse>(
@@ -249,13 +263,19 @@ export class ApiClient {
         }))
     }
 
-    async sendMessageToSession(sessionId: string, text: string, sentFrom?: string): Promise<SendMessageToSessionResult> {
+    async sendMessageToSession(
+        sessionId: string,
+        text: string,
+        sentFrom?: string,
+        opts?: { mainSessionId?: string }
+    ): Promise<SendMessageToSessionResult> {
         const idempotencyKey = ulid()
+        const query = buildBrainChildScopeQuery(opts)
         let lastError: unknown = null
         for (let attempt = 0; attempt < 3; attempt++) {
             try {
                 const response = await axios.post(
-                    `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/messages`,
+                    `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/messages${query}`,
                     { text, sentFrom },
                     {
                         headers: {
@@ -367,9 +387,10 @@ export class ApiClient {
         return response.data
     }
 
-    async deleteSession(sessionId: string): Promise<{ ok: boolean }> {
+    async deleteSession(sessionId: string, opts?: { mainSessionId?: string }): Promise<{ ok: boolean }> {
+        const query = buildBrainChildScopeQuery(opts)
         const response = await axios.delete(
-            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}`,
+            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}${query}`,
             {
                 headers: {
                     Authorization: `Bearer ${this.token}`,
@@ -381,9 +402,10 @@ export class ApiClient {
         return response.data
     }
 
-    async abortSession(sessionId: string): Promise<{ ok: boolean }> {
+    async abortSession(sessionId: string, opts?: { mainSessionId?: string }): Promise<{ ok: boolean }> {
+        const query = buildBrainChildScopeQuery(opts)
         const response = await axios.post(
-            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/abort`,
+            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/abort${query}`,
             {},
             {
                 headers: {
@@ -396,14 +418,15 @@ export class ApiClient {
         return response.data
     }
 
-    async resumeSession(sessionId: string): Promise<{
+    async resumeSession(sessionId: string, opts?: { mainSessionId?: string }): Promise<{
         type: 'already-active' | 'resumed' | 'created'
         sessionId: string
         resumedFrom?: string
         usedResume?: boolean
     }> {
+        const query = buildBrainChildScopeQuery(opts)
         const response = await axios.post(
-            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/resume`,
+            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/resume${query}`,
             {},
             {
                 headers: {
@@ -416,9 +439,10 @@ export class ApiClient {
         return response.data
     }
 
-    async patchSessionMetadata(sessionId: string, patch: Record<string, unknown>): Promise<void> {
+    async patchSessionMetadata(sessionId: string, patch: Record<string, unknown>, opts?: { mainSessionId?: string }): Promise<void> {
+        const query = buildBrainChildScopeQuery(opts)
         await axios.patch(
-            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/metadata`,
+            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/metadata${query}`,
             patch,
             {
                 headers: {
@@ -430,10 +454,14 @@ export class ApiClient {
         )
     }
 
-    async setSessionModelMode(sessionId: string, modelMode: 'default' | 'sonnet' | 'opus' | 'opus-4-7'): Promise<void> {
+    async setSessionModelMode(
+        sessionId: string,
+        modelMode: 'default' | 'sonnet' | 'opus' | 'opus-4-7',
+        opts?: { mainSessionId?: string }
+    ): Promise<void> {
         await this.setSessionConfig(sessionId, {
             model: modelMode,
-        })
+        }, opts)
     }
 
     async setSessionConfig(sessionId: string, config: {
@@ -441,7 +469,7 @@ export class ApiClient {
         model?: string
         reasoningEffort?: SessionModelReasoningEffort
         fastMode?: boolean
-    }): Promise<{
+    }, opts?: { mainSessionId?: string }): Promise<{
         ok: boolean
         applied?: {
             permissionMode?: 'default' | 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
@@ -450,8 +478,9 @@ export class ApiClient {
             fastMode?: boolean
         }
     }> {
+        const query = buildBrainChildScopeQuery(opts)
         const response = await axios.post(
-            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/config`,
+            `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}/config${query}`,
             config,
             {
                 headers: {
