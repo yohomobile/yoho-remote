@@ -108,7 +108,6 @@ export function StatusBar(props: {
     contextSize?: number
     outputTokens?: number
     modelContextWindow?: number
-    reasoningOutputTokens?: number
     rateLimitUsedPercent?: number
     modelMode?: ModelMode
     runtimeModel?: string | null
@@ -152,11 +151,6 @@ export function StatusBar(props: {
                 {contextWarning ? (
                     <span className={`text-[10px] ${contextWarning.color}`}>
                         {contextWarning.text}
-                    </span>
-                ) : null}
-                {props.reasoningOutputTokens && props.reasoningOutputTokens > 0 ? (
-                    <span className="text-[10px] text-[var(--app-hint)]">
-                        thinking: {formatCompactTokenCount(props.reasoningOutputTokens)}
                     </span>
                 ) : null}
                 {props.rateLimitUsedPercent !== undefined && props.rateLimitUsedPercent >= 50 ? (

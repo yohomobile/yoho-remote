@@ -2834,6 +2834,41 @@ export class SyncEngine {
     private _autoResumeInProgress = new Set<string>()
     private _autoResumePending = new Map<string, string>()
 
+    private shouldAllowBrainChildAutoResumeWithoutDbActive(
+        session: Session,
+        machineId: string,
+        namespace: string,
+        machineSupportedAgents: SpawnAgentType[] | null | undefined,
+        now: number
+    ): boolean {
+        if (getSessionSourceFromMetadata(session.metadata) !== 'brain-child') {
+            return false
+        }
+        if (session.metadata?.lifecycleState !== 'running') {
+            return false
+        }
+
+        const mainSessionId = getBrainChildMainSessionId(session.metadata)
+        if (!mainSessionId) {
+            return false
+        }
+
+        const parent = this.sessions.get(mainSessionId)
+        if (!parent || getSessionSourceFromMetadata(parent.metadata) !== 'brain') {
+            return false
+        }
+
+        const parentSkipReasons = this.getAutoResumeSkipReasons(
+            parent,
+            machineId,
+            namespace,
+            machineSupportedAgents,
+            now
+        ).filter(reason => reason !== 'already-active')
+
+        return parentSkipReasons.length === 0
+    }
+
     private getAutoResumeSkipReasons(
         session: Session,
         machineId: string,
@@ -2846,9 +2881,16 @@ export class SyncEngine {
         const flavor = session.metadata?.flavor
         const RESUME_WINDOW_MS = 24 * 60 * 60 * 1000
         const CLI_ARCHIVE_RESUME_WINDOW_MS = 2 * 60 * 60 * 1000
+        const brainChildFollowResumeAllowed = this.shouldAllowBrainChildAutoResumeWithoutDbActive(
+            session,
+            machineId,
+            namespace,
+            machineSupportedAgents,
+            now
+        )
 
         if (session.active) reasons.push('already-active')
-        if (!this._dbActiveSessionIds.has(session.id) && !cliArchived) reasons.push('not-in-dbActive')
+        if (!this._dbActiveSessionIds.has(session.id) && !cliArchived && !brainChildFollowResumeAllowed) reasons.push('not-in-dbActive')
         if (session.terminationReason) reasons.push(`terminated:${session.terminationReason}`)
         if (session.metadata?.archivedBy && !cliArchived) reasons.push(`archived:${session.metadata.archivedBy}`)
         if (session.metadata?.startedFromDaemon !== true && session.metadata?.startedBy !== 'daemon') reasons.push('not-daemon-started')
