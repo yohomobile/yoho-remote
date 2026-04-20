@@ -1554,6 +1554,12 @@ export function createCliRoutes(
 
         const session = resolved.session
         if (session.active) {
+            if (session.metadata?.lifecycleState === 'archived') {
+                const unarchiveResult = await engine.unarchiveSession(sessionId, { actor: 'cli-resume-already-active' })
+                if (!unarchiveResult.ok) {
+                    console.warn(`[cli/resume] Failed to clear archive metadata for already-active session ${sessionId}: ${unarchiveResult.error}`)
+                }
+            }
             return c.json({ type: 'already-active', sessionId })
         }
 
@@ -1635,6 +1641,12 @@ export function createCliRoutes(
         if (resumeAttempt.type === 'success') {
             const online = await waitForSessionOnline(engine, sessionId, RESUME_TIMEOUT_MS)
             if (online) {
+                if (session.metadata?.lifecycleState === 'archived') {
+                    const unarchiveResult = await engine.unarchiveSession(sessionId, { actor: 'cli-resume' })
+                    if (!unarchiveResult.ok) {
+                        console.warn(`[cli/resume] Failed to clear archive metadata for ${sessionId}: ${unarchiveResult.error}`)
+                    }
+                }
                 console.log(`[cli/resume] In-place resume succeeded for session=${sessionId}`)
                 return c.json({ type: 'resumed', sessionId })
             }

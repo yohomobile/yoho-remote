@@ -604,6 +604,9 @@ describe('createSessionsRoutes', () => {
                 caller: 'feishu',
                 brainPreferences: createBrainPreferences(),
                 claudeSessionId: 'claude-session-1',
+                lifecycleState: 'archived',
+                archivedBy: 'user',
+                archiveReason: 'User archived session',
             },
             metadataVersion: 1,
             agentState: null,
@@ -616,6 +619,7 @@ describe('createSessionsRoutes', () => {
         }
 
         const spawnCalls: Array<Record<string, unknown> | undefined> = []
+        const unarchiveCalls: string[] = []
         const fakeEngine = withRouteDiagnostics({
             getSession: (id: string) => id === session.id ? session : null,
             getOrRefreshSession: async (id: string) => id === session.id ? session : null,
@@ -625,6 +629,10 @@ describe('createSessionsRoutes', () => {
                 spawnCalls.push(options)
                 session.active = true
                 return { type: 'success', sessionId: session.id }
+            },
+            unarchiveSession: async (sessionId: string) => {
+                unarchiveCalls.push(sessionId)
+                return { ok: true }
             },
             subscribe: () => () => {},
         })
@@ -661,6 +669,7 @@ describe('createSessionsRoutes', () => {
             caller: 'feishu',
             brainPreferences: createBrainPreferences(),
         })])
+        expect(unarchiveCalls).toEqual(['brain-session'])
     })
 
     it('rejects web resume when brainPreferences metadata is invalid', async () => {

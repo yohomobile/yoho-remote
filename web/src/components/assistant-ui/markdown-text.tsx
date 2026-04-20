@@ -1,4 +1,4 @@
-import { useState, useEffect, type ComponentPropsWithoutRef, type ReactNode } from 'react'
+import { type ComponentPropsWithoutRef } from 'react'
 import {
     MarkdownTextPrimitive,
     unstable_memoizeMarkdownComponents as memoizeMarkdownComponents,
@@ -10,7 +10,6 @@ import { cn } from '@/lib/utils'
 import { SyntaxHighlighter } from '@/components/assistant-ui/shiki-highlighter'
 import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
 import { CopyIcon, CheckIcon } from '@/components/icons'
-import { useYohoRemoteChatContextSafe } from '@/components/AssistantChat/context'
 import { ImageViewer as ImageViewerComponent } from '@/components/ImageViewer'
 
 export const MARKDOWN_PLUGINS = [remarkGfm]
@@ -155,367 +154,12 @@ export function preprocessMarkdown(text: string): string {
     return text
 }
 
-// 检测是否是绝对路径 (支持 @ + ~ 等常见路径字符，且至少包含一个非数字字符)
-const ABSOLUTE_PATH_REGEX = /^(\/[\w.@+~-]*[a-zA-Z_][\w.@+~-]*\/)+[\w.@+~-]*$/
-// 检测是否是相对路径（以 ./ 或 字母/下划线开头，包含 /，可以有或没有文件扩展名）
-const RELATIVE_PATH_REGEX = /^(?:\.\/|(?:[\w@][\w.@+~-]*\/))[\w.@+~-]*[a-zA-Z_][\w.@+~-]*(\.[a-zA-Z0-9]+)?$/
-// 用于在文本中查找路径的正则（全局匹配）- 绝对路径以 / 开头（非路径字符后面），相对路径以 ./ 或 @ 开头
-const PATH_GLOBAL_REGEX = /(?<![/\w])(\/[\w.@+~-]*[a-zA-Z_][\w.@+~-]*\/)+[\w.@+~-]*|(?:\.\/|(?:[\w@][\w.@+~-]*\/))[\w.@+~-]*[a-zA-Z_][\w.@+~-]*(\.[a-zA-Z0-9]+)?/g
-
-function isAbsolutePath(text: string): boolean {
-    return ABSOLUTE_PATH_REGEX.test(text.trim())
-}
-
-function isRelativePath(text: string): boolean {
-    return RELATIVE_PATH_REGEX.test(text.trim())
-}
-
 // 判断是否是文件夹（只以 / 结尾；如有后端状态则优先信任）
 export function isFolderPath(path: string, status?: 'folder' | 'file' | null): boolean {
     if (status) {
         return status === 'folder'
     }
     return path.endsWith('/')
-}
-
-function isPath(text: string): boolean {
-    const trimmed = text.trim()
-    return isAbsolutePath(trimmed) || isRelativePath(trimmed)
-}
-
-// 将文本中的路径转换为链接
-function processTextWithPaths(text: string): ReactNode[] {
-    const parts: ReactNode[] = []
-    let lastIndex = 0
-    let match: RegExpExecArray | null
-
-    // 重置正则的 lastIndex
-    PATH_GLOBAL_REGEX.lastIndex = 0
-
-    while ((match = PATH_GLOBAL_REGEX.exec(text)) !== null) {
-        // 绝对路径在 group[1]，相对路径直接在 match[0]
-        const path = match[1] ?? match[0]
-        const startIndex = match.index
-
-        // 添加路径之前的文本
-        if (startIndex > lastIndex) {
-            parts.push(text.slice(lastIndex, startIndex))
-        }
-
-        // 判断是绝对路径还是相对路径
-        if (path.startsWith('/')) {
-            // 绝对路径直接渲染为链接
-            parts.push(<FilePathLink key={startIndex} path={path} />)
-        } else {
-            // 相对路径也显示为链接，点击时再验证
-            parts.push(<RelativeFilePathLink key={startIndex} path={path} />)
-        }
-
-        lastIndex = startIndex + path.length
-    }
-
-    // 添加剩余的文本
-    if (lastIndex < text.length) {
-        parts.push(text.slice(lastIndex))
-    }
-
-    return parts
-}
-
-// 递归处理 children，将文本中的路径转换为链接
-function processChildren(children: ReactNode): ReactNode {
-    if (typeof children === 'string') {
-        const parts = processTextWithPaths(children)
-        return parts.length === 1 ? parts[0] : <>{parts}</>
-    }
-
-    if (Array.isArray(children)) {
-        // 先把连续的字符串合并，避免路径被分割到多个文本节点
-        const merged: ReactNode[] = []
-        let currentStrings: string[] = []
-
-        for (const child of children) {
-            if (typeof child === 'string') {
-                currentStrings.push(child)
-            } else {
-                // 遇到非字符串节点，先处理累积的字符串
-                if (currentStrings.length > 0) {
-                    const combinedText = currentStrings.join('')
-                    const parts = processTextWithPaths(combinedText)
-                    merged.push(...parts)
-                    currentStrings = []
-                }
-                merged.push(child)
-            }
-        }
-
-        // 处理剩余的字符串
-        if (currentStrings.length > 0) {
-            const combinedText = currentStrings.join('')
-            const parts = processTextWithPaths(combinedText)
-            merged.push(...parts)
-        }
-
-        return merged.length === 1 ? merged[0] : <>{merged}</>
-    }
-
-    return children
-}
-
-// 文件路径链接组件 - 点击时复制文件到服务器并在新窗口打开
-function FilePathLink({ path }: { path: string }) {
-    const context = useYohoRemoteChatContextSafe()
-    const [loading, setLoading] = useState(false)
-
-    const filename = path.split('/').pop() || path
-
-    const handleClick = async (e: React.MouseEvent) => {
-        e.preventDefault()
-        if (loading || !context?.api || !context?.sessionId) return
-
-        setLoading(true)
-        try {
-            const result = await context.api.copyFile(context.sessionId, path)
-            if (result.success && result.path) {
-                // 确保 token 是新鲜的（如果快过期则刷新）
-                const token = await context.api.ensureFreshToken()
-                const url = `${window.location.origin}/api/${result.path}${token ? `?token=${encodeURIComponent(token)}` : ''}`
-                console.log('[FilePathLink] opening URL:', url)
-                // 使用隐藏的 <a> 标签触发下载，绕过 PWA 拦截
-                const link = document.createElement('a')
-                link.href = url
-                link.download = result.filename || path.split('/').pop() || 'file'
-                link.style.display = 'none'
-                document.body.appendChild(link)
-                link.click()
-                document.body.removeChild(link)
-            } else {
-                alert(`Failed to load file: ${result.error || 'Unknown error'}`)
-            }
-        } catch (err) {
-            console.error('[FilePathLink] error:', err)
-            alert('Failed to load file')
-        } finally {
-            setLoading(false)
-        }
-    }
-
-    return (
-        <a
-            href="#"
-            onClick={handleClick}
-            className={`text-[var(--app-link)] underline hover:opacity-80 ${loading ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
-            title={`Open ${filename}`}
-        >
-            {loading ? `${path} (loading...)` : path}
-        </a>
-    )
-}
-
-// 相对路径文件存在性缓存 (sessionId -> path -> { exists, absolutePath })
-const relativePathCache = new Map<string, Map<string, { exists: boolean; absolutePath?: string } | 'pending'>>()
-
-// 获取或创建 session 的缓存
-function getSessionCache(sessionId: string): Map<string, { exists: boolean; absolutePath?: string } | 'pending'> {
-    let cache = relativePathCache.get(sessionId)
-    if (!cache) {
-        cache = new Map()
-        relativePathCache.set(sessionId, cache)
-    }
-    return cache
-}
-
-// 待检查的路径队列 (sessionId -> Set<path>)
-const pendingChecks = new Map<string, Set<string>>()
-// 等待检查完成的回调 (sessionId -> path -> callbacks)
-const checkCallbacks = new Map<string, Map<string, Array<() => void>>>()
-
-// 批量检查文件存在性
-async function batchCheckFiles(api: { checkFiles: (sessionId: string, paths: string[]) => Promise<Record<string, { exists: boolean; absolutePath?: string }>> }, sessionId: string) {
-    const pending = pendingChecks.get(sessionId)
-    if (!pending || pending.size === 0) return
-
-    const paths = Array.from(pending)
-    pending.clear()
-
-    try {
-        const results = await api.checkFiles(sessionId, paths)
-        const cache = getSessionCache(sessionId)
-
-        for (const path of paths) {
-            const result = results[path] || { exists: false }
-            cache.set(path, result)
-
-            // 触发等待的回调
-            const callbacks = checkCallbacks.get(sessionId)?.get(path)
-            if (callbacks) {
-                callbacks.forEach(cb => cb())
-                checkCallbacks.get(sessionId)?.delete(path)
-            }
-        }
-    } catch (err) {
-        console.error('[batchCheckFiles] error:', err)
-        const cache = getSessionCache(sessionId)
-        for (const path of paths) {
-            cache.set(path, { exists: false })
-            const callbacks = checkCallbacks.get(sessionId)?.get(path)
-            if (callbacks) {
-                callbacks.forEach(cb => cb())
-                checkCallbacks.get(sessionId)?.delete(path)
-            }
-        }
-    }
-}
-
-// 调度批量检查（防抖）
-let batchCheckTimer: ReturnType<typeof setTimeout> | null = null
-function scheduleBatchCheck(api: { checkFiles: (sessionId: string, paths: string[]) => Promise<Record<string, { exists: boolean; absolutePath?: string }>> }, sessionId: string) {
-    if (batchCheckTimer) {
-        clearTimeout(batchCheckTimer)
-    }
-    batchCheckTimer = setTimeout(() => {
-        batchCheckTimer = null
-        void batchCheckFiles(api, sessionId)
-    }, 50) // 50ms 防抖
-}
-
-// 相对路径链接组件 - 懒加载检查文件是否存在
-function RelativeFilePathLink({ path }: { path: string }) {
-    const context = useYohoRemoteChatContextSafe()
-    const [status, setStatus] = useState<'checking' | 'exists' | 'not-exists'>('checking')
-    const [absolutePath, setAbsolutePath] = useState<string | null>(null)
-    const [loading, setLoading] = useState(false)
-
-    const filename = path.split('/').pop() || path
-    const isFolder = isFolderPath(path)
-
-    useEffect(() => {
-        if (isFolder) return
-        if (!context?.api || !context?.sessionId) {
-            setStatus('not-exists')
-            return
-        }
-
-        const sessionId = context.sessionId
-        const cache = getSessionCache(sessionId)
-        const cached = cache.get(path)
-
-        if (cached && cached !== 'pending') {
-            // 已缓存
-            if (cached.exists && cached.absolutePath) {
-                setAbsolutePath(cached.absolutePath)
-                setStatus('exists')
-            } else {
-                setStatus('not-exists')
-            }
-            return
-        }
-
-        if (cached === 'pending') {
-            // 正在检查中，等待回调
-            let callbacks = checkCallbacks.get(sessionId)
-            if (!callbacks) {
-                callbacks = new Map()
-                checkCallbacks.set(sessionId, callbacks)
-            }
-            let pathCallbacks = callbacks.get(path)
-            if (!pathCallbacks) {
-                pathCallbacks = []
-                callbacks.set(path, pathCallbacks)
-            }
-            pathCallbacks.push(() => {
-                const result = cache.get(path)
-                if (result && result !== 'pending') {
-                    if (result.exists && result.absolutePath) {
-                        setAbsolutePath(result.absolutePath)
-                        setStatus('exists')
-                    } else {
-                        setStatus('not-exists')
-                    }
-                }
-            })
-            return
-        }
-
-        // 加入待检查队列
-        cache.set(path, 'pending')
-        let pending = pendingChecks.get(sessionId)
-        if (!pending) {
-            pending = new Set()
-            pendingChecks.set(sessionId, pending)
-        }
-        pending.add(path)
-
-        // 注册回调
-        let callbacks = checkCallbacks.get(sessionId)
-        if (!callbacks) {
-            callbacks = new Map()
-            checkCallbacks.set(sessionId, callbacks)
-        }
-        let pathCallbacks = callbacks.get(path)
-        if (!pathCallbacks) {
-            pathCallbacks = []
-            callbacks.set(path, pathCallbacks)
-        }
-        pathCallbacks.push(() => {
-            const result = cache.get(path)
-            if (result && result !== 'pending') {
-                if (result.exists && result.absolutePath) {
-                    setAbsolutePath(result.absolutePath)
-                    setStatus('exists')
-                } else {
-                    setStatus('not-exists')
-                }
-            }
-        })
-
-        // 调度批量检查
-        scheduleBatchCheck(context.api, sessionId)
-    }, [context?.api, context?.sessionId, path, isFolder])
-
-    const handleClick = async (e: React.MouseEvent) => {
-        e.preventDefault()
-        if (loading || !context?.api || !context?.sessionId || !absolutePath) return
-
-        setLoading(true)
-        try {
-            const result = await context.api.copyFile(context.sessionId, absolutePath)
-            if (result.success && result.path) {
-                const token = await context.api.ensureFreshToken()
-                const url = `${window.location.origin}/api/${result.path}${token ? `?token=${encodeURIComponent(token)}` : ''}`
-                const link = document.createElement('a')
-                link.href = url
-                link.download = result.filename || filename
-                link.style.display = 'none'
-                document.body.appendChild(link)
-                link.click()
-                document.body.removeChild(link)
-            } else {
-                alert(`Failed to load file: ${result.error || 'Unknown error'}`)
-            }
-        } catch (err) {
-            console.error('[RelativeFilePathLink] error:', err)
-            alert('Failed to load file')
-        } finally {
-            setLoading(false)
-        }
-    }
-
-    // 文件夹路径或检查中/不存在时，显示为普通文本
-    if (isFolder || status !== 'exists') {
-        return <>{path}</>
-    }
-
-    return (
-        <a
-            href="#"
-            onClick={handleClick}
-            className={`text-[var(--app-link)] underline hover:opacity-80 ${loading ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
-            title={`Open ${filename}`}
-        >
-            {loading ? `${path} (loading...)` : path}
-        </a>
-    )
 }
 
 function CodeHeader(props: CodeHeaderProps) {
@@ -567,38 +211,6 @@ function Code(props: ComponentPropsWithoutRef<'code'>) {
         )
     }
 
-    // 检查是否是路径的行内代码
-    const content = typeof props.children === 'string' ? props.children : null
-    const trimmedContent = content?.trim()
-
-    // 绝对路径
-    if (trimmedContent && isAbsolutePath(trimmedContent)) {
-        return (
-            <code
-                className={cn(
-                    'aui-md-code break-words rounded bg-[var(--app-inline-code-bg)] px-[0.3em] py-[0.1em] font-mono text-[0.9em]',
-                    props.className
-                )}
-            >
-                <FilePathLink path={trimmedContent} />
-            </code>
-        )
-    }
-
-    // 相对路径
-    if (trimmedContent && isRelativePath(trimmedContent)) {
-        return (
-            <code
-                className={cn(
-                    'aui-md-code break-words rounded bg-[var(--app-inline-code-bg)] px-[0.3em] py-[0.1em] font-mono text-[0.9em]',
-                    props.className
-                )}
-            >
-                <RelativeFilePathLink path={trimmedContent} />
-            </code>
-        )
-    }
-
     return (
         <code
             {...props}
@@ -626,7 +238,7 @@ function Paragraph(props: ComponentPropsWithoutRef<'p'>) {
     const { children, ...rest } = props
     return (
         <p {...rest} className={cn('aui-md-p leading-relaxed', props.className)}>
-            {processChildren(children)}
+            {children}
         </p>
     )
 }
@@ -652,12 +264,7 @@ function OrderedList(props: ComponentPropsWithoutRef<'ol'>) {
 }
 
 function ListItem(props: ComponentPropsWithoutRef<'li'>) {
-    const { children, ...rest } = props
-    return (
-        <li {...rest} className={cn('aui-md-li', props.className)}>
-            {processChildren(children)}
-        </li>
-    )
+    return <li {...props} className={cn('aui-md-li', props.className)} />
 }
 
 function Hr(props: ComponentPropsWithoutRef<'hr'>) {

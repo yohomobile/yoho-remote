@@ -2370,6 +2370,188 @@ describe('SyncEngine', () => {
         expect(setSessionTodosCalls[0]?.todosUpdatedAt).toBe(1_700_000_000_200)
     })
 
+    test('does not restart todo backfill retries for unchanged history after giving up', async () => {
+        const pageCalls: Array<{ afterSeq: number; limit: number }> = []
+        const setSessionTodosCalls: Array<{ id: string; todos: unknown; todosUpdatedAt: number; namespace: string }> = []
+
+        const storedSession: any = createSession('session-1', {
+            path: '/tmp/project',
+            summary: { text: 'Session summary', updatedAt: 0 },
+        })
+        storedSession.todos = null
+        storedSession.seq = 5
+
+        const todoPage = [{
+            id: 'msg-6',
+            sessionId: 'session-1',
+            seq: 6,
+            createdAt: 1_700_000_000_006,
+            localId: null,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'attachment',
+                        attachment: {
+                            type: 'todo_reminder',
+                            itemCount: 1,
+                            content: [{
+                                content: 'Retry only after new history arrives',
+                                status: 'pending'
+                            }]
+                        }
+                    }
+                }
+            }
+        }]
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getSession: async () => storedSession,
+            getMessagesAfter: async (_sessionId: string, afterSeq: number, limit: number) => {
+                pageCalls.push({ afterSeq, limit })
+                return afterSeq === 0 ? todoPage as any : []
+            },
+            setSessionTodos: async (id: string, todos: unknown, todosUpdatedAt: number, namespace: string) => {
+                setSessionTodosCalls.push({ id, todos, todosUpdatedAt, namespace })
+                storedSession.todos = todos
+                storedSession.todosUpdatedAt = todosUpdatedAt
+                return true
+            }
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        ;(engine as any).todoBackfillStateBySessionId.set('session-1', {
+            attempts: 3,
+            timer: null,
+            nextRetryAt: Number.POSITIVE_INFINITY,
+            seq: 5,
+        })
+
+        await engine.getOrRefreshSession('session-1')
+        expect(pageCalls).toEqual([])
+        expect(setSessionTodosCalls).toEqual([])
+
+        storedSession.seq = 6
+        const session = await engine.getOrRefreshSession('session-1')
+
+        expect(pageCalls).toEqual([{ afterSeq: 0, limit: 200 }])
+        expect(session?.todos).toEqual([
+            {
+                id: 'claude-plan-1',
+                content: 'Retry only after new history arrives',
+                status: 'pending',
+                priority: 'medium'
+            }
+        ])
+        expect(setSessionTodosCalls).toHaveLength(1)
+    })
+
+    test('refreshSession prefers stored inactive state on tie and heals active archived metadata', async () => {
+        const updateMetadataCalls: Array<{ id: string; metadata: Record<string, unknown>; expectedVersion: number }> = []
+        const storedSession: any = createSession('session-1', {
+            path: '/tmp/project',
+            host: 'ncu',
+            machineId: 'machine-1',
+            flavor: 'codex',
+            codexSessionId: 'thread-1',
+            lifecycleState: 'archived',
+            lifecycleStateSince: 150,
+            archivedBy: 'user',
+            archiveReason: 'User archived session',
+        })
+        storedSession.active = false
+        storedSession.activeAt = 200
+        storedSession.thinking = false
+        storedSession.thinkingAt = 200
+        storedSession.metadataVersion = 3
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getSession: async () => storedSession,
+            updateSessionMetadata: async (id: string, metadata: Record<string, unknown>, expectedVersion: number) => {
+                updateMetadataCalls.push({ id, metadata, expectedVersion })
+                storedSession.metadata = metadata
+                storedSession.metadataVersion = expectedVersion + 1
+                return { result: 'success', version: expectedVersion + 1, value: metadata }
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const staleMemorySession = createSession('session-1', {
+            path: '/tmp/project',
+            host: 'ncu',
+            machineId: 'machine-1',
+            flavor: 'codex',
+            codexSessionId: 'thread-1',
+            lifecycleState: 'archived',
+            lifecycleStateSince: 150,
+            archivedBy: 'user',
+            archiveReason: 'User archived session',
+        })
+        staleMemorySession.active = true
+        staleMemorySession.activeAt = 200
+        staleMemorySession.thinking = true
+        staleMemorySession.thinkingAt = 200
+        ;(engine as any).sessions.set(staleMemorySession.id, staleMemorySession)
+
+        const refreshed = await engine.getOrRefreshSession('session-1')
+
+        expect(refreshed?.active).toBe(false)
+        expect(refreshed?.thinking).toBe(false)
+        expect(updateMetadataCalls).toHaveLength(0)
+
+        storedSession.active = true
+        storedSession.activeAt = 260
+        const healed = await engine.getOrRefreshSession('session-1')
+
+        expect(healed?.active).toBe(true)
+        expect((healed?.metadata as Record<string, unknown>).lifecycleState).toBe('active')
+        expect((healed?.metadata as Record<string, unknown>).archivedBy).toBeUndefined()
+        expect(updateMetadataCalls).toHaveLength(1)
+        expect(updateMetadataCalls[0]).toEqual({
+            id: 'session-1',
+            metadata: expect.objectContaining({
+                path: '/tmp/project',
+                machineId: 'machine-1',
+                flavor: 'codex',
+                codexSessionId: 'thread-1',
+                lifecycleState: 'active',
+                lifecycleStateSince: 260,
+            }),
+            expectedVersion: 3,
+        })
+    })
+
     test('broadcasts session:clear-messages updates to the CLI room', async () => {
         const cliEmits: Array<{ room: string; event: string; payload: unknown }> = []
         const store = {

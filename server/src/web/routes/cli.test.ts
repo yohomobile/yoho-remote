@@ -1754,6 +1754,9 @@ describe('createCliRoutes projects', () => {
                 caller: 'feishu',
                 brainPreferences: createBrainPreferences(),
                 codexSessionId: 'thread-brain-child',
+                lifecycleState: 'archived',
+                archivedBy: 'user',
+                archiveReason: 'User archived session',
             },
             metadataVersion: 1,
             agentState: null,
@@ -1767,6 +1770,7 @@ describe('createCliRoutes projects', () => {
         }
 
         const spawnCalls: Array<Record<string, unknown> | undefined> = []
+        const unarchiveCalls: string[] = []
         const engine = {
             getSessionByNamespace: (sessionId: string, namespace: string) =>
                 sessionId === session.id && namespace === session.namespace ? session
@@ -1779,6 +1783,10 @@ describe('createCliRoutes projects', () => {
                 spawnCalls.push(options)
                 session.active = true
                 return { type: 'success', sessionId: session.id }
+            },
+            unarchiveSession: async (sessionId: string) => {
+                unarchiveCalls.push(sessionId)
+                return { ok: true }
             },
             subscribe: () => () => {},
         }
@@ -1816,6 +1824,7 @@ describe('createCliRoutes projects', () => {
             caller: 'feishu',
             brainPreferences: createBrainPreferences(),
         })])
+        expect(unarchiveCalls).toEqual(['brain-child-old'])
     })
 
     it('rejects CLI resume when brainPreferences metadata is invalid', async () => {

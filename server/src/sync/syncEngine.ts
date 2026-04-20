@@ -647,7 +647,7 @@ export class SyncEngine {
 
     private readonly lastBroadcastAtBySessionId: Map<string, number> = new Map()
     private readonly lastBroadcastAtByMachineId: Map<string, number> = new Map()
-    private readonly todoBackfillStateBySessionId: Map<string, { attempts: number; timer: NodeJS.Timeout | null; nextRetryAt: number }> = new Map()
+    private readonly todoBackfillStateBySessionId: Map<string, { attempts: number; timer: NodeJS.Timeout | null; nextRetryAt: number; seq: number }> = new Map()
     private readonly deletingSessions: Set<string> = new Set()
     // Tracks brain-child sessions that have completed their init prompt at least once.
     // First thinking→false is the init prompt; subsequent completions are real task results.
@@ -3132,21 +3132,13 @@ export class SyncEngine {
                             console.warn(`[auto-resume] Session ${session.id.slice(0, 8)} spawn succeeded but no reconnect heartbeat arrived within ${RESUME_TIMEOUT_MS}ms`)
                             return
                         }
-                        // Clear stale archive metadata from old CLI cleanup
-                        if (session.metadata?.archivedBy === 'cli') {
-                            const cleaned = { ...session.metadata }
-                            delete cleaned.archivedBy
-                            delete (cleaned as any).archiveReason
-                            if (cleaned.lifecycleState === 'archived') {
-                                cleaned.lifecycleState = 'active'
-                                cleaned.lifecycleStateSince = Date.now()
+                        if (session.metadata?.lifecycleState === 'archived') {
+                            const unarchiveResult = await this.unarchiveSession(session.id, { actor: 'auto-resume' })
+                            if (!unarchiveResult.ok) {
+                                console.warn(
+                                    `[auto-resume] Failed to clear archive metadata for ${session.id.slice(0, 8)}: ${unarchiveResult.error}`
+                                )
                             }
-                            session.metadata = cleaned
-                            this.store.updateSessionMetadata(session.id, cleaned, session.metadataVersion, session.namespace).then(r => {
-                                if (r.result === 'success') session.metadataVersion = r.version
-                            }).catch(err => {
-                                console.error(`[auto-resume] Failed to clear archive metadata for ${session.id.slice(0, 8)}:`, err)
-                            })
                         }
                         this.markSessionResumeReady(session.id, 'auto-resume')
                         console.log(`[auto-resume] Resumed session ${session.id.slice(0, 8)}`)
@@ -3242,14 +3234,21 @@ export class SyncEngine {
 
         const existing = this.sessions.get(sessionId)
 
-        const backfillState = this.todoBackfillStateBySessionId.get(sessionId)
-        if (stored.todos === null && (!backfillState || (!backfillState.timer && Date.now() >= backfillState.nextRetryAt))) {
-            const backfilled = await this.backfillTodosFromHistory(sessionId, stored.namespace)
-            if (backfilled) {
+        let backfillState = this.todoBackfillStateBySessionId.get(sessionId)
+        if (stored.todos === null) {
+            if (backfillState && stored.seq > backfillState.seq) {
                 this.clearTodoBackfillState(sessionId)
-                stored = await this.store.getSession(sessionId) ?? stored
-            } else {
-                this.scheduleTodoBackfillRetry(sessionId, 'todo markers not found in history')
+                backfillState = undefined
+            }
+
+            if (!backfillState || (!backfillState.timer && Date.now() >= backfillState.nextRetryAt && backfillState.attempts < 3)) {
+                const backfilled = await this.backfillTodosFromHistory(sessionId, stored.namespace)
+                if (backfilled) {
+                    this.clearTodoBackfillState(sessionId)
+                    stored = await this.store.getSession(sessionId) ?? stored
+                } else {
+                    this.scheduleTodoBackfillRetry(sessionId, stored.seq, 'todo markers not found in history')
+                }
             }
         } else if (stored.todos !== null) {
             this.clearTodoBackfillState(sessionId)
@@ -3283,6 +3282,14 @@ export class SyncEngine {
             metadata: metadata ?? rawMetadata,
         })
 
+        const storedActiveAt = stored.activeAt ?? stored.createdAt
+        const existingActiveAt = existing?.activeAt ?? 0
+        const shouldPreferStoredInactiveState =
+            stored.active === false
+            && storedActiveAt >= existingActiveAt
+            && existing?.active === true
+        const shouldUseStoredActiveState = storedActiveAt > existingActiveAt || shouldPreferStoredInactiveState
+
         const session: Session = {
             id: stored.id,
             namespace: stored.namespace,
@@ -3290,26 +3297,50 @@ export class SyncEngine {
             createdAt: stored.createdAt,
             updatedAt: stored.updatedAt,
             lastMessageAt: existing?.lastMessageAt ?? stored.lastMessageAt,
-            active: existing?.active ?? stored.active,
-            activeAt: existing?.activeAt ?? (stored.activeAt ?? stored.createdAt),
+            active: shouldUseStoredActiveState ? stored.active : (existing?.active ?? stored.active),
+            activeAt: shouldUseStoredActiveState ? storedActiveAt : (existingActiveAt || storedActiveAt),
             createdBy: stored.createdBy ?? undefined,
             metadata,
             metadataVersion: stored.metadataVersion,
             agentState,
             agentStateVersion: stored.agentStateVersion,
-            thinking: existing?.thinking ?? stored.thinking,
-            thinkingAt: existing?.thinkingAt ?? (stored.thinkingAt ?? 0),
+            thinking: shouldPreferStoredInactiveState ? stored.thinking : (existing?.thinking ?? stored.thinking),
+            thinkingAt: shouldPreferStoredInactiveState ? (stored.thinkingAt ?? 0) : (existing?.thinkingAt ?? (stored.thinkingAt ?? 0)),
             todos,
             permissionMode: existing?.permissionMode ?? normalizedStoredPermissionMode,
             modelMode: existing?.modelMode ?? (stored.modelMode as any) ?? undefined,
             modelReasoningEffort: existing?.modelReasoningEffort ?? (stored.modelReasoningEffort as any) ?? undefined,
             fastMode: existing?.fastMode ?? stored.fastMode ?? undefined,
             activeMonitors: existing?.activeMonitors ?? activeMonitors,
-            terminationReason: existing?.terminationReason ?? stored.terminationReason ?? undefined,
+            terminationReason: shouldPreferStoredInactiveState
+                ? (stored.terminationReason ?? undefined)
+                : (existing?.terminationReason ?? stored.terminationReason ?? undefined),
             resumingUntil: existing?.resumingUntil
         }
 
         this.sessions.set(sessionId, session)
+
+        if (stored.active && isRecord(session.metadata) && session.metadata.lifecycleState === 'archived') {
+            const healedMetadata = { ...session.metadata }
+            delete healedMetadata.archivedBy
+            delete healedMetadata.archiveReason
+            healedMetadata.lifecycleState = 'active'
+            healedMetadata.lifecycleStateSince = storedActiveAt
+            session.metadata = healedMetadata as Session['metadata']
+            void this.store.updateSessionMetadata(session.id, healedMetadata, session.metadataVersion, session.namespace)
+                .then(result => {
+                    if (result.result === 'success') {
+                        session.metadataVersion = result.version
+                        return
+                    }
+                    console.warn(
+                        `[refreshSession] Failed to heal archived active session ${session.id}: metadata version mismatch`
+                    )
+                })
+                .catch(err => {
+                    console.error(`[refreshSession] Failed to heal archived active session ${session.id}:`, err)
+                })
+        }
 
         // Hydrate the in-memory brainChildInitCompleted Set from the persisted
         // metadata flag. Without this, a server restart would wipe the Set and
@@ -3486,12 +3517,15 @@ export class SyncEngine {
         this.todoBackfillStateBySessionId.delete(sessionId)
     }
 
-    private scheduleTodoBackfillRetry(sessionId: string, reason: string): void {
+    private scheduleTodoBackfillRetry(sessionId: string, seq: number, reason: string): void {
         const state = this.todoBackfillStateBySessionId.get(sessionId) ?? {
             attempts: 0,
             timer: null as NodeJS.Timeout | null,
-            nextRetryAt: 0
+            nextRetryAt: 0,
+            seq
         }
+
+        state.seq = seq
 
         if (state.timer) {
             return
@@ -3499,7 +3533,8 @@ export class SyncEngine {
 
         if (state.attempts >= 3) {
             console.warn(`[todo-backfill] Giving up on session ${sessionId.slice(0, 8)} after ${state.attempts} attempts: ${reason}`)
-            this.clearTodoBackfillState(sessionId)
+            state.nextRetryAt = Number.POSITIVE_INFINITY
+            this.todoBackfillStateBySessionId.set(sessionId, state)
             return
         }
 

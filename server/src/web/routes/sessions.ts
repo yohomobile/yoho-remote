@@ -1504,6 +1504,12 @@ export function createSessionsRoutes(
         const session = sessionResult.session
 
         if (session.active) {
+            if (session.metadata?.lifecycleState === 'archived') {
+                const unarchiveResult = await engine.unarchiveSession(sessionId, { actor: 'manual-resume-already-active' })
+                if (!unarchiveResult.ok) {
+                    console.warn(`[resume] Failed to clear archive metadata for already-active session ${sessionId}: ${unarchiveResult.error}`)
+                }
+            }
             return c.json({ type: 'already-active', sessionId })
         }
 
@@ -1588,6 +1594,12 @@ export function createSessionsRoutes(
         if (resumeAttempt.type === 'success') {
             const online = await waitForSessionOnline(engine, sessionId, RESUME_TIMEOUT_MS)
             if (online) {
+                if (session.metadata?.lifecycleState === 'archived') {
+                    const unarchiveResult = await engine.unarchiveSession(sessionId, { actor: 'manual-resume' })
+                    if (!unarchiveResult.ok) {
+                        console.warn(`[resume] Failed to clear archive metadata for ${sessionId}: ${unarchiveResult.error}`)
+                    }
+                }
                 // Set createdBy after session is confirmed online (exists in DB)
                 const email = c.get('email')
                 if (email) {
