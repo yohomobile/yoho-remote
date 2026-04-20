@@ -12,6 +12,7 @@
         "build:exe": "bun build src/index.ts --compile --outfile dist-exe/yoho-remote-worker"
     },
     "dependencies": {
+        "cron-parser": "^4.9.0",
         "pg": "^8.16.3",
         "pg-boss": "^12.15.0",
         "zod": "^4.3.6"
