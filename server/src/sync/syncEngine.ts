@@ -57,7 +57,12 @@ export const MetadataSchema = z.object({
         name: z.string(),
         worktreePath: z.string().optional(),
         createdAt: z.number().optional()
-    }).optional()
+    }).optional(),
+    // Persisted flag so the in-memory brainChildInitCompleted Set can survive
+    // server restarts. Without this, long-lived brain-child sessions get stuck
+    // in the brain-child-init queue after the server is restarted, because the
+    // 20-message recovery tail no longer contains the original InitPrompt.
+    brainChildInitCompleted: z.boolean().optional()
 }).passthrough()
 
 export type Metadata = z.infer<typeof MetadataSchema>
@@ -2010,7 +2015,7 @@ export class SyncEngine {
             // finishing its init prompt. This avoids dropping legitimate task results in
             // tests or resumed sessions where no init prompt is present in history.
             if (!this.brainChildInitCompleted.has(session.id)) {
-                this.brainChildInitCompleted.add(session.id)
+                await this.markBrainChildInitCompleted(session.id, session)
                 if (this.shouldSkipInitialBrainCallback(messages)) {
                     console.log(`[brain-callback] Skipping init prompt callback for ${shortId(session.id)}`)
                     // Flush any brain messages that arrived before init was done
@@ -3003,6 +3008,17 @@ export class SyncEngine {
         }
 
         this.sessions.set(sessionId, session)
+
+        // Hydrate the in-memory brainChildInitCompleted Set from the persisted
+        // metadata flag. Without this, a server restart would wipe the Set and
+        // subsequent brain sends to long-lived brain-children would be trapped
+        // in the brain-child-init buffer queue (the recent-tail recovery path
+        // can't find the original InitPrompt after enough conversation).
+        if (metadata?.source === 'brain-child'
+            && (metadata as { brainChildInitCompleted?: unknown }).brainChildInitCompleted === true) {
+            this.brainChildInitCompleted.add(sessionId)
+        }
+
         if (normalizedStoredPermissionMode !== stored.permissionMode) {
             this.store.setSessionModelConfig(session.id, {
                 permissionMode: normalizedStoredPermissionMode,
@@ -3257,6 +3273,35 @@ export class SyncEngine {
         return false
     }
 
+    // Marks a brain-child as having finished its init prompt, both in the
+    // in-memory Set and as a persisted flag in session.metadata. Persisting is
+    // what lets a server restart skip the buffering branch for long-lived
+    // brain-children whose original InitPrompt has scrolled far out of the
+    // recent-message tail.
+    private async markBrainChildInitCompleted(sessionId: string, session: Session | undefined): Promise<void> {
+        const firstTime = !this.brainChildInitCompleted.has(sessionId)
+        this.brainChildInitCompleted.add(sessionId)
+        if (!session) {
+            return
+        }
+        const meta = session.metadata as { brainChildInitCompleted?: unknown } | null
+        if (meta?.brainChildInitCompleted === true) {
+            return
+        }
+        if (!firstTime && meta?.brainChildInitCompleted === true) {
+            return
+        }
+        try {
+            await this.store.patchSessionMetadata(
+                sessionId,
+                { brainChildInitCompleted: true },
+                session.namespace
+            )
+        } catch (err) {
+            console.warn(`[brain-queue] Failed to persist brainChildInitCompleted for ${shortId(sessionId)}:`, err)
+        }
+    }
+
     private async recoverBrainChildInitFromHistory(sessionId: string, session: Session | undefined): Promise<boolean> {
         if (!session || session.metadata?.source !== 'brain-child') {
             return false
@@ -3265,12 +3310,24 @@ export class SyncEngine {
             return false
         }
 
-        const messages = await this.store.getMessages(sessionId, 20)
-        const sawInitPrompt = messages.some((message) => {
+        // Scan the earliest messages, not the most recent tail. For long-lived
+        // brain-children (hundreds of messages) the original #InitPrompt- has
+        // already scrolled out of any reasonable recent window, so a tail scan
+        // will wrongly conclude init never ran and trap subsequent brain sends
+        // in the buffering queue. The init prompt is always among the first
+        // user messages, so a small earliest-slice is both sufficient and cheap.
+        let earliest: DecryptedMessage[] = []
+        try {
+            earliest = await this.store.getMessagesAfter(sessionId, 0, 10)
+        } catch (err) {
+            console.warn(`[brain-queue] Failed to load earliest history for ${shortId(sessionId)}:`, err)
+            return false
+        }
+        const sawInitPrompt = earliest.some((message) => {
             const text = getUserTextMessage(message)
             return Boolean(text?.trimStart().startsWith(INIT_PROMPT_PREFIX))
         })
-        const sawAgentReply = messages.some((message) => {
+        const sawAgentReply = earliest.some((message) => {
             const content = message.content as Record<string, unknown> | null
             return content?.role === 'agent'
         })
@@ -3279,7 +3336,7 @@ export class SyncEngine {
             return false
         }
 
-        this.brainChildInitCompleted.add(sessionId)
+        await this.markBrainChildInitCompleted(sessionId, session)
         console.warn(`[brain-queue] Recovered init completion state for ${shortId(sessionId)} from persisted history`)
         return true
     }

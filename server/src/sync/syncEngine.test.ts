@@ -559,6 +559,11 @@ describe('SyncEngine', () => {
             getSessions: async () => [],
             getMachines: async () => [],
             getMessages: async () => childMessages,
+            getMessagesAfter: async (_sessionId: string, afterSeq: number, _limit?: number) => {
+                if (afterSeq !== 0) return []
+                return childMessages
+            },
+            patchSessionMetadata: async () => true,
             addMessage: async (sessionId: string, content: unknown, localId?: string) => {
                 added.push({ sessionId, content })
                 return {
@@ -1157,6 +1162,173 @@ describe('SyncEngine', () => {
                 localId: 'brain-msg-1',
             },
         ])
+    })
+
+    test('recovers brain-child init completion from earliest history when recent tail is empty of InitPrompt', async () => {
+        // Simulates a long-lived brain-child after a server restart: the in-memory
+        // brainChildInitCompleted Set has been wiped, the recent-message tail
+        // no longer contains the original #InitPrompt- (scrolled out), but the
+        // earliest messages do. A brain send must NOT be trapped in the init
+        // buffer — it should deliver normally.
+        const patchCalls: Array<{ id: string; patch: Record<string, unknown>; namespace: string }> = []
+        const deliveredAdds: Array<{ sessionId: string; content: unknown; localId: string | undefined }> = []
+        let addedSeq = 500
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getMessages: async () => [
+                // Simulate a tail-only view that has no InitPrompt anywhere —
+                // this is what the old recovery path would see on a long-lived child.
+                { id: 'm-recent', sessionId: 'child-session', seq: 500, createdAt: 0, localId: null, content: { role: 'user', content: { type: 'text', text: '最新业务消息' } } },
+            ],
+            getMessagesAfter: async (_sessionId: string, afterSeq: number, _limit?: number) => {
+                if (afterSeq !== 0) return []
+                return [
+                    { id: 'm-1', sessionId: 'child-session', seq: 1, createdAt: 0, localId: null, content: { role: 'user', content: { type: 'text', text: '#InitPrompt-v1\nhello' } } },
+                    { id: 'm-2', sessionId: 'child-session', seq: 2, createdAt: 0, localId: null, content: { role: 'agent', content: { type: 'message' } } },
+                ]
+            },
+            patchSessionMetadata: async (id: string, patch: Record<string, unknown>, namespace: string) => {
+                patchCalls.push({ id, patch, namespace })
+                return true
+            },
+            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+                deliveredAdds.push({ sessionId, content, localId })
+                addedSeq += 1
+                return {
+                    id: `stored-${addedSeq}`,
+                    sessionId,
+                    seq: addedSeq,
+                    localId: localId ?? null,
+                    content,
+                    createdAt: 1_000 + addedSeq,
+                }
+            },
+            setSessionThinking: async () => {},
+            setSessionActive: async () => true,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const childSession = createSession('child-session', {
+            source: 'brain-child',
+            summary: { text: 'Child', updatedAt: 0 },
+        })
+        // active=true & thinking=false mimics a post-restart resumed child
+        childSession.active = true
+        childSession.thinking = false
+        ;(engine as any).sessions.set(childSession.id, childSession)
+
+        const outcome = await engine.sendMessage(childSession.id, {
+            text: '请继续处理',
+            sentFrom: 'brain',
+            localId: 'brain-msg-after-restart',
+        })
+
+        // Init flag should now be set, both in memory and persisted to metadata
+        expect((engine as any).brainChildInitCompleted.has(childSession.id)).toBe(true)
+        expect(patchCalls).toHaveLength(1)
+        expect(patchCalls[0]?.patch).toEqual({ brainChildInitCompleted: true })
+
+        // The message must NOT be stuck in the init buffer
+        expect((engine as any).brainChildPendingMessages.get(childSession.id)).toBeUndefined()
+        expect(outcome).not.toMatchObject({ queue: 'brain-child-init' })
+    })
+
+    test('hydrates brainChildInitCompleted Set from persisted metadata so restart-survived flag bypasses the init buffer', async () => {
+        // A brain-child whose metadata already carries brainChildInitCompleted=true
+        // (persisted before the restart) must bypass the init buffer on the very
+        // first brain send after restart — without any history scan.
+        const storedChild = {
+            id: 'persisted-child',
+            namespace: 'default',
+            seq: 0,
+            createdAt: 0,
+            updatedAt: 0,
+            lastMessageAt: null,
+            active: true,
+            activeAt: 0,
+            metadata: {
+                path: '/tmp/project',
+                host: 'local',
+                source: 'brain-child',
+                brainChildInitCompleted: true,
+            },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            activeMonitors: [],
+            thinking: false,
+            thinkingAt: 0,
+            modelMode: 'default',
+            permissionMode: 'default',
+            todos: null,
+            terminationReason: null,
+            fastMode: null,
+        }
+
+        const store = {
+            getSessions: async () => [storedChild],
+            getSession: async (id: string) => (id === storedChild.id ? storedChild : null),
+            getMachines: async () => [],
+            getMessages: async () => [],
+            getMessagesAfter: async () => [],
+            patchSessionMetadata: async () => true,
+            setSessionModelConfig: async () => {},
+            setSessionThinking: async () => {},
+            setSessionActive: async () => true,
+            getSessionNotificationRecipients: async () => [],
+            getSessionNotificationRecipientClientIds: async () => [],
+            addMessage: async (sessionId: string, content: unknown, localId?: string) => ({
+                id: 'stored-1',
+                sessionId,
+                seq: 1,
+                localId: localId ?? null,
+                content,
+                createdAt: 1_000,
+            }),
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        // Drive the reload-all path the way server startup does
+        await (engine as any).refreshSession(storedChild.id, { silent: true })
+
+        // The persisted flag must have repopulated the in-memory Set
+        expect((engine as any).brainChildInitCompleted.has(storedChild.id)).toBe(true)
+
+        // Now a brain send must NOT enter the init-buffer branch
+        const outcome = await engine.sendMessage(storedChild.id, {
+            text: '继续',
+            sentFrom: 'brain',
+            localId: 'post-restart-1',
+        })
+        expect(outcome).not.toMatchObject({ queue: 'brain-child-init' })
+        expect((engine as any).brainChildPendingMessages.get(storedChild.id)).toBeUndefined()
     })
 
     test('marks disconnected sessions inactive in memory and allows heartbeat reactivation', async () => {
