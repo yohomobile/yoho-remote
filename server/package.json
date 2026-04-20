@@ -34,7 +34,8 @@
         "socket.io": "^4.8.3",
         "web-push": "^3.6.7",
         "xlsx": "^0.18.5",
-        "zod": "^4.3.6"
+        "zod": "^4.3.6",
+        "cron-parser": "^4.9.0"
     },
     "devDependencies": {
         "@types/node": ">=25",
