@@ -50,6 +50,7 @@ interface DaemonToServerEvents {
 type MachineRpcHandlers = {
     spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>
     stopSession: (sessionId: string) => Promise<boolean>
+    listSessions: () => Array<{ sessionId: string; pid: number; startedBy: string }>
     requestShutdown: () => void
 }
 
@@ -102,7 +103,7 @@ export class ApiMachineClient {
         })
     }
 
-    setRPCHandlers({ spawnSession, stopSession, requestShutdown }: MachineRpcHandlers): void {
+    setRPCHandlers({ spawnSession, stopSession, listSessions, requestShutdown }: MachineRpcHandlers): void {
         this.rpcHandlerManager.registerHandler('spawn-yoho-remote-session', async (params: any) => {
             const { directory, sessionId, resumeSessionId, machineId, approvedNewDirectoryCreation, agent, yolo, token, sessionType, worktreeName, reuseExistingWorktree, tokenSourceId, tokenSourceName, tokenSourceType, tokenSourceBaseUrl, tokenSourceApiKey, claudeSettingsType, claudeAgent, codexModel, permissionMode, modelMode, modelReasoningEffort, source, mainSessionId, caller, brainPreferences } = params || {}
 
@@ -162,6 +163,10 @@ export class ApiMachineClient {
             }
 
             return { message: 'Session stopped' }
+        })
+
+        this.rpcHandlerManager.registerHandler('list-sessions', async () => {
+            return { sessions: listSessions() }
         })
 
         this.rpcHandlerManager.registerHandler('stop-daemon', () => {

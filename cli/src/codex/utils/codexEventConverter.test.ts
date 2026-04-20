@@ -97,6 +97,18 @@ describe('convertCodexEvent', () => {
         });
     });
 
+    it('converts status events', () => {
+        const result = convertCodexEvent({
+            type: 'event_msg',
+            payload: { type: 'status', status: 'compacting' }
+        });
+
+        expect(result?.message).toMatchObject({
+            type: 'status',
+            status: 'compacting'
+        });
+    });
+
     it('converts function_call items', () => {
         const result = convertCodexEvent({
             type: 'response_item',
@@ -130,6 +142,19 @@ describe('convertCodexEvent', () => {
             type: 'tool-call-result',
             callId: 'call-2',
             output: { ok: true }
+        });
+    });
+
+    it('converts context compaction items', () => {
+        const result = convertCodexEvent({
+            type: 'response_item',
+            payload: {
+                type: 'context_compaction',
+            }
+        });
+
+        expect(result?.message).toMatchObject({
+            type: 'compact-boundary'
         });
     });
 });

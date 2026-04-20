@@ -163,6 +163,58 @@ describe('Codex frontend support', () => {
         })
     })
 
+    test('normalizes Codex compacting status into timeline events', () => {
+        const normalized = normalize(makeMessage({
+            id: 'codex-status',
+            createdAt: 4,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'status',
+                        status: 'compacting',
+                        id: 'codex-status-item'
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(1)
+        expect(normalized[0]).toMatchObject({
+            role: 'event',
+            content: {
+                type: 'status',
+                status: 'compacting'
+            }
+        })
+    })
+
+    test('normalizes Codex compact boundary events', () => {
+        const normalized = normalize(makeMessage({
+            id: 'codex-compact-boundary',
+            createdAt: 5,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'compact-boundary',
+                        id: 'codex-compact-boundary-item'
+                    }
+                }
+            }
+        }))
+
+        expect(normalized).toHaveLength(1)
+        expect(normalized[0]).toMatchObject({
+            role: 'event',
+            content: {
+                type: 'compact-boundary'
+            }
+        })
+    })
+
     test('uses Codex token_count context-window usage without rendering a timeline event', () => {
         const normalized = normalize(makeMessage({
             id: 'token-count',
@@ -321,6 +373,84 @@ describe('Codex frontend support', () => {
         expect(reduced.latestUsage).not.toBeNull()
         expect(reduced.latestUsage?.contextSize).toBe(0)
         expect(reduced.latestUsage?.modelContextWindow).toBe(950_000)
+    })
+
+    test('prefers latest Codex token_count usage over earlier assistant usage', () => {
+        const normalized: NormalizedMessage[] = [{
+            id: 'assistant-usage',
+            localId: null,
+            createdAt: 100,
+            role: 'agent',
+            isSidechain: false,
+            content: [{ type: 'text', text: 'Done', uuid: 'assistant-usage', parentUUID: null }],
+            usage: {
+                input_tokens: 24_000,
+                output_tokens: 512
+            }
+        }, {
+            id: 'codex-token-count-latest',
+            localId: null,
+            createdAt: 101,
+            role: 'event',
+            isSidechain: false,
+            content: { type: 'token-count' },
+            usage: {
+                input_tokens: 123_456,
+                output_tokens: 3_456,
+                model_context_window: 950_000,
+                reasoning_output_tokens: 789,
+                rate_limit_used_percent: 65,
+                context_tokens_reliable: true
+            }
+        }]
+
+        const reduced = reduceChatBlocks(normalized, null)
+
+        expect(reduced.latestUsage).not.toBeNull()
+        expect(reduced.latestUsage?.inputTokens).toBe(123_456)
+        expect(reduced.latestUsage?.contextSize).toBe(123_456)
+        expect(reduced.latestUsage?.modelContextWindow).toBe(950_000)
+        expect(reduced.latestUsage?.rateLimitUsedPercent).toBe(65)
+    })
+
+    test('prefers richer Codex token_count over a later legacy exec fallback', () => {
+        const normalized: NormalizedMessage[] = [{
+            id: 'rich-token-count',
+            localId: null,
+            createdAt: 101,
+            role: 'event',
+            isSidechain: false,
+            content: { type: 'token-count' },
+            usage: {
+                input_tokens: 123_456,
+                output_tokens: 3_456,
+                model_context_window: 950_000,
+                reasoning_output_tokens: 789,
+                rate_limit_used_percent: 65,
+                context_tokens_reliable: true
+            }
+        }, {
+            id: 'legacy-exec-token-count',
+            localId: null,
+            createdAt: 102,
+            role: 'event',
+            isSidechain: false,
+            content: { type: 'token-count' },
+            usage: {
+                input_tokens: 900_000,
+                output_tokens: 4_000,
+                cache_read_input_tokens: 880_000,
+                context_tokens_reliable: false
+            }
+        }]
+
+        const reduced = reduceChatBlocks(normalized, null)
+
+        expect(reduced.latestUsage).not.toBeNull()
+        expect(reduced.latestUsage?.inputTokens).toBe(123_456)
+        expect(reduced.latestUsage?.contextSize).toBe(123_456)
+        expect(reduced.latestUsage?.modelContextWindow).toBe(950_000)
+        expect(reduced.latestUsage?.rateLimitUsedPercent).toBe(65)
     })
 
     test('renders Codex plan messages as assistant text instead of dropping them', () => {

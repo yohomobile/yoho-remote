@@ -1268,6 +1268,38 @@ function normalizeAgentRecord(
             }
         }
 
+        if (data.type === 'status') {
+            const status = asString(data.status) ?? asString(data.message)
+            if (!status) {
+                return null
+            }
+
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'event',
+                content: {
+                    type: 'status',
+                    status
+                },
+                isSidechain: false,
+                meta
+            }
+        }
+
+        if (data.type === 'compact-boundary') {
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'event',
+                content: { type: 'compact-boundary' } as AgentEvent,
+                isSidechain: false,
+                meta
+            }
+        }
+
         if (data.type === 'token_count') {
             const info = isObject(data.info) ? data.info : null
 

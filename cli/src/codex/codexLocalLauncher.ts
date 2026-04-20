@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import { codexLocal } from './codexLocal';
 import { CodexSession } from './session';
@@ -5,6 +6,7 @@ import { Future } from '@/utils/future';
 import { createCodexSessionScanner } from './utils/codexSessionScanner';
 import { convertCodexEvent } from './utils/codexEventConverter';
 import { getLocalLaunchExitReason } from '@/agent/localLaunchPolicy';
+import { parseCompact } from '@/parsers/specialCommands';
 
 export async function codexLocalLauncher(session: CodexSession): Promise<'switch' | 'exit'> {
     let exitReason: 'switch' | 'exit' | null = null;
@@ -40,6 +42,13 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
                 session.updateRuntimeModel(converted.modelInfo.model, converted.modelInfo.reasoningEffort ?? null);
             }
             if (converted?.userMessage) {
+                if (parseCompact(converted.userMessage).isCompact) {
+                    session.sendCodexMessage({
+                        type: 'status',
+                        status: 'compacting',
+                        id: randomUUID()
+                    });
+                }
                 session.sendUserMessage(converted.userMessage);
             }
             if (converted?.message) {

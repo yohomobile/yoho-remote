@@ -27,6 +27,8 @@ import { restoreTerminalState } from '@/ui/terminalState';
 import { hasCodexCliOverrides } from './utils/codexCliOverrides';
 import { buildCodexStartConfig, TITLE_INSTRUCTION } from './utils/codexStartConfig';
 import { buildCommandExecutionResult, getCommandExecutionPreview } from './utils/commandExecutionResult';
+import { createCodexSessionScanner } from './utils/codexSessionScanner';
+import { convertCodexEvent } from './utils/codexEventConverter';
 import { normalizeCodexToolReferences } from './utils/normalizeCodexToolReferences';
 import { buildCodexExecArgs, type CodexExecStartConfig } from './utils/codexExecArgs';
 import { resolveCodexBinary } from './codexBinary';
@@ -40,6 +42,7 @@ import {
 } from './utils/codexDeveloperInstructions';
 import type { CodexSession } from './session';
 import type { EnhancedMode, PermissionMode } from './loop';
+import { parseCompact } from '@/parsers/specialCommands';
 
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
 
@@ -321,6 +324,57 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
     let pending: { message: string; mode: EnhancedMode; isolate: boolean; hash: string } | null = null;
     let first = true;
     let titleInstructionPending = true;
+    let scanner: Awaited<ReturnType<typeof createCodexSessionScanner>> | null = null;
+
+    scanner = await createCodexSessionScanner({
+        sessionId: threadId,
+        cwd: session.path,
+        startupTimestampMs: Date.now(),
+        onSessionMatchFailed: (message) => {
+            logger.warn(`[codex-exec] ${message}`);
+        },
+        onSessionFound: (sessionId) => {
+            threadId = sessionId;
+            session.onSessionFound(sessionId);
+        },
+        onEvent: (event) => {
+            const converted = convertCodexEvent(event);
+            if (converted?.sessionId) {
+                threadId = converted.sessionId;
+                session.onSessionFound(converted.sessionId);
+                scanner?.onNewSession(converted.sessionId);
+            }
+            if (converted?.modelInfo) {
+                session.updateRuntimeModel(converted.modelInfo.model, converted.modelInfo.reasoningEffort ?? null);
+            }
+            if (
+                converted?.message
+                && (
+                    converted.message.type === 'token_count'
+                    || converted.message.type === 'status'
+                    || converted.message.type === 'compact-boundary'
+                )
+            ) {
+                session.sendCodexMessage(converted.message);
+            }
+        }
+    });
+
+    const handleSessionClearMessages = (payload: { sid?: string; sessionId?: string; time?: number }) => {
+        const targetSessionId = typeof payload.sid === 'string' && payload.sid.length > 0
+            ? payload.sid
+            : typeof payload.sessionId === 'string' && payload.sessionId.length > 0
+                ? payload.sessionId
+                : session.client.sessionId;
+        if (targetSessionId !== session.client.sessionId) {
+            return;
+        }
+        scanner?.clearSessionCache(
+            targetSessionId,
+            typeof payload.time === 'number' && Number.isFinite(payload.time) ? payload.time : Date.now()
+        );
+    };
+    session.client.on('session:clear-messages', handleSessionClearMessages);
 
     const appendTitleInstructionIfNeeded = (messageText: string): string => {
         if (!titleInstructionPending) {
@@ -374,6 +428,15 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
             const outgoingPrompt = normalizeCodexToolReferences(
                 appendTitleInstructionIfNeeded(resolvedMessage)
             );
+            const isCompactCommand = parseCompact(message.message).isCompact;
+
+            if (isCompactCommand) {
+                session.sendCodexMessage({
+                    type: 'status',
+                    status: 'compacting',
+                    id: randomUUID()
+                });
+            }
 
             console.error('[YR codex-exec] Processing message:', message.message.slice(0, 50));
 
@@ -401,7 +464,10 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
                     session,
                     messageBuffer,
                     turnTimeoutMs: TURN_TIMEOUT_MS,
-                    onThreadId: (id) => { threadId = id; },
+                    onThreadId: (id) => {
+                        threadId = id;
+                        scanner?.onNewSession(id);
+                    },
                     onChildSpawned: (child) => {
                         activeChild = child;
                         activeChildExited = false;
@@ -449,6 +515,8 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
         killActiveChild();
         session.client.rpcHandlerManager.registerHandler('abort', async () => {});
         session.client.rpcHandlerManager.registerHandler('switch', async () => {});
+        session.client.off('session:clear-messages', handleSessionClearMessages);
+        await scanner?.cleanup();
         yohoRemoteServer.stop();
         restoreTerminalState();
         if (hasTTY) {

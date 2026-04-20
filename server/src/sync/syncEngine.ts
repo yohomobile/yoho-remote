@@ -350,11 +350,10 @@ export interface SyncEvent {
 
 export type SyncEventListener = (event: SyncEvent) => void
 
-type AutoResumeGraceOptions = {
-    baseTimeoutMs?: number
-    maxTimeoutMs?: number
-    quietWindowMs?: number
-    checkIntervalMs?: number
+type DaemonLiveSessionSummary = {
+    sessionId: string
+    pid: number
+    startedBy: string
 }
 
 function clampAliveTime(t: number): number | null {
@@ -686,10 +685,8 @@ export class SyncEngine {
     private static readonly TASK_MESSAGE_SETTLE_WINDOW_MS = 200
     private static readonly TASK_MESSAGE_SETTLE_MAX_WAIT_MS = 3_000
     private static readonly RESUME_TRACE_TTL_MS = 10 * 60_000
-    private autoResumeBaseGraceMs = 10_000
-    private autoResumeMaxGraceMs = 30_000
-    private autoResumeGraceQuietWindowMs = 5_000
-    private autoResumeGraceCheckIntervalMs = 1_000
+    private autoResumeClaimedReconnectTimeoutMs = 3_000
+    private autoResumeLiveInventoryRpcWaitMs = 1_500
     private readonly resumeTraceBySessionId: Map<string, ResumeTraceState> = new Map()
 
     // Server 启动静默窗口：启动后 30 秒内
@@ -2879,6 +2876,120 @@ export class SyncEngine {
         )
     }
 
+    private async waitForMachineRpcRegistration(machineId: string, method: string, timeoutMs: number, pollMs: number): Promise<boolean> {
+        const rpcMethod = `${machineId}:${method}`
+        const start = Date.now()
+        while (Date.now() - start < timeoutMs) {
+            if (this.rpcRegistry.getSocketIdForMethod(rpcMethod)) {
+                return true
+            }
+            await new Promise(resolve => setTimeout(resolve, pollMs))
+        }
+        return Boolean(this.rpcRegistry.getSocketIdForMethod(rpcMethod))
+    }
+
+    private async listDaemonLiveSessions(machineId: string): Promise<DaemonLiveSessionSummary[]> {
+        const waitMs = this.autoResumeLiveInventoryRpcWaitMs
+        const rpcReady = await this.waitForMachineRpcRegistration(machineId, 'list-sessions', waitMs, 100)
+        if (!rpcReady) {
+            console.log(
+                `[auto-resume] Live inventory RPC not ready for ${machineId.slice(0, 8)} after ${waitMs}ms; ` +
+                'falling back to direct resume candidates'
+            )
+            return []
+        }
+
+        try {
+            const response = await this.machineRpc(machineId, 'list-sessions', {})
+            const sessions = Array.isArray((response as { sessions?: unknown })?.sessions)
+                ? (response as { sessions: unknown[] }).sessions
+                : []
+
+            const parsed = sessions.flatMap((entry) => {
+                if (!entry || typeof entry !== 'object') return []
+                const sessionId = typeof (entry as { sessionId?: unknown }).sessionId === 'string'
+                    ? (entry as { sessionId: string }).sessionId.trim()
+                    : ''
+                const pid = typeof (entry as { pid?: unknown }).pid === 'number'
+                    ? (entry as { pid: number }).pid
+                    : NaN
+                const startedBy = typeof (entry as { startedBy?: unknown }).startedBy === 'string'
+                    ? (entry as { startedBy: string }).startedBy
+                    : 'unknown'
+                if (!sessionId || !Number.isFinite(pid)) return []
+                return [{ sessionId, pid, startedBy }]
+            })
+
+            console.log(
+                `[auto-resume] Daemon live inventory for ${machineId.slice(0, 8)}: sessions=${parsed.length}`
+            )
+            return parsed
+        } catch (error) {
+            console.warn(
+                `[auto-resume] Failed to load daemon live inventory for ${machineId.slice(0, 8)}:`,
+                error
+            )
+            return []
+        }
+    }
+
+    private async filterClaimedAutoResumeCandidates(
+        machineId: string,
+        namespace: string,
+        machineSupportedAgents: SpawnAgentType[] | null | undefined,
+        candidates: Session[]
+    ): Promise<Session[]> {
+        if (candidates.length === 0) {
+            return candidates
+        }
+
+        const daemonLiveSessions = await this.listDaemonLiveSessions(machineId)
+        if (daemonLiveSessions.length === 0) {
+            return candidates
+        }
+
+        const daemonLiveSessionIds = new Set(daemonLiveSessions.map(session => session.sessionId))
+        const claimedCandidates = candidates.filter(session => daemonLiveSessionIds.has(session.id))
+        if (claimedCandidates.length === 0) {
+            return candidates
+        }
+
+        const timeoutMs = this.autoResumeClaimedReconnectTimeoutMs
+        console.log(
+            `[auto-resume] Daemon claimed ${claimedCandidates.length} candidate session(s) for ${machineId.slice(0, 8)}; ` +
+            `waiting up to ${timeoutMs}ms for reconnect`
+        )
+
+        const unresolvedClaimedSessionIds = new Set<string>()
+        await Promise.allSettled(claimedCandidates.map(async (session) => {
+            const reconnected = await this.waitForSessionHeartbeatAfter(session.id, session.activeAt, timeoutMs)
+            if (reconnected) {
+                console.log(`[auto-resume] Session ${session.id.slice(0, 8)} reconnected from daemon claim`)
+                return
+            }
+            unresolvedClaimedSessionIds.add(session.id)
+            console.log(
+                `[auto-resume] Session ${session.id.slice(0, 8)} still missing heartbeat after daemon claim; ` +
+                `replacement resume allowed`
+            )
+        }))
+
+        const stillCandidateIds = new Set(
+            this.getAutoResumeCandidates(machineId, namespace, machineSupportedAgents, Date.now())
+                .map(session => session.id)
+        )
+
+        return candidates.filter((session) => {
+            if (!stillCandidateIds.has(session.id)) {
+                return false
+            }
+            if (!daemonLiveSessionIds.has(session.id)) {
+                return true
+            }
+            return unresolvedClaimedSessionIds.has(session.id)
+        })
+    }
+
     private async autoResumeSessions(machineId: string, namespace: string): Promise<void> {
         console.log(`[auto-resume] Triggered for machine ${machineId.slice(0, 8)}, namespace=${namespace}`)
         if (this._autoResumeInProgress.has(machineId)) {
@@ -2889,27 +3000,14 @@ export class SyncEngine {
         this._autoResumeInProgress.add(machineId)
 
         try {
-            const rpcMethod = `${machineId}:spawn-yoho-remote-session`
             const maxWait = 10_000
             const start = Date.now()
-            while (Date.now() - start < maxWait) {
-                if (this.rpcRegistry.getSocketIdForMethod(rpcMethod)) break
-                await new Promise(r => setTimeout(r, 500))
-            }
-
-            const rpcReady = Boolean(this.rpcRegistry.getSocketIdForMethod(rpcMethod))
+            const rpcReady = await this.waitForMachineRpcRegistration(machineId, 'spawn-yoho-remote-session', maxWait, 500)
             console.log(`[auto-resume] RPC ready=${rpcReady} after ${Date.now() - start}ms`)
 
             const machine = this.machines.get(machineId)
             if (!machine?.active) {
                 console.log(`[auto-resume] Machine ${machineId.slice(0, 8)} no longer active, aborting`)
-                return
-            }
-
-            await this.waitForAutoResumeGrace(machineId, namespace, machine.supportedAgents)
-
-            if (!this.machines.get(machineId)?.active) {
-                console.log(`[auto-resume] Machine ${machineId.slice(0, 8)} went inactive during grace, aborting`)
                 return
             }
 
@@ -2967,7 +3065,8 @@ export class SyncEngine {
                 }
             }
 
-            const candidates = this.getAutoResumeCandidates(machineId, namespace, machineSupportedAgents, Date.now())
+            let candidates = this.getAutoResumeCandidates(machineId, namespace, machineSupportedAgents, Date.now())
+            candidates = await this.filterClaimedAutoResumeCandidates(machineId, namespace, machineSupportedAgents, candidates)
 
             if (candidates.length === 0) {
                 console.log(`[auto-resume] No candidates found for machine ${machineId.slice(0, 8)}`)
@@ -3119,82 +3218,6 @@ export class SyncEngine {
                 finish(true)
             }
         })
-    }
-
-    private async waitForAutoResumeGrace(
-        machineId: string,
-        namespace: string,
-        machineSupportedAgents: SpawnAgentType[] | null | undefined,
-        options: AutoResumeGraceOptions = {}
-    ): Promise<void> {
-        const baseTimeoutMs = options.baseTimeoutMs ?? this.autoResumeBaseGraceMs
-        const maxTimeoutMs = Math.max(baseTimeoutMs, options.maxTimeoutMs ?? this.autoResumeMaxGraceMs)
-        const quietWindowMs = options.quietWindowMs ?? this.autoResumeGraceQuietWindowMs
-        const checkIntervalMs = options.checkIntervalMs ?? this.autoResumeGraceCheckIntervalMs
-
-        if (maxTimeoutMs <= 0) return
-
-        const start = Date.now()
-        const machineLabel = machineId.slice(0, 8)
-        // Always wait through the base grace, then require a short quiet window
-        // with no candidate-set changes before we trigger replacement resumes.
-        let quietReferenceAt = start + baseTimeoutMs
-        let previousPendingSessions = this.getAutoResumeCandidates(machineId, namespace, machineSupportedAgents, start)
-        let previousPendingKey = previousPendingSessions.map(session => session.id).sort().join(',')
-        let previousPendingCount = previousPendingSessions.length
-
-        console.log(
-            `[auto-resume] Grace start for ${machineLabel}: ` +
-            `base=${baseTimeoutMs}ms quiet=${quietWindowMs}ms max=${maxTimeoutMs}ms candidates=${previousPendingCount}`
-        )
-
-        if (!previousPendingKey) {
-            console.log(`[auto-resume] Grace skip for ${machineLabel}: reason=no-candidates`)
-            return
-        }
-
-        while (Date.now() - start < maxTimeoutMs) {
-            const now = Date.now()
-            if (now - start >= baseTimeoutMs && now - quietReferenceAt >= quietWindowMs) {
-                console.log(
-                    `[auto-resume] Grace end for ${machineLabel}: ` +
-                    `reason=quiet-window-elapsed waited=${now - start}ms candidates=${previousPendingCount}`
-                )
-                return
-            }
-            await new Promise(r => setTimeout(r, checkIntervalMs))
-            if (!this.machines.get(machineId)?.active) {
-                console.log(
-                    `[auto-resume] Grace aborted for ${machineLabel}: ` +
-                    `reason=machine-inactive waited=${Date.now() - start}ms`
-                )
-                return
-            }
-            previousPendingSessions = this.getAutoResumeCandidates(machineId, namespace, machineSupportedAgents, Date.now())
-            const pendingKey = previousPendingSessions.map(session => session.id).sort().join(',')
-            previousPendingCount = previousPendingSessions.length
-            if (!pendingKey) {
-                console.log(
-                    `[auto-resume] Grace end for ${machineLabel}: ` +
-                    `reason=no-candidates waited=${Date.now() - start}ms`
-                )
-                return
-            }
-            if (pendingKey !== previousPendingKey) {
-                const changedAt = Date.now()
-                quietReferenceAt = Math.max(start + baseTimeoutMs, changedAt)
-                previousPendingKey = pendingKey
-                console.log(
-                    `[auto-resume] Grace reset for ${machineLabel}: ` +
-                    `reason=candidate-set-changed waited=${changedAt - start}ms candidates=${previousPendingCount}`
-                )
-            }
-        }
-
-        console.log(
-            `[auto-resume] Grace end for ${machineLabel}: ` +
-            `reason=max-timeout waited=${Date.now() - start}ms candidates=${previousPendingCount}`
-        )
     }
 
     /** Public alias for refreshSession - used by guards.ts and events.ts */
@@ -3369,6 +3392,9 @@ export class SyncEngine {
 
     private async reloadAllAsync(): Promise<void> {
         const sessions = await this.store.getSessions()
+        const initialSessionActivityAtById = new Map<string, number>(
+            sessions.map(session => [session.id, session.activeAt ?? session.createdAt])
+        )
 
         // silent 模式：启动 hydrate 时不广播 session-added/session-updated，
         // 避免前端订阅者（含 SSE）在 server 重启后收到大量带历史 terminationReason
@@ -3378,6 +3404,9 @@ export class SyncEngine {
         }
 
         const machines = await this.store.getMachines()
+        const initialMachineActivityAtById = new Map<string, number>(
+            machines.map(machine => [machine.id, machine.activeAt ?? machine.createdAt])
+        )
         for (const m of machines) {
             await this.refreshMachine(m.id, { silent: true })
         }
@@ -3422,12 +3451,27 @@ export class SyncEngine {
         for (const session of this.sessions.values()) {
             this.markStartupNotificationSuppression(session)
         }
+        let preservedActiveMachines = 0
         for (const machine of this.machines.values()) {
+            const initialActiveAt = initialMachineActivityAtById.get(machine.id)
+            const reconnectedDuringHydrate = initialActiveAt === undefined || machine.activeAt > initialActiveAt
+            if (reconnectedDuringHydrate) {
+                preservedActiveMachines += 1
+                continue
+            }
             machine.active = false
         }
+        let preservedActiveSessions = 0
         for (const session of this.sessions.values()) {
+            const initialActiveAt = initialSessionActivityAtById.get(session.id)
+            const reconnectedDuringHydrate = initialActiveAt === undefined || session.activeAt > initialActiveAt
+            if (reconnectedDuringHydrate) {
+                preservedActiveSessions += 1
+                continue
+            }
             session.active = false
         }
+        console.log(`[hydrate] startup reset preserved active state for machines=${preservedActiveMachines}, sessions=${preservedActiveSessions}`)
 
         // Don't clean up zombie sessions on startup.
         // expireInactive() will handle stale sessions after the timer fires,

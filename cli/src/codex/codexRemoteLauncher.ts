@@ -30,6 +30,11 @@ function isInitPromptMessage(message: string): boolean {
     return message.trimStart().startsWith(INIT_PROMPT_PREFIX);
 }
 
+function isCompactCommandMessage(message: string): boolean {
+    const trimmed = message.trim();
+    return trimmed === '/compact' || trimmed.startsWith('/compact ');
+}
+
 function normalizeText(value: unknown): string | null {
     if (typeof value !== 'string') {
         return null;
@@ -403,6 +408,12 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
             messageBuffer.addMessage('Starting task...', 'status');
         } else if (msg.type === 'task_complete') {
             messageBuffer.addMessage('Task completed', 'status');
+            if (inFlight && isCompactCommandMessage(inFlight.message)) {
+                session.sendCodexMessage({
+                    type: 'compact-boundary',
+                    id: randomUUID()
+                });
+            }
             sendReady();
             scheduleCompletionAbort('task_complete');
         } else if (msg.type === 'turn_aborted') {
@@ -883,6 +894,15 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
             currentModeHash = message.hash;
             console.error('[YR codex] Processing message:', message.message.slice(0, 50));
             const outgoingMessage = appendTitleInstructionIfNeeded(message.message);
+            const isCompactCommand = isCompactCommandMessage(message.message);
+
+            if (isCompactCommand) {
+                session.sendCodexMessage({
+                    type: 'status',
+                    status: 'compacting',
+                    id: randomUUID()
+                });
+            }
 
             try {
                 if (!wasCreated) {

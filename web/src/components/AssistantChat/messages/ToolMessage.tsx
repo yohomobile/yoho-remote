@@ -58,8 +58,20 @@ function splitTaskChildren(block: ToolCallBlock): { pending: ChatBlock[]; rest: 
     return { pending, rest }
 }
 
+function isTaskTool(toolName: string): boolean {
+    return toolName === 'Task' || toolName === 'Agent'
+}
+
+function isReadBatchTool(toolName: string): boolean {
+    return toolName === 'ReadBatch'
+}
+
 function getTaskDetailsLabel(toolName: string): string {
     return toolName === 'Agent' ? 'Agent details' : 'Task details'
+}
+
+function getReadBatchDetailsLabel(count: number): string {
+    return count === 1 ? 'File read (1)' : `Files read (${count})`
 }
 
 function todoStatusTone(status: PlanTodoReminderItem['status']): string {
@@ -238,7 +250,8 @@ function YohoRemoteNestedBlockList(props: {
                 }
 
                 if (block.kind === 'tool-call') {
-                    const isTask = block.tool.name === 'Task' || block.tool.name === 'Agent'
+                    const isTask = isTaskTool(block.tool.name)
+                    const isReadBatch = isReadBatchTool(block.tool.name)
                     const taskChildren = isTask ? splitTaskChildren(block) : null
 
                     return (
@@ -270,6 +283,15 @@ function YohoRemoteNestedBlockList(props: {
                                             </details>
                                         ) : null}
                                     </>
+                                ) : isReadBatch ? (
+                                    <details className="mt-2">
+                                        <summary className="cursor-pointer text-xs text-[var(--app-hint)]">
+                                            {getReadBatchDetailsLabel(block.children.length)}
+                                        </summary>
+                                        <div className="mt-2 pl-3">
+                                            <YohoRemoteNestedBlockList blocks={block.children} />
+                                        </div>
+                                    </details>
                                 ) : (
                                     <div className="mt-2 pl-3">
                                         <YohoRemoteNestedBlockList blocks={block.children} />
@@ -328,7 +350,8 @@ export function YohoRemoteToolMessage(props: ToolCallMessagePartProps) {
     }
 
     const block = artifact
-    const isTask = block.tool.name === 'Task' || block.tool.name === 'Agent'
+    const isTask = isTaskTool(block.tool.name)
+    const isReadBatch = isReadBatchTool(block.tool.name)
     const taskChildren = isTask ? splitTaskChildren(block) : null
 
     return (
@@ -360,6 +383,15 @@ export function YohoRemoteToolMessage(props: ToolCallMessagePartProps) {
                             </details>
                         ) : null}
                     </>
+                ) : isReadBatch ? (
+                    <details className="mt-2">
+                        <summary className="cursor-pointer text-xs text-[var(--app-hint)]">
+                            {getReadBatchDetailsLabel(block.children.length)}
+                        </summary>
+                        <div className="mt-2 pl-3">
+                            <YohoRemoteNestedBlockList blocks={block.children} />
+                        </div>
+                    </details>
                 ) : (
                     <div className="mt-2 pl-3">
                         <YohoRemoteNestedBlockList blocks={block.children} />

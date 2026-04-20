@@ -1602,6 +1602,106 @@ describe('SyncEngine', () => {
         })
     })
 
+    test('startup hydrate preserves sessions and machines that already reconnected during reload', async () => {
+        const staleMachine = createMachine('machine-stale', { host: 'stale-host' })
+        staleMachine.active = true
+        staleMachine.activeAt = 1_000
+
+        const liveMachine = createMachine('machine-live', { host: 'live-host' })
+        liveMachine.active = true
+        liveMachine.activeAt = 1_000
+
+        const staleSession = createSession('session-stale', {
+            machineId: staleMachine.id,
+            path: '/tmp/stale-project',
+            flavor: 'codex',
+            codexSessionId: 'thread-stale',
+        })
+        staleSession.active = true
+        staleSession.activeAt = 1_000
+
+        const liveSession = createSession('session-live', {
+            machineId: liveMachine.id,
+            path: '/tmp/live-project',
+            flavor: 'codex',
+            codexSessionId: 'thread-live',
+        })
+        liveSession.active = true
+        liveSession.activeAt = 1_000
+
+        const store = {
+            getSessions: async () => [],
+            getSession: async () => null,
+            getMachines: async () => [],
+            getMachine: async () => null,
+            setSessionThinking: async () => {},
+            setSessionModelConfig: async () => {},
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        store.getSessions = async () => [staleSession, liveSession]
+        store.getSession = async (id: string) => {
+            if (id === staleSession.id) return staleSession
+            if (id === liveSession.id) return liveSession
+            return null
+        }
+        store.getMachines = async () => [staleMachine, liveMachine]
+        store.getMachine = async (id: string) => {
+            if (id === staleMachine.id) return staleMachine
+            if (id === liveMachine.id) return liveMachine
+            return null
+        }
+
+        const liveMachineInMemory = createMachine(liveMachine.id, { host: 'live-host' })
+        liveMachineInMemory.active = true
+        liveMachineInMemory.activeAt = 5_000
+        const staleMachineInMemory = createMachine(staleMachine.id, { host: 'stale-host' })
+        staleMachineInMemory.active = true
+        staleMachineInMemory.activeAt = staleMachine.activeAt
+
+        const liveSessionInMemory = createSession(liveSession.id, {
+            machineId: liveMachine.id,
+            path: '/tmp/live-project',
+            flavor: 'codex',
+            codexSessionId: 'thread-live',
+        })
+        liveSessionInMemory.active = true
+        liveSessionInMemory.activeAt = 5_000
+        const staleSessionInMemory = createSession(staleSession.id, {
+            machineId: staleMachine.id,
+            path: '/tmp/stale-project',
+            flavor: 'codex',
+            codexSessionId: 'thread-stale',
+        })
+        staleSessionInMemory.active = true
+        staleSessionInMemory.activeAt = staleSession.activeAt
+
+        ;(engine as any).machines.set(staleMachine.id, staleMachineInMemory)
+        ;(engine as any).machines.set(liveMachine.id, liveMachineInMemory)
+        ;(engine as any).sessions.set(staleSession.id, staleSessionInMemory)
+        ;(engine as any).sessions.set(liveSession.id, liveSessionInMemory)
+
+        await (engine as any).reloadAllAsync()
+
+        expect((engine as any).machines.get(staleMachine.id)?.active).toBe(false)
+        expect((engine as any).machines.get(liveMachine.id)?.active).toBe(true)
+        expect(engine.getSession(staleSession.id)?.active).toBe(false)
+        expect(engine.getSession(liveSession.id)?.active).toBe(true)
+    })
+
     test('suppresses startup-replayed completion and clears stale termination on first reconnect', async () => {
         const storedSession = createSession('session-startup-reconnect', {
             machineId: 'machine-1',

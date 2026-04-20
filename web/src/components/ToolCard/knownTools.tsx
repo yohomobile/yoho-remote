@@ -36,6 +36,22 @@ function countLines(text: string): number {
     return text.split('\n').length
 }
 
+function getBatchFiles(input: unknown): string[] {
+    if (!isObject(input) || !Array.isArray(input.files)) {
+        return []
+    }
+
+    return input.files.filter((file): file is string => typeof file === 'string' && file.length > 0)
+}
+
+function getBatchCount(input: unknown, childrenCount: number): number {
+    if (isObject(input) && typeof input.count === 'number' && Number.isFinite(input.count)) {
+        return input.count
+    }
+    const files = getBatchFiles(input)
+    return files.length > 0 ? files.length : childrenCount
+}
+
 function snakeToTitleWithSpaces(value: string): string {
     return value
         .split('_')
@@ -261,6 +277,30 @@ export const knownTools: Record<string, {
         title: (opts) => {
             const file = getInputStringAny(opts.input, ['file_path', 'path', 'file'])
             return file ? resolveDisplayPath(file, opts.metadata) : 'Read file'
+        },
+        minimal: true
+    },
+    ReadBatch: {
+        icon: () => <EyeIcon className={DEFAULT_ICON_CLASS} />,
+        title: (opts) => {
+            const count = getBatchCount(opts.input, opts.childrenCount)
+            return count === 1 ? 'Read 1 file' : `Read ${count} files`
+        },
+        subtitle: (opts) => {
+            const files = getBatchFiles(opts.input)
+            if (files.length === 0) {
+                return null
+            }
+
+            const visible = files
+                .slice(0, 3)
+                .map((file) => resolveDisplayPath(file, opts.metadata))
+
+            if (files.length > visible.length) {
+                visible.push(`+${files.length - visible.length} more`)
+            }
+
+            return visible.join(', ')
         },
         minimal: true
     },

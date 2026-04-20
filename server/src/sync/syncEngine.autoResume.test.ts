@@ -100,7 +100,7 @@ describe('SyncEngine auto-resume', () => {
             }
             return { type: 'success', sessionId: options?.sessionId ?? 'unknown' }
         }
-        ;(engine as any).waitForAutoResumeGrace = async () => {}
+        ;(engine as any).listDaemonLiveSessions = async () => []
         ;(engine as any).waitForSessionHeartbeatAfter = async () => true
 
         await (engine as any).autoResumeSessions(machine.id, machine.namespace)
@@ -155,7 +155,7 @@ describe('SyncEngine auto-resume', () => {
             type: 'success',
             sessionId: options?.sessionId ?? 'unknown',
         })
-        ;(engine as any).waitForAutoResumeGrace = async () => {}
+        ;(engine as any).listDaemonLiveSessions = async () => []
         ;(engine as any).waitForSessionHeartbeatAfter = async () => false
 
         await (engine as any).autoResumeSessions(machine.id, machine.namespace)
@@ -226,7 +226,7 @@ describe('SyncEngine auto-resume', () => {
             spawnCalls.push(options)
             return { type: 'success', sessionId: options?.sessionId ?? 'unknown' }
         }
-        ;(engine as any).waitForAutoResumeGrace = async () => {}
+        ;(engine as any).listDaemonLiveSessions = async () => []
         ;(engine as any).waitForSessionHeartbeatAfter = async () => true
 
         await (engine as any).autoResumeSessions(machine.id, machine.namespace)
@@ -244,7 +244,73 @@ describe('SyncEngine auto-resume', () => {
         })])
     })
 
-    test('waits through reconnect grace before auto-resuming replacement sessions', async () => {
+    test('waits briefly for live inventory RPC registration before falling back', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActive: async () => true,
+            getSession: async () => null,
+        } as any
+
+        let listSessionsRegistered = false
+        let rpcCalls = 0
+        const machine = createMachine('machine-1')
+        const socket = {
+            timeout: () => ({
+                emitWithAck: async (_event: string, payload: { method: string }) => {
+                    rpcCalls += 1
+                    expect(payload.method).toBe(`${machine.id}:list-sessions`)
+                    return JSON.stringify({
+                        sessions: [{
+                            sessionId: 'session-live',
+                            pid: 4321,
+                            startedBy: 'daemon',
+                        }]
+                    })
+                }
+            }),
+        }
+
+        const io = {
+            of: () => ({
+                sockets: new Map([['socket-1', socket]]),
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const rpcRegistry = {
+            getSocketIdForMethod: (method: string) => {
+                if (method === `${machine.id}:list-sessions` && listSessionsRegistered) {
+                    return 'socket-1'
+                }
+                return undefined
+            },
+        } as any
+
+        const engine = new SyncEngine(store, io, rpcRegistry, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        ;(engine as any).autoResumeLiveInventoryRpcWaitMs = 120
+        setTimeout(() => {
+            listSessionsRegistered = true
+        }, 20)
+
+        const liveSessions = await (engine as any).listDaemonLiveSessions(machine.id)
+
+        expect(rpcCalls).toBe(1)
+        expect(liveSessions).toEqual([{
+            sessionId: 'session-live',
+            pid: 4321,
+            startedBy: 'daemon',
+        }])
+    })
+
+    test('skips replacement resume when a daemon-claimed session reconnects in time', async () => {
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
@@ -288,18 +354,23 @@ describe('SyncEngine auto-resume', () => {
             spawnCalled = true
             return { type: 'success', sessionId: session.id }
         }
-        ;(engine as any).waitForAutoResumeGrace = async () => {
+        ;(engine as any).listDaemonLiveSessions = async () => [{
+            sessionId: session.id,
+            pid: 4242,
+            startedBy: 'daemon',
+        }]
+        ;(engine as any).waitForSessionHeartbeatAfter = async () => {
             session.active = true
             session.activeAt = Date.now()
+            return true
         }
-        ;(engine as any).waitForSessionHeartbeatAfter = async () => true
 
         await (engine as any).autoResumeSessions(machine.id, machine.namespace)
 
         expect(spawnCalled).toBe(false)
     })
 
-    test('extends auto-resume grace past the base timeout when a slow reconnect still arrives', async () => {
+    test('resumes missing sessions immediately when daemon does not claim them', async () => {
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
@@ -326,43 +397,34 @@ describe('SyncEngine auto-resume', () => {
         await new Promise(resolve => setTimeout(resolve, 0))
 
         const machine = createMachine('machine-1')
-        const session = createSession('session-slow-reconnect', {
+        const session = createSession('session-not-claimed', {
             machineId: machine.id,
-            path: '/tmp/project-slow-reconnect',
+            path: '/tmp/project-not-claimed',
             flavor: 'codex',
-            codexSessionId: 'thread-slow-reconnect',
+            codexSessionId: 'thread-not-claimed',
             startedFromDaemon: true,
         })
 
         ;(engine as any).machines.set(machine.id, machine)
         ;(engine as any).sessions.set(session.id, session)
         ;(engine as any)._dbActiveSessionIds = new Set([session.id])
-        ;(engine as any).autoResumeBaseGraceMs = 20
-        ;(engine as any).autoResumeGraceQuietWindowMs = 20
-        ;(engine as any).autoResumeMaxGraceMs = 80
-        ;(engine as any).autoResumeGraceCheckIntervalMs = 5
 
         let spawnCalled = false
         ;(engine as any).spawnSession = async () => {
             spawnCalled = true
             return { type: 'success', sessionId: session.id }
         }
+        ;(engine as any).listDaemonLiveSessions = async () => []
         ;(engine as any).waitForSessionHeartbeatAfter = async () => true
-
-        const reconnectTimer = setTimeout(() => {
-            session.active = true
-            session.activeAt = Date.now()
-        }, 35)
 
         const startedAt = Date.now()
         await (engine as any).autoResumeSessions(machine.id, machine.namespace)
-        clearTimeout(reconnectTimer)
 
-        expect(spawnCalled).toBe(false)
-        expect(Date.now() - startedAt).toBeGreaterThanOrEqual(30)
+        expect(spawnCalled).toBe(true)
+        expect(Date.now() - startedAt).toBeLessThan(50)
     })
 
-    test('settles auto-resume grace after a quiet window when no reconnect arrives', async () => {
+    test('resumes daemon-claimed sessions after a short reconnect deadline when heartbeat never arrives', async () => {
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
@@ -389,34 +451,44 @@ describe('SyncEngine auto-resume', () => {
         await new Promise(resolve => setTimeout(resolve, 0))
 
         const machine = createMachine('machine-1')
-        const session = createSession('session-grace-quiet-window', {
+        const session = createSession('session-daemon-claimed-timeout', {
             machineId: machine.id,
-            path: '/tmp/project-grace-quiet-window',
+            path: '/tmp/project-daemon-claimed-timeout',
             flavor: 'codex',
-            codexSessionId: 'thread-grace-quiet-window',
+            codexSessionId: 'thread-daemon-claimed-timeout',
             startedFromDaemon: true,
         })
 
         ;(engine as any).machines.set(machine.id, machine)
         ;(engine as any).sessions.set(session.id, session)
         ;(engine as any)._dbActiveSessionIds = new Set([session.id])
-        ;(engine as any).autoResumeBaseGraceMs = 20
-        ;(engine as any).autoResumeGraceQuietWindowMs = 20
-        ;(engine as any).autoResumeMaxGraceMs = 80
-        ;(engine as any).autoResumeGraceCheckIntervalMs = 5
+        ;(engine as any).autoResumeClaimedReconnectTimeoutMs = 20
 
         let spawnAt: number | null = null
         ;(engine as any).spawnSession = async () => {
             spawnAt = Date.now()
             return { type: 'success', sessionId: session.id }
         }
-        ;(engine as any).waitForSessionHeartbeatAfter = async () => true
+        ;(engine as any).listDaemonLiveSessions = async () => [{
+            sessionId: session.id,
+            pid: 31337,
+            startedBy: 'daemon',
+        }]
+        let waitCallCount = 0
+        ;(engine as any).waitForSessionHeartbeatAfter = async (_sessionId: string, _afterActiveAt: number, timeoutMs: number) => {
+            waitCallCount += 1
+            if (waitCallCount === 1) {
+                await new Promise(resolve => setTimeout(resolve, timeoutMs))
+                return false
+            }
+            return true
+        }
 
         const startedAt = Date.now()
         await (engine as any).autoResumeSessions(machine.id, machine.namespace)
 
         expect(spawnAt).not.toBeNull()
-        expect((spawnAt ?? 0) - startedAt).toBeGreaterThanOrEqual(35)
+        expect((spawnAt ?? 0) - startedAt).toBeGreaterThanOrEqual(20)
     })
 
     test('does not auto-resume terminal-started sessions through the daemon', async () => {
@@ -464,7 +536,7 @@ describe('SyncEngine auto-resume', () => {
             spawnCalled = true
             return { type: 'success', sessionId: session.id }
         }
-        ;(engine as any).waitForAutoResumeGrace = async () => {}
+        ;(engine as any).listDaemonLiveSessions = async () => []
         ;(engine as any).waitForSessionHeartbeatAfter = async () => true
 
         await (engine as any).autoResumeSessions(machine.id, machine.namespace)

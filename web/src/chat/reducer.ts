@@ -66,6 +66,131 @@ function collectTitleChanges(messages: NormalizedMessage[]): Map<string, string>
     return map
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object'
+}
+
+function getInputStringAny(input: unknown, keys: string[]): string | null {
+    if (!isObject(input)) return null
+    for (const key of keys) {
+        const value = input[key]
+        if (typeof value === 'string' && value.trim().length > 0) {
+            return value.trim()
+        }
+    }
+    return null
+}
+
+function getCommandString(input: unknown): string | null {
+    if (!isObject(input)) return null
+
+    const directCommand = input.command
+    if (typeof directCommand === 'string' && directCommand.trim().length > 0) {
+        return directCommand.trim()
+    }
+
+    if (Array.isArray(directCommand)) {
+        const parts = directCommand.filter((part): part is string => typeof part === 'string' && part.length > 0)
+        if (parts.length > 0) {
+            return parts.join(' ')
+        }
+    }
+
+    const cmd = input.cmd
+    if (typeof cmd === 'string' && cmd.trim().length > 0) {
+        return cmd.trim()
+    }
+
+    return null
+}
+
+function unwrapShellCommand(command: string): string {
+    let inner = command.trim()
+    const shellWrapped = inner.match(/-[lc]c\s+"([\s\S]+)"$/) ?? inner.match(/-[lc]c\s+'([\s\S]+)'$/)
+    if (shellWrapped?.[1]) {
+        inner = shellWrapped[1].trim()
+    }
+
+    const chained = inner.split(/\s+&&\s+/)
+    return (chained[chained.length - 1] ?? inner).trim()
+}
+
+function tokenizeShellCommand(command: string): string[] {
+    const matches = command.match(/"[^"]*"|'[^']*'|\S+/g) ?? []
+    return matches
+        .map((token) => token.replace(/^['"]|['"]$/g, ''))
+        .filter((token) => token.length > 0)
+}
+
+function extractReadPathFromParsedCommand(input: unknown): string | null {
+    if (!isObject(input) || !Array.isArray(input.parsed_cmd)) {
+        return null
+    }
+
+    for (const entry of input.parsed_cmd) {
+        if (!isObject(entry)) continue
+        if (entry.type === 'read' && typeof entry.name === 'string' && entry.name.trim().length > 0) {
+            return entry.name.trim()
+        }
+    }
+
+    return null
+}
+
+const READ_LIKE_COMMANDS = new Set(['cat', 'head', 'tail', 'nl', 'sed', 'less', 'more', 'bat', 'awk'])
+
+function extractReadPathFromCommand(command: string): string | null {
+    const tokens = tokenizeShellCommand(unwrapShellCommand(command))
+    if (tokens.length === 0) return null
+
+    let commandIndex = 0
+    while (commandIndex < tokens.length) {
+        const token = tokens[commandIndex]!
+        if (token === 'env' || token.includes('=')) {
+            commandIndex += 1
+            continue
+        }
+        break
+    }
+
+    const commandName = tokens[commandIndex]
+    if (!commandName || !READ_LIKE_COMMANDS.has(commandName)) {
+        return null
+    }
+
+    for (let index = tokens.length - 1; index > commandIndex; index -= 1) {
+        const candidate = tokens[index]!
+        if (candidate === '&&' || candidate === '|' || candidate === ';' || candidate === '--') continue
+        if (candidate.startsWith('-')) continue
+        if (candidate === commandName) continue
+        return candidate
+    }
+
+    return null
+}
+
+function extractReadLikeToolPath(tool: ToolCallBlock['tool']): string | null {
+    if (tool.name === 'Read') {
+        return getInputStringAny(tool.input, ['file_path', 'path', 'file'])
+    }
+
+    if (tool.name === 'NotebookRead') {
+        return getInputStringAny(tool.input, ['notebook_path', 'path', 'file'])
+    }
+
+    if (tool.name === 'Bash' || tool.name === 'CodexBash') {
+        const parsedPath = extractReadPathFromParsedCommand(tool.input)
+        if (parsedPath) {
+            return parsedPath
+        }
+
+        const command = getCommandString(tool.input)
+        return command ? extractReadPathFromCommand(command) : null
+    }
+
+    return null
+}
+
 /**
  * Remove result-text blocks when the same turn already has agent-text blocks.
  *
@@ -665,6 +790,100 @@ function mergeAgentReasoningBlocks(blocks: ChatBlock[]): ChatBlock[] {
     return result
 }
 
+function mergeReadBlocks(blocks: ChatBlock[]): ChatBlock[] {
+    const merged: ChatBlock[] = []
+    let runStart = -1
+    let runParentUUID: string | null = null
+
+    function isReadLikeBlock(block: ChatBlock): block is ToolCallBlock {
+        return block.kind === 'tool-call' && extractReadLikeToolPath(block.tool) !== null
+    }
+
+    function flushRun() {
+        if (runStart === -1) return
+
+        const run = merged.slice(runStart) as ToolCallBlock[]
+        merged.length = runStart
+        const first = run[0]
+        if (!first) {
+            runStart = -1
+            runParentUUID = null
+            return
+        }
+
+        let state: ChatToolCall['state'] = 'completed'
+        let completedAt: number | null = null
+
+        for (const block of run) {
+            if (block.tool.state === 'error') {
+                state = 'error'
+            } else if (block.tool.state === 'running' && state !== 'error') {
+                state = 'running'
+            } else if (block.tool.state === 'pending' && state === 'completed') {
+                state = 'pending'
+            }
+
+            if (block.tool.completedAt && (!completedAt || block.tool.completedAt > completedAt)) {
+                completedAt = block.tool.completedAt
+            }
+        }
+
+        const files = run
+            .map((block) => extractReadLikeToolPath(block.tool))
+            .filter((file): file is string => typeof file === 'string' && file.length > 0)
+
+        merged.push({
+            kind: 'tool-call',
+            id: `read-batch:${first.id}`,
+            localId: first.localId,
+            createdAt: first.createdAt,
+            seq: first.seq ?? null,
+            tool: {
+                id: `read-batch:${first.tool.id}`,
+                name: 'ReadBatch',
+                state,
+                input: {
+                    count: run.length,
+                    files
+                },
+                createdAt: first.tool.createdAt,
+                startedAt: first.tool.startedAt ?? first.tool.createdAt,
+                completedAt,
+                description: null,
+                parentUUID: first.tool.parentUUID
+            },
+            children: run,
+            meta: first.meta
+        })
+
+        runStart = -1
+        runParentUUID = null
+    }
+
+    for (const block of blocks) {
+        if (isReadLikeBlock(block)) {
+            const parentUUID = block.tool.parentUUID ?? null
+            if (runStart !== -1 && parentUUID !== runParentUUID) {
+                flushRun()
+            }
+
+            if (runStart === -1) {
+                runStart = merged.length
+                runParentUUID = parentUUID
+            }
+
+            merged.push(block)
+            continue
+        }
+
+        flushRun()
+        merged.push(block)
+    }
+
+    flushRun()
+    return merged
+}
+
 function mergeAgentBrowserBlocks(blocks: ChatBlock[]): ChatBlock[] {
     const merged: ChatBlock[] = []
     let runStart = -1
@@ -1095,7 +1314,19 @@ function reduceTimeline(
     }
 
     return {
-        blocks: mergeAgentReasoningBlocks(mergeAgentTextBlocks(dedupeResultTextBlocks(mergeAgentBrowserBlocks(mergeCliOutputBlocks(dedupeUserEchoBlocks(blocks)))))),
+        blocks: mergeAgentReasoningBlocks(
+            mergeAgentTextBlocks(
+                dedupeResultTextBlocks(
+                    mergeReadBlocks(
+                        mergeAgentBrowserBlocks(
+                            mergeCliOutputBlocks(
+                                dedupeUserEchoBlocks(blocks)
+                            )
+                        )
+                    )
+                )
+            )
+        ),
         toolBlocksById,
         hasReadyEvent
     }
@@ -1229,6 +1460,7 @@ export function reduceChatBlocks(
     // Codex-specific: track the last token-count event.
     // New format has model_context_window for direct percentage calculation.
     let lastTokenCount: LatestUsage | null = null
+    let lastTokenCountHasRichSignal = false
 
     for (let i = normalized.length - 1; i >= 0; i--) {
         const msg = normalized[i]
@@ -1260,6 +1492,10 @@ export function reduceChatBlocks(
             }
 
             if (isTokenCount) {
+                const tokenCountHasRichSignal = msg.usage.model_context_window !== undefined
+                    || msg.usage.reasoning_output_tokens !== undefined
+                    || msg.usage.rate_limit_used_percent !== undefined
+                    || msg.usage.context_tokens_reliable === true
                 if (clearContextUsage) {
                     if (!lastTokenCount && hasRateLimitSignal) {
                         lastTokenCount = {
@@ -1268,17 +1504,19 @@ export function reduceChatBlocks(
                             reasoningOutputTokens: msg.usage.reasoning_output_tokens || undefined,
                             rateLimitUsedPercent: msg.usage.rate_limit_used_percent
                         }
+                        lastTokenCountHasRichSignal = tokenCountHasRichSignal
                     }
                     break
                 }
 
-                if (!lastTokenCount) {
+                if (!lastTokenCount || (!lastTokenCountHasRichSignal && tokenCountHasRichSignal)) {
                     lastTokenCount = {
                         ...usage,
                         modelContextWindow: msg.usage.model_context_window,
                         reasoningOutputTokens: msg.usage.reasoning_output_tokens || undefined,
                         rateLimitUsedPercent: msg.usage.rate_limit_used_percent
                     }
+                    lastTokenCountHasRichSignal = tokenCountHasRichSignal
                 }
                 continue
             }
@@ -1297,9 +1535,10 @@ export function reduceChatBlocks(
         }
     }
 
-    // Use per-step assistant usage or Codex token-count data only.
-    // Never fall back to cumulative session-result usage for context percentage.
-    latestUsage = assistantUsage ?? lastTokenCount ?? null
+    // Prefer the newest Codex token-count event when present: it carries the
+    // current model context window and rate-limit data needed by the composer.
+    // Fall back to assistant usage only when no token-count signal exists.
+    latestUsage = lastTokenCount ?? assistantUsage ?? null
 
     // Sort blocks by createdAt to ensure permission-only blocks appear in correct order.
     // We use a stable sort by adding original index as tiebreaker for equal createdAt values.

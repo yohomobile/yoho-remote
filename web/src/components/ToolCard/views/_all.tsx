@@ -9,6 +9,7 @@ import { EditView } from '@/components/ToolCard/views/EditView'
 import { AskUserQuestionView } from '@/components/ToolCard/views/AskUserQuestionView'
 import { ExitPlanModeView } from '@/components/ToolCard/views/ExitPlanModeView'
 import { MultiEditFullView, MultiEditView } from '@/components/ToolCard/views/MultiEditView'
+import { ReadBatchView } from '@/components/ToolCard/views/ReadBatchView'
 import { TodoWriteView } from '@/components/ToolCard/views/TodoWriteView'
 import { WriteView } from '@/components/ToolCard/views/WriteView'
 
@@ -23,6 +24,7 @@ export const toolViewRegistry: Record<string, ToolViewComponent> = {
     ClaudeEditedTextFile: ClaudeEditedTextFileView,
     Edit: EditView,
     MultiEdit: MultiEditView,
+    ReadBatch: ReadBatchView,
     Write: WriteView,
     TodoWrite: TodoWriteView,
     CodexDiff: CodexDiffCompactView,
@@ -38,6 +40,7 @@ export const toolFullViewRegistry: Record<string, ToolViewComponent> = {
     ClaudeEditedTextFile: ClaudeEditedTextFileView,
     Edit: EditView,
     MultiEdit: MultiEditFullView,
+    ReadBatch: ReadBatchView,
     Write: WriteView,
     CodexDiff: CodexDiffFullView,
     CodexPatch: CodexPatchView,

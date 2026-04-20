@@ -1030,6 +1030,13 @@ export async function startDaemon(): Promise<void> {
     apiMachine.setRPCHandlers({
       spawnSession,
       stopSession,
+      listSessions: () => Array.from(pidToTrackedSession.values())
+        .filter((tracked) => typeof tracked.yohoRemoteSessionId === 'string' && tracked.yohoRemoteSessionId.trim().length > 0)
+        .map((tracked) => ({
+          sessionId: tracked.yohoRemoteSessionId!,
+          pid: tracked.pid,
+          startedBy: tracked.startedBy,
+        })),
       requestShutdown: () => requestShutdown('yr-app')
     });
 

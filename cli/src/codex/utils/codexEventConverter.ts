@@ -15,6 +15,13 @@ export type CodexMessage = {
     message: string;
     id: string;
 } | {
+    type: 'status';
+    status: string;
+    id: string;
+} | {
+    type: 'compact-boundary';
+    id: string;
+} | {
     type: 'reasoning';
     message: string;
     id: string;
@@ -194,6 +201,22 @@ export function convertCodexEvent(rawEvent: unknown): CodexConversionResult | nu
             };
         }
 
+        if (eventType === 'status') {
+            const status = asString(payloadRecord.status)
+                ?? asString(payloadRecord.message)
+                ?? asString(payloadRecord.text);
+            if (!status) {
+                return null;
+            }
+            return {
+                message: {
+                    type: 'status',
+                    status,
+                    id: randomUUID()
+                }
+            };
+        }
+
         if (eventType === 'agent_reasoning') {
             const message = asString(payloadRecord.text) ?? asString(payloadRecord.message);
             if (!message) {
@@ -242,6 +265,15 @@ export function convertCodexEvent(rawEvent: unknown): CodexConversionResult | nu
         const itemType = asString(payloadRecord.type);
         if (!itemType) {
             return null;
+        }
+
+        if (itemType === 'context_compaction' || itemType === 'compaction') {
+            return {
+                message: {
+                    type: 'compact-boundary',
+                    id: randomUUID()
+                }
+            };
         }
 
         if (itemType === 'function_call') {
