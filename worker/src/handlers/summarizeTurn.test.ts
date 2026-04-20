@@ -71,6 +71,7 @@ function createContext(options?: {
                 insertedSummaries.push(input)
                 return { id: 'summary-1', inserted: true }
             },
+            countUnassignedL1: async () => 0,
         },
         runStore: {
             insert: async (input: InsertRunInput) => {
