@@ -409,7 +409,7 @@ describe('/session/send', () => {
         expect(res.status).toBe(200)
         expect(await res.json()).toEqual({ ok: true })
         expect(engine.sendMessage.mock.calls).toHaveLength(1)
-        const [sid, payload] = engine.sendMessage.mock.calls[0] as [string, { text: string }]
+        const [sid, payload] = engine.sendMessage.mock.calls[0] as unknown as [string, { text: string }]
         expect(sid).toBe('sess-1')
         expect(payload.text).toBe('hello')
     })
@@ -500,7 +500,7 @@ describe('/session/stop', () => {
         expect(res.status).toBe(200)
         expect(await res.json()).toEqual({ ok: true })
         expect(engine.terminateSessionProcess.mock.calls).toHaveLength(1)
-        expect((engine.terminateSessionProcess.mock.calls[0] as [string])[0]).toBe('sess-1')
+        expect((engine.terminateSessionProcess.mock.calls[0] as unknown as [string])[0]).toBe('sess-1')
     })
 
     it('unknown sessionId → 404', async () => {

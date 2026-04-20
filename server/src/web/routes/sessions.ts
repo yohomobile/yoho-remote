@@ -1421,6 +1421,7 @@ export function createSessionsRoutes(
             })
         }
 
+        engine.noteResumeClientEvent(sessionResult.sessionId, 'session-get')
         return c.json({ session })
     })
 
@@ -1593,6 +1594,7 @@ export function createSessionsRoutes(
                     const namespace = c.get('namespace')
                     void store.setSessionCreatedBy(sessionId, email, namespace)
                 }
+                engine.markSessionResumeReady(sessionId, 'manual-resume')
                 return c.json({ type: 'resumed', sessionId })
             }
         }
@@ -1665,6 +1667,7 @@ export function createSessionsRoutes(
             }
         }
 
+        engine.markSessionResumeReady(newSessionId, 'manual-resume')
         return c.json({
             type: 'created',
             sessionId: newSessionId,
@@ -1990,6 +1993,7 @@ export function createSessionsRoutes(
 
         // Get agent type from session metadata, default to 'claude'
         const agent = sessionResult.session.metadata?.flavor ?? 'claude'
+        engine.noteResumeClientEvent(sessionResult.sessionId, 'slash-commands-get')
 
         try {
             const result = await engine.listSlashCommands(sessionResult.sessionId, agent)
@@ -2025,6 +2029,7 @@ export function createSessionsRoutes(
         if (sessionResult instanceof Response) {
             return sessionResult
         }
+        engine.noteResumeClientEvent(sessionResult.sessionId, 'typing')
 
         const body = await c.req.json().catch(() => null)
         if (!body || typeof body.text !== 'string') {

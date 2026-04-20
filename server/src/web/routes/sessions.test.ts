@@ -51,6 +51,17 @@ function createBrainPreferences(machineId = 'machine-1') {
     })
 }
 
+function withRouteDiagnostics<T extends Record<string, unknown>>(engine: T): T & {
+    markSessionResumeReady: (sessionId: string, source: string) => void
+    noteResumeClientEvent: (sessionId: string, event: string, details?: Record<string, unknown>) => void
+} {
+    return {
+        markSessionResumeReady() {},
+        noteResumeClientEvent() {},
+        ...engine,
+    }
+}
+
 describe('createSessionsRoutes', () => {
     it('archives sessions by default and still requests runtime shutdown for inactive sessions', async () => {
         const archiveCalls: Array<{ sessionId: string; options: Record<string, unknown> }> = []
@@ -605,7 +616,7 @@ describe('createSessionsRoutes', () => {
         }
 
         const spawnCalls: Array<Record<string, unknown> | undefined> = []
-        const fakeEngine = {
+        const fakeEngine = withRouteDiagnostics({
             getSession: (id: string) => id === session.id ? session : null,
             getOrRefreshSession: async (id: string) => id === session.id ? session : null,
             getMachineByNamespace: () => ({ id: 'machine-1', active: true, metadata: {}, namespace: 'default' }),
@@ -616,7 +627,7 @@ describe('createSessionsRoutes', () => {
                 return { type: 'success', sessionId: session.id }
             },
             subscribe: () => () => {},
-        }
+        })
 
         const fakeStore = {
             getSession: async () => createStoredSession({
@@ -685,7 +696,7 @@ describe('createSessionsRoutes', () => {
             modelMode: 'gpt-5.4',
         }
 
-        const fakeEngine = {
+        const fakeEngine = withRouteDiagnostics({
             getSession: (id: string) => id === session.id ? session : null,
             getOrRefreshSession: async (id: string) => id === session.id ? session : null,
             getMachineByNamespace: () => ({ id: 'machine-1', active: true, metadata: {}, namespace: 'default' }),
@@ -695,7 +706,7 @@ describe('createSessionsRoutes', () => {
                 return { type: 'success', sessionId: session.id }
             },
             subscribe: () => () => {},
-        }
+        })
 
         const fakeStore = {
             getSession: async () => createStoredSession({
@@ -1240,7 +1251,7 @@ describe('createSessionsRoutes', () => {
 
         const spawnCalls: Array<Record<string, unknown> | undefined> = []
         let spawnCount = 0
-        const fakeEngine = {
+        const fakeEngine = withRouteDiagnostics({
             getSession: (id: string) => {
                 if (id === session.id) return session
                 if (id === createdSession.id) return createdSession
@@ -1261,7 +1272,7 @@ describe('createSessionsRoutes', () => {
             subscribe: () => () => {},
             sendMessage: async () => true,
             getMessagesPage: async () => ({ messages: [] }),
-        }
+        })
 
         const fakeStore = {
             getSession: async (id: string) => createStoredSession({
@@ -1361,7 +1372,7 @@ describe('createSessionsRoutes', () => {
 
         const rebindCalls: Array<{ sessionId: string; patch: Record<string, unknown> }> = []
         let spawnCount = 0
-        const fakeEngine = {
+        const fakeEngine = withRouteDiagnostics({
             getSession: (id: string) => {
                 if (id === session.id) return session
                 if (id === createdSession.id) return createdSession
@@ -1387,7 +1398,7 @@ describe('createSessionsRoutes', () => {
             subscribe: () => () => {},
             sendMessage: async () => true,
             getMessagesPage: async () => ({ messages: [] }),
-        }
+        })
 
         const fakeStore = {
             getSession: async (id: string) => createStoredSession({

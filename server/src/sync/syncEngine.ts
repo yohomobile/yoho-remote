@@ -181,6 +181,27 @@ export type SendMessageOutcome =
         queueDepth: number
     }
 
+type ResumeTraceSource = 'auto-resume' | 'manual-resume'
+
+type ResumeTraceClientEvent =
+    | 'session-get'
+    | 'messages-get'
+    | 'slash-commands-get'
+    | 'sse-connect'
+    | 'typing'
+    | 'message-post'
+
+type ResumeTraceState = {
+    source: ResumeTraceSource
+    resumedAt: number
+    lastUpdatedAt: number
+    firstClientActivityAt?: number
+    firstClientActivityEvent?: ResumeTraceClientEvent
+    firstSseConnectedAt?: number
+    firstTypingAt?: number
+    firstMessagePostedAt?: number
+}
+
 export interface Machine {
     id: string
     namespace: string
@@ -664,10 +685,12 @@ export class SyncEngine {
     private static readonly TASK_MESSAGE_SETTLE_POLL_MS = 50
     private static readonly TASK_MESSAGE_SETTLE_WINDOW_MS = 200
     private static readonly TASK_MESSAGE_SETTLE_MAX_WAIT_MS = 3_000
+    private static readonly RESUME_TRACE_TTL_MS = 10 * 60_000
     private autoResumeBaseGraceMs = 10_000
     private autoResumeMaxGraceMs = 30_000
     private autoResumeGraceQuietWindowMs = 5_000
     private autoResumeGraceCheckIntervalMs = 1_000
+    private readonly resumeTraceBySessionId: Map<string, ResumeTraceState> = new Map()
 
     // Server 启动静默窗口：启动后 30 秒内
     // - reloadAllAsync hydrate session 时不广播 session-added/session-updated
@@ -714,6 +737,87 @@ export class SyncEngine {
     subscribe(listener: SyncEventListener): () => void {
         this.listeners.add(listener)
         return () => this.listeners.delete(listener)
+    }
+
+    private pruneResumeTrace(now = Date.now()): void {
+        for (const [sessionId, trace] of this.resumeTraceBySessionId) {
+            if (now - trace.lastUpdatedAt > SyncEngine.RESUME_TRACE_TTL_MS) {
+                this.resumeTraceBySessionId.delete(sessionId)
+            }
+        }
+    }
+
+    markSessionResumeReady(sessionId: string, source: ResumeTraceSource): void {
+        const now = Date.now()
+        this.pruneResumeTrace(now)
+        this.resumeTraceBySessionId.set(sessionId, {
+            source,
+            resumedAt: now,
+            lastUpdatedAt: now,
+        })
+        console.log(`[resume-trace] Session ${sessionId.slice(0, 8)} resumed via ${source}, waiting for client activity`)
+    }
+
+    noteResumeClientEvent(
+        sessionId: string,
+        event: ResumeTraceClientEvent,
+        details: {
+            sentFrom?: string
+            clientId?: string | null
+            deviceType?: string | null
+        } = {}
+    ): void {
+        const trace = this.resumeTraceBySessionId.get(sessionId)
+        if (!trace) {
+            return
+        }
+
+        const now = Date.now()
+        trace.lastUpdatedAt = now
+        const shortId = sessionId.slice(0, 8)
+        const elapsedSinceResume = now - trace.resumedAt
+
+        if (!trace.firstClientActivityAt) {
+            trace.firstClientActivityAt = now
+            trace.firstClientActivityEvent = event
+            console.log(`[resume-trace] Session ${shortId} first client activity after resume: event=${event} elapsed=${elapsedSinceResume}ms`)
+        }
+
+        if (event === 'sse-connect' && !trace.firstSseConnectedAt) {
+            trace.firstSseConnectedAt = now
+            const clientIdPart = details.clientId ? ` clientId=${details.clientId}` : ''
+            const deviceTypePart = details.deviceType ? ` deviceType=${details.deviceType}` : ''
+            console.log(`[resume-trace] Session ${shortId} SSE connected after resume: elapsed=${elapsedSinceResume}ms${clientIdPart}${deviceTypePart}`)
+            this.resumeTraceBySessionId.set(sessionId, trace)
+            return
+        }
+
+        if (event === 'typing' && !trace.firstTypingAt) {
+            trace.firstTypingAt = now
+            const sinceFirstClient = trace.firstClientActivityAt ? now - trace.firstClientActivityAt : null
+            console.log(`[resume-trace] Session ${shortId} first typing after resume: elapsed=${elapsedSinceResume}ms${sinceFirstClient === null ? '' : ` sinceFirstClient=${sinceFirstClient}ms`}`)
+            this.resumeTraceBySessionId.set(sessionId, trace)
+            return
+        }
+
+        if (event === 'message-post' && !trace.firstMessagePostedAt) {
+            trace.firstMessagePostedAt = now
+            const sinceFirstClient = trace.firstClientActivityAt ? now - trace.firstClientActivityAt : null
+            const sinceSse = trace.firstSseConnectedAt ? now - trace.firstSseConnectedAt : null
+            const sinceTyping = trace.firstTypingAt ? now - trace.firstTypingAt : null
+            const sentFrom = details.sentFrom?.trim() || 'unknown'
+            console.log(
+                `[resume-trace] Session ${shortId} first user message after resume: elapsed=${elapsedSinceResume}ms` +
+                `${sinceFirstClient === null ? '' : ` sinceFirstClient=${sinceFirstClient}ms`}` +
+                `${sinceSse === null ? '' : ` sinceSse=${sinceSse}ms`}` +
+                `${sinceTyping === null ? '' : ` sinceTyping=${sinceTyping}ms`}` +
+                ` sentFrom=${sentFrom} source=${trace.source}`
+            )
+            this.resumeTraceBySessionId.delete(sessionId)
+            return
+        }
+
+        this.resumeTraceBySessionId.set(sessionId, trace)
     }
 
     /**
@@ -2945,6 +3049,7 @@ export class SyncEngine {
                                 console.error(`[auto-resume] Failed to clear archive metadata for ${session.id.slice(0, 8)}:`, err)
                             })
                         }
+                        this.markSessionResumeReady(session.id, 'auto-resume')
                         console.log(`[auto-resume] Resumed session ${session.id.slice(0, 8)}`)
                     } else {
                         await this.store.setSessionActive(session.id, false, previousActiveAt, namespace)
@@ -3030,37 +3135,66 @@ export class SyncEngine {
         if (maxTimeoutMs <= 0) return
 
         const start = Date.now()
+        const machineLabel = machineId.slice(0, 8)
         // Always wait through the base grace, then require a short quiet window
         // with no candidate-set changes before we trigger replacement resumes.
         let quietReferenceAt = start + baseTimeoutMs
-        let previousPendingKey = this.getAutoResumeCandidates(machineId, namespace, machineSupportedAgents, start)
-            .map(session => session.id)
-            .sort()
-            .join(',')
+        let previousPendingSessions = this.getAutoResumeCandidates(machineId, namespace, machineSupportedAgents, start)
+        let previousPendingKey = previousPendingSessions.map(session => session.id).sort().join(',')
+        let previousPendingCount = previousPendingSessions.length
 
-        if (!previousPendingKey) return
+        console.log(
+            `[auto-resume] Grace start for ${machineLabel}: ` +
+            `base=${baseTimeoutMs}ms quiet=${quietWindowMs}ms max=${maxTimeoutMs}ms candidates=${previousPendingCount}`
+        )
+
+        if (!previousPendingKey) {
+            console.log(`[auto-resume] Grace skip for ${machineLabel}: reason=no-candidates`)
+            return
+        }
 
         while (Date.now() - start < maxTimeoutMs) {
             const now = Date.now()
             if (now - start >= baseTimeoutMs && now - quietReferenceAt >= quietWindowMs) {
+                console.log(
+                    `[auto-resume] Grace end for ${machineLabel}: ` +
+                    `reason=quiet-window-elapsed waited=${now - start}ms candidates=${previousPendingCount}`
+                )
                 return
             }
             await new Promise(r => setTimeout(r, checkIntervalMs))
             if (!this.machines.get(machineId)?.active) {
+                console.log(
+                    `[auto-resume] Grace aborted for ${machineLabel}: ` +
+                    `reason=machine-inactive waited=${Date.now() - start}ms`
+                )
                 return
             }
-            const pendingKey = this.getAutoResumeCandidates(machineId, namespace, machineSupportedAgents, Date.now())
-                .map(session => session.id)
-                .sort()
-                .join(',')
+            previousPendingSessions = this.getAutoResumeCandidates(machineId, namespace, machineSupportedAgents, Date.now())
+            const pendingKey = previousPendingSessions.map(session => session.id).sort().join(',')
+            previousPendingCount = previousPendingSessions.length
             if (!pendingKey) {
+                console.log(
+                    `[auto-resume] Grace end for ${machineLabel}: ` +
+                    `reason=no-candidates waited=${Date.now() - start}ms`
+                )
                 return
             }
             if (pendingKey !== previousPendingKey) {
-                quietReferenceAt = Math.max(start + baseTimeoutMs, Date.now())
+                const changedAt = Date.now()
+                quietReferenceAt = Math.max(start + baseTimeoutMs, changedAt)
                 previousPendingKey = pendingKey
+                console.log(
+                    `[auto-resume] Grace reset for ${machineLabel}: ` +
+                    `reason=candidate-set-changed waited=${changedAt - start}ms candidates=${previousPendingCount}`
+                )
             }
         }
+
+        console.log(
+            `[auto-resume] Grace end for ${machineLabel}: ` +
+            `reason=max-timeout waited=${Date.now() - start}ms candidates=${previousPendingCount}`
+        )
     }
 
     /** Public alias for refreshSession - used by guards.ts and events.ts */

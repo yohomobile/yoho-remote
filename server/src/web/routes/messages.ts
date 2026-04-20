@@ -44,6 +44,7 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null, sto
             return sessionResult
         }
         const sessionId = sessionResult.sessionId
+        engine.noteResumeClientEvent(sessionId, 'messages-get')
 
         const parsed = querySchema.safeParse(c.req.query())
         const limit = parsed.success ? (parsed.data.limit ?? 200) : 200
@@ -74,6 +75,7 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null, sto
         if (!session.active && !isBrainSession) {
             return c.json({ error: 'Session is inactive' }, 409)
         }
+        engine.noteResumeClientEvent(sessionId, 'message-post', { sentFrom })
 
         const acceptedAt = Date.now()
         const brainDelivery = isBrainSession

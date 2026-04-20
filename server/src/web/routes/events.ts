@@ -55,6 +55,7 @@ export function createEventsRoutes(
                 if (sessionResult instanceof Response) {
                     return sessionResult
                 }
+                engine.noteResumeClientEvent(sessionId, 'sse-connect', { clientId, deviceType })
             }
             if (machineId) {
                 const machine = engine.getMachine(machineId)

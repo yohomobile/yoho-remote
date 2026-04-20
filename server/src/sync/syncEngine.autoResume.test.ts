@@ -471,4 +471,44 @@ describe('SyncEngine auto-resume', () => {
 
         expect(spawnCalled).toBe(false)
     })
+
+    test('tracks resume trace milestones until the first user message arrives', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActive: async () => true,
+            getSession: async () => null,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const rpcRegistry = {
+            getSocketIdForMethod: () => 'socket-1',
+        } as any
+
+        const engine = new SyncEngine(store, io, rpcRegistry, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        engine.markSessionResumeReady('session-trace', 'auto-resume')
+        engine.noteResumeClientEvent('session-trace', 'session-get')
+
+        const traceAfterClient = (engine as any).resumeTraceBySessionId.get('session-trace')
+        expect(traceAfterClient).toMatchObject({
+            source: 'auto-resume',
+            firstClientActivityEvent: 'session-get',
+        })
+        expect(typeof traceAfterClient?.firstClientActivityAt).toBe('number')
+
+        engine.noteResumeClientEvent('session-trace', 'message-post', { sentFrom: 'webapp' })
+        expect((engine as any).resumeTraceBySessionId.has('session-trace')).toBe(false)
+    })
 })
