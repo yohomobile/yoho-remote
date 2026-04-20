@@ -290,39 +290,10 @@ ncu_exec "cd $NCU_EXE_DIR && NOW=\$(date +%s) && ALL_OK=true && for f in $VERIFY
 
 # ==================== Step 6: Deploy ====================
 
-# --- 6a: Deploy server to ncu ---
-if [[ "$DEPLOY_SERVER" == "true" ]]; then
-    log "Deploying server to ncu..."
-
-    # Ensure systemd EnvironmentFile is configured
-    ncu_exec "
-        SERVICE_FILE=/etc/systemd/system/yoho-remote-server.service
-        ENV_FILE=$NCU_REPO/.env
-        if ! echo $NCU_SUDO_PASS | sudo -S grep -q 'EnvironmentFile=' \$SERVICE_FILE 2>/dev/null; then
-            echo $NCU_SUDO_PASS | sudo -S sed -i \"/^ExecStart=/i EnvironmentFile=\$ENV_FILE\" \$SERVICE_FILE
-            echo $NCU_SUDO_PASS | sudo -S systemctl daemon-reload
-            echo '  ✓ Added EnvironmentFile to server service'
-        fi
-    "
-
-    # Stop server (处理假死/僵尸)
-    ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl stop yoho-remote-server.service 2>/dev/null || true"
-    sleep 2
-    if is_ncu; then
-        force_kill_process yoho-remote-server "echo $NCU_SUDO_PASS | sudo -S"
-    else
-        ncu_exec "P=yoho-remote-server; S='echo $NCU_SUDO_PASS | sudo -S'; \$S pkill -x \$P 2>/dev/null; sleep 3; if pgrep -x \$P >/dev/null 2>&1; then echo '  ⚠ SIGTERM failed, SIGKILL...'; \$S pkill -9 -x \$P 2>/dev/null; sleep 2; fi; R=\$(pgrep -x \$P 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do \$S kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -x \$P >/dev/null 2>&1 && echo '  ✗ WARNING: still alive' || echo '  ✓ Fully stopped'"
-    fi
-    # Start server
-    ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl start yoho-remote-server.service"
-    sleep 2
-    ncu_exec "systemctl is-active --quiet yoho-remote-server.service && echo '  ✓ Server restarted' || echo '  ✗ Server failed to start'"
-fi
-
-# --- 6b: Deploy daemon ---
+# --- 6a: Deploy daemon ---
 if [[ "$DEPLOY_DAEMON" == "true" ]]; then
 
-    # 6b-1: Deploy to macmini
+    # 6a-1: Deploy to macmini
     if should_deploy_daemon macmini; then
         log "Deploying daemon to macmini..."
         if ncu_exec "ssh $SSH_OPTS -o BatchMode=yes $MACMINI_SSH 'true'" 2>/dev/null; then
@@ -354,30 +325,31 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
             # macOS 要求重新 ad-hoc 签名（SCP 后签名失效，LaunchAgent 会 SIGKILL 未签名二进制）
             ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'codesign --force --sign - $INSTALL_DIR/yoho-remote-daemon && codesign --force --sign - $INSTALL_DIR/yoho-remote'"
 
-            # 通过 LaunchAgent 重启（macOS 不能用 nohup via SSH）
-            ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'launchctl unload /Users/guang/Library/LaunchAgents/com.hapi.daemon.plist 2>/dev/null; launchctl load /Users/guang/Library/LaunchAgents/com.hapi.daemon.plist'"
-            sleep 4
-            ALIVE=$(ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'pgrep -x yoho-remote-daemon >/dev/null && echo yes || echo no'")
-            if [[ "$ALIVE" == *"yes"* ]]; then
-                ok "macmini daemon restarted"
-            else
-                fail "macmini daemon failed to start — check /tmp/yoho-remote-daemon.log"
-            fi
+            # 暂时跳过 macmini daemon 重启，避免部署过程中把它拉起。
+            # ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'launchctl unload /Users/guang/Library/LaunchAgents/com.hapi.daemon.plist 2>/dev/null; launchctl load /Users/guang/Library/LaunchAgents/com.hapi.daemon.plist'"
+            # sleep 4
+            # ALIVE=$(ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'pgrep -x yoho-remote-daemon >/dev/null && echo yes || echo no'")
+            # if [[ "$ALIVE" == *"yes"* ]]; then
+            #     ok "macmini daemon restarted"
+            # else
+            #     fail "macmini daemon failed to start — check /tmp/yoho-remote-daemon.log"
+            # fi
+            warn "macmini daemon restart skipped (binaries copied and signed only)"
         else
             warn "macmini is unreachable — skipping"
         fi
     fi
 
-    # 6b-2: Deploy daemon to ncu
+    # 6a-2: Deploy daemon to ncu
     if should_deploy_daemon ncu && ! is_ncu; then
         log "Reinstalling daemon on ncu..."
         ncu_exec "echo $NCU_SUDO_PASS | sudo -SE bash $NCU_REPO/scripts/reinstall-daemon-systemd.sh $NCU_EXE_DIR/bun-linux-x64/yoho-remote"
         ok "ncu daemon unit reinstalled and restarted"
     fi
 
-    # 6b-3: If running on ncu, restart ncu daemon last (will kill session)
+    # 6a-3: If running on ncu, restart ncu daemon before server deploy (may kill session)
     if is_ncu && should_deploy_daemon ncu; then
-        log "Restarting daemon on ncu (self) — session will restart..."
+        log "Restarting daemon on ncu (self) before server deploy — session may restart..."
 
         RESTART_SCRIPT=$(mktemp /tmp/yr-restart-XXXXXX.sh)
         cat > "$RESTART_SCRIPT" << RESTART_EOF
@@ -393,6 +365,35 @@ RESTART_EOF
         echo "$NCU_SUDO_PASS" | sudo -S systemd-run --unit=yr-daemon-restart bash "$RESTART_SCRIPT"
         ok "Restart dispatched (log: /tmp/yr-restart.log)"
     fi
+fi
+
+# --- 6b: Deploy server to ncu ---
+if [[ "$DEPLOY_SERVER" == "true" ]]; then
+    log "Deploying server to ncu..."
+
+    # Ensure systemd EnvironmentFile is configured
+    ncu_exec "
+        SERVICE_FILE=/etc/systemd/system/yoho-remote-server.service
+        ENV_FILE=$NCU_REPO/.env
+        if ! echo $NCU_SUDO_PASS | sudo -S grep -q 'EnvironmentFile=' \$SERVICE_FILE 2>/dev/null; then
+            echo $NCU_SUDO_PASS | sudo -S sed -i \"/^ExecStart=/i EnvironmentFile=\$ENV_FILE\" \$SERVICE_FILE
+            echo $NCU_SUDO_PASS | sudo -S systemctl daemon-reload
+            echo '  ✓ Added EnvironmentFile to server service'
+        fi
+    "
+
+    # Stop server (处理假死/僵尸)
+    ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl stop yoho-remote-server.service 2>/dev/null || true"
+    sleep 2
+    if is_ncu; then
+        force_kill_process yoho-remote-server "echo $NCU_SUDO_PASS | sudo -S"
+    else
+        ncu_exec "P=yoho-remote-server; S='echo $NCU_SUDO_PASS | sudo -S'; \$S pkill -x \$P 2>/dev/null; sleep 3; if pgrep -x \$P >/dev/null 2>&1; then echo '  ⚠ SIGTERM failed, SIGKILL...'; \$S pkill -9 -x \$P 2>/dev/null; sleep 2; fi; R=\$(pgrep -x \$P 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do \$S kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -x \$P >/dev/null 2>&1 && echo '  ✗ WARNING: still alive' || echo '  ✓ Fully stopped'"
+    fi
+    # Start server
+    ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl start yoho-remote-server.service"
+    sleep 2
+    ncu_exec "systemctl is-active --quiet yoho-remote-server.service && echo '  ✓ Server restarted' || echo '  ✗ Server failed to start'"
 fi
 
 echo ""
