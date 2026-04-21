@@ -289,7 +289,7 @@ export class ApiClient {
                     return parsed.data
                 }
                 lastError = error
-                if (!isRetryableSendMessageError(error)) {
+                if (!isRetryableServerError(error)) {
                     throw error
                 }
                 if (attempt < 2) {
@@ -861,7 +861,7 @@ export class ApiClient {
 
 }
 
-function isRetryableSendMessageError(error: unknown): boolean {
+export function isRetryableServerError(error: unknown): boolean {
     if (!axios.isAxiosError(error)) {
         return true
     }

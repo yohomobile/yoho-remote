@@ -3,9 +3,9 @@ import { existsSync } from 'fs';
 import os from 'os';
 import { spawnSync } from 'child_process';
 
-import { ApiClient } from '@/api/api';
+import { ApiClient, isRetryableServerError } from '@/api/api';
 import { TrackedSession } from './types';
-import { MachineMetadata, DaemonState, Metadata } from '@/api/types';
+import { MachineMetadata, DaemonState, Machine, Metadata } from '@/api/types';
 import { SpawnSessionOptions, SpawnSessionResult, SpawnLogEntry } from '@/modules/common/registerCommonHandlers';
 import { logger } from '@/ui/logger';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
@@ -13,6 +13,7 @@ import { configuration } from '@/configuration';
 import packageJson from '../../package.json';
 import { getEnvironmentInfo } from '@/ui/doctor';
 import { spawnYohoRemoteCLI } from '@/utils/spawnYohoRemoteCLI';
+import { delay } from '@/utils/time';
 import { writeDaemonState, DaemonLocallyPersistedState, readDaemonState, readSettings, applyPathMapping, acquireDaemonLock, releaseDaemonLock } from '@/persistence';
 import { isProcessAlive, isWindows, killProcess, killProcessByChildProcess } from '@/utils/process';
 import { resolveClaudeModelArg } from '@/utils/claudeModelArg';
@@ -69,6 +70,47 @@ function machineMetadataChanged(currentMetadata: MachineMetadata | null | undefi
   }
 
   return false;
+}
+
+const STARTUP_SERVER_RETRY_BUDGET_MS = 3 * 60 * 1000;
+const STARTUP_SERVER_RETRY_MAX_DELAY_MS = 30_000;
+
+/**
+ * Register the machine with the server during daemon startup, tolerating the server
+ * being temporarily unreachable (e.g. when a deploy script restarts daemon and server
+ * in parallel). Retries on network errors / 5xx with exponential backoff capped at
+ * 30 s, for up to 3 minutes total. 4xx responses fail fast — they indicate a real
+ * configuration or auth problem that retrying cannot fix.
+ */
+async function registerMachineWithStartupRetry(
+  api: ApiClient,
+  opts: {
+    machineId: string;
+    metadata: MachineMetadata;
+    daemonState?: DaemonState;
+  }
+): Promise<Machine> {
+  const deadline = Date.now() + STARTUP_SERVER_RETRY_BUDGET_MS;
+  let attempt = 0;
+  while (true) {
+    try {
+      return await api.getOrCreateMachine(opts);
+    } catch (error) {
+      if (!isRetryableServerError(error)) {
+        throw error;
+      }
+      if (Date.now() >= deadline) {
+        throw error;
+      }
+      const waitMs = Math.min(STARTUP_SERVER_RETRY_MAX_DELAY_MS, 1_000 * 2 ** attempt);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.info(
+        `[DAEMON RUN] Server not reachable yet (${errorMessage}); retrying in ${waitMs}ms (attempt ${attempt + 1})`
+      );
+      await delay(waitMs);
+      attempt += 1;
+    }
+  }
 }
 
 export async function startDaemon(): Promise<void> {
@@ -1002,8 +1044,10 @@ export async function startDaemon(): Promise<void> {
     // Create API client
     const api = await ApiClient.create();
 
-    // Get or create machine
-    const machine = await api.getOrCreateMachine({
+    // Get or create machine — tolerate server being temporarily unreachable at startup
+    // (e.g. deploy scripts restart daemon and server in parallel). Only retry on network
+    // errors / 5xx; 4xx is a real configuration/auth problem and must fail fast.
+    const machine = await registerMachineWithStartupRetry(api, {
       machineId,
       metadata: initialMachineMetadata,
       daemonState: initialDaemonState
