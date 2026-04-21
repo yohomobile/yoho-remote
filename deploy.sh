@@ -9,9 +9,6 @@ NCU_REPO="/home/workspaces/repos/yoho-remote"
 NCU_EXE_DIR="$NCU_REPO/cli/dist-exe"
 NCU_SUDO_PASS="guang"
 
-MACMINI_SSH="guang@192.168.0.236"
-MACMINI_DAEMON_ENV="CLI_API_TOKEN=rDhnX0JCPIki0s6t1kNsHJkSLCvpAEt3wNCb_dkEyOc YOHO_REMOTE_URL=https://remote.yohomobile.dev YOHO_MACHINE_NAME=macmini-daemon YOHO_MACHINE_IP=192.168.0.236"
-
 INSTALL_DIR="/opt/yoho-remote"
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3"
 LOCAL_REINSTALL_DAEMON_SCRIPT="$(pwd)/scripts/reinstall-daemon-systemd.sh"
@@ -123,7 +120,7 @@ force_kill_process() {
 
 # ==================== Parse arguments ====================
 # 所有合法的 daemon 目标名
-ALL_DAEMON_TARGET_NAMES="ncu macmini"
+ALL_DAEMON_TARGET_NAMES="ncu"
 
 MODE="${1:-}"
 shift 2>/dev/null || true
@@ -134,18 +131,15 @@ if [[ -z "$MODE" || ! "$MODE" =~ ^(server|daemon|all)$ ]]; then
 Usage: deploy.sh <server|daemon|all> [target...]
 
   server              Build & deploy server + CLI to ncu only
-  daemon              Build & deploy daemon + CLI to all machines
-  daemon <target...>  Build & deploy daemon only to specified targets
+  daemon              Build & deploy daemon + CLI to ncu
   all                 Deploy both server and daemon
 
 Daemon targets:
   ncu             ncu 本机 (systemd)
-  macmini         macOS (darwin-arm64, LAN)
 
 Examples:
-  deploy.sh daemon                        # 部署到全部 2 台
-  deploy.sh daemon ncu                    # 只部署到 ncu
-  deploy.sh daemon ncu macmini            # 部署到 ncu 和 macmini
+  deploy.sh daemon
+  deploy.sh daemon ncu
 USAGE
     exit 1
 fi
@@ -176,12 +170,6 @@ should_deploy_daemon() {
     done
     return 1
 }
-
-# 是否需要构建 darwin-arm64 二进制（macmini）
-NEED_DARWIN_BUILD=false
-if should_deploy_daemon macmini; then
-    NEED_DARWIN_BUILD=true
-fi
 
 # 显示信息
 DEPLOY_INFO="$MODE"
@@ -265,10 +253,6 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
         ncu_exec "cd $NCU_REPO/cli && $BUN run build:exe:daemon"
     fi
 
-    if [[ "$NEED_DARWIN_BUILD" == "true" ]]; then
-        log "Building daemon + CLI (darwin-arm64) for macmini..."
-        ncu_exec "cd $NCU_REPO/cli && $BUN run scripts/build-executable.ts --name yoho-remote-daemon --target bun-darwin-arm64 && $BUN run scripts/build-executable.ts --name yoho-remote --target bun-darwin-arm64"
-    fi
 fi
 
 # ==================== Step 5: Verify builds ====================
@@ -281,9 +265,6 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
     if should_deploy_daemon ncu; then
         VERIFY_FILES="$VERIFY_FILES bun-linux-x64/yoho-remote-daemon"
     fi
-    if [[ "$NEED_DARWIN_BUILD" == "true" ]]; then
-        VERIFY_FILES="$VERIFY_FILES bun-darwin-arm64/yoho-remote-daemon bun-darwin-arm64/yoho-remote"
-    fi
 fi
 
 ncu_exec "cd $NCU_EXE_DIR && NOW=\$(date +%s) && ALL_OK=true && for f in $VERIFY_FILES; do if [ ! -f \"\$f\" ]; then echo \"  ✗ \$f not found\"; ALL_OK=false; elif [ \$(( NOW - \$(stat -c %Y \"\$f\") )) -gt 120 ]; then echo \"  ✗ \$f is stale\"; ALL_OK=false; else echo \"  ✓ \$f\"; fi; done && \$ALL_OK"
@@ -293,54 +274,7 @@ ncu_exec "cd $NCU_EXE_DIR && NOW=\$(date +%s) && ALL_OK=true && for f in $VERIFY
 # --- 6a: Deploy daemon ---
 if [[ "$DEPLOY_DAEMON" == "true" ]]; then
 
-    # 6a-1: Deploy to macmini
-    if should_deploy_daemon macmini; then
-        log "Deploying daemon to macmini..."
-        if ncu_exec "ssh $SSH_OPTS -o BatchMode=yes $MACMINI_SSH 'true'" 2>/dev/null; then
-            # Stop old daemon and detached session children (处理假死/僵尸 — macOS，无 sudo)
-            ncu_exec "ssh $SSH_OPTS $MACMINI_SSH '
-                list_pids() {
-                    { pgrep -x yoho-remote-daemon 2>/dev/null || true; pgrep -x yoho-remote 2>/dev/null || true; } | sort -u
-                }
-                for p in \$(list_pids); do kill -TERM \$p 2>/dev/null || true; done
-                sleep 3
-                R=\$(list_pids)
-                if [ -n \"\$R\" ]; then
-                    echo \"  ⚠ SIGTERM failed, SIGKILL...\"
-                    for p in \$R; do kill -9 \$p 2>/dev/null || true; done
-                    sleep 2
-                fi
-                R=\$(list_pids)
-                if [ -n \"\$R\" ]; then
-                    for p in \$R; do kill -9 \$p 2>/dev/null || true; done
-                    sleep 1
-                fi
-                R=\$(list_pids)
-                [ -n \"\$R\" ] && echo \"  ✗ WARNING: yoho-remote processes still alive\" || echo \"  ✓ Fully stopped\"
-            '"
-
-            # Copy new binaries
-            ncu_exec "rsync -az -e 'ssh $SSH_OPTS' $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote-daemon $NCU_EXE_DIR/bun-darwin-arm64/yoho-remote $MACMINI_SSH:$INSTALL_DIR/"
-
-            # macOS 要求重新 ad-hoc 签名（SCP 后签名失效，LaunchAgent 会 SIGKILL 未签名二进制）
-            ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'codesign --force --sign - $INSTALL_DIR/yoho-remote-daemon && codesign --force --sign - $INSTALL_DIR/yoho-remote'"
-
-            # 暂时跳过 macmini daemon 重启，避免部署过程中把它拉起。
-            # ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'launchctl unload /Users/guang/Library/LaunchAgents/com.hapi.daemon.plist 2>/dev/null; launchctl load /Users/guang/Library/LaunchAgents/com.hapi.daemon.plist'"
-            # sleep 4
-            # ALIVE=$(ncu_exec "ssh $SSH_OPTS $MACMINI_SSH 'pgrep -x yoho-remote-daemon >/dev/null && echo yes || echo no'")
-            # if [[ "$ALIVE" == *"yes"* ]]; then
-            #     ok "macmini daemon restarted"
-            # else
-            #     fail "macmini daemon failed to start — check /tmp/yoho-remote-daemon.log"
-            # fi
-            warn "macmini daemon restart skipped (binaries copied and signed only)"
-        else
-            warn "macmini is unreachable — skipping"
-        fi
-    fi
-
-    # 6a-2: Deploy daemon to ncu
+    # 6a-1: Deploy daemon to ncu
     if should_deploy_daemon ncu && ! is_ncu; then
         log "Reinstalling daemon on ncu..."
         ncu_exec "echo $NCU_SUDO_PASS | sudo -SE bash $NCU_REPO/scripts/reinstall-daemon-systemd.sh $NCU_EXE_DIR/bun-linux-x64/yoho-remote"
