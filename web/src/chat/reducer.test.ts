@@ -415,6 +415,46 @@ describe('reduceChatBlocks duplicate handling', () => {
         expect(reasoningBlocks[0]?.kind === 'agent-reasoning' ? reasoningBlocks[0].isDelta : null).toBe(false)
     })
 
+    test('does not merge reasoning deltas with different reasoning ids', () => {
+        const reduced = reduceChatBlocks([
+            {
+                id: 'reasoning-a',
+                localId: null,
+                createdAt: 1,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'reasoning',
+                    text: 'First',
+                    uuid: 'reasoning-1',
+                    parentUUID: null,
+                    isDelta: true
+                }],
+                meta: { sentFrom: 'cli' }
+            },
+            {
+                id: 'reasoning-b',
+                localId: null,
+                createdAt: 2,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'reasoning',
+                    text: 'Second',
+                    uuid: 'reasoning-2',
+                    parentUUID: null,
+                    isDelta: true
+                }],
+                meta: { sentFrom: 'cli' }
+            }
+        ] satisfies NormalizedMessage[], null)
+
+        const reasoningBlocks = reduced.blocks.filter((block) => block.kind === 'agent-reasoning')
+        expect(reasoningBlocks).toHaveLength(2)
+        expect(reasoningBlocks.map((block) => block.kind === 'agent-reasoning' ? block.text : null))
+            .toEqual(['First', 'Second'])
+    })
+
     test('merges assistant text blocks when the base id contains colons', () => {
         const reduced = reduceChatBlocks([
             {
@@ -452,6 +492,97 @@ describe('reduceChatBlocks duplicate handling', () => {
         const agentBlocks = reduced.blocks.filter((block) => block.kind === 'agent-text')
         expect(agentBlocks).toHaveLength(1)
         expect(agentBlocks[0]?.kind === 'agent-text' ? agentBlocks[0].text : '').toBe('Hello world')
+    })
+
+    test('converts assistant summary content into a visible event block', () => {
+        const reduced = reduceChatBlocks([
+            {
+                id: 'summary-msg',
+                localId: null,
+                createdAt: 1,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'summary',
+                    summary: '已完成文本摘要',
+                }],
+            }
+        ] satisfies NormalizedMessage[], null)
+
+        expect(reduced.blocks).toHaveLength(1)
+        const block = reduced.blocks[0]
+        expect(block?.kind).toBe('agent-event')
+        if (!block || block.kind !== 'agent-event') {
+            throw new Error('Expected summary to become an agent-event block')
+        }
+        expect(block.event).toEqual({
+            type: 'message',
+            message: '已完成文本摘要',
+        })
+        expect(renderEventLabel(block.event)).toBe('已完成文本摘要')
+    })
+
+    test('merges tool-result into the matching tool-call block', () => {
+        const reduced = reduceChatBlocks([
+            {
+                id: 'tool-call-message',
+                localId: null,
+                createdAt: 1,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'tool-1',
+                    name: 'Write',
+                    input: { path: 'README.md' },
+                    description: null,
+                    uuid: 'tool-call-message',
+                    parentUUID: 'parent-1',
+                }],
+            },
+            {
+                id: 'tool-result-message',
+                localId: null,
+                createdAt: 2,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'tool-1',
+                    content: {
+                        file: {
+                            filePath: 'README.md',
+                            content: '# Hello',
+                        },
+                    },
+                    is_error: false,
+                    uuid: 'tool-result-message',
+                    parentUUID: 'parent-1',
+                }],
+            }
+        ] satisfies NormalizedMessage[], null)
+
+        expect(reduced.blocks).toHaveLength(1)
+        const block = reduced.blocks[0]
+        expect(block?.kind).toBe('tool-call')
+        if (!block || block.kind !== 'tool-call') {
+            throw new Error('Expected merged tool-call block')
+        }
+        expect(block.tool).toMatchObject({
+            id: 'tool-1',
+            name: 'Write',
+            state: 'completed',
+            input: { path: 'README.md' },
+            result: {
+                file: {
+                    filePath: 'README.md',
+                    content: '# Hello',
+                },
+            },
+        })
+        expect(block.tool.startedAt).toBe(1)
+        expect(block.tool.completedAt).toBe(2)
+        expect(block.children).toHaveLength(0)
     })
 
     test('preserves task_notification summary when folding into task_started', () => {

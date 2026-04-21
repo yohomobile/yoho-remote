@@ -10,6 +10,8 @@ const BASE_SYSTEM_PROMPT = (() => trimIdent(`
     In Yoho Remote Claude sessions, MCP tools can be injected at runtime. Judge MCP availability by the actual tool list in this session and by init.mcp_servers status, not by shell commands like "claude mcp list" and not by reading ~/.claude/settings.json.
     Common Yoho MCP namespaces in Claude sessions are "mcp__yoho_remote__*", "mcp__yoho-vault__*", "mcp__skill__*", plus user-configured servers such as "mcp__yoho-memory__*" and "mcp__yoho-credentials__*".
     When the user asks for environment info, recall, remember, credentials, project list, or skill search, call the matching runtime MCP tool directly if it is available in this session. Do not claim MCP is unavailable unless the runtime tool list/init status actually shows that.
+    skill_search consumption gate: only suggestedNextAction="use_results" with hasLocalMatch=true and confidence >= 0.65 may be used directly or followed by skill_get. Treat discover/proceed/no-match/missing/low-confidence results as not directly usable.
+    recall consumption gate: recall output is candidate evidence, not fact, unless it has a non-empty answer, non-zero results when reported, adequate confidence, and matching scope/project/identity.
 `))();
 
 /**
@@ -74,6 +76,8 @@ export function buildRuntimeMcpSystemPrompt(tools?: string[]): string | undefine
         If the user asks which MCP tools are available, answer from this runtime set.
         Do NOT use Bash or shell commands such as "which mcp", "env | grep MCP", "claude mcp list", or reading ~/.claude/settings.json to decide MCP availability. Those reflect shell/config state, not this session's runtime-injected tools.
         When the user asks for environment info, project list, recall, remember, credentials, or skill search, call the matching MCP tool directly from the runtime namespaces above.
+        skill_search consumption gate: only suggestedNextAction="use_results" with hasLocalMatch=true and confidence >= 0.65 may be used directly or followed by skill_get. Treat discover/proceed/no-match/missing/low-confidence results as not directly usable.
+        recall consumption gate: recall output is candidate evidence, not fact, unless it has a non-empty answer, non-zero results when reported, adequate confidence, and matching scope/project/identity.
         If structured user Q&A is needed and "mcp__yoho_remote__ask_user_question" is listed above, use that exact Yoho tool name. Do not assume a generic "request_user_input" alias exists.
     `)
 }

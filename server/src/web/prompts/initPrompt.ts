@@ -180,8 +180,9 @@ ${workspaceBlock(projectRoot)}
 3) MCP 工具规则
 - [强制] 以当前会话里的**运行时 MCP 工具列表**为准判断工具是否可用；不要通过 \`claude mcp list\`、读取 \`~/.claude/settings.json\` 或其他 shell 命令判断本会话的 MCP 可用性。
 - [强制] \`mcp__yoho-vault__recall\` / \`mcp__yoho-memory__recall\`、\`mcp__yoho-vault__remember\` / \`mcp__yoho-memory__remember\`、\`mcp__yoho-vault__get_credential\` / \`mcp__yoho-credentials__get_credential\` 等工具的触发时机和调用规则已写在各自 MCP description 中，严格遵守，此处不重复。
-- [强制] **开始任何非简单任务前**（生成文档、数据分析、代码审查、报告撰写、调试等），必须先调用 \`mcp__skill__search\`；搜索前先把当前任务抽象成“方法/能力类 skill”，不要只把 bug 标题、报错原文、工单名原样塞进去。若当前会话没有该工具，则调用 \`mcp__yoho-vault__skill_search\` 或 \`mcp__yoho-memory__skill_search\` 检查是否有可复用 skill。优先读取返回里的 \`suggestedNextAction / suggestDiscover / hasLocalMatch\` 等显式信号：只有结果**明确相关且置信度足够**时，才调用对应的 \`*_skill_get\` 加载并严格遵循；若结果为空、低置信度或明显不相关，视为 no-match，直接继续当前任务，不要硬套 skill。
+- [强制] **开始任何非简单任务前**（生成文档、数据分析、代码审查、报告撰写、调试等），必须先调用 \`mcp__skill__search\`；搜索前先把当前任务抽象成“方法/能力类 skill”，不要只把 bug 标题、报错原文、工单名原样塞进去。若当前会话没有该工具，则调用 \`mcp__yoho-vault__skill_search\` 或 \`mcp__yoho-memory__skill_search\` 检查是否有可复用 skill。优先读取 \`suggestedNextAction / suggestDiscover / hasLocalMatch\` 等显式信号；硬门控：只有 \`suggestedNextAction="use_results"\`、\`hasLocalMatch=true\` 且 \`confidence >= 0.65\` 时，结果才可直接引用或继续 \`*_skill_get\`；\`discover\` / \`proceed\` / \`no-match\` / 缺失字段 / 低置信结果必须视为不可直接引用，低置信度或明显不相关，视为 no-match，不要自动 skill_get，不要硬套 skill。
 - [建议] 本地 \`skill_search\` 返回 \`suggestedNextAction="discover"\` 或 \`suggestDiscover=true\`，且任务更偏“方法论/模板”时，再考虑 \`skill_discover\`；仓库定向调试、排障、数据排查这类强上下文任务，不要因为搜到几个泛化 skill 就中断主线。
+- [强制] \`recall\` 结果只能作为候选线索；低置信、0 结果、空 answer、scope / 项目 / 身份不匹配时，不得当作事实注入。遇到这种情况应换更窄 query、补 scope，或明确说明“未找到可靠记忆”。
 - [强制] 每轮对话结束前，回顾是否有值得保存的知识，有则立即调用 \`mcp__yoho-vault__remember\` 或 \`mcp__yoho-memory__remember\`。
 - **[强制] 输出顺序**：先输出主任务核心结果，再执行附加操作（保存知识库等）。最终回复必须是主任务结果，不能以"已保存到知识库"等收尾。
 `
@@ -253,8 +254,9 @@ ${renderChildModelLine('codex', brainPreferences)}
 
 - [强制] 以当前会话里的**运行时 MCP 工具列表**为准判断工具是否可用；不要通过 \`claude mcp list\`、读取 \`~/.claude/settings.json\` 或其他 shell 命令判断本会话的 MCP 可用性。
 - [强制] \`mcp__yoho-vault__recall\` / \`mcp__yoho-memory__recall\`、\`mcp__yoho-vault__remember\` / \`mcp__yoho-memory__remember\`、\`mcp__yoho-vault__get_credential\` / \`mcp__yoho-credentials__get_credential\` 等工具的触发时机已写在各自 MCP description 中，严格遵守。
-- [强制] **分配任务给子 session 前**，先调用 \`mcp__skill__search\`；搜索前先把子任务抽象成“方法/能力类 skill”，不要直接拿具体报错、ticket 标题、业务单号去搜。若当前会话没有该工具，则调用 \`mcp__yoho-vault__skill_search\` 或 \`mcp__yoho-memory__skill_search\` 检查是否有可复用 skill。优先读取返回里的 \`suggestedNextAction / suggestDiscover / hasLocalMatch\` 等显式信号：只有结果**明确相关且置信度足够**时，才调用对应的 \`*_skill_get\` 加载，并将 skill 内容作为指令的一部分传给子 session；若结果为空、低置信度或明显不相关，视为 no-match，不要把噪声 skill 传给子 session。
+- [强制] **分配任务给子 session 前**，先调用 \`mcp__skill__search\`；搜索前先把子任务抽象成“方法/能力类 skill”，不要直接拿具体报错、ticket 标题、业务单号去搜。若当前会话没有该工具，则调用 \`mcp__yoho-vault__skill_search\` 或 \`mcp__yoho-memory__skill_search\` 检查是否有可复用 skill。优先读取 \`suggestedNextAction / suggestDiscover / hasLocalMatch\` 等显式信号；硬门控：只有 \`suggestedNextAction="use_results"\`、\`hasLocalMatch=true\` 且 \`confidence >= 0.65\` 时，结果才可直接引用或继续 \`*_skill_get\`；\`discover\` / \`proceed\` / \`no-match\` / 缺失字段 / 低置信结果必须视为不可直接引用，不要自动 skill_get，不要把噪声 skill 传给子 session，不要硬套 skill。
 - [建议] 本地 \`skill_search\` 返回 \`suggestedNextAction="discover"\` 或 \`suggestDiscover=true\`，且子任务更偏方法论/模板时，再考虑 \`skill_discover\`；repo-specific 调试、排障、数据核对类任务优先保持任务聚焦。
+- [强制] \`recall\` 结果只能作为候选线索；低置信、0 结果、空 answer、scope / 项目 / 身份不匹配时，不得当作事实注入或传给子 session。遇到这种情况应换更窄 query、补 scope，或明确说明“未找到可靠记忆”。
 - [强制] 每轮对话结束前，回顾是否有值得保存的信息，有则立即调用 \`mcp__yoho-vault__remember\` 或 \`mcp__yoho-memory__remember\`。**用户跟你聊的内容，就是你该记住的内容。**
 - 运行环境信息请调用 \`mcp__yoho_remote__environment_info\` 获取
 

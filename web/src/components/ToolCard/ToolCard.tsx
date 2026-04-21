@@ -16,6 +16,7 @@ import {
     shouldRenderAskUserQuestionInteractively,
 } from '@/components/ToolCard/askUserQuestion'
 import { isExitPlanModeToolName, shouldRenderExitPlanModeInteractively } from '@/components/ToolCard/planMode'
+import { getCodexDiffUnified } from '@/components/ToolCard/codexArtifacts'
 import { getToolPresentation } from '@/components/ToolCard/knownTools'
 import { getToolFullViewComponent, getToolViewComponent } from '@/components/ToolCard/views/_all'
 import { getToolResultViewComponent } from '@/components/ToolCard/views/_results'
@@ -362,8 +363,11 @@ function renderToolInput(block: ToolCallBlock): ReactNode {
         }
     }
 
-    if (toolName === 'CodexDiff' && isObject(input) && typeof input.unified_diff === 'string') {
-        return <CodeBlock code={input.unified_diff} language="diff" />
+    if (toolName === 'CodexDiff' && isObject(input)) {
+        const unifiedDiff = getCodexDiffUnified(input, block.tool.result)
+        if (unifiedDiff) {
+            return <CodeBlock code={unifiedDiff} language="diff" />
+        }
     }
 
     if (toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode') {

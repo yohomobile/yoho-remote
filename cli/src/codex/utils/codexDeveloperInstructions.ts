@@ -107,6 +107,8 @@ export function buildCodexDeveloperInstructions(args: {
         Judge function availability by the actual runtime tool list in this session.
         Do NOT use shell commands such as "codex mcp list", "claude mcp list", "which mcp", or read ~/.codex/config.toml / ~/.claude/settings.json to decide whether these runtime functions exist.
         When the user asks for environment info, project list, recall, remember, credentials, or skill search, call the matching runtime function directly if it is available.
+        skill_search consumption gate: treat results as directly usable only when suggestedNextAction="use_results", hasLocalMatch=true, and confidence >= 0.65. For discover/proceed/no-match/missing/low-confidence results, do not quote them as instructions and do not automatically call skill_get.
+        recall consumption gate: treat recall output as candidate evidence only. Low-confidence, zero-result, empty, or wrong-scope recall must not be injected as fact; narrow the query/scope or report that no reliable memory was found.
     `);
 
     if (args.sessionSource === 'brain-child') {

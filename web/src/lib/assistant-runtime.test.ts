@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import type { ChatBlock } from '@/chat/types'
+import { reduceChatBlocks } from '@/chat/reducer'
 import type { Session } from '@/types/api'
 import { convertBlocksToThreadMessages } from './assistant-runtime'
+import type { NormalizedMessage } from '@/chat/types'
 
 function getMessageParts(message: ReturnType<typeof convertBlocksToThreadMessages>[number]) {
     if (!Array.isArray(message.content)) {
@@ -380,6 +382,304 @@ describe('convertBlocksToThreadMessages', () => {
                 phase: 'merged',
                 acceptedAt: 1,
             },
+        })
+    })
+
+    test('surfaces brain session queue metadata as user delivery state during replay', () => {
+        const blocks: ChatBlock[] = [
+            {
+                kind: 'user-text',
+                id: 'user-1',
+                localId: 'local-1',
+                createdAt: 1,
+                text: 'Queue this',
+                meta: {
+                    brainSessionQueue: {
+                        delivery: 'queued',
+                        acceptedAt: 1,
+                        wakeQueueDepth: 1,
+                    },
+                },
+            },
+        ]
+
+        const messages = convertBlocksToThreadMessages(blocks, createSession({
+            active: false,
+        }))
+
+        expect(messages[0]?.metadata?.custom).toMatchObject({
+            kind: 'user',
+            brainDelivery: {
+                phase: 'queued',
+                acceptedAt: 1,
+            },
+        })
+    })
+
+    test('surfaces delivered brain session queue metadata as pending_consume during replay', () => {
+        const blocks: ChatBlock[] = [
+            {
+                kind: 'user-text',
+                id: 'user-1',
+                localId: 'local-1',
+                createdAt: 1,
+                text: 'Queue this',
+                meta: {
+                    brainSessionQueue: {
+                        delivery: 'delivered',
+                        acceptedAt: 1,
+                        wakeQueueDepth: 1,
+                    },
+                },
+            },
+        ]
+
+        const messages = convertBlocksToThreadMessages(blocks, createSession({
+            active: false,
+        }))
+
+        expect(messages[0]?.metadata?.custom).toMatchObject({
+            kind: 'user',
+            brainDelivery: {
+                phase: 'pending_consume',
+                acceptedAt: 1,
+            },
+        })
+    })
+
+    test('promotes delivered brain session queue metadata to consuming after a consumption boundary', () => {
+        const blocks: ChatBlock[] = [
+            {
+                kind: 'user-text',
+                id: 'user-1',
+                localId: 'local-1',
+                createdAt: 1,
+                text: 'Queue this',
+                meta: {
+                    brainSessionQueue: {
+                        delivery: 'delivered',
+                        acceptedAt: 1,
+                        wakeQueueDepth: 1,
+                    },
+                },
+            },
+            {
+                kind: 'agent-text',
+                id: 'assistant-1',
+                localId: null,
+                createdAt: 2,
+                text: 'Working',
+            },
+        ]
+
+        const messages = convertBlocksToThreadMessages(blocks, createSession({
+            active: false,
+        }))
+
+        expect(messages[0]?.metadata?.custom).toMatchObject({
+            kind: 'user',
+            brainDelivery: {
+                phase: 'consuming',
+                acceptedAt: 1,
+            },
+        })
+    })
+
+    test('prefers brain delivery metadata over brain session queue metadata', () => {
+        const blocks: ChatBlock[] = [
+            {
+                kind: 'user-text',
+                id: 'user-1',
+                localId: 'local-1',
+                createdAt: 1,
+                text: 'Queue this',
+                meta: {
+                    brainDelivery: {
+                        phase: 'pending_consume',
+                        acceptedAt: 1,
+                    },
+                    brainSessionQueue: {
+                        delivery: 'queued',
+                        acceptedAt: 2,
+                        wakeQueueDepth: 1,
+                    },
+                },
+            },
+            {
+                kind: 'agent-text',
+                id: 'assistant-1',
+                localId: null,
+                createdAt: 2,
+                text: 'Working',
+            },
+        ]
+
+        const messages = convertBlocksToThreadMessages(blocks, createSession({
+            thinking: true,
+        }))
+
+        expect(messages).toHaveLength(2)
+        expect(messages[0]?.metadata?.custom).toMatchObject({
+            kind: 'user',
+            brainDelivery: {
+                phase: 'consuming',
+                acceptedAt: 1,
+            },
+        })
+    })
+
+    test('prefers explicit brain delivery phase over brain session queue fallback', () => {
+        const blocks: ChatBlock[] = [
+            {
+                kind: 'user-text',
+                id: 'user-1',
+                localId: 'local-1',
+                createdAt: 1,
+                text: 'Queue this',
+                meta: {
+                    brainDelivery: {
+                        phase: 'consuming',
+                        acceptedAt: 1,
+                    },
+                    brainSessionQueue: {
+                        delivery: 'delivered',
+                        acceptedAt: 2,
+                        wakeQueueDepth: 1,
+                    },
+                },
+            },
+        ]
+
+        const messages = convertBlocksToThreadMessages(blocks, createSession({
+            active: false,
+        }))
+
+        expect(messages[0]?.metadata?.custom).toMatchObject({
+            kind: 'user',
+            brainDelivery: {
+                phase: 'consuming',
+                acceptedAt: 1,
+            },
+        })
+    })
+
+    test('surfaces display turn metadata on assistant thread messages', () => {
+        const blocks: ChatBlock[] = [
+            {
+                kind: 'agent-text',
+                id: 'assistant-1',
+                localId: null,
+                createdAt: 1,
+                text: 'Working',
+            },
+        ]
+
+        const messages = convertBlocksToThreadMessages(blocks, createSession({
+            thinking: true,
+        }))
+
+        expect(messages).toHaveLength(1)
+        expect(messages[0]?.metadata?.custom).toMatchObject({
+            kind: 'assistant',
+            displayTurnId: 'turn:assistant-1',
+            activeItemId: 'assistant-1',
+            activeItemKind: 'agent-text',
+        })
+    })
+
+    test('preserves assistant text and reasoning while merging tool results into the artifact', () => {
+        const reduced = reduceChatBlocks([
+            {
+                id: 'assistant-turn',
+                localId: null,
+                createdAt: 1,
+                role: 'agent',
+                isSidechain: false,
+                content: [
+                    {
+                        type: 'text',
+                        text: 'Answer',
+                        uuid: 'assistant-turn-0',
+                        parentUUID: null,
+                    },
+                    {
+                        type: 'reasoning',
+                        text: 'Because the file changed',
+                        uuid: 'assistant-turn-1',
+                        parentUUID: null,
+                    },
+                    {
+                        type: 'tool-call',
+                        id: 'tool-1',
+                        name: 'Write',
+                        input: { path: 'README.md' },
+                        description: null,
+                        uuid: 'assistant-turn-2',
+                        parentUUID: null,
+                    },
+                ],
+            },
+            {
+                id: 'tool-result',
+                localId: null,
+                createdAt: 2,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'tool-1',
+                    content: {
+                        file: {
+                            filePath: 'README.md',
+                            content: '# Hello',
+                        },
+                    },
+                    is_error: false,
+                    uuid: 'tool-result-1',
+                    parentUUID: null,
+                }],
+            }
+        ] satisfies NormalizedMessage[], null)
+
+        const messages = convertBlocksToThreadMessages(reduced.blocks, createSession({
+            thinking: true,
+        }))
+
+        expect(messages).toHaveLength(1)
+        const parts = getMessageParts(messages[0]!)
+        expect(parts.map((part) => part.type)).toEqual(['text', 'reasoning', 'tool-call'])
+
+        const toolPart = parts[2]
+        if (!toolPart || toolPart.type !== 'tool-call') {
+            throw new Error('Expected tool-call part')
+        }
+
+        expect(toolPart.result).toEqual({
+            file: {
+                filePath: 'README.md',
+                content: '# Hello',
+            },
+        })
+        expect(toolPart.artifact).toMatchObject({
+            kind: 'tool-call',
+            id: 'tool-1',
+            tool: {
+                id: 'tool-1',
+                name: 'Write',
+                state: 'completed',
+                result: {
+                    file: {
+                        filePath: 'README.md',
+                        content: '# Hello',
+                    },
+                },
+            },
+        })
+        expect(messages[0]?.metadata?.custom).toMatchObject({
+            kind: 'assistant',
+            displayTurnId: 'turn:assistant-turn:0',
+            activeItemId: 'assistant-turn:1',
+            activeItemKind: 'agent-reasoning',
         })
     })
 })

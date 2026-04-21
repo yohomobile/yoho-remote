@@ -1,8 +1,9 @@
 import type { SessionSummary } from '@/types/api'
-import { isArchivedSession } from '@/lib/sessionActivity'
+import { isArchivedSession, isSessionReconnecting, isSessionVisibleInActiveList } from '@/lib/sessionActivity'
 
 export type BrainGroupStatusSummary = {
     active: boolean
+    reconnecting: boolean
     thinking: boolean
     pendingRequestsCount: number
     timestamp: number
@@ -66,7 +67,7 @@ function compareActivityAndPending(
 }
 
 function compareSessions(left: SessionSummary, right: SessionSummary): number {
-    const rankDiff = getEntryRank(left.active) - getEntryRank(right.active)
+    const rankDiff = getEntryRank(isSessionVisibleInActiveList(left)) - getEntryRank(isSessionVisibleInActiveList(right))
     if (rankDiff !== 0) return rankDiff
     return compareActivityAndPending(
         {
@@ -90,8 +91,10 @@ function buildBrainGroupStatusSummary(
 ): BrainGroupStatusSummary {
     const allSessions = [session, ...children]
     const pendingRequestsCount = allSessions.reduce((total, item) => total + item.pendingRequestsCount, 0)
+    const activeVisible = allSessions.filter(isSessionVisibleInActiveList)
     return {
-        active: allSessions.some(item => item.active),
+        active: activeVisible.length > 0,
+        reconnecting: activeVisible.length > 0 && activeVisible.every(isSessionReconnecting),
         thinking: pendingRequestsCount === 0 && allSessions.some(item => item.thinking),
         pendingRequestsCount,
         timestamp: allSessions.reduce((max, item) => Math.max(max, getSessionTimestamp(item)), 0)
@@ -101,10 +104,10 @@ function buildBrainGroupStatusSummary(
 function compareEntries(left: SessionListEntry, right: SessionListEntry): number {
     const leftRank = left.kind === 'brain-group'
         ? getEntryRank(left.statusSummary.active)
-        : getEntryRank(left.session.active)
+        : getEntryRank(isSessionVisibleInActiveList(left.session))
     const rightRank = right.kind === 'brain-group'
         ? getEntryRank(right.statusSummary.active)
-        : getEntryRank(right.session.active)
+        : getEntryRank(isSessionVisibleInActiveList(right.session))
     if (leftRank !== rightRank) return leftRank - rightRank
 
     return compareActivityAndPending(

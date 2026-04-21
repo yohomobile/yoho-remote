@@ -32,6 +32,7 @@ export type CodexMessage = {
 } | {
     type: 'reasoning-delta';
     delta: string;
+    id?: string;
 } | {
     type: 'token_count';
     info: Record<string, unknown>;
@@ -113,6 +114,33 @@ function extractSessionId(payload: Record<string, unknown>): string | null {
     return asString(payload.session_id)
         ?? asString(payload.sessionId)
         ?? asString(payload.id);
+}
+
+export function extractCodexReasoningId(payload: Record<string, unknown>): string | null {
+    const stringCandidates = [
+        payload.item_id,
+        payload.itemId,
+        payload.id,
+        payload.reasoning_id,
+        payload.reasoningId,
+    ];
+    for (const candidate of stringCandidates) {
+        if (typeof candidate === 'string' && candidate.length > 0) {
+            return candidate;
+        }
+    }
+
+    const numericCandidates = [
+        payload.summary_index,
+        payload.summaryIndex,
+    ];
+    for (const candidate of numericCandidates) {
+        if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+            return `summary-${candidate}`;
+        }
+    }
+
+    return null;
 }
 
 const MODEL_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh']);
@@ -262,11 +290,12 @@ export function convertCodexEvent(rawEvent: unknown): CodexConversionResult | nu
             if (!message) {
                 return null;
             }
+            const reasoningId = extractCodexReasoningId(payloadRecord) ?? randomUUID();
             return {
                 message: {
                     type: 'reasoning',
                     message,
-                    id: randomUUID()
+                    id: reasoningId
                 }
             };
         }
@@ -276,10 +305,12 @@ export function convertCodexEvent(rawEvent: unknown): CodexConversionResult | nu
             if (!delta) {
                 return null;
             }
+            const reasoningId = extractCodexReasoningId(payloadRecord);
             return {
                 message: {
                     type: 'reasoning-delta',
-                    delta
+                    delta,
+                    ...(reasoningId ? { id: reasoningId } : {})
                 }
             };
         }

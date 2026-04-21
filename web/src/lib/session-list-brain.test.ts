@@ -60,6 +60,7 @@ describe('session-list-brain', () => {
             children: [{ id: 'child-1' }],
             statusSummary: {
                 active: true,
+                reconnecting: false,
                 pendingRequestsCount: 1,
                 timestamp: 300,
             },
@@ -123,6 +124,47 @@ describe('session-list-brain', () => {
             'session-fresh',
             'session-stale-pending',
         ])
+    })
+
+    test('treats reconnecting sessions as active-looking for list ordering and brain group status', () => {
+        const reconnectingBrain = createSession('brain-reconnecting', {
+            active: false,
+            reconnecting: true,
+            updatedAt: 200,
+            metadata: {
+                path: '/tmp/brain-reconnecting',
+                source: 'brain',
+            },
+        })
+        const reconnectingChild = createSession('child-reconnecting', {
+            active: false,
+            reconnecting: true,
+            updatedAt: 220,
+            metadata: {
+                path: '/tmp/child-reconnecting',
+                source: 'brain-child',
+                mainSessionId: 'brain-reconnecting',
+            },
+        })
+        const offline = createSession('session-offline', {
+            active: false,
+            updatedAt: 999,
+        })
+
+        const entries = buildSessionListEntries([offline, reconnectingChild, reconnectingBrain])
+
+        expect(entries[0]).toMatchObject({
+            kind: 'brain-group',
+            session: { id: 'brain-reconnecting' },
+            statusSummary: {
+                active: true,
+                reconnecting: true,
+            },
+        })
+        expect(entries[1]).toMatchObject({
+            kind: 'session',
+            session: { id: 'session-offline' },
+        })
     })
 
     test('prefers recent activity over pending count for brain children within a group', () => {

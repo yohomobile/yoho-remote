@@ -74,6 +74,8 @@ describe('codexArtifacts', () => {
         ].join('\n')
 
         expect(getCodexDiffUnified({ unified_diff: unified })).toBe(unified)
+        expect(getCodexDiffUnified({ diff: unified })).toBe(unified)
+        expect(getCodexDiffUnified({}, { diff: unified })).toBe(unified)
         expect(getUnifiedDiffFilePath(unified)).toBe('web/src/app.ts')
     })
 })
@@ -126,6 +128,29 @@ describe('Codex tool presentation', () => {
             toolName: 'CodexDiff',
             input: { unified_diff: unified },
             result: null,
+            childrenCount: 0,
+            description: null,
+            metadata: null
+        })
+
+        expect(presentation.minimal).toBe(false)
+        expect(presentation.subtitle).toBe('app.ts')
+    })
+
+    test('summarizes CodexDiff result payloads that only expose diff fields', () => {
+        const unified = [
+            'diff --git a/web/src/app.ts b/web/src/app.ts',
+            '--- a/web/src/app.ts',
+            '+++ b/web/src/app.ts',
+            '@@ -1 +1 @@',
+            '-old',
+            '+new'
+        ].join('\n')
+
+        const presentation = getToolPresentation({
+            toolName: 'CodexDiff',
+            input: {},
+            result: { diff: unified },
             childrenCount: 0,
             description: null,
             metadata: null

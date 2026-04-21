@@ -185,6 +185,7 @@ export function useSSE(options: {
                                 modelReasoningEffort: statusData?.modelReasoningEffort,
                                 permissionMode: statusData?.permissionMode,
                                 active: statusData?.active,
+                                reconnecting: statusData?.reconnecting,
                                 thinking: statusData?.thinking,
                                 activeMonitorCount: statusData?.activeMonitorCount
                             })
@@ -226,6 +227,7 @@ export function useSSE(options: {
                                         session: {
                                             ...prev.session,
                                             ...(statusData.active !== undefined && { active: statusData.active }),
+                                            ...(statusData.reconnecting !== undefined && { reconnecting: statusData.reconnecting }),
                                             ...(statusData.thinking !== undefined && { thinking: statusData.thinking }),
                                             ...(statusData.lastMessageAt !== undefined && { lastMessageAt: statusData.lastMessageAt ?? null }),
                                             ...(statusData.permissionMode !== undefined && { permissionMode: statusData.permissionMode as Session['permissionMode'] }),

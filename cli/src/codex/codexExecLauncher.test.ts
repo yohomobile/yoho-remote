@@ -1,6 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { logger } from '@/ui/logger';
+const mocks = vi.hoisted(() => ({
+    loggerDebug: vi.fn(),
+    loggerWarn: vi.fn(),
+}));
+
+vi.mock('@/ui/logger', () => ({
+    logger: {
+        debug: mocks.loggerDebug,
+        warn: mocks.loggerWarn,
+    },
+}));
+
 import { MessageBuffer } from '../ui/ink/messageBuffer';
 import type { CodexSession } from './session';
 import { __testOnly } from './codexExecLauncher';
@@ -59,6 +70,11 @@ function createHarness(opts: {
 }
 
 describe('codexExecLauncher event bridge', () => {
+    beforeEach(() => {
+        mocks.loggerDebug.mockReset();
+        mocks.loggerWarn.mockReset();
+    });
+
     it('starts first remote turn from an existing session id', () => {
         expect(__testOnly.getInitialExecThreadId({ sessionId: 'thread-existing' } as Pick<CodexSession, 'sessionId'>))
             .toBe('thread-existing');
@@ -155,6 +171,7 @@ describe('codexExecLauncher event bridge', () => {
         expect(sent[0]).toMatchObject({
             type: 'reasoning-delta',
             delta: 'thinking',
+            id: 'reasoning-1',
         });
     });
 
@@ -335,11 +352,10 @@ describe('codexExecLauncher event bridge', () => {
         const { ctx, onThreadId, onSessionFound } = createHarness({
             currentThreadId: 'thread-existing',
         });
-        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
         __testOnly.handleExecEvent({ type: 'thread.started', thread_id: 'thread-new' }, ctx);
 
-        expect(warnSpy).toHaveBeenCalledWith('[codex-exec] Thread ID changed during exec stream; deferring replacement until success', {
+        expect(mocks.loggerWarn).toHaveBeenCalledWith('[codex-exec] Thread ID changed during exec stream; deferring replacement until success', {
             previousThreadId: 'thread-existing',
             nextThreadId: 'thread-new',
         });
@@ -351,7 +367,6 @@ describe('codexExecLauncher event bridge', () => {
         expect(onThreadId).toHaveBeenCalledWith('thread-new');
         expect(onSessionFound).toHaveBeenCalledWith('thread-new');
 
-        warnSpy.mockRestore();
     });
 
     it('accepts thread.started when it matches the existing thread id', () => {
@@ -399,29 +414,47 @@ describe('codexExecLauncher event bridge', () => {
         ]);
     });
 
-    it('warns on unknown event and item types', () => {
+    it('warns and emits raw fallback messages for unknown event and item types', () => {
         const { ctx, sent } = createHarness();
-        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
-        __testOnly.handleExecEvent({ type: 'new.event', payload: { hello: 'world' } } as never, ctx);
+        const unknownEvent = { type: 'new.event', payload: { hello: 'world' } };
+        const startedItem = {
+            id: 'unknown-1',
+            type: 'new_item_type',
+        };
+        const completedItem = {
+            id: 'unknown-2',
+            type: 'new_item_type',
+        };
+
+        __testOnly.handleExecEvent(unknownEvent as never, ctx);
         __testOnly.handleExecEvent({
             type: 'item.started',
-            item: {
-                id: 'unknown-1',
-                type: 'new_item_type',
-            },
+            item: startedItem,
         } as never, ctx);
         __testOnly.handleExecEvent({
             type: 'item.completed',
-            item: {
-                id: 'unknown-2',
-                type: 'new_item_type',
-            },
+            item: completedItem,
         } as never, ctx);
 
-        expect(warnSpy).toHaveBeenCalledTimes(3);
-        expect(sent).toHaveLength(0);
-
-        warnSpy.mockRestore();
+        expect(mocks.loggerWarn).toHaveBeenCalledTimes(3);
+        expect(sent).toHaveLength(3);
+        expect(sent[0]).toMatchObject({
+            type: 'unknown-event:new.event',
+            eventType: 'new.event',
+            rawEvent: unknownEvent,
+        });
+        expect(sent[1]).toMatchObject({
+            type: 'unknown-item-started:new_item_type',
+            itemType: 'new_item_type',
+            itemId: 'unknown-1',
+            rawItem: startedItem,
+        });
+        expect(sent[2]).toMatchObject({
+            type: 'unknown-item-completed:new_item_type',
+            itemType: 'new_item_type',
+            itemId: 'unknown-2',
+            rawItem: completedItem,
+        });
     });
 });

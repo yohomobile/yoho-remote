@@ -40,10 +40,6 @@ function getServiceUser(): string {
 }
 
 function getServiceHomeDir(serviceUser: string): string {
-    if (process.env.YOHO_REMOTE_HOME) {
-        return configuration.yohoRemoteHomeDir;
-    }
-
     try {
         const passwdEntry = execFileSync('getent', ['passwd', serviceUser], { encoding: 'utf8' }).trim();
         const fields = passwdEntry.split(':');

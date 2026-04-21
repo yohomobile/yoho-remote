@@ -1,6 +1,7 @@
 import type { ToolViewComponent, ToolViewProps } from '@/components/ToolCard/views/_all'
 import { CodeBlock } from '@/components/CodeBlock'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
+import { getCodexDiffUnified } from '@/components/ToolCard/codexArtifacts'
 import { basename, resolveDisplayPath } from '@/components/ToolCard/path'
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -19,6 +20,26 @@ type MarkdownSection = {
     key: string
     label: string
     text: string
+}
+
+type YohoConsumptionGate = {
+    kind: 'skill_search' | 'recall'
+    directUseAllowed: boolean
+    reliability: 'direct' | 'not_direct'
+    reason: string
+    suggestedNextAction?: string | null
+    suggestDiscover?: boolean
+    hasLocalMatch?: boolean
+    confidence?: number | null
+    resultCount?: number | null
+    scopeMatched?: boolean | null
+    unmatchedScopeReasons?: string[]
+}
+
+type YohoMemoryDisplayData = {
+    markdownSections: MarkdownSection[]
+    jsonValue: unknown | null
+    consumptionGate: YohoConsumptionGate | null
 }
 
 const YOHO_MEMORY_MARKDOWN_PATHS: Array<{ path: string[]; label: string }> = [
@@ -342,6 +363,7 @@ function isYohoMemoryToolName(toolName: string): boolean {
         'mcp__yoho-vault__',
         'mcp__yoho-credentials__',
         'mcp__yoho_remote__',
+        'mcp__skill__',
     ]
     return prefixes.some((prefix) => toolName.startsWith(prefix))
 }
@@ -360,6 +382,39 @@ function cloneJsonValue(value: unknown): unknown {
         clone[key] = cloneJsonValue(nested)
     }
     return clone
+}
+
+function isInternalStructuredDataKey(key: string): boolean {
+    return key === '_yohoConsumptionGate'
+        || (key.startsWith('_yoho') && key.toLowerCase().endsWith('gate'))
+}
+
+function stripInternalStructuredDataFields(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.map(stripInternalStructuredDataFields)
+    }
+
+    if (!isObject(value)) {
+        return value
+    }
+
+    const clone: Record<string, unknown> = {}
+    for (const [key, nested] of Object.entries(value)) {
+        if (isInternalStructuredDataKey(key)) {
+            continue
+        }
+        clone[key] = stripInternalStructuredDataFields(nested)
+    }
+
+    return clone
+}
+
+function isLikelySensitiveMemoryStringPayload(text: string): boolean {
+    const trimmed = text.trimStart()
+    return trimmed.startsWith('{')
+        || trimmed.startsWith('[')
+        || text.includes('_yohoConsumptionGate')
+        || (text.includes('_yoho') && text.toLowerCase().includes('gate'))
 }
 
 function readStringAtPath(value: unknown, path: string[]): string | null {
@@ -385,6 +440,173 @@ function deletePath(value: unknown, path: string[]): void {
     }
 
     deletePath(value[head], rest)
+}
+
+function readNumberValue(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function readStringValue(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
+}
+
+function readBooleanValue(value: unknown): boolean | null {
+    return typeof value === 'boolean' ? value : null
+}
+
+function readStringArrayValue(value: unknown): string[] {
+    return Array.isArray(value)
+        ? value.flatMap(item => typeof item === 'string' && item.trim().length > 0 ? [item.trim()] : [])
+        : []
+}
+
+function readConfidenceValue(value: unknown): number | null {
+    if (!isObject(value)) return null
+    const direct = readNumberValue(value.confidence)
+        ?? readNumberValue(value.maxConfidence)
+        ?? readNumberValue(value.bestConfidence)
+    if (direct !== null) return direct
+
+    for (const key of ['bestMatch', 'topMatch', 'match']) {
+        const nested = value[key]
+        if (isObject(nested)) {
+            const nestedConfidence = readNumberValue(nested.confidence) ?? readNumberValue(nested.score)
+            if (nestedConfidence !== null) return nestedConfidence
+        }
+    }
+
+    for (const key of ['matches', 'results', 'items']) {
+        const values = value[key]
+        if (!Array.isArray(values)) continue
+        const confidences = values
+            .map(item => isObject(item) ? (readNumberValue(item.confidence) ?? readNumberValue(item.score)) : null)
+            .filter((confidence): confidence is number => confidence !== null)
+        if (confidences.length > 0) return Math.max(...confidences)
+    }
+
+    return null
+}
+
+function readDeclaredResultCountValue(value: unknown): number | null {
+    if (!isObject(value)) return null
+    return readNumberValue(value.resultCount)
+        ?? readNumberValue(value.resultsCount)
+        ?? readNumberValue(value.count)
+        ?? readNumberValue(value.filesSearched)
+        ?? readNumberValue(value.files_searched)
+}
+
+function readScopeDecisionValue(value: unknown): { matched: boolean | null; unmatchedReasons: string[] } {
+    if (!isObject(value)) return { matched: null, unmatchedReasons: [] }
+
+    const scope = isObject(value.scope) ? value.scope : null
+    const matched = scope
+        ? readBooleanValue(scope.matched)
+            ?? readBooleanValue(scope.isMatched)
+            ?? readBooleanValue(scope.is_match)
+        : readBooleanValue(value.scopeMatched)
+            ?? readBooleanValue(value.scope_matched)
+    const unmatchedReasons = scope
+        ? [
+            ...readStringArrayValue(scope.unmatchedReasons),
+            ...readStringArrayValue(scope.unmatched_reasons),
+            ...readStringArrayValue(scope.unmatched),
+        ]
+        : [
+            ...readStringArrayValue(value.unmatchedScopeReasons),
+            ...readStringArrayValue(value.unmatched_scope_reasons),
+        ]
+
+    return { matched, unmatchedReasons }
+}
+
+function getYohoConsumptionGate(toolName: string | undefined, payload: unknown): YohoConsumptionGate | null {
+    if (!toolName || !isObject(payload)) return null
+
+    if (toolName.endsWith('__skill_search') || toolName.endsWith('__search')) {
+        const suggestedNextAction = readStringValue(payload.suggestedNextAction)
+            ?? readStringValue(payload.suggested_next_action)
+        const suggestDiscover = readBooleanValue(payload.suggestDiscover)
+            ?? readBooleanValue(payload.suggest_discover)
+            ?? suggestedNextAction === 'discover'
+        const hasLocalMatch = readBooleanValue(payload.hasLocalMatch)
+            ?? readBooleanValue(payload.has_local_match)
+            ?? null
+        const confidence = readConfidenceValue(payload)
+        const explicitDirectUseAllowed = readBooleanValue(payload.directUseAllowed)
+            ?? readBooleanValue(payload.direct_use_allowed)
+        const scope = readScopeDecisionValue(payload)
+        const directUseAllowed = explicitDirectUseAllowed === false
+            ? false
+            : scope.matched === false || scope.unmatchedReasons.length > 0
+            ? false
+            : (explicitDirectUseAllowed === true || suggestedNextAction === 'use_results')
+            && hasLocalMatch === true
+            && confidence !== null
+            && confidence >= 0.65
+        return {
+            kind: 'skill_search',
+            directUseAllowed,
+            reliability: directUseAllowed ? 'direct' : 'not_direct',
+            reason: explicitDirectUseAllowed === false
+                ? 'directUseAllowed=false，服务端明确禁止直接引用或自动 skill_get'
+                : scope.matched === false
+                ? 'skill_search scope.matched=false，不能直接引用或自动 skill_get'
+                : scope.unmatchedReasons.length > 0
+                ? `skill_search scope 不匹配：${scope.unmatchedReasons.join('；')}`
+                : directUseAllowed
+                ? 'use_results + hasLocalMatch + confidence 足够，可直接使用'
+                : '非 use_results / 无本地匹配 / 低置信结果不可直接引用，也不应自动 skill_get',
+            suggestedNextAction,
+            suggestDiscover,
+            hasLocalMatch: hasLocalMatch ?? false,
+            confidence,
+            scopeMatched: scope.matched,
+            unmatchedScopeReasons: scope.unmatchedReasons,
+        }
+    }
+
+    if (toolName.endsWith('__recall')) {
+        const confidence = readConfidenceValue(payload)
+        const resultCount = readDeclaredResultCountValue(payload)
+        const answer = readStringValue(payload.answer)
+            ?? readStringValue(payload.summary)
+            ?? readStringValue(payload.content)
+        const explicitDirectlyUsable = readBooleanValue(payload.isDirectlyUsable)
+            ?? readBooleanValue(payload.is_directly_usable)
+            ?? readBooleanValue(payload.directUseAllowed)
+            ?? readBooleanValue(payload.direct_use_allowed)
+        const scope = readScopeDecisionValue(payload)
+        const directUseAllowed = explicitDirectlyUsable !== false
+            && scope.matched !== false
+            && scope.unmatchedReasons.length === 0
+            && Boolean(answer)
+            && resultCount !== null
+            && resultCount > 0
+            && (confidence === null || confidence >= 0.5)
+        return {
+            kind: 'recall',
+            directUseAllowed,
+            reliability: directUseAllowed ? 'direct' : 'not_direct',
+            reason: explicitDirectlyUsable === false
+                ? 'isDirectlyUsable=false，服务端明确禁止直接注入为事实'
+                : scope.matched === false
+                ? 'recall scope.matched=false，不能自动注入为事实'
+                : scope.unmatchedReasons.length > 0
+                ? `recall scope 不匹配：${scope.unmatchedReasons.join('；')}`
+                : resultCount === null
+                ? 'recall 缺少 resultCount/filesSearched，不能确认结果数'
+                : directUseAllowed
+                ? 'recall 结果满足基础可靠性门槛'
+                : 'recall 低置信、0 结果或空结果，不能自动注入为事实',
+            confidence,
+            resultCount,
+            scopeMatched: scope.matched,
+            unmatchedScopeReasons: scope.unmatchedReasons,
+        }
+    }
+
+    return null
 }
 
 function compactJsonValue(value: unknown): unknown | null {
@@ -425,16 +647,17 @@ function extractStructuredJsonPayload(result: unknown): unknown | null {
     return null
 }
 
-export function extractYohoMemoryDisplayData(result: unknown): { markdownSections: MarkdownSection[]; jsonValue: unknown | null } {
+export function extractYohoMemoryDisplayData(result: unknown, toolName?: string): YohoMemoryDisplayData {
     const payload = extractStructuredJsonPayload(result)
     if (payload === null) {
-        return { markdownSections: [], jsonValue: null }
+        return { markdownSections: [], jsonValue: null, consumptionGate: null }
     }
 
     if (!Array.isArray(payload) && !isObject(payload)) {
-        return { markdownSections: [], jsonValue: payload }
+        return { markdownSections: [], jsonValue: payload, consumptionGate: null }
     }
 
+    const consumptionGate = getYohoConsumptionGate(toolName, payload)
     const working = cloneJsonValue(payload)
     const seenMarkdown = new Set<string>()
     const markdownSections: MarkdownSection[] = []
@@ -454,10 +677,35 @@ export function extractYohoMemoryDisplayData(result: unknown): { markdownSection
         deletePath(working, spec.path)
     }
 
+    const sanitizedWorking = stripInternalStructuredDataFields(working)
+    const jsonValue = compactJsonValue(sanitizedWorking)
+
     return {
         markdownSections,
-        jsonValue: compactJsonValue(working)
+        jsonValue,
+        consumptionGate
     }
+}
+
+export function sanitizeYohoMemoryRawResult(result: unknown): unknown {
+    if (typeof result === 'string') {
+        const parsed = tryParseJson(result)
+        if (parsed !== null) {
+            return stripInternalStructuredDataFields(parsed)
+        }
+
+        if (isLikelySensitiveMemoryStringPayload(result)) {
+            return {
+                redacted: true,
+                reason: 'unparseable memory payload redacted'
+            }
+        }
+
+        return result
+    }
+
+    const payload = extractStructuredJsonPayload(result)
+    return payload === null ? result : stripInternalStructuredDataFields(payload)
 }
 
 function extractLineList(text: string): string[] {
@@ -509,7 +757,7 @@ const BashResultView: ToolViewComponent = (props: ToolViewProps) => {
                     {exitCodeBanner}
                     <CodeBlock code={display} language="text" />
                 </div>
-                <RawJsonDevOnly value={result} />
+                <RawJsonDevOnly value={sanitizeYohoMemoryRawResult(result)} />
             </>
         )
     }
@@ -523,7 +771,7 @@ const BashResultView: ToolViewComponent = (props: ToolViewProps) => {
                     {stdio.stdout ? <CodeBlock code={stdio.stdout} language="text" /> : null}
                     {stdio.stderr ? <CodeBlock code={stdio.stderr} language="text" /> : null}
                 </div>
-                <RawJsonDevOnly value={result} />
+                <RawJsonDevOnly value={sanitizeYohoMemoryRawResult(result)} />
             </>
         )
     }
@@ -536,7 +784,7 @@ const BashResultView: ToolViewComponent = (props: ToolViewProps) => {
                     {exitCodeBanner}
                     {renderText(text, { mode: 'code', language: 'text' })}
                 </div>
-                <RawJsonDevOnly value={result} />
+                <RawJsonDevOnly value={sanitizeYohoMemoryRawResult(result)} />
             </>
         )
     }
@@ -849,6 +1097,16 @@ const CodexDiffResultView: ToolViewComponent = (props: ToolViewProps) => {
             : <div className="text-sm text-[var(--app-hint)]">{placeholderForState(props.block.tool.state)}</div>
     }
 
+    const unifiedDiff = getCodexDiffUnified(props.block.tool.input, result)
+    if (unifiedDiff) {
+        return (
+            <>
+                {renderText(unifiedDiff, { mode: 'code', language: 'diff' })}
+                <RawJsonDevOnly value={result} />
+            </>
+        )
+    }
+
     const text = extractTextFromResult(result)
     if (text) {
         return (
@@ -966,6 +1224,50 @@ const CodexPlanResultView: ToolViewComponent = (props: ToolViewProps) => {
     )
 }
 
+function formatGateValue(value: unknown): string | null {
+    if (value === null || value === undefined) return null
+    if (typeof value === 'boolean') return value ? 'true' : 'false'
+    if (typeof value === 'number') return String(value)
+    if (typeof value === 'string') return value
+    if (Array.isArray(value) && value.length > 0) return value.join('；')
+    return null
+}
+
+function YohoConsumptionGateView(props: { gate: YohoConsumptionGate }) {
+    const gate = props.gate
+    const statusText = gate.directUseAllowed ? 'Direct use allowed' : 'Direct use blocked'
+    const statusClass = gate.directUseAllowed
+        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700'
+        : 'border-amber-500/40 bg-amber-500/10 text-amber-700'
+    const details = [
+        ['Kind', gate.kind],
+        ['Reason', gate.reason],
+        ['Suggested action', gate.suggestedNextAction],
+        ['Has local match', gate.hasLocalMatch],
+        ['Confidence', gate.confidence],
+        ['Result count', gate.resultCount],
+        ['Scope matched', gate.scopeMatched],
+        ['Scope reasons', gate.unmatchedScopeReasons],
+    ] as const
+
+    return (
+        <div className={`rounded-md border px-3 py-2 text-sm ${statusClass}`}>
+            <div className="font-medium">{statusText}</div>
+            <div className="mt-2 grid gap-1 text-xs">
+                {details.map(([label, value]) => {
+                    const formatted = formatGateValue(value)
+                    return formatted ? (
+                        <div key={label} className="grid grid-cols-[8rem_1fr] gap-2">
+                            <span className="text-[var(--app-hint)]">{label}</span>
+                            <span className="break-words text-[var(--app-fg)]">{formatted}</span>
+                        </div>
+                    ) : null
+                })}
+            </div>
+        </div>
+    )
+}
+
 const YohoMemoryResultView: ToolViewComponent = (props: ToolViewProps) => {
     const result = props.block.tool.result
 
@@ -973,11 +1275,29 @@ const YohoMemoryResultView: ToolViewComponent = (props: ToolViewProps) => {
         return <div className="text-sm text-[var(--app-hint)]">{placeholderForState(props.block.tool.state)}</div>
     }
 
-    const display = extractYohoMemoryDisplayData(result)
+    const display = extractYohoMemoryDisplayData(result, props.block.tool.name)
+    const sanitizedRawResult = sanitizeYohoMemoryRawResult(result)
+
+    if (display.consumptionGate && display.markdownSections.length === 0 && display.jsonValue === null) {
+        return (
+            <>
+                <div className="flex flex-col gap-3">
+                    <YohoConsumptionGateView gate={display.consumptionGate} />
+                    <div className="text-sm text-[var(--app-hint)]">
+                        结果仅包含内部门控信息，未展示 Raw JSON。
+                    </div>
+                </div>
+            </>
+        )
+    }
+
     if (display.markdownSections.length > 0 || display.jsonValue !== null) {
         return (
             <>
                 <div className="flex flex-col gap-3">
+                    {display.consumptionGate ? (
+                        <YohoConsumptionGateView gate={display.consumptionGate} />
+                    ) : null}
                     {display.markdownSections.map((section) => (
                         <div key={section.key}>
                             <div className="mb-1 text-xs font-medium text-[var(--app-hint)]">
@@ -995,8 +1315,16 @@ const YohoMemoryResultView: ToolViewComponent = (props: ToolViewProps) => {
                         </div>
                     ) : null}
                 </div>
-                <RawJsonDevOnly value={result} />
+                <RawJsonDevOnly value={sanitizedRawResult} />
             </>
+        )
+    }
+
+    if (typeof result === 'string' && sanitizedRawResult && isObject(sanitizedRawResult) && 'redacted' in sanitizedRawResult) {
+        return (
+            <div className="text-sm text-[var(--app-hint)]">
+                结果包含内部门控信息，已隐藏原始 JSON。
+            </div>
         )
     }
 
@@ -1005,7 +1333,7 @@ const YohoMemoryResultView: ToolViewComponent = (props: ToolViewProps) => {
         return (
             <>
                 {renderText(text, { mode: 'auto' })}
-                {typeof result === 'object' ? <RawJsonDevOnly value={result} /> : null}
+                {typeof result === 'object' ? <RawJsonDevOnly value={sanitizedRawResult} /> : null}
             </>
         )
     }

@@ -76,24 +76,39 @@ describe('convertCodexEvent', () => {
     it('converts reasoning events', () => {
         const result = convertCodexEvent({
             type: 'event_msg',
-            payload: { type: 'agent_reasoning', text: 'thinking' }
+            payload: { type: 'agent_reasoning', text: 'thinking', item_id: 'reasoning-item-1' }
         });
 
-        expect(result?.message).toMatchObject({
+        expect(result?.message).toEqual({
             type: 'reasoning',
-            message: 'thinking'
+            message: 'thinking',
+            id: 'reasoning-item-1'
         });
     });
 
     it('converts reasoning delta events', () => {
         const result = convertCodexEvent({
             type: 'event_msg',
-            payload: { type: 'agent_reasoning_delta', delta: 'step' }
+            payload: { type: 'agent_reasoning_delta', delta: 'step', id: 'reasoning-1' }
         });
 
         expect(result?.message).toEqual({
             type: 'reasoning-delta',
-            delta: 'step'
+            delta: 'step',
+            id: 'reasoning-1'
+        });
+    });
+
+    it('uses summary_index as a stable reasoning delta id fallback', () => {
+        const result = convertCodexEvent({
+            type: 'event_msg',
+            payload: { type: 'agent_reasoning_delta', delta: 'step', summary_index: 2 }
+        });
+
+        expect(result?.message).toEqual({
+            type: 'reasoning-delta',
+            delta: 'step',
+            id: 'summary-2'
         });
     });
 

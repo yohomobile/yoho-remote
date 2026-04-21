@@ -92,6 +92,7 @@ export type Session = {
     updatedAt: number
     lastMessageAt?: number | null
     active: boolean
+    reconnecting?: boolean
     thinking: boolean
     createdBy?: string
     metadata: SessionMetadataSummary | null
@@ -280,6 +281,7 @@ export type SessionSummary = {
     id: string
     createdAt: number
     active: boolean
+    reconnecting?: boolean
     activeAt: number
     updatedAt: number
     lastMessageAt: number | null

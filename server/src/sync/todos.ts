@@ -15,6 +15,9 @@ function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object'
 }
 
+const TODO_STATUSES = new Set<TodoItem['status']>(['pending', 'in_progress', 'completed'])
+const TODO_PRIORITIES = new Set<TodoItem['priority']>(['high', 'medium', 'low'])
+
 type RoleWrappedRecord = {
     role: string
     content: unknown
@@ -40,6 +43,50 @@ function unwrapRoleWrappedRecordEnvelope(value: unknown): RoleWrappedRecord | nu
     if (isObject(payload) && isRoleWrappedRecord(payload.message)) return payload.message as RoleWrappedRecord
 
     return null
+}
+
+function extractStringCandidate(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
+}
+
+function parseTodoStatus(value: unknown): TodoItem['status'] | null {
+    return typeof value === 'string' && TODO_STATUSES.has(value as TodoItem['status'])
+        ? value as TodoItem['status']
+        : null
+}
+
+function parseTodoPriority(value: unknown): TodoItem['priority'] | null {
+    return typeof value === 'string' && TODO_PRIORITIES.has(value as TodoItem['priority'])
+        ? value as TodoItem['priority']
+        : null
+}
+
+function extractTodosFromPlanEntries(entries: unknown): TodoItem[] | null {
+    if (!Array.isArray(entries) || entries.length === 0) return null
+
+    const todos: TodoItem[] = []
+    entries.forEach((entry, index) => {
+        if (!isObject(entry)) return
+
+        const contentValue = extractStringCandidate(entry.step)
+            ?? extractStringCandidate(entry.content)
+            ?? extractStringCandidate(entry.text)
+        if (!contentValue) return
+
+        const statusValue = parseTodoStatus(entry.status) ?? 'pending'
+        const priorityValue = parseTodoPriority(entry.priority) ?? 'medium'
+        const idValue = extractStringCandidate(entry.id) ?? `plan-${index + 1}`
+
+        todos.push({
+            content: contentValue,
+            status: statusValue,
+            priority: priorityValue,
+            id: idValue,
+        })
+    })
+
+    const parsed = TodosSchema.safeParse(todos)
+    return parsed.success && parsed.data.length > 0 ? parsed.data : null
 }
 
 function extractTodosFromClaudeOutput(content: Record<string, unknown>): TodoItem[] | null {
@@ -99,21 +146,53 @@ function extractTodosFromClaudeOutput(content: Record<string, unknown>): TodoIte
     return null
 }
 
+function extractTodosFromTodoWritePayload(payload: unknown): TodoItem[] | null {
+    if (!isObject(payload)) return null
+
+    const parsed = TodosSchema.safeParse(payload.todos)
+    return parsed.success ? parsed.data : null
+}
+
+function extractTodosFromPlanLikePayload(payload: unknown): TodoItem[] | null {
+    if (!isObject(payload)) return null
+
+    const entries = Array.isArray(payload.plan)
+        ? payload.plan
+        : Array.isArray(payload.entries)
+            ? payload.entries
+            : null
+
+    return extractTodosFromPlanEntries(entries)
+}
+
 function extractTodosFromCodexMessage(content: Record<string, unknown>): TodoItem[] | null {
     if (content.type !== 'codex') return null
 
     const data = isObject(content.data) ? content.data : null
-    if (!data || data.type !== 'tool-call') return null
+    if (!data || typeof data.type !== 'string') return null
 
-    const name = typeof data.name === 'string' ? data.name : null
-    if (name !== 'TodoWrite') return null
+    if (data.type === 'tool-call' || data.type === 'tool-call-result') {
+        const name = typeof data.name === 'string' ? data.name : null
+        if (!name) return null
 
-    const input = 'input' in data ? (data as Record<string, unknown>).input : null
-    if (!isObject(input)) return null
+        const payload = data.type === 'tool-call'
+            ? ('input' in data ? (data as Record<string, unknown>).input : null)
+            : ('output' in data ? (data as Record<string, unknown>).output : null)
 
-    const todosCandidate = input.todos
-    const parsed = TodosSchema.safeParse(todosCandidate)
-    return parsed.success ? parsed.data : null
+        if (name === 'TodoWrite') {
+            return extractTodosFromTodoWritePayload(payload)
+        }
+
+        if (name === 'CodexPlan') {
+            return extractTodosFromPlanLikePayload(payload)
+        }
+    }
+
+    if (data.type === 'plan') {
+        return extractTodosFromPlanLikePayload(data)
+    }
+
+    return null
 }
 
 function extractTodosFromAcpMessage(content: Record<string, unknown>): TodoItem[] | null {
@@ -122,31 +201,7 @@ function extractTodosFromAcpMessage(content: Record<string, unknown>): TodoItem[
     const data = isObject(content.data) ? content.data : null
     if (!data || data.type !== 'plan') return null
 
-    const entries = data.entries
-    if (!Array.isArray(entries)) return null
-
-    const todos: TodoItem[] = []
-    entries.forEach((entry, index) => {
-        if (!isObject(entry)) return
-        const contentValue = typeof entry.content === 'string' ? entry.content : null
-        const priorityValue = typeof entry.priority === 'string' ? entry.priority : null
-        const statusValue = typeof entry.status === 'string' ? entry.status : null
-        if (!contentValue || !priorityValue || !statusValue) return
-        if (priorityValue !== 'high' && priorityValue !== 'medium' && priorityValue !== 'low') return
-        if (statusValue !== 'pending' && statusValue !== 'in_progress' && statusValue !== 'completed') return
-
-        const idValue = typeof entry.id === 'string' ? entry.id : `plan-${index + 1}`
-
-        todos.push({
-            content: contentValue,
-            priority: priorityValue,
-            status: statusValue,
-            id: idValue
-        })
-    })
-
-    const parsed = TodosSchema.safeParse(todos)
-    return parsed.success ? parsed.data : null
+    return extractTodosFromPlanEntries(data.entries ?? data.plan)
 }
 
 export function extractTodoWriteTodosFromMessageContent(messageContent: unknown): TodoItem[] | null {

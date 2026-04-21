@@ -58,4 +58,165 @@ describe('yohoRemoteMcpStdioBridge', () => {
             content: [{ type: 'text', text: '{"ok":true}' }]
         })
     })
+
+    it('annotates unsafe skill_search tool results before returning them to Codex', async () => {
+        const listTools = vi.fn<YohoRemoteBridgeClient['listTools']>()
+        const callTool = vi.fn<YohoRemoteBridgeClient['callTool']>().mockResolvedValue({
+            content: [{
+                type: 'text',
+                text: JSON.stringify({
+                    suggestedNextAction: 'discover',
+                    hasLocalMatch: false,
+                    confidence: 0.9,
+                }),
+            }]
+        })
+        const ensureHttpClient = vi.fn(async () => ({ listTools, callTool }))
+
+        const handlers = createYohoRemoteMcpBridgeHandlers(ensureHttpClient)
+        const result = await handlers.callTool({
+            name: 'skill_search',
+            arguments: { query: 'review workflow' }
+        })
+
+        const content = result.content as Array<{ type: string; text?: string }>
+        expect(content).toHaveLength(2)
+        expect(JSON.parse(content[1]?.text as string)).toMatchObject({
+            yohoConsumptionGate: {
+                kind: 'skill_search',
+                directUseAllowed: false,
+            },
+        })
+    })
+
+    it('does not override explicit directUseAllowed=false from skill_search', async () => {
+        const listTools = vi.fn<YohoRemoteBridgeClient['listTools']>()
+        const callTool = vi.fn<YohoRemoteBridgeClient['callTool']>().mockResolvedValue({
+            content: [{
+                type: 'text',
+                text: JSON.stringify({
+                    directUseAllowed: false,
+                    suggestedNextAction: 'use_results',
+                    hasLocalMatch: true,
+                    confidence: 0.99,
+                }),
+            }]
+        })
+        const ensureHttpClient = vi.fn(async () => ({ listTools, callTool }))
+
+        const handlers = createYohoRemoteMcpBridgeHandlers(ensureHttpClient)
+        const result = await handlers.callTool({
+            name: 'skill_search',
+            arguments: { query: 'review workflow' }
+        })
+
+        const content = result.content as Array<{ type: string; text?: string }>
+        expect(JSON.parse(content[1]?.text as string)).toMatchObject({
+            yohoConsumptionGate: {
+                kind: 'skill_search',
+                directUseAllowed: false,
+                reason: expect.stringContaining('directUseAllowed=false'),
+            },
+        })
+    })
+
+    it('blocks skill_search when scope does not match', async () => {
+        const listTools = vi.fn<YohoRemoteBridgeClient['listTools']>()
+        const callTool = vi.fn<YohoRemoteBridgeClient['callTool']>().mockResolvedValue({
+            content: [{
+                type: 'text',
+                text: JSON.stringify({
+                    directUseAllowed: true,
+                    suggestedNextAction: 'use_results',
+                    hasLocalMatch: true,
+                    confidence: 0.99,
+                    scope: {
+                        matched: false,
+                    },
+                }),
+            }]
+        })
+        const ensureHttpClient = vi.fn(async () => ({ listTools, callTool }))
+
+        const handlers = createYohoRemoteMcpBridgeHandlers(ensureHttpClient)
+        const result = await handlers.callTool({
+            name: 'skill_search',
+            arguments: { query: 'review workflow' }
+        })
+
+        const content = result.content as Array<{ type: string; text?: string }>
+        expect(JSON.parse(content[1]?.text as string)).toMatchObject({
+            yohoConsumptionGate: {
+                kind: 'skill_search',
+                directUseAllowed: false,
+                reason: expect.stringContaining('scope.matched=false'),
+            },
+        })
+    })
+
+    it('blocks recall results when the new protocol says unusable, scope mismatches, or result count is missing', async () => {
+        const listTools = vi.fn<YohoRemoteBridgeClient['listTools']>()
+        const callTool = vi.fn<YohoRemoteBridgeClient['callTool']>()
+            .mockResolvedValueOnce({
+                content: [{
+                    type: 'text',
+                    text: JSON.stringify({
+                        isDirectlyUsable: false,
+                        answer: 'old answer',
+                        filesSearched: 1,
+                        confidence: 0.9,
+                    }),
+                }]
+            })
+            .mockResolvedValueOnce({
+                content: [{
+                    type: 'text',
+                    text: JSON.stringify({
+                        answer: 'old answer',
+                        filesSearched: 1,
+                        confidence: 0.9,
+                        scope: {
+                            matched: false,
+                        },
+                    }),
+                }]
+            })
+            .mockResolvedValueOnce({
+                content: [{
+                    type: 'text',
+                    text: JSON.stringify({
+                        answer: 'old answer',
+                        confidence: 0.9,
+                    }),
+                }]
+            })
+        const ensureHttpClient = vi.fn(async () => ({ listTools, callTool }))
+        const handlers = createYohoRemoteMcpBridgeHandlers(ensureHttpClient)
+
+        const explicit = await handlers.callTool({ name: 'recall', arguments: { query: 'a' } })
+        const scope = await handlers.callTool({ name: 'recall', arguments: { query: 'b' } })
+        const missingCount = await handlers.callTool({ name: 'recall', arguments: { query: 'c' } })
+
+        expect(JSON.parse((explicit.content as Array<{ text?: string }>)[1]?.text as string)).toMatchObject({
+            yohoConsumptionGate: {
+                kind: 'recall',
+                directUseAllowed: false,
+                reason: expect.stringContaining('isDirectlyUsable=false'),
+            },
+        })
+        expect(JSON.parse((scope.content as Array<{ text?: string }>)[1]?.text as string)).toMatchObject({
+            yohoConsumptionGate: {
+                kind: 'recall',
+                directUseAllowed: false,
+                reason: expect.stringContaining('scope.matched=false'),
+            },
+        })
+        expect(JSON.parse((missingCount.content as Array<{ text?: string }>)[1]?.text as string)).toMatchObject({
+            yohoConsumptionGate: {
+                kind: 'recall',
+                directUseAllowed: false,
+                reason: expect.stringContaining('缺少 resultCount/filesSearched'),
+            },
+        })
+    })
 })

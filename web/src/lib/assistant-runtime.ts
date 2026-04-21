@@ -1,9 +1,10 @@
 import { useCallback, useMemo } from 'react'
 import type { AppendMessage, ThreadMessageLike } from '@assistant-ui/react'
 import { useExternalMessageConverter, useExternalStoreRuntime } from '@assistant-ui/react'
+import { deriveBrainMessageDelivery } from '@/chat/brainDelivery'
 import { deriveStableMessageId } from '@/chat/ids'
-import { renderEventLabel } from '@/chat/presentation'
-import type { ChatBlock, CliOutputBlock, UserTextBlock } from '@/chat/types'
+import { activeItem, buildDisplayTurns, renderEventLabel, type DisplayItem, type DisplayTurn } from '@/chat/presentation'
+import type { ChatBlock, CliOutputBlock } from '@/chat/types'
 import type { AgentEvent, ToolCallBlock } from '@/chat/types'
 import { hashStableValueSync } from '@/lib/hash'
 import type { BrainMessageDelivery, MessageStatus as YohoRemoteMessageStatus, Session } from '@/types/api'
@@ -23,6 +24,9 @@ export type YohoRemoteChatMessageMetadata = {
     kind: 'user' | 'assistant' | 'tool' | 'event' | 'cli-output'
     status?: YohoRemoteMessageStatus
     brainDelivery?: BrainMessageDelivery
+    displayTurnId?: string
+    activeItemId?: string | null
+    activeItemKind?: DisplayItem['kind'] | null
     localId?: string | null
     originalText?: string
     toolCallId?: string
@@ -33,116 +37,12 @@ export type YohoRemoteChatMessageMetadata = {
 type ThreadMessageParts = Exclude<ThreadMessageLike['content'], string>
 type AssistantBlock = Extract<ChatBlock, { kind: 'agent-text' | 'agent-reasoning' | 'tool-call' }>
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object'
-}
-
-function readBrainDelivery(block: UserTextBlock): BrainMessageDelivery | undefined {
-    if (!isRecord(block.meta)) {
-        return undefined
-    }
-    const raw = block.meta.brainDelivery
-    if (!isRecord(raw)) {
-        return undefined
-    }
-    const phase = raw.phase
-    const acceptedAt = raw.acceptedAt
-    if (
-        phase !== 'queued'
-        && phase !== 'pending_consume'
-        && phase !== 'consuming'
-        && phase !== 'merged'
-    ) {
-        return undefined
-    }
-    if (typeof acceptedAt !== 'number' || !Number.isFinite(acceptedAt)) {
-        return undefined
-    }
-    return { phase, acceptedAt }
-}
-
-function isConsumptionBoundary(block: ChatBlock): boolean {
-    if (block.kind === 'agent-text' || block.kind === 'agent-reasoning' || block.kind === 'tool-call') {
-        return true
-    }
-    return block.kind === 'agent-event' && block.event.type === 'brain-child-callback'
-}
-
-function countConsumptionBoundariesAfter(
-    index: number,
-    blocks: readonly ChatBlock[],
-): number {
-    let boundaries = 0
-    for (let i = index + 1; i < blocks.length; i += 1) {
-        const next = blocks[i]
-        if (!next) continue
-        if (next.kind === 'user-text') {
-            break
-        }
-        if (isConsumptionBoundary(next)) {
-            boundaries += 1
-        }
-    }
-    return boundaries
-}
-
-function deriveBrainDelivery(
-    block: UserTextBlock,
-    index: number,
-    blocks: readonly ChatBlock[],
-    session?: Session,
-): BrainMessageDelivery | undefined {
-    const raw = readBrainDelivery(block)
-    if (!raw) {
-        return undefined
-    }
-
-    const boundaries = countConsumptionBoundariesAfter(index, blocks)
-    const requiredBoundaries = raw.phase === 'pending_consume' ? 2 : 1
-    if (boundaries >= requiredBoundaries) {
-        return {
-            ...raw,
-            phase: 'merged',
-        }
-    }
-
-    if (!session) {
-        return raw
-    }
-    if (!session.active) {
-        return {
-            ...raw,
-            phase: 'queued',
-        }
-    }
-    if (raw.phase === 'pending_consume') {
-        if (boundaries >= 1 || !session.thinking) {
-            return {
-                ...raw,
-                phase: 'consuming',
-            }
-        }
-        return {
-            ...raw,
-            phase: 'pending_consume',
-        }
-    }
-    if (raw.phase === 'consuming') {
-        return {
-            ...raw,
-            phase: 'consuming',
-        }
-    }
-    return {
-        ...raw,
-        phase: 'consuming',
-    }
-}
-
 function createUserThreadMessage(
     block: Extract<ChatBlock, { kind: 'user-text' }>,
     brainDelivery?: BrainMessageDelivery,
+    turn?: DisplayTurn,
 ): ThreadMessageLike {
+    const active = turn ? activeItem(turn) : null
     return {
         role: 'user',
         id: `user:${block.id}`,
@@ -153,6 +53,9 @@ function createUserThreadMessage(
                 kind: 'user',
                 status: block.status,
                 brainDelivery,
+                displayTurnId: turn?.id,
+                activeItemId: active?.id ?? null,
+                activeItemKind: active?.kind ?? null,
                 localId: block.localId,
                 originalText: block.originalText
             } satisfies YohoRemoteChatMessageMetadata
@@ -160,7 +63,8 @@ function createUserThreadMessage(
     }
 }
 
-function createEventThreadMessage(block: Extract<ChatBlock, { kind: 'agent-event' }>): ThreadMessageLike {
+function createEventThreadMessage(block: Extract<ChatBlock, { kind: 'agent-event' }>, turn?: DisplayTurn): ThreadMessageLike {
+    const active = turn ? activeItem(turn) : null
     const eventText = renderEventLabel(block.event)
     const eventVersion = hashStableValueSync({
         event: block.event,
@@ -172,19 +76,32 @@ function createEventThreadMessage(block: Extract<ChatBlock, { kind: 'agent-event
         createdAt: new Date(block.createdAt),
         content: [{ type: 'text', text: eventText }],
         metadata: {
-            custom: { kind: 'event', event: block.event } satisfies YohoRemoteChatMessageMetadata
+            custom: {
+                kind: 'event',
+                event: block.event,
+                displayTurnId: turn?.id,
+                activeItemId: active?.id ?? null,
+                activeItemKind: active?.kind ?? null,
+            } satisfies YohoRemoteChatMessageMetadata
         }
     }
 }
 
-function createCliOutputThreadMessage(block: Extract<ChatBlock, { kind: 'cli-output' }>): ThreadMessageLike {
+function createCliOutputThreadMessage(block: Extract<ChatBlock, { kind: 'cli-output' }>, turn?: DisplayTurn): ThreadMessageLike {
+    const active = turn ? activeItem(turn) : null
     return {
         role: block.source === 'user' ? 'user' : 'assistant',
         id: `cli:${block.id}`,
         createdAt: new Date(block.createdAt),
         content: [{ type: 'text', text: block.text }],
         metadata: {
-            custom: { kind: 'cli-output', source: block.source } satisfies YohoRemoteChatMessageMetadata
+            custom: {
+                kind: 'cli-output',
+                source: block.source,
+                displayTurnId: turn?.id,
+                activeItemId: active?.id ?? null,
+                activeItemKind: active?.kind ?? null,
+            } satisfies YohoRemoteChatMessageMetadata
         }
     }
 }
@@ -215,14 +132,20 @@ export function deriveTurnId(blocks: readonly ChatBlock[]): string {
     return deriveStableMessageId(assistantBlocks[0]!)
 }
 
-function createAssistantThreadMessage(blocks: readonly AssistantBlock[]): ThreadMessageLike {
+function createAssistantThreadMessage(blocks: readonly AssistantBlock[], turn: DisplayTurn): ThreadMessageLike {
+    const active = activeItem(turn)
     const message: ThreadMessageLike = {
         role: 'assistant',
         id: `assistant:${deriveTurnId(blocks)}`,
         createdAt: new Date(blocks[0]!.createdAt),
         content: [] as ThreadMessageParts,
         metadata: {
-            custom: { kind: 'assistant' } satisfies YohoRemoteChatMessageMetadata
+            custom: {
+                kind: 'assistant',
+                displayTurnId: turn.id,
+                activeItemId: active?.id ?? null,
+                activeItemKind: active?.kind ?? null,
+            } satisfies YohoRemoteChatMessageMetadata
         }
     }
 
@@ -271,38 +194,44 @@ export function convertBlocksToThreadMessages(
     session?: Session,
 ): ThreadMessageLike[] {
     const messages: ThreadMessageLike[] = []
-    let pendingAssistantBlocks: AssistantBlock[] = []
+    const turns = buildDisplayTurns(blocks, session)
 
-    const flushAssistant = () => {
-        if (pendingAssistantBlocks.length === 0) {
-            return
+    for (const turn of turns) {
+        const pendingAssistantBlocks: AssistantBlock[] = []
+
+        const flushAssistant = () => {
+            if (pendingAssistantBlocks.length === 0) {
+                return
+            }
+            messages.push(createAssistantThreadMessage(pendingAssistantBlocks, turn))
+            pendingAssistantBlocks.length = 0
         }
-        messages.push(createAssistantThreadMessage(pendingAssistantBlocks))
-        pendingAssistantBlocks = []
-    }
 
-    for (const [index, block] of blocks.entries()) {
-        if (block.kind === 'agent-text' || block.kind === 'agent-reasoning' || block.kind === 'tool-call') {
-            pendingAssistantBlocks.push(block)
-            continue
+        for (const item of turn.items) {
+            const block = item.block
+
+            if (block.kind === 'agent-text' || block.kind === 'agent-reasoning' || block.kind === 'tool-call') {
+                pendingAssistantBlocks.push(block)
+                continue
+            }
+
+            flushAssistant()
+
+            if (block.kind === 'user-text') {
+                messages.push(createUserThreadMessage(block, deriveBrainMessageDelivery(block, item.index, blocks, session), turn))
+                continue
+            }
+
+            if (block.kind === 'agent-event') {
+                messages.push(createEventThreadMessage(block, turn))
+                continue
+            }
+
+            messages.push(createCliOutputThreadMessage(block, turn))
         }
 
         flushAssistant()
-
-        if (block.kind === 'user-text') {
-            messages.push(createUserThreadMessage(block, deriveBrainDelivery(block, index, blocks, session)))
-            continue
-        }
-
-        if (block.kind === 'agent-event') {
-            messages.push(createEventThreadMessage(block))
-            continue
-        }
-
-        messages.push(createCliOutputThreadMessage(block))
     }
-
-    flushAssistant()
     return messages
 }
 

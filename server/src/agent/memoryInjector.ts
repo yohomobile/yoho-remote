@@ -17,12 +17,16 @@ export interface MemoryInjectorConfig {
     maxMemories: number           // 最多注入的记忆数量
     minImportance: number         // 最低重要性阈值
     maxPromptLength: number       // 生成的 prompt 片段最大长度
+    minRelevance: number          // metadata 中 relevance/confidence 的最低阈值
+    maxMemoryAgeDays: number      // 低重要性记忆的最大年龄
 }
 
 const DEFAULT_CONFIG: MemoryInjectorConfig = {
     maxMemories: 20,
     minImportance: 0.3,
-    maxPromptLength: 3000
+    maxPromptLength: 3000,
+    minRelevance: 0.35,
+    maxMemoryAgeDays: 365
 }
 
 /**
@@ -73,13 +77,15 @@ export class MemoryInjector {
      * @returns 注入结果，包含格式化的 prompt 和记忆列表
      */
     async injectMemories(namespace: string, profileId: string): Promise<MemoryInjectionResult> {
-        // 1. 从 store 获取记忆（已按重要性和访问时间排序）
-        const memories = await this.store.getProfileMemories({
+        // 1. 从 store 获取候选记忆（已按重要性和访问时间排序），再做运行时过滤。
+        const candidateLimit = Math.max(this.config.maxMemories, this.config.maxMemories * 3)
+        const candidates = await this.store.getProfileMemories({
             namespace,
             profileId,
             minImportance: this.config.minImportance,
-            limit: this.config.maxMemories
+            limit: candidateLimit
         })
+        const memories = this.filterMemoriesForInjection(candidates).slice(0, this.config.maxMemories)
 
         if (memories.length === 0) {
             return {
@@ -106,6 +112,52 @@ export class MemoryInjector {
             })),
             totalCount: memories.length
         }
+    }
+
+    private filterMemoriesForInjection(memories: StoredAIProfileMemory[]): StoredAIProfileMemory[] {
+        const now = Date.now()
+        const maxAgeMs = this.config.maxMemoryAgeDays * 24 * 60 * 60 * 1000
+
+        return memories.filter((memory) => {
+            if (memory.expiresAt !== null && memory.expiresAt <= now) {
+                return false
+            }
+
+            const metadata = isRecord(memory.metadata) ? memory.metadata : null
+            if (metadata) {
+                if (metadata.conflict === true || metadata.valid === false) {
+                    return false
+                }
+
+                const conflictStatus = readString(metadata.conflictStatus) ?? readString(metadata.conflict_status)
+                if (conflictStatus && conflictStatus !== 'resolved' && conflictStatus !== 'none') {
+                    return false
+                }
+
+                if (readString(metadata.supersededBy) || readString(metadata.superseded_by)) {
+                    return false
+                }
+
+                const relevance = readNumber(metadata.relevance)
+                    ?? readNumber(metadata.relevanceScore)
+                    ?? readNumber(metadata.relevance_score)
+                    ?? readNumber(metadata.confidence)
+                if (relevance !== null && relevance < this.config.minRelevance) {
+                    return false
+                }
+            }
+
+            const ageMs = now - memory.updatedAt
+            if (
+                ageMs > maxAgeMs
+                && memory.importance < 0.8
+                && memory.memoryType !== 'preference'
+            ) {
+                return false
+            }
+
+            return true
+        })
     }
 
     /**
@@ -233,6 +285,18 @@ export class MemoryInjector {
     }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object'
+}
+
+function readString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
+}
+
+function readNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
 /**
  * 创建记忆注入器实例
  */
@@ -270,20 +334,11 @@ export async function getMemoriesForInjection(
     profileId: string,
     limit: number = 10
 ): Promise<{ type: string; content: string; importance: number }[]> {
-    const memories = await store.getProfileMemories({
-        namespace,
-        profileId,
-        limit,
-        minImportance: 0.3
-    })
+    const injector = new MemoryInjector(store, { maxMemories: limit })
+    const result = await injector.injectMemories(namespace, profileId)
 
-    // 更新访问记录
-    for (const mem of memories) {
-        await store.updateMemoryAccess(namespace, mem.id)
-    }
-
-    return memories.map(m => ({
-        type: m.memoryType,
+    return result.memories.map(m => ({
+        type: m.type,
         content: m.content,
         importance: m.importance
     }))

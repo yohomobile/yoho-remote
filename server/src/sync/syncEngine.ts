@@ -687,6 +687,7 @@ export class SyncEngine {
     private static readonly TASK_MESSAGE_SETTLE_WINDOW_MS = 200
     private static readonly TASK_MESSAGE_SETTLE_MAX_WAIT_MS = 3_000
     private static readonly RESUME_TRACE_TTL_MS = 10 * 60_000
+    private static readonly STARTUP_RECONNECT_GRACE_MS = 30_000
     private autoResumeClaimedReconnectTimeoutMs = 3_000
     private autoResumeLiveInventoryRpcWaitMs = 1_500
     private readonly resumeTraceBySessionId: Map<string, ResumeTraceState> = new Map()
@@ -826,6 +827,21 @@ export class SyncEngine {
      */
     private inStartupQuietWindow(): boolean {
         return Date.now() - this.serverStartedAt < SyncEngine.STARTUP_QUIET_WINDOW_MS
+    }
+
+    private inStartupReconnectGraceWindow(): boolean {
+        return Date.now() - this.serverStartedAt < SyncEngine.STARTUP_RECONNECT_GRACE_MS
+    }
+
+    isSessionStartupRecovering(sessionId: string): boolean {
+        if (!this.inStartupReconnectGraceWindow()) {
+            return false
+        }
+        if (!this._dbActiveSessionIds.has(sessionId)) {
+            return false
+        }
+        const session = this.sessions.get(sessionId)
+        return session?.active !== true
     }
 
     private markStartupNotificationSuppression(session: Session): void {
@@ -1087,6 +1103,7 @@ export class SyncEngine {
             lastMessageAt: session.lastMessageAt,
             active: session.active,
             activeAt: session.activeAt,
+            reconnecting: this.isSessionStartupRecovering(session.id),
             createdBy: session.createdBy,
             metadata,
             metadataVersion: session.metadataVersion,
@@ -1975,6 +1992,7 @@ export class SyncEngine {
                     data: {
                         active: session.active,
                         activeAt: session.activeAt,
+                        reconnecting: this.isSessionStartupRecovering(session.id),
                         thinking: session.thinking,
                         wasThinking: false,
                         permissionMode: session.permissionMode,
@@ -2007,6 +2025,7 @@ export class SyncEngine {
                 data: {
                     active: session.active,
                     activeAt: session.activeAt,
+                    reconnecting: this.isSessionStartupRecovering(session.id),
                     thinking: session.thinking,
                     wasThinking: true,
                     permissionMode: session.permissionMode,
@@ -2033,6 +2052,7 @@ export class SyncEngine {
                 data: {
                     active: session.active,
                     activeAt: session.activeAt,
+                    reconnecting: this.isSessionStartupRecovering(session.id),
                     thinking: session.thinking,
                     wasThinking: true,
                     permissionMode: session.permissionMode,
@@ -2639,6 +2659,7 @@ export class SyncEngine {
                 sessionId: session.id,
                 data: {
                     active: false,
+                    reconnecting: this.isSessionStartupRecovering(session.id),
                     thinking: false,
                     wasThinking: false,
                     ...(clearedActiveMonitors ? { activeMonitorCount: 0 } : {}),
@@ -2687,6 +2708,7 @@ export class SyncEngine {
             sessionId: session.id,
             data: {
                 active: false,
+                reconnecting: this.isSessionStartupRecovering(session.id),
                 thinking: false,
                 wasThinking: false,
                 ...(session.activeMonitors.length > 0 ? { activeMonitorCount: session.activeMonitors.length } : {}),
@@ -2780,6 +2802,7 @@ export class SyncEngine {
                 sessionId: session.id,
                 data: {
                     active: false,
+                    reconnecting: this.isSessionStartupRecovering(session.id),
                     ...(session.activeMonitors.length > 0 ? { activeMonitorCount: session.activeMonitors.length } : {})
                 }
             })

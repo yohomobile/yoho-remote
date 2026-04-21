@@ -31,6 +31,7 @@ describe('selfSystem', () => {
     it('builds prompt and metadata patch from AI profile plus yoho-memory recall', async () => {
         globalThis.fetch = (async () => new Response(JSON.stringify({
             answer: 'K1 长期偏好：遇到模糊需求时先澄清目标，再拆执行路径。',
+            filesSearched: 1,
         }), {
             status: 200,
             headers: { 'content-type': 'application/json' },
@@ -182,5 +183,61 @@ describe('selfSystem', () => {
         expect(context.prompt).not.toContain('长期自我记忆（yoho-memory）')
         expect(context.metadataPatch.selfMemoryStatus).toBe('error')
         expect(context.metadataPatch.selfMemoryAttached).toBe(false)
+    })
+
+    it('does not attach low-confidence yoho-memory recall as self memory', async () => {
+        globalThis.fetch = (async () => new Response(JSON.stringify({
+            answer: 'K1 可能喜欢极简回答。',
+            filesSearched: 1,
+            confidence: 0.2,
+        }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+        })) as unknown as typeof fetch
+
+        const context = await resolveBrainSelfSystemContext({
+            namespace: 'default',
+            store: {
+                getBrainConfig: async () => ({
+                    namespace: 'default',
+                    agent: 'claude',
+                    claudeModelMode: 'opus',
+                    codexModel: 'gpt-5.4',
+                    extra: {
+                        selfSystem: {
+                            enabled: true,
+                            defaultProfileId: 'profile-1',
+                            memoryProvider: 'yoho-memory',
+                        },
+                    },
+                    updatedAt: 1,
+                    updatedBy: null,
+                }),
+                getAIProfile: async () => ({
+                    id: 'profile-1',
+                    namespace: 'default',
+                    name: 'K1',
+                    role: 'architect',
+                    specialties: [],
+                    personality: null,
+                    greetingTemplate: null,
+                    preferredProjects: [],
+                    workStyle: null,
+                    avatarEmoji: '🤖',
+                    status: 'idle',
+                    stats: {
+                        tasksCompleted: 0,
+                        activeMinutes: 0,
+                        lastActiveAt: null,
+                    },
+                    createdAt: 1,
+                    updatedAt: 1,
+                }),
+            } as any,
+        })
+
+        expect(context.metadataPatch.selfMemoryStatus).toBe('empty')
+        expect(context.metadataPatch.selfMemoryAttached).toBe(false)
+        expect(context.prompt).not.toContain('长期自我记忆（yoho-memory）')
     })
 })

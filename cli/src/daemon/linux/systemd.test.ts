@@ -38,10 +38,12 @@ import {
     SYSTEMD_SERVICE_PATH,
     buildSystemdServiceFile,
     type InstallContext,
+    prepareSystemdInstall,
     writeSystemdServiceFile,
 } from './systemd';
 
 describe('linux systemd helpers', () => {
+    const originalEnv = process.env;
     const context: InstallContext = {
         envFilePath: '/home/yoho/.yoho-remote/daemon.systemd.env',
         execParts: ['/opt/yoho-remote/yoho-remote-daemon'],
@@ -56,6 +58,7 @@ describe('linux systemd helpers', () => {
         mocks.readFileSync.mockReset();
         mocks.userInfo.mockReset();
         mocks.writeFileSync.mockReset();
+        process.env = { ...originalEnv };
     });
 
     it('builds a systemd unit with the expected network and kill semantics', () => {
@@ -91,5 +94,41 @@ describe('linux systemd helpers', () => {
 
         expect(result).toEqual({ existed: true, changed: false });
         expect(mocks.writeFileSync).not.toHaveBeenCalled();
+    });
+
+    it('keeps HOME pointed at the service user home when YOHO_REMOTE_HOME is customized', async () => {
+        process.env.SUDO_USER = 'yoho';
+        process.env.CLI_API_TOKEN = 'test-token';
+        process.env.YOHO_REMOTE_HOME = '/custom/.yoho-remote';
+        process.env.PATH = '/usr/local/bin:/usr/bin';
+
+        mocks.execFileSync.mockImplementation((command: string, args?: string[]) => {
+            if (command === 'systemctl' && args?.[0] === '--version') {
+                return '';
+            }
+            if (command === 'getent' && args?.[0] === 'passwd' && args?.[1] === 'yoho') {
+                return 'yoho:x:1001:1001::/home/yoho:/bin/bash';
+            }
+            throw new Error(`Unexpected execFileSync call: ${command} ${(args ?? []).join(' ')}`);
+        });
+        mocks.existsSync.mockReturnValue(false);
+
+        const result = await prepareSystemdInstall();
+
+        expect(result).toMatchObject({
+            envFilePath: '/custom/.yoho-remote/daemon.systemd.env',
+            serviceUser: 'yoho',
+            workingDirectory: '/custom/.yoho-remote',
+        });
+        expect(mocks.writeFileSync).toHaveBeenCalledWith(
+            '/custom/.yoho-remote/daemon.systemd.env',
+            expect.stringContaining('HOME="/home/yoho"\n'),
+            { mode: 0o600 },
+        );
+        expect(mocks.writeFileSync).toHaveBeenCalledWith(
+            '/custom/.yoho-remote/daemon.systemd.env',
+            expect.stringContaining('YOHO_REMOTE_HOME="/custom/.yoho-remote"\n'),
+            { mode: 0o600 },
+        );
     });
 });

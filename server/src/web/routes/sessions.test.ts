@@ -346,6 +346,71 @@ describe('createSessionsRoutes', () => {
         expect(payload.sessions[0]?.metadata).not.toHaveProperty('mainSessionId')
     })
 
+    it('marks startup-recovering sessions as reconnecting instead of dropping them into archive semantics', async () => {
+        const storedSessions = [
+            createStoredSession({
+                id: 'session-reconnecting',
+                active: true,
+                activeAt: 1_700_000_000_200,
+                metadata: {
+                    path: '/tmp/reconnecting',
+                    machineId: 'machine-1',
+                },
+            }),
+        ]
+
+        const fakeEngine = {
+            getSessionsByNamespace: () => [{
+                id: 'session-reconnecting',
+                active: false,
+                activeAt: 1_700_000_000_200,
+                updatedAt: 1_700_000_000_300,
+                lastMessageAt: null,
+                thinking: false,
+                metadata: {
+                    path: '/tmp/reconnecting',
+                    machineId: 'machine-1',
+                },
+                agentState: null,
+                activeMonitors: [],
+                modelMode: null,
+                modelReasoningEffort: null,
+                fastMode: null,
+                terminationReason: null,
+            }],
+            isSessionStartupRecovering: (sessionId: string) => sessionId === 'session-reconnecting',
+        }
+
+        const fakeStore = {
+            getSessionsByNamespace: async () => storedSessions,
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'ns-test')
+            c.set('role', 'developer')
+            c.set('orgs', [])
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/sessions')
+        expect(response.status).toBe(200)
+
+        const payload = await response.json() as {
+            sessions: Array<{
+                id: string
+                active: boolean
+                reconnecting?: boolean
+            }>
+        }
+        expect(payload.sessions[0]).toMatchObject({
+            id: 'session-reconnecting',
+            active: false,
+            reconnecting: true,
+        })
+    })
+
     it('includes self system troubleshooting metadata in brain session summaries', async () => {
         const storedSessions = [
             createStoredSession({
@@ -1467,6 +1532,8 @@ describe('createSessionsRoutes', () => {
         const originalFetch = globalThis.fetch
         globalThis.fetch = (async () => new Response(JSON.stringify({
             answer: 'K1 长期倾向：先收敛问题边界，再做分派。',
+            filesSearched: 1,
+            confidence: 0.92,
         }), {
             status: 200,
             headers: { 'content-type': 'application/json' },

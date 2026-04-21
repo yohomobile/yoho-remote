@@ -21,6 +21,10 @@ describe('useSSE utils', () => {
         })).toBe(true)
 
         expect(hasSessionStatusFields({
+            reconnecting: true,
+        })).toBe(true)
+
+        expect(hasSessionStatusFields({
             activeMonitorCount: 1,
         })).toBe(true)
     })
@@ -119,6 +123,36 @@ describe('useSSE utils', () => {
         }])
     })
 
+    test('preserves reconnecting across session summary upserts and status updates', () => {
+        const reconnectingSummary = toSessionSummaryFromSsePayload({
+            id: 'session-1',
+            createdAt: 1,
+            updatedAt: 2,
+            activeAt: 3,
+            lastMessageAt: 4,
+            active: false,
+            reconnecting: true,
+            thinking: false,
+            metadata: {
+                path: '/tmp/project',
+                source: 'codex',
+            },
+        })
+
+        expect(reconnectingSummary.reconnecting).toBe(true)
+
+        const merged = upsertSessionSummary(undefined, reconnectingSummary)
+        expect(merged.sessions[0]?.reconnecting).toBe(true)
+
+        const updated = applySessionSummaryStatusUpdate(merged, 'session-1', {
+            active: true,
+            activeAt: 5,
+        })
+
+        expect(updated?.sessions[0]?.reconnecting).toBe(true)
+        expect(updated?.sessions[0]?.active).toBe(true)
+    })
+
     test('maps full session payloads into session summaries with derived fields', () => {
         const summary = toSessionSummaryFromSsePayload({
             id: 'session-1',
@@ -127,6 +161,7 @@ describe('useSSE utils', () => {
             activeAt: 3,
             lastMessageAt: 4,
             active: true,
+            reconnecting: true,
             thinking: false,
             createdBy: 'user@example.com',
             metadata: {
@@ -161,6 +196,7 @@ describe('useSSE utils', () => {
             id: 'session-1',
             createdAt: 1,
             active: true,
+            reconnecting: true,
             activeAt: 3,
             updatedAt: 2,
             lastMessageAt: 4,
@@ -219,6 +255,7 @@ describe('useSSE utils', () => {
                 id: 'session-1',
                 createdAt: 1,
                 active: false,
+                reconnecting: true,
                 activeAt: 1,
                 updatedAt: 1,
                 lastMessageAt: null,
@@ -235,6 +272,7 @@ describe('useSSE utils', () => {
             id: 'session-1',
             createdAt: 1,
             active: true,
+            reconnecting: false,
             activeAt: 5,
             updatedAt: 6,
             lastMessageAt: 7,
@@ -249,6 +287,7 @@ describe('useSSE utils', () => {
                 id: 'session-1',
                 createdAt: 1,
                 active: true,
+                reconnecting: false,
                 activeAt: 5,
                 updatedAt: 6,
                 lastMessageAt: 7,
@@ -268,6 +307,7 @@ describe('useSSE utils', () => {
                 id: 'session-1',
                 createdAt: 1,
                 active: true,
+                reconnecting: true,
                 activeAt: 10,
                 updatedAt: 20,
                 lastMessageAt: 30,
@@ -280,12 +320,14 @@ describe('useSSE utils', () => {
 
         const next = applySessionSummaryStatusUpdate(previous, 'session-1', {
             lastMessageAt: 99,
+            reconnecting: false,
         })
 
         expect(next).toEqual({
             sessions: [{
                 ...previous.sessions[0],
                 lastMessageAt: 99,
+                reconnecting: false,
             }]
         })
     })

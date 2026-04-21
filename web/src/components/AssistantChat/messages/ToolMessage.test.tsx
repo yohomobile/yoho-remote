@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { ToolCallBlock } from '@/chat/types'
+import type { AgentEvent, ToolCallBlock } from '@/chat/types'
+import { BrainChildCallbackCard } from './BrainChildCallbackCard'
 import { ReadBatchDisclosure } from './ToolMessage'
 
 describe('ReadBatchDisclosure', () => {
@@ -61,5 +62,24 @@ describe('ReadBatchDisclosure', () => {
         expect(html).not.toContain('Search')
         expect(html).not.toContain('Find files')
         expect(html).not.toContain('Read file')
+    })
+
+    test('renders nested brain-child-callback events with the rich callback card', () => {
+        const event: Extract<AgentEvent, { type: 'brain-child-callback' }> = {
+            type: 'brain-child-callback',
+            title: '子任务完成',
+            previousSummary: '之前摘要',
+            details: ['消息数: 5'],
+            report: undefined
+        }
+
+        const html = renderToStaticMarkup(
+            <BrainChildCallbackCard api={{} as never} event={event} />
+        )
+
+        expect(html).toContain('子任务回传')
+        expect(html).toContain('子任务完成')
+        expect(html).toContain('之前摘要')
+        expect(html).toContain('消息数: 5')
     })
 })

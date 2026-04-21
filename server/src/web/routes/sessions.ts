@@ -93,6 +93,7 @@ type SessionSummary = {
     id: string
     createdAt: number
     active: boolean
+    reconnecting?: boolean
     activeAt: number
     updatedAt: number
     lastMessageAt: number | null
@@ -175,7 +176,7 @@ function toSessionSummary(session: Session): SessionSummary {
 }
 
 // Convert StoredSession (from database) to SessionSummary
-function storedSessionToSummary(stored: StoredSession): SessionSummary {
+function storedSessionToSummary(stored: StoredSession, reconnecting = false): SessionSummary {
     const meta = stored.metadata as SessionSummaryMetadata | null
     const todos = stored.todos as Array<{ status: string }> | null
 
@@ -188,6 +189,7 @@ function storedSessionToSummary(stored: StoredSession): SessionSummary {
         id: stored.id,
         createdAt: stored.createdAt,
         active: stored.active,
+        ...(reconnecting && { reconnecting: true }),
         activeAt: stored.activeAt ?? stored.updatedAt,
         updatedAt: stored.updatedAt,
         lastMessageAt: stored.lastMessageAt,
@@ -1310,6 +1312,14 @@ export function createSessionsRoutes(
         const now = Date.now()
 
         const isSessionTrulyActive = (stored: StoredSession, memorySession: Session | undefined): boolean => {
+            const reconnecting = typeof (engine as Partial<SyncEngine>).isSessionStartupRecovering === 'function'
+                ? engine.isSessionStartupRecovering(stored.id)
+                : false
+
+            if (reconnecting) {
+                return false
+            }
+
             // Database active=false is the source of truth for archived sessions
             if (!stored.active) return false
 
@@ -1332,9 +1342,12 @@ export function createSessionsRoutes(
         const sessionSummaries: SessionSummary[] = storedSessions.map((stored) => {
             const memorySession = memorySessionMap.get(stored.id)
             const trulyActive = isSessionTrulyActive(stored, memorySession)
+            const reconnecting = typeof (engine as Partial<SyncEngine>).isSessionStartupRecovering === 'function'
+                ? engine.isSessionStartupRecovering(stored.id)
+                : false
 
             // Start with database data
-            const summary = storedSessionToSummary(stored)
+            const summary = storedSessionToSummary(stored, reconnecting)
 
             // 如果这是来自其他用户（开启了 shareAllSessions）的 session，标注来源
             const ownerEmail = sessionOwnerMap.get(stored.id)

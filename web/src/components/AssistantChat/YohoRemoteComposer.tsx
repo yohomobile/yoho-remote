@@ -39,11 +39,18 @@ export interface TextInputState {
 }
 
 
-export const MODEL_MODES = ['default', 'sonnet', 'opus'] as const
+export const MODEL_MODES = ['default', 'sonnet', 'opus', 'opus-4-7'] as const
 export const MODEL_MODE_LABELS: Record<string, string> = {
     default: 'Default',
     sonnet: 'Sonnet',
-    opus: 'Opus'
+    opus: 'Opus',
+    'opus-4-7': 'Opus 4.7'
+}
+
+export function getNextClaudeModelMode(mode: ModelMode | undefined): typeof MODEL_MODES[number] {
+    const currentIndex = MODEL_MODES.indexOf(mode as typeof MODEL_MODES[number])
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % MODEL_MODES.length : 0
+    return MODEL_MODES[nextIndex]
 }
 
 export const CODEX_MODELS = [
@@ -299,6 +306,7 @@ export function YohoRemoteComposer(props: {
     otherUserTyping?: TypingUser | null
     setTextRef?: React.MutableRefObject<((text: string) => void) | null>
     activeMonitors?: ActiveMonitor[]
+    reconnecting?: boolean
 }) {
     const {
         apiClient,
@@ -327,7 +335,8 @@ export function YohoRemoteComposer(props: {
         onTerminal,
         autocompletePrefixes = ['@', '/'],
         autocompleteSuggestions = defaultSuggestionHandler,
-        otherUserTyping = null
+        otherUserTyping = null,
+        reconnecting = false,
     } = props
 
     if (isFlutterApp()) return null
@@ -357,8 +366,12 @@ export function YohoRemoteComposer(props: {
     const resumeLabel = resumePending
         ? 'Resuming...'
         : resumeError
-            ? 'Resume failed. Tap to retry.'
-            : 'Tap to resume session'
+            ? reconnecting
+                ? 'Resume failed while reconnecting. Tap to retry.'
+                : 'Resume failed. Tap to retry.'
+            : reconnecting
+                ? 'Session is reconnecting...'
+                : 'Tap to resume session'
 
     const [inputState, setInputState] = useState<TextInputState>({
         text: '',
@@ -807,9 +820,7 @@ export function YohoRemoteComposer(props: {
         const handleGlobalKeyDown = (e: globalThis.KeyboardEvent) => {
             if (e.key === 'm' && (e.metaKey || e.ctrlKey) && onModelModeChange && agentFlavor !== 'codex' && agentFlavor !== 'gemini') {
                 e.preventDefault()
-                const currentIndex = MODEL_MODES.indexOf(modelMode as typeof MODEL_MODES[number])
-                const nextIndex = (currentIndex + 1) % MODEL_MODES.length
-                onModelModeChange({ model: MODEL_MODES[nextIndex] })
+                onModelModeChange({ model: getNextClaudeModelMode(modelMode) })
                 haptic('light')
             }
         }
@@ -1580,6 +1591,7 @@ export function YohoRemoteComposer(props: {
 
                     <StatusBar
                         active={active}
+                        reconnecting={reconnecting}
                         thinking={thinking}
                         agentState={agentState}
                         contextSize={contextSize}

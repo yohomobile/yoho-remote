@@ -1,4 +1,4 @@
-import { useState, useEffect, type FC, type PropsWithChildren } from 'react'
+import { useState, useEffect, useMemo, type FC, type PropsWithChildren } from 'react'
 import { useMessage } from '@assistant-ui/react'
 import { MarkdownTextPrimitive } from '@assistant-ui/react-markdown'
 import { cn } from '@/lib/utils'
@@ -59,6 +59,24 @@ export const ReasoningGroup: FC<PropsWithChildren> = ({ children }) => {
         && message.content.length > 0
         && message.content[message.content.length - 1]?.type === 'reasoning'
 
+    const summaryText = useMemo(() => {
+        const allReasoning = message.content
+            .filter((part): part is { type: 'reasoning'; text: string } => part.type === 'reasoning' && typeof part.text === 'string')
+            .map((part) => part.text.trim())
+            .filter(Boolean)
+            .join('\n')
+
+        if (!allReasoning) {
+            return '生成中…'
+        }
+
+        const normalized = allReasoning.replace(/\s+/g, ' ').trim()
+        const maxSummaryLength = 90
+        return normalized.length <= maxSummaryLength
+            ? normalized
+            : `${normalized.slice(0, maxSummaryLength)}…`
+    }, [message.content])
+
     // Auto-expand while streaming
     useEffect(() => {
         if (isStreaming) {
@@ -78,7 +96,11 @@ export const ReasoningGroup: FC<PropsWithChildren> = ({ children }) => {
                 )}
             >
                 <ChevronIcon open={isOpen} />
-                <span>Reasoning</span>
+                {isOpen ? (
+                    <span>Reasoning</span>
+                ) : (
+                    <span>Reasoning（摘要：{summaryText}）</span>
+                )}
                 {isStreaming && (
                     <span className="flex items-center gap-1 ml-1 text-[var(--app-hint)]">
                         <ShimmerDot />

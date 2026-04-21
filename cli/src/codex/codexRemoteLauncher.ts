@@ -21,7 +21,7 @@ import type { EnhancedMode } from './loop';
 import { restoreTerminalState } from '@/ui/terminalState';
 import { hasCodexCliOverrides } from './utils/codexCliOverrides';
 import { buildCodexStartConfig, TITLE_INSTRUCTION } from './utils/codexStartConfig';
-import { convertCodexEvent } from './utils/codexEventConverter';
+import { convertCodexEvent, extractCodexReasoningId } from './utils/codexEventConverter';
 import { getYohoAuxMcpServers, VAULT_HTTP_PORT } from '@/utils/yohoMcpServers';
 
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
@@ -388,9 +388,11 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
                     logger.debug('[Codex] Streaming agent_reasoning_delta to UI');
                     loggedReasoningDelta = true;
                 }
+                const reasoningId = extractCodexReasoningId(msg);
                 session.sendCodexMessage({
                     type: 'reasoning-delta',
-                    delta: msg.delta
+                    delta: msg.delta,
+                    ...(reasoningId ? { id: reasoningId } : {})
                 });
             }
         } else if (msg.type === 'agent_reasoning') {
@@ -448,7 +450,7 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
             reasoningProcessor.processDelta(msg.delta);
         }
         if (msg.type === 'agent_reasoning') {
-            reasoningProcessor.complete(msg.text);
+            reasoningProcessor.complete(msg.text, extractCodexReasoningId(msg));
         }
         if (msg.type === 'agent_message') {
             session.sendCodexMessage({

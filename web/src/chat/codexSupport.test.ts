@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { normalizeDecryptedMessage } from './normalize'
 import { reduceChatBlocks } from './reducer'
+import { activeItem, buildDisplayTurns } from './presentation'
 import { getToolPresentation } from '../components/ToolCard/knownTools'
 import type { NormalizedMessage } from './types'
 import type { DecryptedMessage } from '../types/api'
+import type { Session } from '@/types/api'
 
 function makeMessage(props: {
     id: string
@@ -23,6 +25,24 @@ function normalize(message: DecryptedMessage): NormalizedMessage[] {
     const normalized = normalizeDecryptedMessage(message)
     if (!normalized) return []
     return Array.isArray(normalized) ? normalized : [normalized]
+}
+
+function createSession(overrides: Partial<Session> = {}): Session {
+    return {
+        id: 'session-1',
+        createdAt: 1,
+        updatedAt: 1,
+        lastMessageAt: null,
+        active: true,
+        thinking: true,
+        metadata: {
+            path: '/tmp/session',
+            host: 'localhost',
+            source: 'codex',
+        },
+        agentState: null,
+        ...overrides,
+    }
 }
 
 describe('Codex frontend support', () => {
@@ -213,6 +233,111 @@ describe('Codex frontend support', () => {
                 type: 'compact-boundary'
             }
         })
+    })
+
+    test('threads Codex reasoning-delta through normalize, reducer, and display turns', () => {
+        const normalized = normalize(makeMessage({
+            id: 'codex-reasoning-delta',
+            createdAt: 6,
+            content: {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'reasoning-delta',
+                        delta: 'Need to inspect package.json',
+                        id: 'codex-reasoning-delta-item'
+                    }
+                }
+            }
+        }))
+
+        const reduced = reduceChatBlocks(normalized, null)
+        expect(reduced.blocks).toHaveLength(1)
+        const block = reduced.blocks[0]
+        expect(block?.kind).toBe('agent-reasoning')
+        if (!block || block.kind !== 'agent-reasoning') {
+            throw new Error('Expected agent-reasoning block')
+        }
+        expect(block.text).toBe('Need to inspect package.json')
+        expect(block.isDelta).toBe(true)
+
+        const turns = buildDisplayTurns(reduced.blocks, createSession({
+            thinking: true,
+        }))
+
+        expect(turns).toHaveLength(1)
+        expect(turns[0]?.items.map((item) => item.kind)).toEqual(['agent-reasoning'])
+        expect(activeItem(turns[0]!)?.kind).toBe('agent-reasoning')
+        expect(activeItem(turns[0]!)?.id).toBe(block.id)
+    })
+
+    test('merges Codex reasoning-delta chunks with the same payload id only', () => {
+        const normalized = [
+            ...normalize(makeMessage({
+                id: 'codex-reasoning-delta-a',
+                createdAt: 6,
+                content: {
+                    role: 'agent',
+                    content: {
+                        type: 'codex',
+                        data: {
+                            type: 'reasoning-delta',
+                            delta: 'Need to ',
+                            id: 'reasoning-shared'
+                        }
+                    }
+                }
+            })),
+            ...normalize(makeMessage({
+                id: 'codex-reasoning-delta-b',
+                createdAt: 7,
+                content: {
+                    role: 'agent',
+                    content: {
+                        type: 'codex',
+                        data: {
+                            type: 'reasoning-delta',
+                            delta: 'inspect files',
+                            reasoningId: 'reasoning-shared'
+                        }
+                    }
+                }
+            })),
+            ...normalize(makeMessage({
+                id: 'codex-reasoning-delta-c',
+                createdAt: 8,
+                content: {
+                    role: 'agent',
+                    content: {
+                        type: 'codex',
+                        data: {
+                            type: 'reasoning-delta',
+                            delta: 'Different group',
+                            item_id: 'reasoning-other'
+                        }
+                    }
+                }
+            }))
+        ]
+
+        expect(normalized.map((message) => {
+            if (message.role !== 'agent') return null
+            const content = message.content[0]
+            return content?.type === 'reasoning' ? content.uuid : null
+        })).toEqual(['reasoning-shared', 'reasoning-shared', 'reasoning-other'])
+
+        const reduced = reduceChatBlocks(normalized, null)
+        const reasoningBlocks = reduced.blocks.filter((block) => block.kind === 'agent-reasoning')
+        expect(reasoningBlocks).toHaveLength(2)
+        expect(reasoningBlocks[0]?.kind === 'agent-reasoning' ? reasoningBlocks[0].text : null)
+            .toBe('Need to inspect files')
+        expect(reasoningBlocks[0]?.kind === 'agent-reasoning' ? reasoningBlocks[0].reasoningId : null)
+            .toBe('reasoning-shared')
+        expect(reasoningBlocks[1]?.kind === 'agent-reasoning' ? reasoningBlocks[1].text : null)
+            .toBe('Different group')
+        expect(reasoningBlocks[1]?.kind === 'agent-reasoning' ? reasoningBlocks[1].reasoningId : null)
+            .toBe('reasoning-other')
     })
 
     test('uses Codex token_count context-window usage without rendering a timeline event', () => {
@@ -687,6 +812,78 @@ describe('Codex frontend support', () => {
                 planExists: false
             }
         })
+    })
+
+    test('normalizes stored top-level role:event rows as events without agent JSON fallback', () => {
+        const message: DecryptedMessage = {
+            id: 'stored-todo-event',
+            seq: 42,
+            localId: 'turn-42',
+            createdAt: 7,
+            status: 'sent',
+            originalText: 'raw-event-row',
+            content: {
+                role: 'event',
+                content: {
+                    type: 'todo-reminder',
+                    items: [
+                        { content: 'Inspect the repo', status: 'completed' },
+                        { content: 'Patch the UI', status: 'in_progress', activeForm: 'Patching the UI' }
+                    ],
+                    itemCount: 2,
+                    pendingCount: 0,
+                    inProgressCount: 1,
+                    completedCount: 1,
+                    source: 'stored-row'
+                },
+                meta: {
+                    transport: 'postgres'
+                }
+            }
+        }
+
+        const normalized = normalize(message)
+
+        expect(normalized).toEqual([
+            {
+                id: 'stored-todo-event',
+                seq: 42,
+                localId: 'turn-42',
+                createdAt: 7,
+                role: 'event',
+                isSidechain: false,
+                content: {
+                    type: 'todo-reminder',
+                    items: [
+                        { content: 'Inspect the repo', status: 'completed' },
+                        { content: 'Patch the UI', status: 'in_progress', activeForm: 'Patching the UI' }
+                    ],
+                    itemCount: 2,
+                    pendingCount: 0,
+                    inProgressCount: 1,
+                    completedCount: 1,
+                    source: 'stored-row'
+                },
+                meta: {
+                    transport: 'postgres'
+                },
+                status: 'sent',
+                originalText: 'raw-event-row'
+            }
+        ])
+
+        const reduced = reduceChatBlocks(normalized, null)
+        expect(reduced.blocks).toEqual([
+            {
+                kind: 'agent-event',
+                id: 'stored-todo-event',
+                createdAt: 7,
+                event: normalized[0]!.content,
+                meta: {
+                    transport: 'postgres'
+                }
+            }
+        ])
     })
 
     test('renders Claude edited_text_file attachments as structured code-change cards', () => {

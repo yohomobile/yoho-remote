@@ -1,7 +1,7 @@
 {
     "name": "yoho-remote",
     "private": true,
-    "workspaces": ["cli", "server", "web", "worker"],
+    "workspaces": ["cli", "server", "web", "worker", "e2e"],
     "scripts": {
         "dev": "concurrently \"bun run dev:server\" \"bun run dev:web\" --kill-others-on-exit",
         "build": "bun run build:cli && bun run build:server && bun run build:web && bun run build:worker",
@@ -19,9 +19,12 @@
         "repair:brain-sessions": "cd server && bun run repair:brain-sessions",
         "typecheck": "bun run typecheck:cli && bun run typecheck:web && bun run typecheck:server && bun run typecheck:worker",
         "typecheck:cli": "cd cli && bun run typecheck",
+        "typecheck:e2e": "cd e2e && bun run typecheck",
         "typecheck:server": "cd server && bun run typecheck",
         "typecheck:worker": "cd worker && bun run typecheck",
         "typecheck:web": "cd web && bun run typecheck",
+        "e2e:smoke": "cd e2e && bun run smoke",
+        "e2e:full": "cd e2e && bun run full",
         "test": "bun run test:cli && bun run test:server",
         "test:cli": "cd cli && bun run test",
         "test:server": "cd server && bun run test",

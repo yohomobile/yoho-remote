@@ -4,13 +4,15 @@ import {
     canQueueMessagesWhenInactive,
     isArchivedSession,
     isIdleBrainChildSession,
+    isSessionReconnecting,
+    isSessionVisibleInActiveList,
     matchesArchiveFilter,
     shouldShowSessionComposer,
 } from './sessionActivity'
 
 function createSession(
-    overrides: Partial<Pick<SessionSummary, 'active' | 'pendingRequestsCount' | 'metadata'>> = {}
-): Pick<SessionSummary, 'active' | 'pendingRequestsCount' | 'metadata'> {
+    overrides: Partial<Pick<SessionSummary, 'active' | 'reconnecting' | 'pendingRequestsCount' | 'metadata'>> = {}
+): Pick<SessionSummary, 'active' | 'reconnecting' | 'pendingRequestsCount' | 'metadata'> {
     return {
         active: true,
         pendingRequestsCount: 0,
@@ -127,5 +129,20 @@ describe('sessionActivity', () => {
         })
 
         expect(matchesArchiveFilter(inactive, 'archive')).toBe(true)
+    })
+
+    test('treats reconnecting sessions as visible in active view without marking them online', () => {
+        const reconnecting = createSession({
+            active: false,
+            reconnecting: true,
+            metadata: {
+                path: '/tmp/reconnecting-session',
+            },
+        })
+
+        expect(isSessionReconnecting(reconnecting)).toBe(true)
+        expect(isSessionVisibleInActiveList(reconnecting)).toBe(true)
+        expect(matchesArchiveFilter(reconnecting, 'active')).toBe(true)
+        expect(matchesArchiveFilter(reconnecting, 'archive')).toBe(false)
     })
 })

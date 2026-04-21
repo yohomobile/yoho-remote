@@ -2,25 +2,33 @@ import type { Session, SessionSummary } from '@/types/api'
 import type { ArchiveFilter } from '@/lib/session-filters'
 
 type SessionWithSource = Pick<Session, 'metadata'> | Pick<SessionSummary, 'metadata'>
-type SessionWithArchiveState = Pick<Session, 'active' | 'metadata'> | Pick<SessionSummary, 'active' | 'metadata'>
+type SessionWithReconnectState = Pick<Session, 'active' | 'reconnecting' | 'metadata'> | Pick<SessionSummary, 'active' | 'reconnecting' | 'metadata'>
 
 export function isBrainChildSession(session: SessionWithSource): boolean {
     return session.metadata?.source === 'brain-child'
 }
 
-export function isArchivedSession(session: SessionWithArchiveState): boolean {
+export function isArchivedSession(session: SessionWithReconnectState): boolean {
     return session.metadata?.lifecycleState === 'archived'
 }
 
+export function isSessionReconnecting(session: SessionWithReconnectState): boolean {
+    return session.reconnecting === true
+}
+
+export function isSessionVisibleInActiveList(session: SessionWithReconnectState): boolean {
+    return session.active || isSessionReconnecting(session)
+}
+
 export function matchesArchiveFilter(
-    session: SessionWithArchiveState,
+    session: SessionWithReconnectState,
     archiveFilter: ArchiveFilter
 ): boolean {
     const archived = isArchivedSession(session)
     if (archiveFilter === 'archive') {
-        return archived || !session.active
+        return archived || !isSessionVisibleInActiveList(session)
     }
-    return !archived && session.active
+    return !archived && isSessionVisibleInActiveList(session)
 }
 
 export function canQueueMessagesWhenInactive(session: SessionWithSource): boolean {

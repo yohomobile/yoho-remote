@@ -15,6 +15,7 @@ function getBrainChildMainSessionId(metadata: Session['metadata']): string | und
 export type SessionStatusUpdateData = {
     active?: boolean
     activeAt?: number
+    reconnecting?: boolean
     lastMessageAt?: number | null
     thinking?: boolean
     wasThinking?: boolean
@@ -69,6 +70,7 @@ export function hasSessionStatusFields(data: SessionStatusUpdateData | null): bo
     return (
         data.active !== undefined ||
         data.activeAt !== undefined ||
+        data.reconnecting !== undefined ||
         data.lastMessageAt !== undefined ||
         data.thinking !== undefined ||
         data.wasThinking !== undefined ||
@@ -176,6 +178,7 @@ export function toSessionFromSsePayload(data: Record<string, unknown>): Session 
         updatedAt: data.updatedAt as number,
         ...((typeof data.lastMessageAt === 'number' || data.lastMessageAt === null) && { lastMessageAt: data.lastMessageAt as number | null }),
         active: data.active as boolean,
+        ...(typeof data.reconnecting === 'boolean' && { reconnecting: data.reconnecting }),
         thinking: data.thinking as boolean,
         metadata: (isObject(data.metadata) || data.metadata === null)
             ? data.metadata as Session['metadata']
@@ -249,6 +252,7 @@ export function toSessionSummaryFromSsePayload(data: Record<string, unknown>): S
         id: session.id,
         createdAt: session.createdAt,
         active: session.active,
+        ...(typeof session.reconnecting === 'boolean' && { reconnecting: session.reconnecting }),
         activeAt: typeof data.activeAt === 'number' ? data.activeAt : session.updatedAt,
         updatedAt: session.updatedAt,
         lastMessageAt: session.lastMessageAt ?? null,
@@ -314,6 +318,7 @@ export function applySessionSummaryStatusUpdate(
     const hasChange =
         (data.active !== undefined && data.active !== target.active) ||
         (data.activeAt !== undefined && data.activeAt !== target.activeAt) ||
+        (data.reconnecting !== undefined && data.reconnecting !== target.reconnecting) ||
         (data.lastMessageAt !== undefined && data.lastMessageAt !== target.lastMessageAt) ||
         (data.thinking !== undefined && data.thinking !== target.thinking) ||
         (data.modelMode !== undefined && data.modelMode !== target.modelMode) ||
@@ -334,6 +339,7 @@ export function applySessionSummaryStatusUpdate(
                     ...session,
                     ...(data.active !== undefined && { active: data.active }),
                     ...(data.activeAt !== undefined && { activeAt: data.activeAt }),
+                    ...(data.reconnecting !== undefined && { reconnecting: data.reconnecting }),
                     ...(data.lastMessageAt !== undefined && { lastMessageAt: data.lastMessageAt ?? null }),
                     ...(data.thinking !== undefined && { thinking: data.thinking }),
                     ...(data.modelMode !== undefined && { modelMode: data.modelMode as SessionSummary['modelMode'] }),

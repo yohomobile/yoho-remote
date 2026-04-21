@@ -11,6 +11,7 @@ export type UsageData = {
     rate_limit_used_percent?: number
     context_tokens_reliable?: boolean
     clear_context_usage?: boolean
+    raw?: Record<string, unknown>
 }
 
 export type PlanTodoReminderItem = {

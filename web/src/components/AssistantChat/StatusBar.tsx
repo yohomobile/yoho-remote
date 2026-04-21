@@ -21,10 +21,20 @@ function formatCompactTokenCount(value: number): string {
 
 function getConnectionStatus(
     active: boolean,
+    reconnecting: boolean,
     thinking: boolean,
     agentState: AgentState | null | undefined
 ): { text: string; color: string; dotColor: string; isPulsing: boolean } {
     const hasPermissions = agentState?.requests && Object.keys(agentState.requests).length > 0
+
+    if (reconnecting) {
+        return {
+            text: 'reconnecting',
+            color: 'text-amber-500',
+            dotColor: 'bg-amber-500',
+            isPulsing: true
+        }
+    }
 
     if (!active) {
         return {
@@ -103,6 +113,7 @@ function getDisplayName(email: string): string {
 
 export function StatusBar(props: {
     active: boolean
+    reconnecting?: boolean
     thinking: boolean
     agentState: AgentState | null | undefined
     contextSize?: number
@@ -115,8 +126,8 @@ export function StatusBar(props: {
     otherUserTyping?: TypingUser | null
 }) {
     const connectionStatus = useMemo(
-        () => getConnectionStatus(props.active, props.thinking, props.agentState),
-        [props.active, props.thinking, props.agentState]
+        () => getConnectionStatus(props.active, props.reconnecting === true, props.thinking, props.agentState),
+        [props.active, props.reconnecting, props.thinking, props.agentState]
     )
 
     const vibingMessage = useVibingMessage(props.thinking)

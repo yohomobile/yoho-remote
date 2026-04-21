@@ -147,7 +147,7 @@ export class ReasoningProcessor {
     /**
      * Complete the reasoning section with final text
      */
-    complete(fullText: string): void {
+    complete(fullText: string, reasoningId?: string | null): void {
         // Extract title and content if present
         let title: string | undefined;
         let content: string = fullText;
@@ -186,7 +186,7 @@ export class ReasoningProcessor {
             const reasoningMessage: ReasoningMessage = {
                 type: 'reasoning',
                 message: content,
-                id: randomUUID()
+                id: reasoningId ?? randomUUID()
             };
             logger.debug('[ReasoningProcessor] Sending reasoning message');
             this.onMessage?.(reasoningMessage);

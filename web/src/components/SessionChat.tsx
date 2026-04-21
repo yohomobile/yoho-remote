@@ -48,10 +48,11 @@ import {
     isCodexModel,
 } from '@/components/AssistantChat/YohoRemoteComposer'
 
-const MODEL_MODE_VALUES = new Set([
+export const MODEL_MODE_VALUES = new Set<string>([
     'default',
     'sonnet',
     'opus',
+    'opus-4-7',
     'glm-5.1',
     'gpt-5.4',
     'gpt-5.4-mini',
@@ -63,7 +64,7 @@ const MODEL_MODE_VALUES = new Set([
     'gpt-5.2'
 ])
 
-function coerceModelMode(value: string | null | undefined): ModelMode | undefined {
+export function coerceModelMode(value: string | null | undefined): ModelMode | undefined {
     if (!value) {
         return undefined
     }
@@ -71,6 +72,9 @@ function coerceModelMode(value: string | null | undefined): ModelMode | undefine
         return value as ModelMode
     }
     const normalized = value.toLowerCase()
+    if (normalized.includes('opus-4-7')) {
+        return 'opus-4-7'
+    }
     if (normalized.includes('sonnet')) {
         return 'sonnet'
     }
@@ -96,6 +100,71 @@ function getAvailableModels(session: Session): { id: string; label: string }[] {
 
 type ResumePhase = 'idle' | 'pending' | 'resolving'
 
+export type SessionConnectionState = 'active' | 'reconnecting' | 'inactive'
+
+export function getSessionConnectionState(session: Pick<Session, 'active' | 'reconnecting'>): SessionConnectionState {
+    if (session.reconnecting) {
+        return 'reconnecting'
+    }
+    return session.active ? 'active' : 'inactive'
+}
+
+export function getSessionChatConnectionNotices(options: {
+    connectionState: SessionConnectionState
+    showComposer: boolean
+    isResuming: boolean
+    resumeError: string | null
+    messageCount: number
+    brainChildInactiveHint: string | null
+    terminationReason?: string | null
+    canQueueWhileInactive: boolean
+}): {
+    reconnectingText: string | null
+    inactiveText: string | null
+    licenseTerminationText: string | null
+} {
+    const {
+        connectionState,
+        showComposer,
+        isResuming,
+        resumeError,
+        messageCount,
+        brainChildInactiveHint,
+        terminationReason,
+        canQueueWhileInactive,
+    } = options
+
+    const reconnectingText = connectionState === 'reconnecting'
+        ? (showComposer
+            ? 'Session is reconnecting. New messages will queue until it is ready.'
+            : brainChildInactiveHint ?? 'Session is reconnecting. Brain subtask pages do not accept manual input.')
+        : null
+
+    const licenseTerminationText = !reconnectingText && isLicenseTermination(terminationReason)
+        ? `Session terminated — ${getLicenseTerminationLabel(terminationReason!).toLowerCase()}. Contact your administrator.`
+        : null
+
+    const inactiveText = !reconnectingText && connectionState === 'inactive' && !canQueueWhileInactive
+        ? (isResuming
+            ? 'Resuming session...'
+            : resumeError
+                ? showComposer
+                    ? 'Resume failed. Tap the composer to retry.'
+                    : brainChildInactiveHint ?? 'Resume failed. Brain subtask pages do not accept manual input.'
+                : messageCount === 0
+                    ? brainChildInactiveHint ?? 'Starting session...'
+                    : showComposer
+                        ? 'Session is inactive. Tap the composer to resume.'
+                        : brainChildInactiveHint ?? 'Session is inactive. Brain subtask pages do not accept manual input.')
+        : null
+
+    return {
+        reconnectingText,
+        inactiveText,
+        licenseTerminationText,
+    }
+}
+
 export function SessionChat(props: {
     api: ApiClient
     session: Session
@@ -116,8 +185,10 @@ export function SessionChat(props: {
     const { haptic } = usePlatform()
     const navigate = useNavigate()
     const queryClient = useQueryClient()
+    const connectionState = getSessionConnectionState(props.session)
+    const reconnecting = connectionState === 'reconnecting'
     const canQueueWhileInactive = canQueueMessagesWhenInactive(props.session)
-    const controlsDisabled = !props.session.active && !canQueueWhileInactive
+    const controlsDisabled = connectionState !== 'active' && !canQueueWhileInactive
     const showComposer = shouldShowSessionComposer(props.session)
     const brainChildActionState = useMemo(
         () => deriveBrainChildPageActionState(props.session),
@@ -342,13 +413,13 @@ export function SessionChat(props: {
             return
         }
 
-        if (props.session.active && resumeQueueRef.current.length === 0) {
+        if (connectionState === 'active' && resumeQueueRef.current.length === 0) {
             setResumePhase('idle')
             return
         }
 
         resumeInFlightRef.current = true
-        if (resumeQueueRef.current.length > 0 || !props.session.active) {
+        if (resumeQueueRef.current.length > 0 || connectionState !== 'active') {
             setResumePhase('resolving')
         }
         setResumeError(null)
@@ -356,7 +427,7 @@ export function SessionChat(props: {
         try {
             let targetSessionId = props.session.id
 
-            if (!props.session.active) {
+            if (connectionState !== 'active') {
                 const result = await props.api.resumeSession(props.session.id)
                 targetSessionId = result.sessionId
                 await queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
@@ -381,7 +452,7 @@ export function SessionChat(props: {
             console.error('Failed to resume session:', error)
         } finally {
             resumeInFlightRef.current = false
-            if (completedNormally && props.session.active && resumeQueueRef.current.length > 0) {
+            if (completedNormally && connectionState === 'active' && resumeQueueRef.current.length > 0) {
                 setResumePhase('pending')
                 void resumeSession()
             } else if (resumeQueueRef.current.length > 0) {
@@ -396,7 +467,7 @@ export function SessionChat(props: {
         navigate,
         props.api,
         props.onRefresh,
-        props.session.active,
+        connectionState,
         props.session.id,
         queryClient,
         flushResumeQueue,
@@ -408,12 +479,12 @@ export function SessionChat(props: {
     }, [resumeSession])
 
     const handleSendMessage = useCallback((text: string) => {
-        if (props.session.active) {
+        if (connectionState === 'active') {
             props.onSend(text)
             return
         }
         void resumeSession(text)
-    }, [props.session.active, props.onSend, resumeSession])
+    }, [connectionState, props.onSend, resumeSession])
 
     const runtime = useYohoRemoteRuntime({
         session: props.session,
@@ -570,6 +641,16 @@ export function SessionChat(props: {
         onUploadImages: handleBridgeUploadImages,
         onUploadFiles: handleBridgeUploadFiles,
     })
+    const connectionNotices = getSessionChatConnectionNotices({
+        connectionState,
+        showComposer,
+        isResuming,
+        resumeError,
+        messageCount: props.messages.length,
+        brainChildInactiveHint,
+        terminationReason: props.session.terminationReason,
+        canQueueWhileInactive,
+    })
 
     // Push session header to Flutter
     useEffect(() => {
@@ -609,7 +690,7 @@ export function SessionChat(props: {
             selectedModel: resolvedModelMode ?? 'default',
             fastMode: props.session.fastMode ?? false,
             reasoningLevel: resolvedReasoningEffort ?? 'medium',
-            canSend: showComposer && !props.isSending && !isResuming && props.session.active,
+            canSend: showComposer && !props.isSending && !isResuming && (props.session.active || reconnecting || canQueueWhileInactive),
             isGenerating: props.session.thinking ?? false,
             availableModels,
         })
@@ -618,6 +699,8 @@ export function SessionChat(props: {
         props.isSending,
         props.otherUserTyping,
         isResuming,
+        reconnecting,
+        canQueueWhileInactive,
         resolvedModelMode,
         resolvedReasoningEffort,
         showComposer,
@@ -687,29 +770,27 @@ export function SessionChat(props: {
                 />
             ) : null}
 
-            {controlsDisabled ? (
+            {connectionNotices.reconnectingText ? (
                 <div className="px-3 pt-3">
-                    {isLicenseTermination(props.session.terminationReason) ? (
-                        <div className="mx-auto w-full max-w-content rounded-md bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-600 dark:text-red-400">
-                            Session terminated — {getLicenseTerminationLabel(props.session.terminationReason!).toLowerCase()}. Contact your administrator.
-                        </div>
-                    ) : (
-                        <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-hint)]">
-                            {isResuming
-                                ? 'Resuming session...'
-                                : resumeError
-                                    ? showComposer
-                                        ? 'Resume failed. Tap the composer to retry.'
-                                        : brainChildInactiveHint
-                                            ?? 'Resume failed. Brain subtask pages do not accept manual input.'
-                                    : props.messages.length === 0
-                                        ? brainChildInactiveHint ?? 'Starting session...'
-                                        : showComposer
-                                            ? 'Session is inactive. Tap the composer to resume.'
-                                            : brainChildInactiveHint
-                                                ?? 'Session is inactive. Brain subtask pages do not accept manual input.'}
-                        </div>
-                    )}
+                    <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-hint)]">
+                        {connectionNotices.reconnectingText}
+                    </div>
+                </div>
+            ) : null}
+
+            {connectionNotices.licenseTerminationText ? (
+                <div className="px-3 pt-3">
+                    <div className="mx-auto w-full max-w-content rounded-md bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-600 dark:text-red-400">
+                        {connectionNotices.licenseTerminationText}
+                    </div>
+                </div>
+            ) : null}
+
+            {connectionNotices.inactiveText ? (
+                <div className="px-3 pt-3">
+                    <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-hint)]">
+                        {connectionNotices.inactiveText}
+                    </div>
                 </div>
             ) : null}
 
@@ -733,7 +814,7 @@ export function SessionChat(props: {
                 </div>
             ) : null}
 
-            {!brainCreationReadyPhase && !props.session.active && canQueueWhileInactive ? (
+            {!brainCreationReadyPhase && connectionState === 'inactive' && canQueueWhileInactive ? (
                 <div className="px-3 pt-3">
                     <div className="mx-auto flex w-full max-w-content items-center justify-between gap-3 rounded-md border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-700">
                         <span>Brain 当前未运行。新消息会先入队，等恢复后再消费。</span>
@@ -789,6 +870,7 @@ export function SessionChat(props: {
                             onRequestResume={handleResumeRequest}
                             resumePending={isResuming}
                             resumeError={resumeError}
+                            reconnecting={reconnecting}
                             onModelModeChange={handleModelModeChange}
                             onFastModeChange={handleFastModeChange}
                             onSwitchToRemote={handleSwitchToRemote}

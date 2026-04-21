@@ -7,7 +7,13 @@ import { useDebouncedThinking } from '@/hooks/useDebouncedThinking'
 import { getMachineTitle } from '@/lib/machines'
 import { formatSessionModelLabel } from '@/lib/sessionModelLabel'
 import { matchSessionToProject } from '@/lib/projectMatching'
-import { isArchivedSession, isIdleBrainChildSession, matchesArchiveFilter } from '@/lib/sessionActivity'
+import {
+    isArchivedSession,
+    isIdleBrainChildSession,
+    isSessionReconnecting,
+    isSessionVisibleInActiveList,
+    matchesArchiveFilter,
+} from '@/lib/sessionActivity'
 import {
     buildSessionListEntries,
     getCollapsedBrainChildCount,
@@ -268,14 +274,18 @@ function SessionItem(props: {
         ? s.createdBy.toLowerCase() === currentUserEmail.toLowerCase()
         : false
     const progress = getTodoProgress(s)
-    const active = statusSummary?.active ?? s.active
+    const reconnecting = statusSummary?.reconnecting ?? isSessionReconnecting(s)
+    const online = statusSummary
+        ? (statusSummary.active && !statusSummary.reconnecting)
+        : s.active
+    const active = statusSummary?.active ?? isSessionVisibleInActiveList(s)
     const pendingRequestsCount = statusSummary?.pendingRequestsCount ?? s.pendingRequestsCount
     const hasPending = pendingRequestsCount > 0
     const debouncedThinking = useDebouncedThinking(Boolean(statusSummary?.thinking ?? s.thinking))
     const isThinking = debouncedThinking && !hasPending
     const isIdleBrainChild = isIdleBrainChildSession(
         {
-            active,
+            active: online,
             pendingRequestsCount,
             metadata: s.metadata,
         },
@@ -305,7 +315,7 @@ function SessionItem(props: {
                 hover:bg-[var(--app-secondary-bg)]
                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]
                 ${nested ? 'px-2 py-2' : 'px-3 py-2.5'}
-                ${!active ? 'opacity-40' : ''}
+                ${!active ? 'opacity-40' : reconnecting ? 'opacity-80' : ''}
             `}
         >
             {/* Status indicator */}
@@ -313,7 +323,7 @@ function SessionItem(props: {
                 <span
                     className={`
                         block h-2 w-2 rounded-full
-                        ${!active ? 'bg-[#999]' : hasPending ? 'bg-[#FF9500] animate-pulse' : isThinking ? 'bg-[#007AFF] animate-pulse' : isIdleBrainChild ? 'bg-[#8E8E93]' : 'bg-[#34C759]'}
+                        ${!active ? 'bg-[#999]' : reconnecting ? 'bg-[#FFB020] animate-pulse' : hasPending ? 'bg-[#FF9500] animate-pulse' : isThinking ? 'bg-[#007AFF] animate-pulse' : isIdleBrainChild ? 'bg-[#8E8E93]' : 'bg-[#34C759]'}
                     `}
                 />
             </div>
@@ -334,9 +344,22 @@ function SessionItem(props: {
                             空闲
                         </span>
                     )}
+                    {reconnecting && (
+                        <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-700">
+                            重连中
+                        </span>
+                    )}
                     {childCount > 0 && (
                         <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[var(--app-subtle-bg)] text-[var(--app-hint)]">
                             {childCount} 子任务
+                        </span>
+                    )}
+                    {progress && (
+                        <span
+                            className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-600"
+                            title={`Todo progress ${progress.completed}/${progress.total}`}
+                        >
+                            {progress.completed}/{progress.total}
                         </span>
                     )}
                     {hasPending && (
@@ -423,6 +446,10 @@ function SessionItem(props: {
                 {!active ? (
                     <span className="text-[10px] font-medium text-[#999]">
                         offline
+                    </span>
+                ) : reconnecting ? (
+                    <span className="text-[10px] font-medium text-[#FFB020]">
+                        reconnecting
                     </span>
                 ) : hasPending ? (
                     <span className="text-[10px] font-medium text-[#FF9500]">
@@ -531,7 +558,8 @@ export function SessionList(props: {
     )
 
     // Statistics
-    const activeCount = filteredSessions.filter((session) => session.active && !isArchivedSession(session)).length
+    const visibleActiveCount = filteredSessions.filter((session) => isSessionVisibleInActiveList(session) && !isArchivedSession(session)).length
+    const reconnectingCount = filteredSessions.filter((session) => isSessionReconnecting(session) && !isArchivedSession(session)).length
     const archiveFilterLabel = props.archiveFilter === 'active' ? 'Active' : 'Archive'
     const nextArchiveFilter = props.archiveFilter === 'active' ? 'archive' : 'active'
     const nextArchiveFilterLabel = nextArchiveFilter === 'active' ? 'Active' : 'Archive'
@@ -551,7 +579,8 @@ export function SessionList(props: {
                 <div className="flex items-center justify-between px-3 py-1">
                     <div className="text-xs text-[var(--app-hint)]">
                         {filteredSessions.length} sessions
-                        {activeCount > 0 && ` (${activeCount} active)`}
+                        {visibleActiveCount > 0 && ` (${visibleActiveCount} visible)`}
+                        {reconnectingCount > 0 && ` · ${reconnectingCount} reconnecting`}
                         {collapsedBrainChildCount > 0 && ` · ${collapsedBrainChildCount} collapsed`}
                     </div>
                     <button

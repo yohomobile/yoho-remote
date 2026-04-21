@@ -473,7 +473,7 @@ export const knownTools: Record<string, {
         icon: () => <FileDiffIcon className={DEFAULT_ICON_CLASS} />,
         title: () => 'Diff',
         subtitle: (opts) => {
-            const unified = getCodexDiffUnified(opts.input)
+            const unified = getCodexDiffUnified(opts.input, opts.result)
             if (!unified) return null
 
             const filePath = getUnifiedDiffFilePath(unified)
@@ -481,7 +481,7 @@ export const knownTools: Record<string, {
 
             return filePath.split('/').pop() ?? filePath
         },
-        minimal: (opts) => !getCodexDiffUnified(opts.input)
+        minimal: (opts) => !getCodexDiffUnified(opts.input, opts.result)
     },
     search: {
         icon: () => <SearchIcon className={DEFAULT_ICON_CLASS} />,

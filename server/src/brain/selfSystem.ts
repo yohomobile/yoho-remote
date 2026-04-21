@@ -1,4 +1,5 @@
 import type { IStore, StoredAIProfile } from '../store'
+import { evaluateRecallConsumption } from '../agent/memoryResultGate'
 
 export type SelfSystemMemoryProvider = 'yoho-memory' | 'none'
 export type SelfSystemMemoryStatus = 'disabled' | 'skipped' | 'attached' | 'empty' | 'error'
@@ -127,8 +128,12 @@ async function recallSelfMemory(
             return { snippet: null, status: 'error' }
         }
 
-        const payload = await response.json() as { answer?: string }
-        if (typeof payload.answer !== 'string' || payload.answer.trim().length === 0) {
+        const payload = await response.json() as { answer?: string; filesSearched?: number; confidence?: number }
+        const gate = evaluateRecallConsumption(payload, {
+            matchTerms: [profile.name, namespace],
+            requireResultCount: true,
+        })
+        if (!gate.reliable || typeof payload.answer !== 'string' || payload.answer.trim().length === 0) {
             return { snippet: null, status: 'empty' }
         }
 

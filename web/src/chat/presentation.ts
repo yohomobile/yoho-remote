@@ -1,4 +1,6 @@
-import type { AgentEvent } from '@/chat/types'
+import { deriveBrainMessageDelivery } from '@/chat/brainDelivery'
+import type { ChatBlock, ToolCallBlock, AgentEvent } from '@/chat/types'
+import type { Session } from '@/types/api'
 
 export function formatUnixTimestamp(value: number): string {
     const ms = value < 1_000_000_000_000 ? value * 1000 : value
@@ -20,6 +22,97 @@ function truncateEventText(text: string, maxLen = 120): string {
     if (firstLine.length < text.length) text = firstLine
     if (text.length > maxLen) text = text.slice(0, maxLen - 3) + '...'
     return text
+}
+
+function isDisplayItemActive(block: ChatBlock, index: number, blocks: readonly ChatBlock[], session?: Session): boolean {
+    if (block.kind === 'user-text') {
+        if (block.status === 'sending') {
+            return true
+        }
+        const delivery = deriveBrainMessageDelivery(block, index, blocks, session)
+        const phase = delivery?.phase ?? null
+        return phase === 'queued' || phase === 'pending_consume' || phase === 'consuming'
+    }
+
+    if (block.kind === 'tool-call') {
+        const toolBlock = block as ToolCallBlock
+        return toolBlock.tool.state === 'pending' || toolBlock.tool.state === 'running'
+    }
+
+    if (block.kind === 'agent-text' || block.kind === 'agent-reasoning') {
+        return session?.thinking === true
+    }
+
+    return false
+}
+
+export type DisplayItem = {
+    id: string
+    kind: ChatBlock['kind']
+    createdAt: number
+    index: number
+    block: ChatBlock
+}
+
+export type DisplayTurn = {
+    id: string
+    createdAt: number
+    items: DisplayItem[]
+    activeItem: DisplayItem | null
+}
+
+export function activeItem(turn: DisplayTurn): DisplayItem | null {
+    return turn.activeItem
+}
+
+export function buildDisplayTurns(blocks: readonly ChatBlock[], session?: Session): DisplayTurn[] {
+    const turns: DisplayTurn[] = []
+    let currentItems: DisplayItem[] = []
+
+    const flush = () => {
+        if (currentItems.length === 0) {
+            return
+        }
+
+        const turnItems = currentItems
+        const turn: DisplayTurn = {
+            id: `turn:${turnItems[0]!.id}`,
+            createdAt: turnItems[0]!.createdAt,
+            items: turnItems,
+            activeItem: null,
+        }
+
+        let lastActiveItem: DisplayItem | null = null
+        for (const item of turnItems) {
+            if (isDisplayItemActive(item.block, item.index, blocks, session)) {
+                lastActiveItem = item
+            }
+        }
+        turn.activeItem = lastActiveItem
+        turns.push(turn)
+        currentItems = []
+    }
+
+    for (const [index, block] of blocks.entries()) {
+        if (block.kind === 'user-text' && currentItems.length > 0) {
+            flush()
+        }
+
+        currentItems.push({
+            id: block.id,
+            kind: block.kind,
+            createdAt: block.createdAt,
+            index,
+            block,
+        })
+
+        if (block.kind === 'user-text') {
+            flush()
+        }
+    }
+
+    flush()
+    return turns
 }
 
 export type EventPresentation = {

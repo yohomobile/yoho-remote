@@ -144,8 +144,12 @@ export function getCodexPatchPrimaryPath(input: unknown, result: unknown): strin
     return getCodexPatchEntries(input, result)[0]?.filePath ?? null
 }
 
-export function getCodexDiffUnified(input: unknown): string | null {
-    return getString(input, 'unified_diff')
+function getCodexDiffText(source: unknown): string | null {
+    return getStringAny(source, ['unified_diff', 'diff'])
+}
+
+export function getCodexDiffUnified(input: unknown, result: unknown = null): string | null {
+    return getCodexDiffText(input) ?? getCodexDiffText(result)
 }
 
 export function getUnifiedDiffFilePath(unifiedDiff: string): string | null {

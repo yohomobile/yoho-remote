@@ -42,6 +42,7 @@ import {
     validateNewSessionSearch,
     validateSessionListSearch,
 } from '@/lib/session-filters'
+import { isSessionVisibleInActiveList } from '@/lib/sessionActivity'
 import SettingsPage from '@/routes/settings'
 import AcceptInvitationPage from '@/routes/invitations/accept'
 import { LoginPage } from '@/routes/login'
@@ -214,7 +215,7 @@ function SessionsPage() {
         pushSessionsHeader({
             orgName: currentOrg?.name,
             onlineUsers: getOnlineUsersForBadge(onlineUsers),
-            activeCount: sessions.filter(s => s.active).length,
+            activeCount: sessions.filter((session) => isSessionVisibleInActiveList(session)).length,
             gitHash: gitCommitHash,
         })
     }, [onlineUsers, sessions, gitCommitHash, currentOrg])
@@ -250,8 +251,8 @@ function SessionsPage() {
                     <div className="flex shrink-0 items-center gap-1.5">
                         <OnlineUsersBadge users={onlineUsers} />
                         <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[var(--app-subtle-bg)] text-[var(--app-hint)]">
-                            <span className="sm:hidden">{sessions.filter(s => s.active).length}</span>
-                            <span className="hidden sm:inline">{sessions.filter(s => s.active).length} sessions</span>
+                            <span className="sm:hidden">{sessions.filter((session) => isSessionVisibleInActiveList(session)).length}</span>
+                            <span className="hidden sm:inline">{sessions.filter((session) => isSessionVisibleInActiveList(session)).length} sessions</span>
                         </span>
                         <button
                             type="button"

@@ -27,6 +27,29 @@ function safeStringify(value: unknown): string {
     }
 }
 
+function collectRawFields(source: Record<string, unknown>, knownKeys: string[]): Record<string, unknown> | undefined {
+    const raw: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(source)) {
+        if (knownKeys.includes(key)) continue
+        raw[key] = value
+    }
+
+    return Object.keys(raw).length > 0 ? raw : undefined
+}
+
+function createFallbackAgentTextBlock(
+    value: unknown,
+    uuid: string,
+    parentUUID: string | null
+): NormalizedAgentContent {
+    return {
+        type: 'text',
+        text: safeStringify(value),
+        uuid,
+        parentUUID
+    }
+}
+
 function withMessageEnvelope<T extends NormalizedMessage | NormalizedMessage[]>(
     value: T,
     message: DecryptedMessage
@@ -207,6 +230,65 @@ function normalizeAgentEvent(value: unknown): AgentEvent | null {
     return value as AgentEvent
 }
 
+function normalizeRoleEventContent(value: unknown): AgentEvent | null {
+    let content = value
+    if (typeof content === 'string') {
+        try {
+            const parsed: unknown = JSON.parse(content)
+            if (isObject(parsed)) {
+                content = parsed
+            }
+        } catch { /* keep as non-JSON string */ }
+    }
+
+    if (isObject(content) && content.type === 'event') {
+        const nested = normalizeAgentEvent(content.data)
+        if (nested) {
+            return nested
+        }
+    }
+
+    return normalizeAgentEvent(content)
+}
+
+function normalizeEventRecord(
+    messageId: string,
+    localId: string | null,
+    createdAt: number,
+    content: unknown,
+    meta?: unknown
+): NormalizedMessage | null {
+    const event = normalizeRoleEventContent(content)
+    if (event) {
+        return {
+            id: messageId,
+            localId,
+            createdAt,
+            role: 'event',
+            content: event,
+            isSidechain: false,
+            meta
+        }
+    }
+
+    if (content === null || content === undefined) {
+        return null
+    }
+
+    return {
+        id: messageId,
+        localId,
+        createdAt,
+        role: 'event',
+        content: {
+            type: 'message',
+            message: safeStringify(content)
+        },
+        isSidechain: false,
+        meta
+    }
+}
+
 function normalizeAssistantOutput(
     messageId: string,
     localId: string | null,
@@ -228,7 +310,10 @@ function normalizeAssistantOutput(
         blocks.push({ type: 'text', text: modelContent, uuid, parentUUID })
     } else if (Array.isArray(modelContent)) {
         for (const block of modelContent) {
-            if (!isObject(block) || typeof block.type !== 'string') continue
+            if (!isObject(block) || typeof block.type !== 'string') {
+                blocks.push(createFallbackAgentTextBlock(block, uuid, parentUUID))
+                continue
+            }
             if (block.type === 'text' && typeof block.text === 'string') {
                 blocks.push({ type: 'text', text: block.text, uuid, parentUUID })
                 continue
@@ -266,22 +351,15 @@ function normalizeAssistantOutput(
                     uuid,
                     parentUUID
                 })
+                continue
             }
+            blocks.push(createFallbackAgentTextBlock(block, uuid, parentUUID))
         }
     }
 
     const usage = isObject(message.usage) ? (message.usage as Record<string, unknown>) : null
     const inputTokens = usage ? asNumber(usage.input_tokens) : null
     const outputTokens = usage ? asNumber(usage.output_tokens) : null
-
-    if (blocks.length === 0 && Array.isArray(modelContent) && modelContent.length > 0) {
-        blocks.push({
-            type: 'text',
-            text: safeStringify(modelContent),
-            uuid,
-            parentUUID
-        })
-    }
 
     return {
         id: messageId,
@@ -296,7 +374,14 @@ function normalizeAssistantOutput(
             output_tokens: outputTokens,
             cache_creation_input_tokens: asNumber(usage?.cache_creation_input_tokens) ?? undefined,
             cache_read_input_tokens: asNumber(usage?.cache_read_input_tokens) ?? undefined,
-            service_tier: asString(usage?.service_tier) ?? undefined
+            service_tier: asString(usage?.service_tier) ?? undefined,
+            raw: usage ? collectRawFields(usage, [
+                'input_tokens',
+                'output_tokens',
+                'cache_creation_input_tokens',
+                'cache_read_input_tokens',
+                'service_tier'
+            ]) : undefined
         } : undefined
     }
 }
@@ -338,6 +423,24 @@ function formatCodexPlanEntries(value: unknown): string | null {
     }
 
     return ['Plan', '', ...lines].join('\n')
+}
+
+function getCodexReasoningUuid(data: Record<string, unknown>, fallback: string): string {
+    const direct = asString(data.id)
+        ?? asString(data.reasoningId)
+        ?? asString(data.reasoning_id)
+        ?? asString(data.item_id)
+        ?? asString(data.itemId)
+    if (direct) {
+        return direct
+    }
+
+    const summaryIndex = asNumber(data.summary_index) ?? asNumber(data.summaryIndex)
+    if (summaryIndex !== null) {
+        return `summary-${summaryIndex}`
+    }
+
+    return fallback
 }
 
 function normalizeUserOutput(
@@ -978,7 +1081,13 @@ function normalizeAgentRecord(
                     input_tokens: inputTokens ?? 0,
                     output_tokens: outputTokens ?? 0,
                     cache_creation_input_tokens: cacheCreationTokens ?? 0,
-                    cache_read_input_tokens: cacheReadTokens ?? 0
+                    cache_read_input_tokens: cacheReadTokens ?? 0,
+                    raw: usage ? collectRawFields(usage, [
+                        'input_tokens',
+                        'output_tokens',
+                        'cache_creation_input_tokens',
+                        'cache_read_input_tokens'
+                    ]) : undefined
                 } : undefined
             }
 
@@ -986,7 +1095,8 @@ function normalizeAgentRecord(
             // the reply text only appears in result.result.  Surface it as an
             // agent text block so the user can see the response.
             const resultText = typeof data.result === 'string' && data.result.trim() ? data.result as string : null
-            if (resultText) {
+            const resultFallbackText = resultText ?? (data.result !== undefined && data.result !== null ? safeStringify(data.result) : null)
+            if (resultFallbackText) {
                 const uuid = asString(data.uuid) ?? messageId
                 const parentUUID = asString(data.parentUuid) ?? null
                 const textMsg: NormalizedMessage = {
@@ -995,7 +1105,7 @@ function normalizeAgentRecord(
                     createdAt,
                     role: 'agent',
                     isSidechain: false,
-                    content: [{ type: 'text', text: resultText, uuid, parentUUID }],
+                    content: [{ type: 'text', text: resultFallbackText, uuid, parentUUID }],
                     meta
                 }
                 if (resultEvent) return [textMsg, resultEvent]
@@ -1386,13 +1496,14 @@ function normalizeAgentRecord(
         }
 
         if (data.type === 'reasoning' && typeof data.message === 'string') {
+            const uuid = getCodexReasoningUuid(data, messageId)
             return {
                 id: messageId,
                 localId,
                 createdAt,
                 role: 'agent',
                 isSidechain: false,
-                content: [{ type: 'reasoning', text: data.message, uuid: messageId, parentUUID: null }],
+                content: [{ type: 'reasoning', text: data.message, uuid, parentUUID: null }],
                 meta
             }
         }
@@ -1408,7 +1519,13 @@ function normalizeAgentRecord(
                 createdAt,
                 role: 'agent',
                 isSidechain: false,
-                content: [{ type: 'reasoning', text: delta, uuid: messageId, parentUUID: null, isDelta: true }],
+                content: [{
+                    type: 'reasoning',
+                    text: delta,
+                    uuid: getCodexReasoningUuid(data, messageId),
+                    parentUUID: null,
+                    isDelta: true
+                }],
                 meta
             }
         }
@@ -1620,6 +1737,10 @@ export function normalizeDecryptedMessage(message: DecryptedMessage): Normalized
                 content: { type: 'text', text: safeStringify(record.content) },
                 meta: record.meta
             }, message)
+    }
+    if (record.role === 'event') {
+        const normalized = normalizeEventRecord(message.id, message.localId, message.createdAt, record.content, record.meta)
+        return normalized ? withMessageEnvelope(normalized, message) : null
     }
     if (record.role === 'agent' || record.role === 'assistant') {
         if (isSkippableAgentContent(record.content)) {

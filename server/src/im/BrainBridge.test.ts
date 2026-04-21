@@ -2,6 +2,39 @@ import { describe, expect, test } from 'bun:test'
 import { BrainBridge } from './BrainBridge'
 
 describe('BrainBridge', () => {
+    test('filters unreliable yoho-memory user profile recall before prompt injection', async () => {
+        const originalFetch = globalThis.fetch
+        globalThis.fetch = (async () => new Response(JSON.stringify({
+            answer: '另一个用户的历史偏好',
+            filesSearched: 1,
+            confidence: 0.9,
+        }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+        })) as unknown as typeof fetch
+
+        try {
+            const bridge = new BrainBridge({
+                syncEngine: {
+                    subscribe: () => () => {},
+                } as any,
+                store: {
+                    updateFeishuChatState: async () => true,
+                } as any,
+                adapter: {
+                    platform: 'feishu',
+                    start: async () => {},
+                    stop: async () => {},
+                    sendReply: async () => {},
+                } as any,
+            })
+
+            await expect((bridge as any).fetchUserProfile('Dev', 'ou_user_1')).resolves.toBeNull()
+        } finally {
+            globalThis.fetch = originalFetch
+        }
+    })
+
     test('keeps the current busy Brain turn running for normal p2p follow-up context', async () => {
         const aborted: string[] = []
         const bridge = new BrainBridge({
@@ -233,7 +266,14 @@ describe('BrainBridge', () => {
     test('appends self system prompt and patches metadata during IM Brain initialization', async () => {
         const originalFetch = globalThis.fetch
         globalThis.fetch = (async () => new Response(JSON.stringify({
-            answer: 'K1 长期记忆：收到模糊输入时，优先把上下文结构化。',
+            answer: 'K1 长期记忆：namespace:default 收到模糊输入时，优先把上下文结构化。',
+            filesSearched: 1,
+            confidence: 0.9,
+            isDirectlyUsable: true,
+            scope: {
+                matched: true,
+            },
+            sources: ['K1 Brain 自我记忆 namespace:default'],
         }), {
             status: 200,
             headers: { 'content-type': 'application/json' },

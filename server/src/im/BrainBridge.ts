@@ -27,6 +27,7 @@ import { extractActions, actionsToExtras } from './feishu/actionExtractor'
 import { lookupKeycloakUserByEmail, type KeycloakUserInfo } from './keycloakLookup'
 import { getLicenseService } from '../license/licenseService'
 import { appendSelfSystemPrompt, resolveBrainSelfSystemContext } from '../brain/selfSystem'
+import { evaluateRecallConsumption } from '../agent/memoryResultGate'
 
 // ========== Structured logging ==========
 
@@ -2012,15 +2013,33 @@ export class BrainBridge implements IMBridgeCallbacks {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    input: `飞书用户 ${senderName} ${senderId}`,
-                    keywords: [senderName, senderId],
-                    maxFiles: 2,
+                    input: `飞书用户画像 openId:${senderId} 姓名:${senderName}`,
+                    keywords: [
+                        `openId:${senderId}`,
+                        senderId,
+                        senderName,
+                        '飞书用户画像',
+                    ],
+                    maxFiles: 1,
                 }),
                 signal: ctrl.signal,
             }).finally(() => clearTimeout(timeout))
             if (!resp.ok) return null
-            const result = await resp.json() as { answer?: string; filesSearched?: number }
-            if (!result.answer || result.filesSearched === undefined) return null
+            const result = await resp.json() as { answer?: string; filesSearched?: number; confidence?: number }
+            const gate = evaluateRecallConsumption(result, {
+                matchTerms: [senderId],
+                requireResultCount: true,
+            })
+            if (!gate.reliable || !result.answer) {
+                slog('warn', 'brain.user_profile_recall.filtered', {
+                    senderId,
+                    senderName,
+                    reason: gate.reason,
+                    confidence: gate.confidence,
+                    resultCount: gate.resultCount,
+                })
+                return null
+            }
             return result.answer
         } catch {
             return null

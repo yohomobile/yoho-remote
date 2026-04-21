@@ -70,7 +70,7 @@ function makeFetchSequence(responses: MockFetchResp[]) {
     const calls: FetchCall[] = []
     let idx = 0
 
-    const fetchFn = async (url: string | URL | Request, options?: RequestInit): Promise<Response> => {
+    const fetchImpl = async (url: string | URL | Request, options?: RequestInit): Promise<Response> => {
         const urlStr =
             typeof url === 'string' ? url
             : url instanceof URL ? url.toString()
@@ -92,6 +92,10 @@ function makeFetchSequence(responses: MockFetchResp[]) {
             text: async () => resp.textBody ?? JSON.stringify(resp.body ?? ''),
         } as Response
     }
+
+    const fetchFn = Object.assign(fetchImpl, {
+        preconnect: async () => {},
+    }) as typeof fetch
 
     return { fetchFn, calls }
 }

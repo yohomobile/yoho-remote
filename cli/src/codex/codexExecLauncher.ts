@@ -823,7 +823,7 @@ function handleExecEvent(event: ExecEvent, ctx: EventHandlerContext): void {
 
         case 'item.started': {
             const item = (event as { item: ExecItem }).item;
-            handleItemStarted(item, ctx);
+            handleItemStarted(item, ctx, event);
             break;
         }
 
@@ -835,7 +835,7 @@ function handleExecEvent(event: ExecEvent, ctx: EventHandlerContext): void {
 
         case 'item.completed': {
             const item = (event as { item: ExecItem }).item;
-            handleItemCompleted(item, ctx);
+            handleItemCompleted(item, ctx, event);
             break;
         }
 
@@ -893,12 +893,13 @@ function handleExecEvent(event: ExecEvent, ctx: EventHandlerContext): void {
                 eventType: event.type,
                 event
             });
+            session.sendCodexMessage(buildUnknownCodexEventPayload(event));
             break;
         }
     }
 }
 
-function handleItemStarted(item: ExecItem, ctx: EventHandlerContext): void {
+function handleItemStarted(item: ExecItem, ctx: EventHandlerContext, event?: ExecEvent): void {
     const { session, messageBuffer, turnPrefix } = ctx;
     const callId = `${turnPrefix}-${item.id}`;
 
@@ -975,6 +976,7 @@ function handleItemStarted(item: ExecItem, ctx: EventHandlerContext): void {
                 itemType: item.type,
                 item
             });
+            session.sendCodexMessage(buildUnknownCodexItemPayload('started', item, event));
             break;
         }
     }
@@ -1001,7 +1003,7 @@ function handleItemUpdated(item: ExecItem, ctx: EventHandlerContext): void {
     });
 }
 
-function handleItemCompleted(item: ExecItem, ctx: EventHandlerContext): void {
+function handleItemCompleted(item: ExecItem, ctx: EventHandlerContext, event?: ExecEvent): void {
     const { session, messageBuffer, turnPrefix } = ctx;
     const callId = `${turnPrefix}-${item.id}`;
 
@@ -1078,7 +1080,8 @@ function handleItemCompleted(item: ExecItem, ctx: EventHandlerContext): void {
             emittedReasoningItemIds.add(reasonItem.id);
             session.sendCodexMessage({
                 type: 'reasoning-delta',
-                delta: reasonItem.text ?? ''
+                delta: reasonItem.text ?? '',
+                id: reasonItem.id
             });
             break;
         }
@@ -1143,6 +1146,7 @@ function handleItemCompleted(item: ExecItem, ctx: EventHandlerContext): void {
                 itemType: item.type,
                 item
             });
+            session.sendCodexMessage(buildUnknownCodexItemPayload('completed', item, event));
             break;
         }
     }
@@ -1185,6 +1189,36 @@ function getExecEventErrorMessage(event: ExecEvent): string | null {
     }
 
     return null;
+}
+
+function buildUnknownCodexEventPayload(event: ExecEvent): Record<string, unknown> {
+    const eventType = typeof event.type === 'string' && event.type.length > 0 ? event.type : 'missing-type';
+    return {
+        type: `unknown-event:${eventType}`,
+        eventType,
+        rawEvent: event,
+        event,
+        id: randomUUID()
+    };
+}
+
+function buildUnknownCodexItemPayload(
+    phase: 'started' | 'completed',
+    item: ExecItem,
+    event?: ExecEvent
+): Record<string, unknown> {
+    const itemRecord = item as Record<string, unknown>;
+    const itemType = typeof itemRecord.type === 'string' && itemRecord.type.length > 0 ? itemRecord.type : 'missing-type';
+    const itemId = typeof itemRecord.id === 'string' && itemRecord.id.length > 0 ? itemRecord.id : null;
+    return {
+        type: `unknown-item-${phase}:${itemType}`,
+        phase,
+        itemType,
+        ...(itemId ? { itemId, id: itemId } : { id: randomUUID() }),
+        rawItem: item,
+        item,
+        ...(event ? { rawEvent: event, event } : {})
+    };
 }
 
 function buildCodexPlanPayload(item: ExecTodoListItem): { plan: Array<{ step: string; status: 'completed' | 'pending' }> } | null {
