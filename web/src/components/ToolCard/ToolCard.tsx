@@ -20,7 +20,7 @@ import { getCodexDiffUnified } from '@/components/ToolCard/codexArtifacts'
 import { getToolPresentation } from '@/components/ToolCard/knownTools'
 import { getToolFullViewComponent, getToolViewComponent } from '@/components/ToolCard/views/_all'
 import { getToolResultViewComponent } from '@/components/ToolCard/views/_results'
-import { basename, resolveDisplayPath } from '@/components/ToolCard/path'
+import { formatReadBatchItemLabel, getReadBatchItems } from '@/components/ToolCard/readBatch'
 import { usePointerFocusRing } from '@/hooks/usePointerFocusRing'
 import { cn } from '@/lib/utils'
 
@@ -221,28 +221,6 @@ function formatTaskChildLabel(child: ToolCallBlock, metadata: SessionMetadataSum
     return presentation.title
 }
 
-function getReadBatchFiles(input: unknown): string[] {
-    if (!isObject(input) || !Array.isArray(input.files)) {
-        return []
-    }
-
-    return input.files.filter((file): file is string => typeof file === 'string' && file.length > 0)
-}
-
-function formatReadBatchFileLabel(file: string, metadata: SessionMetadataSummary | null): string {
-    const displayPath = resolveDisplayPath(file, metadata)
-    const name = basename(displayPath)
-    if (displayPath === name) {
-        return name
-    }
-
-    const directory = displayPath
-        .slice(0, Math.max(0, displayPath.length - name.length))
-        .replace(/[\\/]+$/, '')
-
-    return directory ? `${name}: ${directory}` : displayPath
-}
-
 function TaskStateIcon(props: { state: ToolCallBlock['tool']['state'] }) {
     if (props.state === 'completed') {
         return <span className="text-emerald-600">✓</span>
@@ -304,31 +282,27 @@ function renderTaskSummary(block: ToolCallBlock, metadata: SessionMetadataSummar
 function renderReadBatchSummary(block: ToolCallBlock, metadata: SessionMetadataSummary | null): ReactNode | null {
     if (block.tool.name !== 'ReadBatch') return null
 
-    const files = getReadBatchFiles(block.tool.input)
-    if (files.length === 0) return null
+    const items = getReadBatchItems(block, metadata)
+    if (items.length === 0) return null
 
-    const childTools = block.children.filter((child): child is ToolCallBlock => child.kind === 'tool-call')
-    const visible = files.slice(0, 3)
-    const remaining = files.length - visible.length
+    const visible = items.slice(0, 3)
+    const remaining = items.length - visible.length
 
     return (
         <div className="flex flex-col gap-1 px-1">
             <div className="flex flex-col gap-1">
-                {visible.map((file, index) => {
-                    const state = childTools[index]?.tool.state ?? block.tool.state
-                    return (
-                        <div key={`${file}:${index}`} className="flex items-center gap-2">
-                            <div className="min-w-0 flex-1 font-mono text-xs text-[var(--app-hint)]">
-                                <span className="mr-2 inline-block w-4 text-center align-middle">
-                                    <TaskStateIcon state={state} />
-                                </span>
-                                <span className="align-middle break-all">
-                                    {formatReadBatchFileLabel(file, metadata)}
-                                </span>
-                            </div>
+                {visible.map((item, index) => (
+                    <div key={`${item.file}:${index}`} className="flex items-center gap-2">
+                        <div className="min-w-0 flex-1 font-mono text-xs text-[var(--app-hint)]">
+                            <span className="mr-2 inline-block w-4 text-center align-middle">
+                                <TaskStateIcon state={item.state} />
+                            </span>
+                            <span className="align-middle break-all">
+                                {formatReadBatchItemLabel(item)}
+                            </span>
                         </div>
-                    )
-                })}
+                    </div>
+                ))}
                 {remaining > 0 ? (
                     <div className="text-xs text-[var(--app-hint)] italic">
                         (+{remaining} more)

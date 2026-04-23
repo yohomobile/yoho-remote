@@ -214,6 +214,45 @@ describe('reduceChatBlocks duplicate handling', () => {
         })
     })
 
+    test('uses the upstream file path when a piped read command ends with a sed line range', () => {
+        const reduced = reduceChatBlocks([
+            {
+                id: 'piped-read-call',
+                localId: null,
+                createdAt: 1,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'piped-read',
+                    name: 'CodexBash',
+                    input: {
+                        command: 'nl -ba deploy.sh | sed -n "1,260p"',
+                        parsed_cmd: [{
+                            type: 'read',
+                            name: '1,260p'
+                        }]
+                    },
+                    description: null,
+                    uuid: 'piped-read-call',
+                    parentUUID: null
+                }]
+            }
+        ] satisfies NormalizedMessage[], null)
+
+        const block = reduced.blocks[0]
+        expect(block?.kind).toBe('tool-call')
+        if (!block || block.kind !== 'tool-call') {
+            throw new Error('Expected ReadBatch block')
+        }
+
+        expect(block.tool.name).toBe('ReadBatch')
+        expect(block.tool.input).toEqual({
+            count: 1,
+            files: ['deploy.sh']
+        })
+    })
+
     test('dedupes webapp user message and Claude cli echo with the same text', () => {
         const reduced = reduceChatBlocks([
             {

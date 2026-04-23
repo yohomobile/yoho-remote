@@ -176,7 +176,8 @@ function extractReadPathFromCommand(command: string): string | null {
         if (candidate === '&&' || candidate === '|' || candidate === ';' || candidate === '--') continue
         if (candidate.startsWith('-')) continue
         if (candidate === commandName) continue
-        if (commandName === 'sed' && isSedAddress(candidate)) continue
+        if (isSedAddress(candidate)) continue
+        if (READ_LIKE_COMMANDS.has(candidate)) continue
         return candidate
     }
 
