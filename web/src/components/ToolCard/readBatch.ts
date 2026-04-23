@@ -189,7 +189,7 @@ function extractResultText(result: unknown): string | null {
         return file.content
     }
 
-    for (const key of ['output', 'stdout', 'content', 'text']) {
+    for (const key of ['aggregated_output', 'stdout', 'stderr', 'output', 'content', 'text', 'message', 'error']) {
         const value = result[key]
         if (typeof value === 'string' && value.length > 0) {
             return value
@@ -197,6 +197,10 @@ function extractResultText(result: unknown): string | null {
         const blockText = getTextFromContentBlocks(value)
         if (blockText) {
             return blockText
+        }
+        const nestedText = extractResultText(value)
+        if (nestedText) {
+            return nestedText
         }
     }
 

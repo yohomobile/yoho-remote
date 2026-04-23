@@ -151,14 +151,18 @@ describe('ReadBatch card rendering', () => {
                     name: 'CodexBash',
                     state: 'completed',
                     input: {
-                        command: 'nl -ba deploy.sh | sed -n "1,260p"',
+                        command: '/usr/bin/zsh -lc "nl -ba deploy.sh | sed -n \'1,260p\'"',
                         parsed_cmd: [{
                             type: 'read',
                             name: '1,260p'
                         }]
                     },
                     result: {
-                        output: '     1\t#!/bin/bash\n     2\tset -e'
+                        output: {
+                            command: '/usr/bin/zsh -lc "nl -ba deploy.sh | sed -n \'1,260p\'"',
+                            exit_code: 0,
+                            aggregated_output: '     1\t#!/bin/bash\n     2\tset -e'
+                        }
                     },
                     createdAt: 1,
                     startedAt: 1,
