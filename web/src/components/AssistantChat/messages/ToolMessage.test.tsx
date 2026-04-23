@@ -5,6 +5,51 @@ import { ToolCard } from '@/components/ToolCard/ToolCard'
 import { BrainChildCallbackCard } from './BrainChildCallbackCard'
 
 describe('ReadBatch card rendering', () => {
+    test('summarizes read batches in the card body like task and agent cards', () => {
+        const block: ToolCallBlock = {
+            kind: 'tool-call',
+            id: 'read-batch:summary',
+            localId: null,
+            createdAt: 1,
+            seq: null,
+            tool: {
+                id: 'read-batch-tool:summary',
+                name: 'ReadBatch',
+                state: 'completed',
+                input: {
+                    count: 5,
+                    files: ['README.md', 'web/src/app.ts', 'web/src/chat/reducer.ts', 'web/src/api/client.ts', 'web/src/types/api.ts']
+                },
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                parentUUID: null
+            },
+            children: [],
+            meta: undefined
+        }
+
+        const html = renderToStaticMarkup(
+            <ToolCard
+                api={{} as never}
+                sessionId="session-1"
+                metadata={null}
+                disabled={false}
+                onDone={() => undefined}
+                block={block}
+            />
+        )
+
+        expect(html).toContain('Read 5 files')
+        expect(html).toContain('README.md')
+        expect(html).toContain('app.ts')
+        expect(html).toContain('reducer.ts')
+        expect(html).toContain('(+2 more)')
+        expect(html).not.toContain('client.ts')
+        expect(html).not.toContain('api.ts')
+    })
+
     test('renders a single grouped card without nested search or read cards', () => {
         const block: ToolCallBlock = {
             kind: 'tool-call',

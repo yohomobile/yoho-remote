@@ -20,6 +20,7 @@ import { getCodexDiffUnified } from '@/components/ToolCard/codexArtifacts'
 import { getToolPresentation } from '@/components/ToolCard/knownTools'
 import { getToolFullViewComponent, getToolViewComponent } from '@/components/ToolCard/views/_all'
 import { getToolResultViewComponent } from '@/components/ToolCard/views/_results'
+import { basename, resolveDisplayPath } from '@/components/ToolCard/path'
 import { usePointerFocusRing } from '@/hooks/usePointerFocusRing'
 import { cn } from '@/lib/utils'
 
@@ -220,6 +221,28 @@ function formatTaskChildLabel(child: ToolCallBlock, metadata: SessionMetadataSum
     return presentation.title
 }
 
+function getReadBatchFiles(input: unknown): string[] {
+    if (!isObject(input) || !Array.isArray(input.files)) {
+        return []
+    }
+
+    return input.files.filter((file): file is string => typeof file === 'string' && file.length > 0)
+}
+
+function formatReadBatchFileLabel(file: string, metadata: SessionMetadataSummary | null): string {
+    const displayPath = resolveDisplayPath(file, metadata)
+    const name = basename(displayPath)
+    if (displayPath === name) {
+        return name
+    }
+
+    const directory = displayPath
+        .slice(0, Math.max(0, displayPath.length - name.length))
+        .replace(/[\\/]+$/, '')
+
+    return directory ? `${name}: ${directory}` : displayPath
+}
+
 function TaskStateIcon(props: { state: ToolCallBlock['tool']['state'] }) {
     if (props.state === 'completed') {
         return <span className="text-emerald-600">✓</span>
@@ -268,6 +291,44 @@ function renderTaskSummary(block: ToolCallBlock, metadata: SessionMetadataSummar
                         </div>
                     </div>
                 ))}
+                {remaining > 0 ? (
+                    <div className="text-xs text-[var(--app-hint)] italic">
+                        (+{remaining} more)
+                    </div>
+                ) : null}
+            </div>
+        </div>
+    )
+}
+
+function renderReadBatchSummary(block: ToolCallBlock, metadata: SessionMetadataSummary | null): ReactNode | null {
+    if (block.tool.name !== 'ReadBatch') return null
+
+    const files = getReadBatchFiles(block.tool.input)
+    if (files.length === 0) return null
+
+    const childTools = block.children.filter((child): child is ToolCallBlock => child.kind === 'tool-call')
+    const visible = files.slice(0, 3)
+    const remaining = files.length - visible.length
+
+    return (
+        <div className="flex flex-col gap-1 px-1">
+            <div className="flex flex-col gap-1">
+                {visible.map((file, index) => {
+                    const state = childTools[index]?.tool.state ?? block.tool.state
+                    return (
+                        <div key={`${file}:${index}`} className="flex items-center gap-2">
+                            <div className="min-w-0 flex-1 font-mono text-xs text-[var(--app-hint)]">
+                                <span className="mr-2 inline-block w-4 text-center align-middle">
+                                    <TaskStateIcon state={state} />
+                                </span>
+                                <span className="align-middle break-all">
+                                    {formatReadBatchFileLabel(file, metadata)}
+                                </span>
+                            </div>
+                        </div>
+                    )
+                })}
                 {remaining > 0 ? (
                     <div className="text-xs text-[var(--app-hint)] italic">
                         (+{remaining} more)
@@ -471,16 +532,19 @@ function ToolCardInner(props: ToolCardProps) {
     const toolTitle = presentation.title
     const subtitle = presentation.subtitle ?? props.block.tool.description
     const taskSummary = renderTaskSummary(props.block, props.metadata)
+    const readBatchSummary = renderReadBatchSummary(props.block, props.metadata)
     const runningFrom = props.block.tool.startedAt ?? props.block.tool.createdAt
     const permission = props.block.tool.permission
     const isAskUserQuestion = isAskUserQuestionToolName(toolName)
     const isExitPlanMode = isExitPlanModeToolName(toolName)
+    const isReadBatch = toolName === 'ReadBatch'
     const rendersAskUserQuestionInteractively = isAskUserQuestion && shouldRenderAskUserQuestionInteractively(props.block.tool)
     const rendersAskUserQuestionAsRegularTool = isAskUserQuestion && shouldRenderAskUserQuestionAsRegularTool(props.block.tool)
     const rendersExitPlanModeInteractively = isExitPlanMode && shouldRenderExitPlanModeInteractively(props.block.tool)
     const showInline = !presentation.minimal
         && toolName !== 'Task'
         && toolName !== 'Agent'
+        && !isReadBatch
         && (!isAskUserQuestion || rendersAskUserQuestionAsRegularTool)
     const CompactToolView = showInline && !rendersAskUserQuestionAsRegularTool ? getToolViewComponent(toolName) : null
     const FullToolView = rendersAskUserQuestionAsRegularTool ? null : getToolFullViewComponent(toolName)
@@ -489,7 +553,12 @@ function ToolCardInner(props: ToolCardProps) {
         permission.status === 'pending'
         || ((permission.status === 'denied' || permission.status === 'canceled') && Boolean(permission.reason))
     ))
-    const hasBody = showInline || taskSummary !== null || showsPermissionFooter || rendersAskUserQuestionInteractively || rendersExitPlanModeInteractively
+    const hasBody = showInline
+        || taskSummary !== null
+        || readBatchSummary !== null
+        || showsPermissionFooter
+        || rendersAskUserQuestionInteractively
+        || rendersExitPlanModeInteractively
     const stateColor = statusColorClass(props.block.tool.state)
     const { suppressFocusRing, onTriggerPointerDown, onTriggerKeyDown, onTriggerBlur } = usePointerFocusRing()
 
@@ -550,12 +619,18 @@ function ToolCardInner(props: ToolCardProps) {
                             const isAskUserQuestionWithAnswers = isAskUserQuestion
                                 && permission?.answers
                                 && Object.keys(permission.answers).length > 0
+                            const inputLabel = isAskUserQuestionWithAnswers
+                                ? 'Questions & Answers'
+                                : isReadBatch
+                                    ? 'Files'
+                                    : 'Input'
+                            const showResult = !isAskUserQuestionWithAnswers && !isReadBatch
 
                             return (
                                 <div className="mt-3 flex max-h-[75vh] flex-col gap-4 overflow-auto">
                                     <div>
                                         <div className="mb-1 text-xs font-medium text-[var(--app-hint)]">
-                                            {isAskUserQuestionWithAnswers ? 'Questions & Answers' : 'Input'}
+                                            {inputLabel}
                                         </div>
                                         {FullToolView ? (
                                             <FullToolView block={props.block} metadata={props.metadata} />
@@ -563,12 +638,12 @@ function ToolCardInner(props: ToolCardProps) {
                                             renderToolInput(props.block)
                                         )}
                                     </div>
-                                    {!isAskUserQuestionWithAnswers && (
+                                    {showResult ? (
                                         <div>
                                             <div className="mb-1 text-xs font-medium text-[var(--app-hint)]">Result</div>
                                             <ResultToolView block={props.block} metadata={props.metadata} />
                                         </div>
-                                    )}
+                                    ) : null}
                                 </div>
                             )
                         })()}
@@ -581,6 +656,12 @@ function ToolCardInner(props: ToolCardProps) {
                     {taskSummary ? (
                         <div className="mt-2">
                             {taskSummary}
+                        </div>
+                    ) : null}
+
+                    {readBatchSummary ? (
+                        <div className="mt-2">
+                            {readBatchSummary}
                         </div>
                     ) : null}
 

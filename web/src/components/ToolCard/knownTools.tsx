@@ -286,22 +286,7 @@ export const knownTools: Record<string, {
             const count = getBatchCount(opts.input, opts.childrenCount)
             return count === 1 ? 'Read 1 file' : `Read ${count} files`
         },
-        subtitle: (opts) => {
-            const files = getBatchFiles(opts.input)
-            if (files.length === 0) {
-                return null
-            }
-
-            const visible = files
-                .slice(0, 3)
-                .map((file) => basename(resolveDisplayPath(file, opts.metadata)))
-
-            if (files.length > visible.length) {
-                visible.push(`+${files.length - visible.length} more`)
-            }
-
-            return visible.join(', ')
-        },
+        subtitle: () => null,
         minimal: false
     },
     ClaudeEditedTextFile: {

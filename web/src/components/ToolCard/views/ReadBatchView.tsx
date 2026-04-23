@@ -1,8 +1,6 @@
 import type { ToolViewProps } from '@/components/ToolCard/views/_all'
 import { basename, resolveDisplayPath } from '@/components/ToolCard/path'
 
-const MAX_VISIBLE_FILES = 8
-
 function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object'
 }
@@ -36,12 +34,9 @@ export function ReadBatchView(props: ToolViewProps) {
         )
     }
 
-    const visibleFiles = files.slice(0, MAX_VISIBLE_FILES)
-    const remaining = files.length - visibleFiles.length
-
     return (
         <div className="flex flex-col gap-1">
-            {visibleFiles.map((file, index) => {
+            {files.map((file, index) => {
                 const parts = getDisplayParts(file, props.metadata)
                 return (
                     <div key={`${file}:${index}`} className="flex min-w-0 items-start gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--app-subtle-bg)]">
@@ -65,11 +60,6 @@ export function ReadBatchView(props: ToolViewProps) {
                     </div>
                 )
             })}
-            {remaining > 0 ? (
-                <div className="px-2 pt-1 text-xs text-[var(--app-hint)]">
-                    +{remaining} more files
-                </div>
-            ) : null}
         </div>
     )
 }
