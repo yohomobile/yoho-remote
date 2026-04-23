@@ -152,6 +152,7 @@ KEYCLOAK_CLIENT_SECRET=replace-me
 | `DEEPSEEK_MODEL` | `deepseek-chat` | 当前代码仅接受该值 |
 | `DEEPSEEK_TIMEOUT_MS` | `60000` | DeepSeek 超时 |
 | `WORKER_CONCURRENCY` | `1` | 单机并发消费数 |
+| `WORKER_HEALTH_HOST` / `WORKER_HEALTH_PORT` | `127.0.0.1` / 未启用 | 配置端口后暴露 `/healthz`、`/readyz`、`/stats` |
 | `SUMMARIZATION_RUN_RETENTION_DAYS` | `30` | `summarization_runs` 清理窗口 |
 
 示例：
@@ -437,7 +438,7 @@ bun run smoke:fake-deepseek
 
 ## 5. 观测项 / 告警项
 
-当前仓库没有单独的 worker HTTP health endpoint，所以上线观测要同时看 **systemd、日志、DB、smoke**。
+worker 配置 `WORKER_HEALTH_PORT` 后会暴露独立 HTTP health endpoint；上线观测仍建议同时看 **systemd、日志、DB、smoke**。
 
 `PG_BOSS_SCHEMA` 一致性是上线前后都要盯的敏感项之一；`server`、`worker`、smoke 使用的 schema 一旦不一致，最容易出现“publisher 正常、consumer 无消费”这一类隐蔽故障。
 
@@ -464,6 +465,13 @@ systemctl status yoho-remote-daemon
 journalctl -u yoho-remote-server -n 200 --no-pager
 journalctl -u yoho-remote-worker -n 200 --no-pager
 journalctl -u yoho-remote-daemon -n 200 --no-pager
+```
+
+worker health：
+
+```bash
+curl -fsS http://127.0.0.1:3102/readyz
+curl -fsS http://127.0.0.1:3102/stats
 ```
 
 应重点搜索：
@@ -612,8 +620,8 @@ sudo systemctl start yoho-remote-worker
 2. **真实 DeepSeek 质量仍需人工抽检。**
    `bun run smoke:fake-deepseek` 只能证明链路可用，不能代表真实模型输出质量。每次发布后都至少抽检 1 条真实摘要结果。
 
-3. **worker 缺少独立 HTTP health endpoint。**
-   目前 worker 健康度需要通过日志、DB 写入和 smoke 联合判断；如果要做平台级自动化探针，还需要后续补专门 health 接口或更稳定的 worker 监控暴露面。
+3. **worker health endpoint 需要显式配置并纳入探针。**
+   `WORKER_HEALTH_PORT` 未配置时仍只能通过日志、DB 写入和 smoke 联合判断；生产发布建议开启 `/readyz` 和 `/stats`。
 
 4. **`PG_BOSS_SCHEMA` 一致性错误很隐蔽。**
    它是最敏感的检查项之一；值一旦漂移，最常见症状不是服务直接挂掉，而是任务看起来已入队、实际没人消费。

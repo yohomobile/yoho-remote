@@ -144,7 +144,7 @@ describe('handleAiTask', () => {
     it('happy path: find-or-create → send → poll → succeeded', async () => {
         const poolObj = makePool()
         const ctx = makeCtx(poolObj)
-        const { fetchFn } = makeFetchSequence([
+        const { fetchFn, calls: fetchCalls } = makeFetchSequence([
             { ok: true, body: { sessionId: 'sess-happy' } },
             { ok: true, body: {} },
             { ok: true, body: { executing: false } },
@@ -165,6 +165,14 @@ describe('handleAiTask', () => {
         expect(resultCalls[0]?.params[0]).toBe('succeeded')
         expect(resultCalls[0]?.params[2]).toBe('sess-happy')
         expect(resultCalls[0]?.params[3]).toBeNull()
+
+        const sendCall = fetchCalls.find(c => c.url.includes('/session/send'))
+        expect(sendCall).toBeDefined()
+        expect(sendCall!.body).toEqual({
+            sessionId: 'sess-happy',
+            message: 'say hello',
+            localId: 'worker-ai-task:run-1:prompt',
+        })
     })
 
     it('claude agent sends correct modelMode in find-or-create body', async () => {

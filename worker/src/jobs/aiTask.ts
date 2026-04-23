@@ -13,8 +13,8 @@ export async function sendAiTaskRun(
     payload: AiTaskPayload,
     config: AiTaskSendConfig,
     singletonKey?: string,
-): Promise<void> {
-    await boss.send(AI_TASK_RUN_QUEUE, payload, {
+): Promise<unknown> {
+    return boss.send(AI_TASK_RUN_QUEUE, payload, {
         singletonKey: singletonKey ?? `aitaskrun:${payload.runId}`,
         retryLimit: 1,
         retryDelay: 60,

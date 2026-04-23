@@ -9,6 +9,7 @@ const baseEnv: NodeJS.ProcessEnv = {
     PG_DATABASE: 'yoho_remote',
     PG_BOSS_SCHEMA: 'yr_boss',
     DEEPSEEK_API_KEY: 'secret',
+    YOHO_WORKER_INTERNAL_TOKEN: 'worker-token',
 }
 
 describe('loadConfig', () => {
@@ -34,6 +35,10 @@ describe('loadConfig', () => {
         expect(config.pg.database).toBe('yoho_remote')
         expect(config.bossSchema).toBe('yr_boss')
         expect(config.pg.connectionString).toBe('postgres://yoho:@db.example:5432/yoho_remote')
+        expect(config.health).toEqual({
+            host: '127.0.0.1',
+            port: 0,
+        })
         expect(config.summarizeTurnQueue).toEqual({
             retryLimit: 4,
             retryDelaySeconds: 15,
@@ -56,6 +61,19 @@ describe('loadConfig', () => {
             retryDelaySeconds: 20,
             retryBackoff: false,
             retryDelayMaxSeconds: 120,
+        })
+    })
+
+    test('allows enabling worker health endpoint explicitly', () => {
+        const config = loadConfig({
+            ...baseEnv,
+            WORKER_HEALTH_HOST: '0.0.0.0',
+            WORKER_HEALTH_PORT: '3102',
+        })
+
+        expect(config.health).toEqual({
+            host: '0.0.0.0',
+            port: 3102,
         })
     })
 })

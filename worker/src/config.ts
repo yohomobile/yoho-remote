@@ -60,6 +60,8 @@ const envSchema = z.object({
     YOHO_REMOTE_INTERNAL_URL: z.string().default('http://localhost:3000'),
     YOHO_WORKER_INTERNAL_TOKEN: z.string().min(1, 'YOHO_WORKER_INTERNAL_TOKEN is required'),
     AI_TASK_TIMEOUT_MS: z.string().optional(),
+    WORKER_HEALTH_HOST: z.string().default('127.0.0.1'),
+    WORKER_HEALTH_PORT: z.string().optional(),
     DEEPSEEK_API_KEY: z.string().min(1, 'DEEPSEEK_API_KEY is required'),
     DEEPSEEK_BASE_URL: z.string().default('https://api.deepseek.com'),
     DEEPSEEK_MODEL: z.literal('deepseek-chat').default('deepseek-chat'),
@@ -116,6 +118,10 @@ export type WorkerConfig = {
     yohoRemoteInternalUrl: string
     workerInternalToken: string
     aiTaskTimeoutMs: number
+    health: {
+        host: string
+        port: number
+    }
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
@@ -154,6 +160,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     const l2SegmentThreshold = Math.max(2, parseNumber(parsed.L2_SEGMENT_THRESHOLD, 5, 'L2_SEGMENT_THRESHOLD'))
     const catchupIntervalMs = Math.max(60_000, parseNumber(parsed.CATCHUP_INTERVAL_MS, 3_600_000, 'CATCHUP_INTERVAL_MS'))
     const aiTaskTimeoutMs = Math.max(60_000, parseNumber(parsed.AI_TASK_TIMEOUT_MS, 30 * 60 * 1_000, 'AI_TASK_TIMEOUT_MS'))
+    const workerHealthPort = Math.max(0, parseNumber(parsed.WORKER_HEALTH_PORT, 0, 'WORKER_HEALTH_PORT'))
 
     const pg = {
         host: pgHost,
@@ -181,6 +188,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
         yohoRemoteInternalUrl: stripTrailingSlash(parsed.YOHO_REMOTE_INTERNAL_URL),
         workerInternalToken: parsed.YOHO_WORKER_INTERNAL_TOKEN,
         aiTaskTimeoutMs,
+        health: {
+            host: parsed.WORKER_HEALTH_HOST,
+            port: workerHealthPort,
+        },
         summarizeTurnQueue: {
             retryLimit: summarizeTurnRetryLimit,
             retryDelaySeconds: summarizeTurnRetryDelaySeconds,

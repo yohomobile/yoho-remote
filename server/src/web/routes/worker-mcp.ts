@@ -74,11 +74,27 @@ const findOrCreateSchema = z.object({
 const sessionSendSchema = z.object({
     sessionId: z.string().min(1),
     message: z.string().min(1),
+    localId: z.string().min(1).optional(),
 })
 
 const sessionIdSchema = z.object({
     sessionId: z.string().min(1),
 })
+
+type MessageLocalIdLookupStore = {
+    getMessageByLocalId?: (sessionId: string, localId: string) => Promise<unknown | null>
+}
+
+async function hasPersistedMessageLocalId(
+    store: IStore,
+    sessionId: string,
+    localId: string,
+): Promise<boolean> {
+    const lookup = (store as MessageLocalIdLookupStore).getMessageByLocalId
+    if (!lookup) return false
+    const message = await lookup.call(store, sessionId, localId)
+    return message != null
+}
 
 export function createWorkerMcpRoutes(
     getSyncEngine: () => SyncEngine | null,
@@ -251,9 +267,21 @@ export function createWorkerMcpRoutes(
         const session = engine.getSession(parsed.data.sessionId)
         if (!session) return c.json({ error: 'session_not_found' }, 404)
 
+        const requestLocalId = parsed.data.localId ?? randomUUID()
+        const duplicateOutcome = engine.getSendOutcomeForCachedLocalId(
+            parsed.data.sessionId,
+            requestLocalId,
+        )
+        if (duplicateOutcome) {
+            return c.json({ ok: true, deduped: true, status: duplicateOutcome.status })
+        }
+        if (await hasPersistedMessageLocalId(store, parsed.data.sessionId, requestLocalId)) {
+            return c.json({ ok: true, deduped: true, status: 'delivered' })
+        }
+
         await engine.sendMessage(parsed.data.sessionId, {
             text: parsed.data.message,
-            localId: randomUUID(),
+            localId: requestLocalId,
             sentFrom: 'worker-ai-task',
         })
         return c.json({ ok: true })

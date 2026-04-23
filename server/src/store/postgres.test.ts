@@ -106,6 +106,64 @@ function createSessionRow(overrides: Record<string, unknown> = {}): Record<strin
     }
 }
 
+function createPersonRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        id: 'person-1',
+        namespace: 'default',
+        org_id: 'org-1',
+        person_type: 'human',
+        status: 'active',
+        canonical_name: 'Dev User',
+        primary_email: 'dev@example.com',
+        employee_code: null,
+        avatar_url: null,
+        attributes: {},
+        created_at: '1700000000000',
+        updated_at: '1700000000100',
+        created_by: 'admin@example.com',
+        merged_into_person_id: null,
+        ...overrides,
+    }
+}
+
+function createPersonIdentityLinkRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        id: 'link-1',
+        person_id: 'person-1',
+        identity_id: 'ident-1',
+        relation_type: 'primary',
+        state: 'admin_verified',
+        confidence: 0.95,
+        source: 'admin',
+        evidence: ['email_exact'],
+        decision_reason: 'confirmed',
+        valid_from: '1700000000000',
+        valid_to: null,
+        decided_by: 'admin@example.com',
+        created_at: '1700000000000',
+        updated_at: '1700000000100',
+        ...overrides,
+    }
+}
+
+function createPersonIdentityAuditRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        id: 'audit-1',
+        namespace: 'default',
+        org_id: 'org-1',
+        action: 'merge_persons',
+        actor_email: 'admin@example.com',
+        person_id: 'person-source',
+        target_person_id: 'person-target',
+        identity_id: null,
+        link_id: null,
+        reason: 'duplicate person',
+        payload: {},
+        created_at: '1700000000200',
+        ...overrides,
+    }
+}
+
 describe('PostgresStore schema migrations', () => {
     it('adds project scope columns before creating dependent indexes', () => {
         const addMachineId = source.indexOf('ALTER TABLE projects ADD COLUMN IF NOT EXISTS machine_id TEXT;')
@@ -146,6 +204,170 @@ describe('PostgresStore schema migrations', () => {
         expect(createDecisionUniqueIndex).toBeGreaterThan(-1)
         expect(dedupeApprovalDecisions).toBeLessThan(createDecisionUniqueIndex)
         expect(resyncApprovalRequestStatus).toBeLessThan(createDecisionUniqueIndex)
+    })
+
+    it('declares identity graph tables and review indexes in schema bootstrap', () => {
+        expect(source).toContain('CREATE TABLE IF NOT EXISTS persons')
+        expect(source).toContain('CREATE TABLE IF NOT EXISTS person_identities')
+        expect(source).toContain('CREATE TABLE IF NOT EXISTS person_identity_links')
+        expect(source).toContain('CREATE TABLE IF NOT EXISTS person_identity_candidates')
+        expect(source).toContain('CREATE TABLE IF NOT EXISTS person_identity_audits')
+        expect(source).toContain('CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_person_identity_link')
+        expect(source).toContain('CREATE INDEX IF NOT EXISTS idx_person_identity_candidates_open')
+        expect(source).toContain('CREATE INDEX IF NOT EXISTS idx_person_identity_audits_scope')
+        expect(source).toContain('decision_reason TEXT')
+    })
+})
+
+describe('PostgresStore identity graph governance', () => {
+    it('mergePersons marks the source person merged and writes identity audit in one transaction', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('SELECT * FROM persons') && params?.[0] === 'person-source') {
+                return { rows: [createPersonRow({ id: 'person-source', canonical_name: 'Dev User A' })] }
+            }
+            if (sql.includes('SELECT * FROM persons') && params?.[0] === 'person-target') {
+                return { rows: [createPersonRow({ id: 'person-target', canonical_name: 'Dev User' })] }
+            }
+            if (sql.includes("SET status = 'merged'")) {
+                return {
+                    rows: [createPersonRow({
+                        id: 'person-source',
+                        status: 'merged',
+                        merged_into_person_id: 'person-target',
+                        updated_at: '1700000000200',
+                    })],
+                }
+            }
+            if (sql.includes('INSERT INTO person_identity_audits')) {
+                return { rows: [createPersonIdentityAuditRow()] }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const originalNow = Date.now
+        Date.now = () => 1_700_000_000_200
+        try {
+            await expect(store.mergePersons({
+                namespace: 'default',
+                orgId: 'org-1',
+                sourcePersonId: 'person-source',
+                targetPersonId: 'person-target',
+                reason: 'duplicate person',
+                decidedBy: 'admin@example.com',
+            })).resolves.toMatchObject({
+                id: 'person-source',
+                status: 'merged',
+                mergedIntoPersonId: 'person-target',
+            })
+        } finally {
+            Date.now = originalNow
+        }
+
+        expect(calls.map((call) => call.sql)).toContain('BEGIN')
+        expect(calls.map((call) => call.sql)).toContain('COMMIT')
+        const updateCall = calls.find((call) => call.sql.includes("SET status = 'merged'"))
+        expect(updateCall?.params).toEqual(['person-source', 'person-target', 1_700_000_000_200])
+        const auditCall = calls.find((call) => call.sql.includes('INSERT INTO person_identity_audits'))
+        expect(auditCall?.params?.slice(1, 12)).toEqual([
+            'default',
+            'org-1',
+            'merge_persons',
+            'admin@example.com',
+            'person-source',
+            'person-target',
+            null,
+            null,
+            'duplicate person',
+            {
+                sourcePerson: expect.objectContaining({ id: 'person-source' }),
+                targetPerson: expect.objectContaining({ id: 'person-target' }),
+            },
+            1_700_000_000_200,
+        ])
+    })
+
+    it('detachPersonIdentityLink closes the active link and writes identity audit', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('FROM person_identity_links l')) {
+                return { rows: [createPersonIdentityLinkRow()] }
+            }
+            if (sql.includes("SET state = 'detached'")) {
+                return {
+                    rows: [createPersonIdentityLinkRow({
+                        state: 'detached',
+                        valid_to: '1700000000300',
+                        decision_reason: 'wrong account',
+                    })],
+                }
+            }
+            if (sql.includes('INSERT INTO person_identity_audits')) {
+                return {
+                    rows: [createPersonIdentityAuditRow({
+                        action: 'detach_identity_link',
+                        person_id: 'person-1',
+                        target_person_id: null,
+                        identity_id: 'ident-1',
+                        link_id: 'link-1',
+                        reason: 'wrong account',
+                        created_at: '1700000000300',
+                    })],
+                }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const originalNow = Date.now
+        Date.now = () => 1_700_000_000_300
+        try {
+            await expect(store.detachPersonIdentityLink({
+                namespace: 'default',
+                orgId: 'org-1',
+                linkId: 'link-1',
+                reason: 'wrong account',
+                decidedBy: 'admin@example.com',
+            })).resolves.toMatchObject({
+                id: 'link-1',
+                state: 'detached',
+                validTo: 1_700_000_000_300,
+            })
+        } finally {
+            Date.now = originalNow
+        }
+
+        const updateCall = calls.find((call) => call.sql.includes("SET state = 'detached'"))
+        expect(updateCall?.params).toEqual(['link-1', 1_700_000_000_300, 'wrong account', 'admin@example.com'])
+        const auditCall = calls.find((call) => call.sql.includes('INSERT INTO person_identity_audits'))
+        expect(auditCall?.params?.slice(1, 12)).toEqual([
+            'default',
+            'org-1',
+            'detach_identity_link',
+            'admin@example.com',
+            'person-1',
+            null,
+            'ident-1',
+            'link-1',
+            'wrong account',
+            {
+                linkBefore: expect.objectContaining({ id: 'link-1' }),
+            },
+            1_700_000_000_300,
+        ])
     })
 })
 

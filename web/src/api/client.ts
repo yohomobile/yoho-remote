@@ -40,6 +40,11 @@ import type {
     UpdateProjectResponse,
     UpdateUserPreferencesResponse,
     UserPreferencesResponse,
+    IdentityCandidateDecision,
+    IdentityCandidateDecisionResponse,
+    IdentityCandidateStatus,
+    IdentityCandidatesResponse,
+    IdentityPersonsResponse,
     OrgsResponse,
     OrgDetailResponse,
     CreateOrgResponse,
@@ -314,6 +319,32 @@ export class ApiClient {
         return await this.request<UpdateUserPreferencesResponse>('/api/settings/user-preferences', {
             method: 'PUT',
             body: JSON.stringify(preferences)
+        })
+    }
+
+    // ========== Identity Graph ==========
+
+    async getIdentityCandidates(orgId?: string | null, status: IdentityCandidateStatus = 'open', limit = 50): Promise<IdentityCandidatesResponse> {
+        const params = new URLSearchParams()
+        if (orgId) params.set('orgId', orgId)
+        params.set('status', status)
+        params.set('limit', String(limit))
+        return await this.request<IdentityCandidatesResponse>(`/api/identity/candidates?${params.toString()}`)
+    }
+
+    async searchIdentityPersons(orgId?: string | null, q?: string | null, limit = 20): Promise<IdentityPersonsResponse> {
+        const params = new URLSearchParams()
+        if (orgId) params.set('orgId', orgId)
+        if (q?.trim()) params.set('q', q.trim())
+        params.set('limit', String(limit))
+        return await this.request<IdentityPersonsResponse>(`/api/identity/persons?${params.toString()}`)
+    }
+
+    async decideIdentityCandidate(candidateId: string, decision: IdentityCandidateDecision, orgId?: string | null): Promise<IdentityCandidateDecisionResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<IdentityCandidateDecisionResponse>(`/api/identity/candidates/${encodeURIComponent(candidateId)}/decision${qs}`, {
+            method: 'POST',
+            body: JSON.stringify(decision)
         })
     }
 

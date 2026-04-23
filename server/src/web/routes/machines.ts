@@ -12,6 +12,7 @@ import { isMachineBlocked } from './blocklist'
 import { serializeMachine, sortMachinesForDisplay } from './machinePayload'
 import { getLicenseService } from '../../license/licenseService'
 import { getUnsupportedSessionSourceError, isSupportedSessionSource } from '../../sessionSourcePolicy'
+import { buildSessionIdentityContextPatch } from '../identityContext'
 
 const spawnBodySchema = z.object({
     directory: z.string().min(1),
@@ -251,6 +252,10 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
                 const orgId = c.req.query('orgId')
                 if (orgId) {
                     await store.setSessionOrgId(result.sessionId, orgId, namespace)
+                }
+                const identityPatch = buildSessionIdentityContextPatch(c.get('identityActor'))
+                if (identityPatch && typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
+                    await engine.patchSessionMetadata(result.sessionId, identityPatch)
                 }
                 await sendInitPrompt(engine, result.sessionId, role, userName, machineId)
             })().catch((err: unknown) => {

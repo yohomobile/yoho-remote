@@ -22,6 +22,10 @@ describe('codexDeveloperInstructions', () => {
         expect(tools).toContain('functions.yoho_remote__session_set_config');
         expect(tools).toContain('functions.yoho_vault__recall');
         expect(tools).toContain('functions.skill__search');
+        expect(tools).toContain('functions.skill__promote');
+        expect(tools).toContain('functions.skill__doctor');
+        expect(tools).toContain('functions.yoho_vault__skill_promote');
+        expect(tools).toContain('functions.yoho_vault__skill_doctor');
     });
 
     it('builds a safe brain-child runtime function allowlist', () => {
@@ -60,12 +64,14 @@ describe('codexDeveloperInstructions', () => {
             'functions.yoho_vault__session_search',
             'functions.yoho_vault__set_credential',
             'functions.yoho_vault__skill_discover',
+            'functions.yoho_vault__skill_doctor',
             'functions.yoho_vault__skill_get',
             'functions.yoho_vault__skill_list',
             'functions.yoho_vault__skill_search',
         ]);
         expect(tools).not.toContain('functions.yoho_remote__session_send');
         expect(tools).not.toContain('functions.yoho_vault__skill_save');
+        expect(tools).not.toContain('functions.yoho_vault__skill_promote');
         expect(tools).not.toContain('functions.skill__search');
     });
 
@@ -114,6 +120,11 @@ describe('codexDeveloperInstructions', () => {
         expect(instructions).toContain('keep iterating until there is no bug left');
         expect(instructions).toContain('codex mcp list');
         expect(instructions).toContain('generic coding tools');
+        expect(instructions).toContain('skill_list({ path, query })');
+        expect(instructions).toContain('candidate/draft/archived/disabled');
+        expect(instructions).toContain('skill lifecycle gate');
+        expect(instructions).toContain('skill_promote');
+        expect(instructions).toContain('allowActive=true');
     });
 
     it('builds brain-child instructions for the safe helper allowlist', () => {

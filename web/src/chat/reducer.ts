@@ -129,8 +129,11 @@ function extractReadPathFromParsedCommand(input: unknown): string | null {
 
     for (const entry of input.parsed_cmd) {
         if (!isObject(entry)) continue
-        if (entry.type === 'read' && typeof entry.name === 'string' && entry.name.trim().length > 0) {
-            return entry.name.trim()
+        if (entry.type === 'read' && typeof entry.name === 'string') {
+            const name = entry.name.trim()
+            if (name.length > 0 && !isSedAddress(name)) {
+                return name
+            }
         }
     }
 
@@ -138,6 +141,16 @@ function extractReadPathFromParsedCommand(input: unknown): string | null {
 }
 
 const READ_LIKE_COMMANDS = new Set(['cat', 'head', 'tail', 'nl', 'sed', 'less', 'more', 'bat', 'awk'])
+const SED_ADDRESS_RE = /^(?:\$|\d+)(?:,(?:\$|\d+))?[acdilpqswy=]?$/i
+const SED_ADDRESS_GROUP_RE = /^(?:\$|\d+)(?:,(?:\$|\d+))?[acdilpqswy=]?(?:;(?:\$|\d+)(?:,(?:\$|\d+))?[acdilpqswy=]?)*$/i
+
+function isSedAddress(value: string): boolean {
+    const trimmed = value.trim()
+    if (!trimmed) {
+        return false
+    }
+    return SED_ADDRESS_RE.test(trimmed) || SED_ADDRESS_GROUP_RE.test(trimmed)
+}
 
 function extractReadPathFromCommand(command: string): string | null {
     const tokens = tokenizeShellCommand(unwrapShellCommand(command))
@@ -163,6 +176,7 @@ function extractReadPathFromCommand(command: string): string | null {
         if (candidate === '&&' || candidate === '|' || candidate === ';' || candidate === '--') continue
         if (candidate.startsWith('-')) continue
         if (candidate === commandName) continue
+        if (commandName === 'sed' && isSedAddress(candidate)) continue
         return candidate
     }
 

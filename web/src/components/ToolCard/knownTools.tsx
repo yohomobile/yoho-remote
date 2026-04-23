@@ -294,7 +294,7 @@ export const knownTools: Record<string, {
 
             const visible = files
                 .slice(0, 3)
-                .map((file) => resolveDisplayPath(file, opts.metadata))
+                .map((file) => basename(resolveDisplayPath(file, opts.metadata)))
 
             if (files.length > visible.length) {
                 visible.push(`+${files.length - visible.length} more`)
@@ -302,7 +302,7 @@ export const knownTools: Record<string, {
 
             return visible.join(', ')
         },
-        minimal: true
+        minimal: false
     },
     ClaudeEditedTextFile: {
         icon: () => <FileDiffIcon className={DEFAULT_ICON_CLASS} />,

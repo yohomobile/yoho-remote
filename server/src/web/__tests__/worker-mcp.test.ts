@@ -46,6 +46,8 @@ type FakeSession = {
     metadata?: { machineId?: string; path?: string; runtimeAgent?: string } | null
 }
 
+type SendOutcome = { status: 'delivered' | 'queued'; queue?: string; queueDepth?: number }
+
 function makeEngine(overrides?: {
     machines?: Array<{ id: string; namespace: string; active: boolean }>
     sessions?: FakeSession[]
@@ -57,6 +59,7 @@ function makeEngine(overrides?: {
         getMachines: mock(() => machines),
         getSession: mock((id: string) => sessions.find(s => s.id === id) ?? null),
         getSessionsByNamespace: mock((ns: string) => sessions.filter(s => s.namespace === ns)),
+        getSendOutcomeForCachedLocalId: mock((_sessionId: string, _localId: string): SendOutcome | null => null),
         spawnSession: mock(async () => overrides?.spawnResult ?? { type: 'success', sessionId: 'new-sess-1' }),
         sendMessage: mock(async () => ({ status: 'delivered' })),
         terminateSessionProcess: mock(async () => { }),
@@ -409,9 +412,41 @@ describe('/session/send', () => {
         expect(res.status).toBe(200)
         expect(await res.json()).toEqual({ ok: true })
         expect(engine.sendMessage.mock.calls).toHaveLength(1)
-        const [sid, payload] = engine.sendMessage.mock.calls[0] as unknown as [string, { text: string }]
+        const [sid, payload] = engine.sendMessage.mock.calls[0] as unknown as [string, { text: string; localId: string }]
         expect(sid).toBe('sess-1')
         expect(payload.text).toBe('hello')
+        expect(payload.localId).toBeTruthy()
+    })
+
+    it('valid localId → passes stable idempotency key to sendMessage', async () => {
+        const session: FakeSession = { id: 'sess-1', namespace: 'ns-1', active: true, thinking: false }
+        const engine = makeEngine({ sessions: [session] })
+        const store = makeStore()
+        const app = buildApp(() => engine, store)
+
+        const res = await app.request('/session/send', json({
+            sessionId: 'sess-1', message: 'hello', localId: 'worker-ai-task:run-1:prompt',
+        }))
+
+        expect(res.status).toBe(200)
+        const [, payload] = engine.sendMessage.mock.calls[0] as unknown as [string, { localId: string }]
+        expect(payload.localId).toBe('worker-ai-task:run-1:prompt')
+    })
+
+    it('duplicate localId in cache → does not resend message', async () => {
+        const session: FakeSession = { id: 'sess-1', namespace: 'ns-1', active: true, thinking: false }
+        const engine = makeEngine({ sessions: [session] })
+        engine.getSendOutcomeForCachedLocalId = mock((_sessionId: string, _localId: string) => ({ status: 'delivered' }))
+        const store = makeStore()
+        const app = buildApp(() => engine, store)
+
+        const res = await app.request('/session/send', json({
+            sessionId: 'sess-1', message: 'hello', localId: 'worker-ai-task:run-1:prompt',
+        }))
+
+        expect(res.status).toBe(200)
+        expect(await res.json()).toEqual({ ok: true, deduped: true, status: 'delivered' })
+        expect(engine.sendMessage.mock.calls).toHaveLength(0)
     })
 
     it('unknown sessionId → 404 session_not_found', async () => {

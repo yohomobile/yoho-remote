@@ -11,6 +11,7 @@ import { SummaryStore } from './db/summaryStore'
 import { enqueueSegmentIfNeeded } from './handlers/summarizeSegment'
 import { handleAiTask, aiTaskPayloadSchema } from './handlers/aiTask'
 import { handleAiTaskDispatcher } from './handlers/aiTaskDispatcher'
+import { startWorkerHealthServer, type WorkerHealthSnapshot } from './health'
 import { registerWorkerJobs } from './jobs/core'
 import { workerJobDefinitions } from './jobs/summarizeTurn'
 import { DeepSeekClient } from './llm/deepseek'
@@ -23,7 +24,76 @@ import {
 
 const CATCHUP_ORPHAN_AGE_MS = 10 * 60 * 1000 // 10 minutes
 
-async function runCatchup(ctx: WorkerContext): Promise<void> {
+type WorkerRuntimeState = {
+    startedAtMs: number
+    ready: boolean
+    shuttingDown: boolean
+    lastCatchupAtMs: number | null
+}
+
+function countRowsByStatus(rows: Array<{ status: string; count: number | string }>): Record<string, number> {
+    const counts: Record<string, number> = {}
+    for (const row of rows) {
+        counts[row.status] = typeof row.count === 'number' ? row.count : Number(row.count)
+    }
+    return counts
+}
+
+async function buildHealthSnapshot(
+    ctx: WorkerContext,
+    state: WorkerRuntimeState,
+    queues: string[],
+): Promise<WorkerHealthSnapshot> {
+    const dbStartedAt = Date.now()
+    let db: WorkerHealthSnapshot['db'] = { ok: true, latencyMs: null }
+    let stats: WorkerHealthSnapshot['stats'] | undefined
+    try {
+        await ctx.pool.query('SELECT 1')
+        db = { ok: true, latencyMs: Date.now() - dbStartedAt }
+        const [summaryRuns, aiTaskRuns] = await Promise.all([
+            ctx.pool.query(
+                `SELECT status, COUNT(*)::int AS count
+                 FROM summarization_runs
+                 WHERE created_at > $1
+                 GROUP BY status`,
+                [Date.now() - 24 * 60 * 60 * 1000],
+            ),
+            ctx.pool.query(
+                `SELECT status, COUNT(*)::int AS count
+                 FROM ai_task_runs
+                 WHERE started_at > $1
+                 GROUP BY status`,
+                [Date.now() - 24 * 60 * 60 * 1000],
+            ),
+        ])
+        stats = {
+            summarizationRuns: countRowsByStatus(summaryRuns.rows as Array<{ status: string; count: number | string }>),
+            aiTaskRuns: countRowsByStatus(aiTaskRuns.rows as Array<{ status: string; count: number | string }>),
+        }
+    } catch (error) {
+        db = {
+            ok: false,
+            latencyMs: Date.now() - dbStartedAt,
+            error: error instanceof Error ? error.message : String(error),
+        }
+    }
+
+    return {
+        status: state.shuttingDown ? 'shutting_down' : state.ready ? 'ready' : 'starting',
+        startedAtMs: state.startedAtMs,
+        uptimeMs: Date.now() - state.startedAtMs,
+        schema: ctx.config.bossSchema,
+        host: ctx.worker.host,
+        version: ctx.worker.version,
+        concurrency: ctx.config.workerConcurrency,
+        queues,
+        lastCatchupAtMs: state.lastCatchupAtMs,
+        db,
+        ...(stats ? { stats } : {}),
+    }
+}
+
+async function runCatchup(ctx: WorkerContext, state?: WorkerRuntimeState): Promise<void> {
     try {
         const cutoff = Date.now() - CATCHUP_ORPHAN_AGE_MS
         const result = await ctx.pool.query(
@@ -50,11 +120,21 @@ async function runCatchup(ctx: WorkerContext): Promise<void> {
         }
     } catch (err) {
         console.error('[Worker] catch-up scan failed:', err)
+    } finally {
+        if (state) {
+            state.lastCatchupAtMs = Date.now()
+        }
     }
 }
 
 async function main(): Promise<void> {
     const config = loadConfig()
+    const state: WorkerRuntimeState = {
+        startedAtMs: Date.now(),
+        ready: false,
+        shuttingDown: false,
+        lastCatchupAtMs: null,
+    }
     const worker = {
         host: hostname(),
         version: packageJson.version,
@@ -93,6 +173,15 @@ async function main(): Promise<void> {
         runStore: new RunStore(pool),
         deepseekClient: new DeepSeekClient(config.deepseek),
     }
+    const allQueueNames = [
+        ...workerJobDefinitions.map(d => d.queueName),
+        AI_TASK_DISPATCH_QUEUE,
+        AI_TASK_RUN_QUEUE,
+    ]
+
+    const healthServer = await startWorkerHealthServer(config.health, () =>
+        buildHealthSnapshot(ctx, state, allQueueNames)
+    )
 
     const prune = async (): Promise<void> => {
         const deleted = await ctx.runStore.pruneOlderThan(Date.now() - config.summarizationRunRetentionMs)
@@ -145,12 +234,13 @@ async function main(): Promise<void> {
     await boss.schedule(AI_TASK_DISPATCH_QUEUE, '* * * * *', {}, { retryLimit: 0 })
 
     // Run catch-up scan on startup then on interval
-    void runCatchup(ctx)
+    void runCatchup(ctx, state)
     const catchupTimer = setInterval(() => {
-        void runCatchup(ctx)
+        void runCatchup(ctx, state)
     }, config.catchupIntervalMs)
 
-    const queueNames = workerJobDefinitions.map(d => d.queueName).join(', ')
+    state.ready = true
+    const queueNames = allQueueNames.join(', ')
     console.log(
         `[Worker] Started. queues=[${queueNames}]`
         + ` schema=${config.bossSchema}`
@@ -158,6 +248,7 @@ async function main(): Promise<void> {
         + ` version=${worker.version}`
         + ` concurrency=${config.workerConcurrency}`
         + ` l2Threshold=${config.l2SegmentThreshold}`
+        + (config.health.port > 0 ? ` health=http://${config.health.host}:${config.health.port}` : '')
     )
 
     let shuttingDown = false
@@ -166,9 +257,14 @@ async function main(): Promise<void> {
             return
         }
         shuttingDown = true
+        state.shuttingDown = true
+        state.ready = false
         clearInterval(pruneTimer)
         clearInterval(catchupTimer)
         console.log(`[Worker] Shutting down on ${signal}`)
+        await healthServer?.close().catch((error: unknown) => {
+            console.error('[Worker] Failed to stop health server:', error)
+        })
         await boss.stop().catch((error: unknown) => {
             console.error('[Worker] Failed to stop pg-boss:', error)
         })

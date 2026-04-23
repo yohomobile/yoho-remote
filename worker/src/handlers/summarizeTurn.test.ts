@@ -151,6 +151,39 @@ describe('handleSummarizeTurn', () => {
         expect(getSummaryInsertCalls()).toBe(0)
     })
 
+    it('summarizes short operational turns even without tool_use', async () => {
+        const { ctx, insertedRuns, insertedSummaries, getLlmCalls, getSummaryInsertCalls } = createContext({
+            turnMessages: [
+                message(10, {
+                    role: 'user',
+                    content: { type: 'text', text: '部署 worker' },
+                }),
+                message(11, {
+                    role: 'assistant',
+                    content: '缺 DEEPSEEK_API_KEY，部署阻塞。',
+                }),
+            ],
+        })
+
+        await handleSummarizeTurn(payload, createJob({ id: 'job-short-operational' }), ctx)
+
+        expect(getLlmCalls()).toBe(1)
+        expect(getSummaryInsertCalls()).toBe(1)
+        expect(insertedSummaries).toHaveLength(1)
+        expect(insertedSummaries[0]?.summary).toBe('完成摘要')
+        expect(insertedRuns).toHaveLength(1)
+        expect(insertedRuns[0]).toMatchObject({
+            status: 'success',
+            errorCode: null,
+            cacheHit: false,
+        })
+        expect(insertedRuns[0]?.metadata).toMatchObject({
+            inserted_summary: true,
+            real_message_count: 2,
+            tool_use_count: 0,
+        })
+    })
+
     it('records transient failure and throws when session is still thinking', async () => {
         const { ctx, insertedRuns, getLlmCalls } = createContext({
             sessionSnapshot: {

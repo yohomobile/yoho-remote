@@ -25,6 +25,7 @@ export const BRAIN_CHILD_YOHO_VAULT_TOOL_NAMES = [
     'skill_get',
     'skill_list',
     'skill_discover',
+    'skill_doctor',
     'list_credentials',
     'get_credential',
     'set_credential',

@@ -73,7 +73,7 @@ function makeMockBoss(): { boss: PgBoss; sentJobs: SentJob[] } {
             options?: Record<string, unknown>,
         ) => {
             sentJobs.push({ queueName, payload, options })
-            return null
+            return `job-${sentJobs.length}`
         },
     } as unknown as PgBoss
     return { boss, sentJobs }
@@ -574,7 +574,7 @@ describe('Scenario 5: singletonKey dedup', () => {
         expect(key0).toBe(key1)
     })
 
-    it('dispatcher invoked twice in same minute → same minute-scoped singletonKey', async () => {
+    it('dispatcher invoked twice after next_fire_at advances → second call does not redispatch', async () => {
         const scheduleId = await insertSchedule({ cron: '* * * * *', recurring: true })
 
         const { boss: boss1, sentJobs: jobs1 } = makeMockBoss()
@@ -587,19 +587,12 @@ describe('Scenario 5: singletonKey dedup', () => {
         const job1 = jobs1.find(
             j => (j.payload as AiTaskPayload).scheduleId === scheduleId,
         )
-        const job2 = jobs2.find(
-            j => (j.payload as AiTaskPayload).scheduleId === scheduleId,
-        )
 
         expect(job1).toBeDefined()
-        expect(job2).toBeDefined()
 
         const key1 = (job1!.options as { singletonKey?: string })?.singletonKey
-        const key2 = (job2!.options as { singletonKey?: string })?.singletonKey
 
-        // Both must be aitask:{scheduleId}:{YYYY-MM-DDTHH:MM}
         expect(key1).toMatch(/^aitask:.+:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/)
-        // Dispatched within the same minute → identical key → pg-boss deduplicates in prod
-        expect(key1).toBe(key2)
+        expect(jobs2.some(j => (j.payload as AiTaskPayload).scheduleId === scheduleId)).toBe(false)
     })
 })

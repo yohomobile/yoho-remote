@@ -114,6 +114,17 @@ function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object'
 }
 
+const isPoolEndedError = (error: unknown): boolean => {
+    if (!(error instanceof Error)) {
+        return false
+    }
+
+    const msg = error.message
+    return msg.includes('Cannot use a pool after calling end on the pool')
+        || msg.includes('Pool is destroyed')
+        || msg.includes('pool is ending')
+}
+
 function extractPlainUserTextMessage(content: unknown): { text: string; sentFrom: string | null } | null {
     if (!isObject(content) || content.role !== 'user') {
         return null
@@ -785,7 +796,9 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
                 onWebappEvent?.({ type: 'machine-updated', machineId: id, data: { id } })
             }
         } catch (err) {
-            console.error('[cli-socket] Error in machine-update-metadata handler:', err)
+            if (!isPoolEndedError(err)) {
+                console.error('[cli-socket] Error in machine-update-metadata handler:', err)
+            }
             try { cb({ result: 'error' }) } catch {}
         }
     }
@@ -830,7 +843,9 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
                 onWebappEvent?.({ type: 'machine-updated', machineId: id, data: { id } })
             }
         } catch (err) {
-            console.error('[cli-socket] Error in machine-update-state handler:', err)
+            if (!isPoolEndedError(err)) {
+                console.error('[cli-socket] Error in machine-update-state handler:', err)
+            }
             try { cb({ result: 'error' }) } catch {}
         }
     }

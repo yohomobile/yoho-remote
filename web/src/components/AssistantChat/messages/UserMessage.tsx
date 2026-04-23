@@ -4,6 +4,24 @@ import { useYohoRemoteChatContext } from '@/components/AssistantChat/context'
 import type { YohoRemoteChatMessageMetadata } from '@/lib/assistant-runtime'
 import { MessageStatusIndicator } from '@/components/AssistantChat/messages/MessageStatusIndicator'
 import { CliOutputBlock } from '@/components/CliOutputBlock'
+import type { MessageActorAttribution } from '@/chat/identityAttribution'
+
+export function MessageAttributionLine(props: { attribution: MessageActorAttribution }) {
+    return (
+        <div
+            className="mb-1 flex min-w-0 max-w-full flex-wrap items-center gap-1 text-[11px] leading-4 text-[var(--app-muted-fg)]"
+            title={props.attribution.title}
+            aria-label={props.attribution.title}
+        >
+            <span className="min-w-0 max-w-full truncate font-medium text-[var(--app-fg)]">
+                {props.attribution.label}
+            </span>
+            <span className="shrink-0 rounded bg-[var(--app-bg)] px-1 py-0 text-[10px] leading-4">
+                {props.attribution.detail}
+            </span>
+        </div>
+    )
+}
 
 export function YohoRemoteUserMessage() {
     const ctx = useYohoRemoteChatContext()
@@ -27,6 +45,11 @@ export function YohoRemoteUserMessage() {
         if (message.role !== 'user') return null
         const custom = message.metadata.custom as Partial<YohoRemoteChatMessageMetadata> | undefined
         return custom?.localId ?? null
+    })
+    const actorAttribution = useAssistantState(({ message }) => {
+        if (message.role !== 'user') return null
+        const custom = message.metadata.custom as Partial<YohoRemoteChatMessageMetadata> | undefined
+        return custom?.actorAttribution ?? null
     })
     const isCliOutput = useAssistantState(({ message }) => {
         const custom = message.metadata.custom as Partial<YohoRemoteChatMessageMetadata> | undefined
@@ -55,15 +78,18 @@ export function YohoRemoteUserMessage() {
 
     return (
         <MessagePrimitive.Root className={userBubbleClass} data-message-id={messageId}>
-            <div className="flex items-end gap-2">
-                <div className="flex-1 min-w-0">
-                    <LazyRainbowText text={text} />
-                </div>
-                {status || brainDelivery ? (
-                    <div className="shrink-0 self-end pb-0.5">
-                        <MessageStatusIndicator status={status} brainDelivery={brainDelivery} onRetry={onRetry} />
+            <div className="min-w-0">
+                {actorAttribution ? <MessageAttributionLine attribution={actorAttribution} /> : null}
+                <div className="flex items-end gap-2">
+                    <div className="flex-1 min-w-0">
+                        <LazyRainbowText text={text} />
                     </div>
-                ) : null}
+                    {status || brainDelivery ? (
+                        <div className="shrink-0 self-end pb-0.5">
+                            <MessageStatusIndicator status={status} brainDelivery={brainDelivery} onRetry={onRetry} />
+                        </div>
+                    ) : null}
+                </div>
             </div>
         </MessagePrimitive.Root>
     )

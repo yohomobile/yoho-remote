@@ -296,6 +296,43 @@ describe('convertBlocksToThreadMessages', () => {
         })
     })
 
+    test('surfaces identity actor attribution on user thread messages', () => {
+        const actor = {
+            identityId: 'identity-feishu-1',
+            personId: 'person-1',
+            channel: 'feishu',
+            resolution: 'admin_verified',
+            displayName: 'Dev User',
+            email: 'dev@example.com',
+            externalId: 'ou_user_1',
+            accountType: 'human',
+        }
+        const blocks: ChatBlock[] = [
+            {
+                kind: 'user-text',
+                id: 'user-1',
+                localId: 'local-1',
+                createdAt: 1,
+                text: '查一下这个订单',
+                meta: {
+                    actor,
+                },
+            },
+        ]
+
+        const messages = convertBlocksToThreadMessages(blocks, createSession())
+
+        expect(messages[0]?.metadata?.custom).toMatchObject({
+            kind: 'user',
+            actorAttribution: {
+                label: 'Dev User',
+                detail: 'Feishu',
+                actors: [actor],
+                primaryActor: actor,
+            },
+        })
+    })
+
     test('does not merge pending-consume brain messages on the first child callback boundary', () => {
         const blocks: ChatBlock[] = [
             {

@@ -38,6 +38,7 @@ import {
 } from '../../resumeSpawnMetadata'
 import { getSessionSourceFromMetadata } from '../../sessionSourcePolicy'
 import { appendSelfSystemPrompt, resolveBrainSelfSystemContext } from '../../brain/selfSystem'
+import { buildSessionIdentityContextPatch } from '../identityContext'
 
 /**
  * License 检查：如果指定了 orgId，校验是否可创建会话
@@ -1002,6 +1003,10 @@ export function createSessionsRoutes(
                 if (orgId) {
                     await store.setSessionOrgId(result.sessionId, orgId, namespace)
                 }
+                const identityPatch = buildSessionIdentityContextPatch(c.get('identityActor'))
+                if (identityPatch && typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
+                    await engine.patchSessionMetadata(result.sessionId, identityPatch)
+                }
                 await sendInitPrompt(engine, store, result.sessionId, role, userName)
             })()
         }
@@ -1209,6 +1214,10 @@ export function createSessionsRoutes(
                 }
                 if (orgId) {
                     await store.setSessionOrgId(result.sessionId, orgId, namespace)
+                }
+                const identityPatch = buildSessionIdentityContextPatch(c.get('identityActor'))
+                if (identityPatch && typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
+                    await engine.patchSessionMetadata(result.sessionId, identityPatch)
                 }
                 await sendInitPrompt(engine, store, result.sessionId, role, userName)
             })()

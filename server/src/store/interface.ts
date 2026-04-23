@@ -35,6 +35,14 @@ import type {
     StoredOrgInvitation,
     StoredOrgLicense,
     StoredAdminOrgLicense,
+    StoredPerson,
+    StoredPersonIdentity,
+    StoredPersonIdentityLink,
+    StoredPersonIdentityCandidate,
+    StoredPersonIdentityAudit,
+    IdentityObservation,
+    ResolvedActorContext,
+    IdentityCandidateSummary,
     StoredBrainConfig,
     BrainAgent,
     LicenseStatus,
@@ -520,6 +528,99 @@ export interface IStore {
     acceptOrgInvitation(id: string, userId: string, email: string): Promise<string | null>
     deleteOrgInvitation(id: string, orgId?: string): Promise<boolean>
 
+    // === Identity Graph 操作 ===
+    createPerson(data: {
+        namespace: string
+        orgId?: string | null
+        personType?: StoredPerson['personType']
+        canonicalName?: string | null
+        primaryEmail?: string | null
+        employeeCode?: string | null
+        avatarUrl?: string | null
+        attributes?: Record<string, unknown>
+        createdBy?: string | null
+    }): Promise<StoredPerson>
+    getPerson(id: string): Promise<StoredPerson | null>
+    searchPersons(options: {
+        namespace: string
+        orgId?: string | null
+        q?: string | null
+        limit?: number
+    }): Promise<StoredPerson[]>
+    upsertPersonIdentity(observation: IdentityObservation): Promise<StoredPersonIdentity>
+    getPersonIdentity(id: string): Promise<StoredPersonIdentity | null>
+    getActiveIdentityLink(identityId: string): Promise<StoredPersonIdentityLink | null>
+    createPersonIdentityLink(data: {
+        personId: string
+        identityId: string
+        relationType?: StoredPersonIdentityLink['relationType']
+        state: StoredPersonIdentityLink['state']
+        confidence?: number
+        source: StoredPersonIdentityLink['source']
+        evidence?: unknown[]
+        decisionReason?: string | null
+        decidedBy?: string | null
+    }): Promise<StoredPersonIdentityLink>
+    createPersonIdentityCandidate(data: {
+        namespace: string
+        orgId?: string | null
+        identityId: string
+        candidatePersonId?: string | null
+        score: number
+        autoAction?: StoredPersonIdentityCandidate['autoAction']
+        riskFlags?: unknown[]
+        evidence?: unknown[]
+        matcherVersion: string
+        suppressUntil?: number | null
+    }): Promise<StoredPersonIdentityCandidate>
+    listPersonIdentityCandidates(options: {
+        namespace: string
+        orgId?: string | null
+        status?: StoredPersonIdentityCandidate['status']
+        limit?: number
+    }): Promise<IdentityCandidateSummary[]>
+    decidePersonIdentityCandidate(candidateId: string, decision: {
+        action: 'confirm_existing_person' | 'create_person_and_confirm' | 'mark_shared' | 'reject'
+        personId?: string | null
+        createPerson?: {
+            canonicalName?: string | null
+            primaryEmail?: string | null
+            employeeCode?: string | null
+        }
+        reason?: string | null
+        decidedBy?: string | null
+    }): Promise<StoredPersonIdentityCandidate | null>
+    resolveActorByIdentityObservation(observation: IdentityObservation): Promise<ResolvedActorContext>
+    mergePersons(data: {
+        namespace: string
+        orgId?: string | null
+        sourcePersonId: string
+        targetPersonId: string
+        reason?: string | null
+        decidedBy?: string | null
+    }): Promise<StoredPerson | null>
+    unmergePerson(data: {
+        namespace: string
+        orgId?: string | null
+        personId: string
+        reason?: string | null
+        decidedBy?: string | null
+    }): Promise<StoredPerson | null>
+    detachPersonIdentityLink(data: {
+        namespace: string
+        orgId?: string | null
+        linkId: string
+        reason?: string | null
+        decidedBy?: string | null
+    }): Promise<StoredPersonIdentityLink | null>
+    listPersonIdentityAudits(options: {
+        namespace: string
+        orgId?: string | null
+        personId?: string | null
+        identityId?: string | null
+        limit?: number
+    }): Promise<StoredPersonIdentityAudit[]>
+
     // === Download Files 操作 ===
     addDownloadFile(file: { sessionId: string; orgId: string | null; filename: string; mimeType: string; content: Buffer }): Promise<StoredDownloadFile>
     getDownloadFile(id: string): Promise<{ meta: StoredDownloadFile; content: Buffer } | null>
@@ -743,6 +844,14 @@ export type {
     StoredOrgInvitation,
     StoredOrgLicense,
     StoredAdminOrgLicense,
+    StoredPerson,
+    StoredPersonIdentity,
+    StoredPersonIdentityLink,
+    StoredPersonIdentityCandidate,
+    StoredPersonIdentityAudit,
+    IdentityObservation,
+    ResolvedActorContext,
+    IdentityCandidateSummary,
     StoredDownloadFile,
     StoredApprovalRequest,
     StoredApprovalDecision,

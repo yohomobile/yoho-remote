@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { AgentEvent, ToolCallBlock } from '@/chat/types'
+import { ToolCard } from '@/components/ToolCard/ToolCard'
 import { BrainChildCallbackCard } from './BrainChildCallbackCard'
-import { ReadBatchDisclosure } from './ToolMessage'
 
-describe('ReadBatchDisclosure', () => {
-    test('renders a single grouped disclosure without nested search or read cards', () => {
+describe('ReadBatch card rendering', () => {
+    test('renders a single grouped card without nested search or read cards', () => {
         const block: ToolCallBlock = {
             kind: 'tool-call',
             id: 'read-batch:1',
@@ -54,11 +54,20 @@ describe('ReadBatchDisclosure', () => {
             meta: undefined
         }
 
-        const html = renderToStaticMarkup(<ReadBatchDisclosure block={block} metadata={null} />)
+        const html = renderToStaticMarkup(
+            <ToolCard
+                api={{} as never}
+                sessionId="session-1"
+                metadata={null}
+                disabled={false}
+                onDone={() => undefined}
+                block={block}
+            />
+        )
 
-        expect(html).toContain('File read (1)')
-        expect(html).toContain('~/.yoho-remote/logs/daemon.log')
-        expect(html).not.toContain('Read 1 file')
+        expect(html).toContain('Read 1 file')
+        expect(html).toContain('daemon.log')
+        expect(html).toContain('~/.yoho-remote/logs')
         expect(html).not.toContain('Search')
         expect(html).not.toContain('Find files')
         expect(html).not.toContain('Read file')

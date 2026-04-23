@@ -139,6 +139,143 @@ export type StoredOrgLicense = {
     updatedAt: number
 }
 
+// Identity Graph 相关类型
+export type IdentityChannel = 'keycloak' | 'feishu' | 'wecom' | 'custom-im' | 'telegram' | 'cli'
+export type PersonType = 'human' | 'shared' | 'service' | 'bot'
+export type PersonStatus = 'active' | 'suspended' | 'departed' | 'merged'
+export type IdentityAccountType = 'human' | 'shared' | 'service' | 'bot' | 'unknown'
+export type IdentityAssurance = 'high' | 'medium' | 'low'
+export type IdentityStatus = 'active' | 'disabled' | 'departed' | 'conflict'
+export type PersonIdentityRelationType = 'primary' | 'alias' | 'shared-access' | 'historical'
+export type PersonIdentityLinkState = 'auto_verified' | 'admin_verified' | 'pending' | 'rejected' | 'detached'
+export type PersonIdentityLinkSource = 'auto' | 'admin' | 'migration' | 'import'
+export type PersonIdentityCandidateAutoAction = 'auto_bind' | 'review' | 'ignore'
+export type PersonIdentityCandidateStatus = 'open' | 'confirmed' | 'rejected' | 'superseded' | 'expired'
+export type PersonIdentityAuditAction = 'merge_persons' | 'unmerge_person' | 'detach_identity_link'
+
+export type StoredPerson = {
+    id: string
+    namespace: string
+    orgId: string | null
+    personType: PersonType
+    status: PersonStatus
+    canonicalName: string | null
+    primaryEmail: string | null
+    employeeCode: string | null
+    avatarUrl: string | null
+    attributes: Record<string, unknown>
+    createdAt: number
+    updatedAt: number
+    createdBy: string | null
+    mergedIntoPersonId: string | null
+}
+
+export type StoredPersonIdentity = {
+    id: string
+    namespace: string
+    orgId: string | null
+    channel: IdentityChannel
+    providerTenantId: string | null
+    externalId: string
+    secondaryId: string | null
+    accountType: IdentityAccountType
+    assurance: IdentityAssurance
+    canonicalEmail: string | null
+    displayName: string | null
+    loginName: string | null
+    employeeCode: string | null
+    status: IdentityStatus
+    attributes: Record<string, unknown>
+    firstSeenAt: number
+    lastSeenAt: number
+    createdAt: number
+    updatedAt: number
+}
+
+export type StoredPersonIdentityLink = {
+    id: string
+    personId: string
+    identityId: string
+    relationType: PersonIdentityRelationType
+    state: PersonIdentityLinkState
+    confidence: number
+    source: PersonIdentityLinkSource
+    evidence: unknown[]
+    decisionReason: string | null
+    validFrom: number
+    validTo: number | null
+    decidedBy: string | null
+    createdAt: number
+    updatedAt: number
+}
+
+export type StoredPersonIdentityCandidate = {
+    id: string
+    namespace: string
+    orgId: string | null
+    identityId: string
+    candidatePersonId: string | null
+    score: number
+    autoAction: PersonIdentityCandidateAutoAction
+    status: PersonIdentityCandidateStatus
+    riskFlags: unknown[]
+    evidence: unknown[]
+    matcherVersion: string
+    suppressUntil: number | null
+    decidedBy: string | null
+    decidedAt: number | null
+    decisionReason: string | null
+    createdAt: number
+    updatedAt: number
+}
+
+export type IdentityObservation = {
+    namespace: string
+    orgId?: string | null
+    channel: IdentityChannel
+    providerTenantId?: string | null
+    externalId: string
+    secondaryId?: string | null
+    canonicalEmail?: string | null
+    displayName?: string | null
+    loginName?: string | null
+    employeeCode?: string | null
+    accountType?: IdentityAccountType
+    assurance: IdentityAssurance
+    attributes?: Record<string, unknown>
+}
+
+export type ResolvedActorContext = {
+    identityId: string
+    personId: string | null
+    channel: IdentityChannel
+    resolution: PersonIdentityLinkState | 'unresolved' | 'shared'
+    displayName: string | null
+    email: string | null
+    externalId: string
+    accountType: IdentityAccountType
+}
+
+export type IdentityCandidateSummary = StoredPersonIdentityCandidate & {
+    identity: StoredPersonIdentity
+    candidatePerson: StoredPerson | null
+}
+
+export type StoredPersonIdentityAudit = {
+    id: string
+    namespace: string
+    orgId: string | null
+    action: PersonIdentityAuditAction
+    actorEmail: string | null
+    personId: string | null
+    targetPersonId: string | null
+    identityId: string | null
+    linkId: string | null
+    reason: string | null
+    payload: unknown
+    createdAt: number
+}
+
 export type StoredAdminOrgLicense = StoredOrgLicense & {
     orgName: string
     orgSlug: string

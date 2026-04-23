@@ -1283,6 +1283,103 @@ describe('createSessionsRoutes', () => {
         expect(spawnCalled).toBe(true)
     })
 
+    it('patches resolved identity context after POST /sessions spawn', async () => {
+        let resolvePatch!: (call: { sessionId: string; patch: Record<string, unknown> }) => void
+        const patchPromise = new Promise<{ sessionId: string; patch: Record<string, unknown> }>((resolve) => {
+            resolvePatch = resolve
+        })
+        const activeSession = {
+            id: 'session-new',
+            namespace: 'default',
+            active: true,
+            metadata: { path: '/tmp/project' },
+        }
+        const fakeEngine = {
+            getMachine: (id: string) => id === 'machine-1'
+                ? { id: 'machine-1', active: true, metadata: {}, namespace: 'default' }
+                : null,
+            getSession: () => activeSession,
+            spawnSession: async () => ({ type: 'success', sessionId: 'session-new' }),
+            patchSessionMetadata: async (sessionId: string, patch: Record<string, unknown>) => {
+                resolvePatch({ sessionId, patch })
+                return { ok: true }
+            },
+            waitForSocketInRoom: async () => true,
+            sendMessage: async () => true,
+            subscribe: () => () => {},
+        }
+
+        const fakeStore = {
+            getOrganization: async () => ({
+                id: 'org-a',
+                name: 'Org A',
+                slug: 'org-a',
+                createdBy: 'owner@example.com',
+                createdAt: 1,
+                updatedAt: 1,
+                settings: {},
+            }),
+            setSessionCreatedBy: async () => true,
+            setSessionOrgId: async () => true,
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            c.set('role', 'developer')
+            c.set('email', 'dev@example.com')
+            c.set('name', 'Dev')
+            c.set('orgs', [])
+            c.set('identityActor', {
+                identityId: 'identity-1',
+                personId: 'person-1',
+                channel: 'keycloak',
+                resolution: 'auto_verified',
+                displayName: 'Dev User',
+                email: 'dev@example.com',
+                externalId: 'keycloak-user-1',
+                accountType: 'human',
+            })
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/sessions?orgId=org-a', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                directory: '/tmp/project',
+                agent: 'claude',
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        const patchCall = await Promise.race([
+            patchPromise,
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timed out waiting for identity context patch')), 100)),
+        ])
+        expect(patchCall).toEqual({
+            sessionId: 'session-new',
+            patch: {
+                identityContext: {
+                    version: 1,
+                    mode: 'single-actor',
+                    defaultActor: {
+                        identityId: 'identity-1',
+                        personId: 'person-1',
+                        channel: 'keycloak',
+                        resolution: 'auto_verified',
+                        displayName: 'Dev User',
+                        email: 'dev@example.com',
+                        externalId: 'keycloak-user-1',
+                        accountType: 'human',
+                    },
+                },
+            },
+        })
+    })
+
     it('preserves brain-child metadata when resume falls back to a new session', async () => {
         const session = {
             id: 'brain-child-old',
@@ -1531,9 +1628,10 @@ describe('createSessionsRoutes', () => {
     it('injects self system prompt and metadata when creating a Brain session', async () => {
         const originalFetch = globalThis.fetch
         globalThis.fetch = (async () => new Response(JSON.stringify({
-            answer: 'K1 长期倾向：先收敛问题边界，再做分派。',
-            filesSearched: 1,
-            confidence: 0.92,
+            result: {
+                content: 'K1 长期倾向：先收敛问题边界，再做分派。',
+                sources: ['memories/self/preferences.md'],
+            },
         }), {
             status: 200,
             headers: { 'content-type': 'application/json' },

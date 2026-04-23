@@ -13,7 +13,7 @@ import { basename, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import type { SyncEngine, SyncEvent } from '../sync/syncEngine'
 import type { IStore } from '../store/interface'
-import type { StoredMessage } from '../store/types'
+import type { IdentityChannel, ResolvedActorContext, StoredMessage } from '../store/types'
 import type { IMAdapter, IMMessage, IMBridgeCallbacks, BrainBridgeConfig } from './types'
 import {
     buildBrainSessionPreferences,
@@ -28,6 +28,7 @@ import { lookupKeycloakUserByEmail, type KeycloakUserInfo } from './keycloakLook
 import { getLicenseService } from '../license/licenseService'
 import { appendSelfSystemPrompt, resolveBrainSelfSystemContext } from '../brain/selfSystem'
 import { evaluateRecallConsumption } from '../agent/memoryResultGate'
+import { mergeMessageMeta, toWebActorMeta } from '../web/identityContext'
 
 // ========== Structured logging ==========
 
@@ -623,8 +624,8 @@ export class BrainBridge implements IMBridgeCallbacks {
         }
 
         const chatType = messages[0].chatType
-        const senderName = messages[0].senderName
-        const sessionId = await this.ensureSession(chatId, chatType, senderName)
+        const firstMessage = messages[0]
+        const sessionId = await this.ensureSession(chatId, chatType, firstMessage)
         if (!sessionId) {
             await this.adapter.sendText(chatId, '⚠️ 暂时无法响应——没有可用的计算节点。稍后会自动恢复，请过几分钟再试。')
             state.incoming.splice(0, messages.length)
@@ -676,6 +677,12 @@ export class BrainBridge implements IMBridgeCallbacks {
 
         // Fetch user profiles for appendSystemPrompt
         const appendSystemPrompt = await this.buildUserProfilePrompt(messages, chatType)
+        const orgId = await this.getSessionOrgId(sessionId)
+        const actorBySenderId = await this.resolveActorsForMessages(messages, orgId)
+        const lastActor = actorBySenderId.get(messages[messages.length - 1].senderId) ?? null
+        const actorMetas = Array.from(actorBySenderId.values())
+            .map((actor) => toWebActorMeta(actor))
+            .filter((actor): actor is NonNullable<ReturnType<typeof toWebActorMeta>> => actor !== null)
 
         // Remember last user message ID for reply threading
         const lastMsgId = messages[messages.length - 1].messageId
@@ -713,16 +720,18 @@ export class BrainBridge implements IMBridgeCallbacks {
 
         // Send to Brain session
         try {
+            const baseMeta: Record<string, unknown> = {
+                feishuChatId: chatId,
+                feishuChatType: chatType,
+                senderName: messages[messages.length - 1].senderName,
+                senderOpenId: messages[messages.length - 1].senderId,
+                ...(actorMetas.length > 1 ? { actors: actorMetas } : {}),
+                ...(appendSystemPrompt ? { appendSystemPrompt } : {}),
+            }
             await this.syncEngine.sendMessage(sessionId, {
                 text: combined,
                 sentFrom: this.adapter.platform as any,
-                meta: {
-                    feishuChatId: chatId,
-                    feishuChatType: chatType,
-                    senderName: messages[messages.length - 1].senderName,
-                    senderOpenId: messages[messages.length - 1].senderId,
-                    ...(appendSystemPrompt ? { appendSystemPrompt } : {}),
-                }
+                meta: mergeMessageMeta(lastActor, baseMeta),
             })
             // Clear buffer only after successful send
             state.incoming.splice(0, messages.length)
@@ -769,7 +778,7 @@ export class BrainBridge implements IMBridgeCallbacks {
 
     // ========== Session management ==========
 
-    private async ensureSession(chatId: string, chatType: string, senderName?: string): Promise<string | null> {
+    private async ensureSession(chatId: string, chatType: string, firstMessage?: IMMessage): Promise<string | null> {
         const state = this.chatStates.get(chatId)
         if (state) state.creating = true
 
@@ -793,7 +802,7 @@ export class BrainBridge implements IMBridgeCallbacks {
                     }
                 }
 
-                return await this.rebuildSession(chatId, chatType, senderName)
+                return await this.rebuildSession(chatId, chatType, firstMessage)
             }
 
             // No mapping exists — create new session
@@ -801,15 +810,16 @@ export class BrainBridge implements IMBridgeCallbacks {
             if (chatType === 'group') {
                 chatName = await this.adapter.fetchChatName(chatId) || undefined
             }
-            return await this.createBrainSession(chatId, chatType, chatName, senderName)
+            return await this.createBrainSession(chatId, chatType, chatName, firstMessage)
         } finally {
             if (state) state.creating = false
         }
     }
 
-    private async createBrainSession(chatId: string, chatType: string, chatName?: string, senderName?: string): Promise<string | null> {
+    private async createBrainSession(chatId: string, chatType: string, chatName?: string, firstMessage?: IMMessage): Promise<string | null> {
         try {
             const namespace = 'default'
+            const senderName = firstMessage?.senderName
             // Load Brain config first to know which agent we need
             const brainConfig = await this.store.getBrainConfig(namespace)
             const agent = brainConfig?.agent ?? 'claude'
@@ -916,6 +926,9 @@ export class BrainBridge implements IMBridgeCallbacks {
             this.chatIdToChatType.set(chatId, chatType)
             this.lastSeenSeq.set(chatId, 0)
             this.lastDeliveredSeq.set(chatId, 0)
+            const initialActor = firstMessage
+                ? await this.resolveActorForMessage(firstMessage, selectedMachine.orgId ?? null)
+                : null
 
             // Create initReady promise
             const initStartMs = Date.now()
@@ -937,7 +950,7 @@ export class BrainBridge implements IMBridgeCallbacks {
             this.initReady.set(chatId, initPromise)
 
             // Send initPrompt (fire-and-forget)
-            this.initializeSession(sessionId, chatId, chatType, chatName, senderName).catch(err => {
+            this.initializeSession(sessionId, chatId, chatType, chatName, senderName, initialActor).catch(err => {
                 console.error(`${this.logPrefix} initializeSession failed for ${sessionId.slice(0, 8)}:`, err)
                 const resolver = this.initReadyResolvers.get(chatId)
                 if (resolver) {
@@ -953,7 +966,7 @@ export class BrainBridge implements IMBridgeCallbacks {
         }
     }
 
-    private async initializeSession(sessionId: string, chatId: string, chatType: string, chatName?: string, senderName?: string): Promise<void> {
+    private async initializeSession(sessionId: string, chatId: string, chatType: string, chatName?: string, senderName?: string, initialActor?: ResolvedActorContext | null): Promise<void> {
         try {
             const isOnline = await this.waitForSessionOnline(sessionId, 60_000)
             if (!isOnline) {
@@ -963,8 +976,10 @@ export class BrainBridge implements IMBridgeCallbacks {
 
             // Set session title (delegated to adapter)
             const title = this.adapter.buildSessionTitle(chatType, chatName, senderName)
+            const identityPatch = this.buildSessionIdentityContextPatch(chatId, chatType, initialActor)
             await this.syncEngine.patchSessionMetadata(sessionId, {
-                summary: { text: title, updatedAt: Date.now() }
+                summary: { text: title, updatedAt: Date.now() },
+                ...(identityPatch ?? {}),
             })
 
             await this.syncEngine.waitForSocketInRoom(sessionId, 5000)
@@ -997,6 +1012,95 @@ export class BrainBridge implements IMBridgeCallbacks {
             console.log(`${this.logPrefix} Sent initPrompt to session ${sessionId.slice(0, 8)}`)
         } catch (err) {
             console.error(`${this.logPrefix} initializeSession failed for ${sessionId.slice(0, 8)}:`, err)
+        }
+    }
+
+    private resolveIdentityChannel(): IdentityChannel {
+        if (this.adapter.platform === 'feishu') return 'feishu'
+        if (this.adapter.platform === 'wecom') return 'wecom'
+        if (this.adapter.platform === 'telegram') return 'telegram'
+        return 'custom-im'
+    }
+
+    private async getSessionOrgId(sessionId: string): Promise<string | null> {
+        const getSession = (this.store as { getSession?: IStore['getSession'] }).getSession
+        if (typeof getSession !== 'function') return null
+        try {
+            const session = await getSession.call(this.store, sessionId)
+            return session?.orgId ?? null
+        } catch {
+            return null
+        }
+    }
+
+    private async resolveActorForMessage(message: IMMessage, orgId: string | null): Promise<ResolvedActorContext | null> {
+        const resolver = (this.store as {
+            resolveActorByIdentityObservation?: IStore['resolveActorByIdentityObservation']
+        }).resolveActorByIdentityObservation
+        if (typeof resolver !== 'function') {
+            return null
+        }
+        try {
+            return await resolver.call(this.store, {
+                namespace: 'default',
+                orgId,
+                channel: this.resolveIdentityChannel(),
+                externalId: message.senderId,
+                canonicalEmail: message.senderEmail,
+                displayName: message.senderName,
+                accountType: 'human',
+                assurance: 'medium',
+                attributes: {
+                    platform: this.adapter.platform,
+                    chatType: message.chatType,
+                    messageId: message.messageId,
+                },
+            })
+        } catch (error) {
+            console.warn(`${this.logPrefix} identity actor resolution failed for sender ${message.senderId.slice(0, 8)}:`, error)
+            return null
+        }
+    }
+
+    private async resolveActorsForMessages(messages: IMMessage[], orgId: string | null): Promise<Map<string, ResolvedActorContext>> {
+        const bySenderId = new Map<string, IMMessage>()
+        for (const message of messages) {
+            if (!bySenderId.has(message.senderId)) {
+                bySenderId.set(message.senderId, message)
+            }
+        }
+
+        const entries = await Promise.all([...bySenderId.entries()].map(async ([senderId, message]) => {
+            const actor = await this.resolveActorForMessage(message, orgId)
+            return actor ? [senderId, actor] as const : null
+        }))
+
+        return new Map(entries.filter((entry): entry is readonly [string, ResolvedActorContext] => entry !== null))
+    }
+
+    private buildSessionIdentityContextPatch(
+        chatId: string,
+        chatType: string,
+        actor: ResolvedActorContext | null | undefined,
+    ): Record<string, unknown> | null {
+        if (chatType !== 'p2p') {
+            return null
+        }
+        const defaultActor = toWebActorMeta(actor)
+        if (!defaultActor) {
+            return null
+        }
+        return {
+            identityContext: {
+                version: 1,
+                mode: defaultActor.resolution === 'shared' ? 'multi-actor' : 'single-actor',
+                defaultActor,
+                chat: {
+                    platform: this.adapter.platform,
+                    chatId,
+                    chatType,
+                },
+            },
         }
     }
 
@@ -1186,7 +1290,8 @@ export class BrainBridge implements IMBridgeCallbacks {
         }
     }
 
-    private async rebuildSession(chatId: string, chatType: string, senderName?: string): Promise<string | null> {
+    private async rebuildSession(chatId: string, chatType: string, firstMessage?: IMMessage): Promise<string | null> {
+        const senderName = firstMessage?.senderName
         const lastRebuild = this.lastRebuildAt.get(chatId) || 0
         const elapsed = Date.now() - lastRebuild
         if (elapsed < this.REBUILD_COOLDOWN_MS) {
@@ -1241,7 +1346,7 @@ export class BrainBridge implements IMBridgeCallbacks {
         if (chatType === 'group') {
             chatName = await this.adapter.fetchChatName(chatId) || undefined
         }
-        const newSessionId = await this.createBrainSession(chatId, chatType, chatName, senderName)
+        const newSessionId = await this.createBrainSession(chatId, chatType, chatName, firstMessage)
         if (!newSessionId) {
             await this.store.updateFeishuChatSessionStatus(chatId, 'dead')
         }

@@ -98,18 +98,86 @@ type RecallSelfMemoryResult = {
     status: Extract<SelfSystemMemoryStatus, 'attached' | 'empty' | 'error'>
 }
 
+function buildYohoMemoryRequestHeaders(): Record<string, string> {
+    const token = process.env.YOHO_MEMORY_HTTP_AUTH_TOKEN?.trim()
+    return {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    }
+}
+
+function unwrapYohoMemoryResult(value: unknown): Record<string, unknown> | null {
+    if (!isRecord(value)) return null
+    return isRecord(value.result) ? value.result : value
+}
+
+async function readJsonResponse(response: Response): Promise<Record<string, unknown> | null> {
+    try {
+        return unwrapYohoMemoryResult(await response.json())
+    } catch {
+        return null
+    }
+}
+
+async function fetchSelfProfileMemory(
+    yohoMemoryUrl: string,
+    fetchImpl: typeof fetch,
+): Promise<RecallSelfMemoryResult | null> {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 3_000)
+    try {
+        const response = await fetchImpl(`${yohoMemoryUrl}/self_profile_get`, {
+            method: 'POST',
+            headers: buildYohoMemoryRequestHeaders(),
+            body: JSON.stringify({
+                agentId: 'K1',
+                profileMode: 'brain-init',
+            }),
+            signal: controller.signal,
+        })
+
+        if (response.status === 404) {
+            return null
+        }
+        if (!response.ok) {
+            return { snippet: null, status: 'error' }
+        }
+
+        const payload = await readJsonResponse(response)
+        const content = typeof payload?.content === 'string' ? payload.content.trim() : ''
+        const sources = Array.isArray(payload?.sources) ? payload.sources : []
+        if (!content || sources.length === 0) {
+            return { snippet: null, status: 'empty' }
+        }
+
+        return {
+            snippet: trimMemorySnippet(content),
+            status: 'attached',
+        }
+    } catch {
+        return { snippet: null, status: 'error' }
+    } finally {
+        clearTimeout(timeout)
+    }
+}
+
 async function recallSelfMemory(
     profile: StoredAIProfile,
     namespace: string,
     yohoMemoryUrl: string,
     fetchImpl: typeof fetch,
 ): Promise<RecallSelfMemoryResult> {
+    const selfProfileResult = await fetchSelfProfileMemory(yohoMemoryUrl, fetchImpl)
+    if (selfProfileResult) {
+        return selfProfileResult
+    }
+
     try {
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), 3_000)
         const response = await fetchImpl(`${yohoMemoryUrl}/recall`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: buildYohoMemoryRequestHeaders(),
             body: JSON.stringify({
                 input: `K1 Brain 自我记忆 ${profile.name} ${profile.role} namespace:${namespace}`,
                 keywords: [
@@ -128,17 +196,20 @@ async function recallSelfMemory(
             return { snippet: null, status: 'error' }
         }
 
-        const payload = await response.json() as { answer?: string; filesSearched?: number; confidence?: number }
-        const gate = evaluateRecallConsumption(payload, {
+        const result = await readJsonResponse(response) as { answer?: string; filesSearched?: number; confidence?: number } | null
+        if (!result) {
+            return { snippet: null, status: 'empty' }
+        }
+        const gate = evaluateRecallConsumption(result, {
             matchTerms: [profile.name, namespace],
             requireResultCount: true,
         })
-        if (!gate.reliable || typeof payload.answer !== 'string' || payload.answer.trim().length === 0) {
+        if (!gate.reliable || typeof result.answer !== 'string' || result.answer.trim().length === 0) {
             return { snippet: null, status: 'empty' }
         }
 
         return {
-            snippet: trimMemorySnippet(payload.answer),
+            snippet: trimMemorySnippet(result.answer),
             status: 'attached',
         }
     } catch {

@@ -85,4 +85,41 @@ describe('SessionList', () => {
         expect(html).toContain('reconnecting')
         expect(html).not.toContain('offline')
     })
+
+    test('renders Brain self system memory status in the session row', () => {
+        const html = renderToStaticMarkup(
+            <SessionList
+                sessions={[
+                    createSession({
+                        id: 'brain-session-self',
+                        metadata: {
+                            path: '/home/dev/.yoho-remote/brain-workspace',
+                            source: 'brain',
+                            selfSystemEnabled: true,
+                            selfProfileId: 'profile-k1',
+                            selfProfileName: 'K1',
+                            selfProfileResolved: true,
+                            selfMemoryProvider: 'yoho-memory',
+                            selfMemoryAttached: true,
+                            selfMemoryStatus: 'attached',
+                        },
+                    }),
+                ]}
+                projects={[] as Project[]}
+                currentUserEmail={null}
+                archiveFilter="active"
+                ownerFilter="brain"
+                onArchiveFilterChange={() => {}}
+                onOwnerFilterChange={() => {}}
+                onSelect={() => {}}
+                onNewSession={() => {}}
+                onRefresh={() => {}}
+                isLoading={false}
+                machines={[] as Machine[]}
+                renderHeader={false}
+            />
+        )
+
+        expect(html).toContain('Self: K1 + memory')
+    })
 })

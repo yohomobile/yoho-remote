@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import {
+    SUMMARIZE_SESSION_QUEUE_NAME,
     SUMMARIZE_TURN_QUEUE_NAME,
     SUMMARIZE_TURN_JOB_VERSION,
     createSummarizeTurnQueuePublisher,
@@ -127,7 +128,7 @@ describe('createSummarizeTurnQueuePublisher', () => {
         }
     })
 
-    test('uses named PgBoss export, wires schema, and creates summarize-turn queue on init', async () => {
+    test('uses named PgBoss export, wires schema, and creates summarize queues on init', async () => {
         const publisher = await createSummarizeTurnQueuePublisher({
             host: 'db.example',
             port: 5432,
@@ -166,11 +167,22 @@ describe('createSummarizeTurnQueuePublisher', () => {
                     retryDelayMax: 300,
                 }
             },
+            {
+                kind: 'create',
+                queueName: SUMMARIZE_SESSION_QUEUE_NAME,
+                options: {
+                    retryLimit: 3,
+                    retryDelay: 60,
+                    retryBackoff: true,
+                    retryDelayMax: 900,
+                }
+            },
         ])
         expect(bossInstances[0]?.lifecycle).toEqual([
             'start',
             `createQueue:${SUMMARIZE_TURN_QUEUE_NAME}`,
             `updateQueue:${SUMMARIZE_TURN_QUEUE_NAME}`,
+            `createQueue:${SUMMARIZE_SESSION_QUEUE_NAME}`,
         ])
     })
 
@@ -212,6 +224,7 @@ describe('createSummarizeTurnQueuePublisher', () => {
             'start',
             `createQueue:${SUMMARIZE_TURN_QUEUE_NAME}`,
             `updateQueue:${SUMMARIZE_TURN_QUEUE_NAME}`,
+            `createQueue:${SUMMARIZE_SESSION_QUEUE_NAME}`,
             'stop'
         ])
     })

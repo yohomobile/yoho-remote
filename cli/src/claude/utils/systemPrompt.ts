@@ -9,8 +9,9 @@ const BASE_SYSTEM_PROMPT = (() => trimIdent(`
     If the first user message looks like an init prompt (starts with "#InitPrompt-"), do NOT call change_title yet. Wait until the first real task request, then call change_title once.
     In Yoho Remote Claude sessions, MCP tools can be injected at runtime. Judge MCP availability by the actual tool list in this session and by init.mcp_servers status, not by shell commands like "claude mcp list" and not by reading ~/.claude/settings.json.
     Common Yoho MCP namespaces in Claude sessions are "mcp__yoho_remote__*", "mcp__yoho-vault__*", "mcp__skill__*", plus user-configured servers such as "mcp__yoho-memory__*" and "mcp__yoho-credentials__*".
-    When the user asks for environment info, recall, remember, credentials, project list, or skill search, call the matching runtime MCP tool directly if it is available in this session. Do not claim MCP is unavailable unless the runtime tool list/init status actually shows that.
-    skill_search consumption gate: only suggestedNextAction="use_results" with hasLocalMatch=true and confidence >= 0.65 may be used directly or followed by skill_get. Treat discover/proceed/no-match/missing/low-confidence results as not directly usable.
+    When the user asks for environment info, recall, remember, credentials, project list, or skills, call the matching runtime MCP tool directly if it is available in this session. Do not claim MCP is unavailable unless the runtime tool list/init status actually shows that.
+    skill selection gate: prefer skill_list({ path, query }) as the local active skill manifest, then call skill_get only when one listed skill clearly matches the task. Use only skills that are active, not disabled, path-compatible, and not blocked by antiTriggers; manual skills require explicit user intent. Never use candidate/draft/archived/disabled skills as execution instructions. Use skill_search as a fallback for large/ambiguous manifests or content-level matching. Treat skill_search results as directly usable only when directUseAllowed=true, or when suggestedNextAction="use_results", hasLocalMatch=true, and confidence >= 0.65. Treat discover/proceed/no-match/missing/low-confidence results as not directly usable.
+    skill lifecycle gate: skill_save creates a candidate and skill_update creates a draft; neither is active. Briefly explain the candidate/draft to the user, then call skill_promote only after the user explicitly confirms activation. Use skill_doctor to inspect the pool after mutations when available. Prefer skill_archive for retirement; use skill_delete for temporary/bad candidate or draft cleanup, and delete active skills only with explicit allowActive=true.
     recall consumption gate: recall output is candidate evidence, not fact, unless it has a non-empty answer, non-zero results when reported, adequate confidence, and matching scope/project/identity.
 `))();
 
@@ -57,12 +58,36 @@ export function buildRuntimeMcpSystemPrompt(tools?: string[]): string | undefine
         'mcp__yoho-vault__get_credential',
         'mcp__yoho-vault__skill_search',
         'mcp__yoho-vault__skill_get',
+        'mcp__yoho-vault__skill_list',
+        'mcp__yoho-vault__skill_save',
+        'mcp__yoho-vault__skill_update',
+        'mcp__yoho-vault__skill_promote',
+        'mcp__yoho-vault__skill_archive',
+        'mcp__yoho-vault__skill_delete',
+        'mcp__yoho-vault__skill_doctor',
+        'mcp__yoho-vault__skill_discover',
         'mcp__skill__search',
         'mcp__skill__get',
+        'mcp__skill__list',
+        'mcp__skill__save',
+        'mcp__skill__update',
+        'mcp__skill__promote',
+        'mcp__skill__archive',
+        'mcp__skill__delete',
+        'mcp__skill__doctor',
+        'mcp__skill__discover',
         'mcp__yoho-memory__recall',
         'mcp__yoho-memory__remember',
         'mcp__yoho-memory__skill_search',
         'mcp__yoho-memory__skill_get',
+        'mcp__yoho-memory__skill_list',
+        'mcp__yoho-memory__skill_save',
+        'mcp__yoho-memory__skill_update',
+        'mcp__yoho-memory__skill_promote',
+        'mcp__yoho-memory__skill_archive',
+        'mcp__yoho-memory__skill_delete',
+        'mcp__yoho-memory__skill_doctor',
+        'mcp__yoho-memory__skill_discover',
         'mcp__yoho-credentials__get_credential',
     ].filter(tool => mcpTools.includes(tool))
 
@@ -75,8 +100,9 @@ export function buildRuntimeMcpSystemPrompt(tools?: string[]): string | undefine
         In restricted Brain-style sessions, do not assume Bash, Read, Edit, Write, Grep, Glob, Task, Agent, or AskUserQuestion exist unless they are explicitly listed in the ordinary Claude tool set above.
         If the user asks which MCP tools are available, answer from this runtime set.
         Do NOT use Bash or shell commands such as "which mcp", "env | grep MCP", "claude mcp list", or reading ~/.claude/settings.json to decide MCP availability. Those reflect shell/config state, not this session's runtime-injected tools.
-        When the user asks for environment info, project list, recall, remember, credentials, or skill search, call the matching MCP tool directly from the runtime namespaces above.
-        skill_search consumption gate: only suggestedNextAction="use_results" with hasLocalMatch=true and confidence >= 0.65 may be used directly or followed by skill_get. Treat discover/proceed/no-match/missing/low-confidence results as not directly usable.
+        When the user asks for environment info, project list, recall, remember, credentials, or skills, call the matching MCP tool directly from the runtime namespaces above.
+        skill selection gate: prefer skill_list({ path, query }) as the local active skill manifest, then call skill_get only when one listed skill clearly matches the task. Use only skills that are active, not disabled, path-compatible, and not blocked by antiTriggers; manual skills require explicit user intent. Never use candidate/draft/archived/disabled skills as execution instructions. Use skill_search as a fallback for large/ambiguous manifests or content-level matching. Treat skill_search results as directly usable only when directUseAllowed=true, or when suggestedNextAction="use_results", hasLocalMatch=true, and confidence >= 0.65. Treat discover/proceed/no-match/missing/low-confidence results as not directly usable.
+        skill lifecycle gate: skill_save creates a candidate and skill_update creates a draft; neither is active. Briefly explain the candidate/draft to the user, then call skill_promote only after the user explicitly confirms activation. Use skill_doctor to inspect the pool after mutations when available. Prefer skill_archive for retirement; use skill_delete for temporary/bad candidate or draft cleanup, and delete active skills only with explicit allowActive=true.
         recall consumption gate: recall output is candidate evidence, not fact, unless it has a non-empty answer, non-zero results when reported, adequate confidence, and matching scope/project/identity.
         If structured user Q&A is needed and "mcp__yoho_remote__ask_user_question" is listed above, use that exact Yoho tool name. Do not assume a generic "request_user_input" alias exists.
     `)

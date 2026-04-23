@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from 'hono'
 import { verifyKeycloakToken, extractUserFromToken } from '../keycloak'
-import type { UserRole, OrgRole, IStore } from '../../store'
+import type { UserRole, OrgRole, IStore, ResolvedActorContext } from '../../store'
 
 export type UserOrgInfo = {
     id: string
@@ -18,6 +18,7 @@ export type WebAppEnv = {
         clientId?: string  // Client identifier for SSE connections
         deviceType?: string  // Device type for SSE connections
         orgs: UserOrgInfo[]  // User's organizations with roles
+        identityActor?: ResolvedActorContext
     }
 }
 
@@ -73,6 +74,28 @@ export function createAuthMiddleware(store: IStore): MiddlewareHandler<WebAppEnv
                 role: org.myRole,
             }))
             c.set('orgs', orgsWithRoles)
+
+            if (typeof store.resolveActorByIdentityObservation === 'function') {
+                try {
+                    const requestedOrgId = c.req.query('orgId') || null
+                    const identityOrgId = requestedOrgId && orgsWithRoles.some((org) => org.id === requestedOrgId)
+                        ? requestedOrgId
+                        : null
+                    const actor = await store.resolveActorByIdentityObservation({
+                        namespace: 'default',
+                        orgId: identityOrgId,
+                        channel: 'keycloak',
+                        externalId: user.sub,
+                        canonicalEmail: user.email,
+                        displayName: user.name ?? user.email,
+                        accountType: 'human',
+                        assurance: 'high',
+                    })
+                    c.set('identityActor', actor)
+                } catch (error) {
+                    console.warn('[Auth] Identity graph resolution failed:', error)
+                }
+            }
 
             await next()
             return

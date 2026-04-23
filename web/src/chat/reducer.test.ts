@@ -175,6 +175,45 @@ describe('reduceChatBlocks duplicate handling', () => {
         })
     })
 
+    test('uses the command file path when Codex parsed_cmd reports a sed line range as the read name', () => {
+        const reduced = reduceChatBlocks([
+            {
+                id: 'sed-read-call',
+                localId: null,
+                createdAt: 1,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'sed-read',
+                    name: 'CodexBash',
+                    input: {
+                        command: 'sed -n "178,190p" web/src/components/ToolCard/ToolCard.tsx',
+                        parsed_cmd: [{
+                            type: 'read',
+                            name: '178,190p'
+                        }]
+                    },
+                    description: null,
+                    uuid: 'sed-read-call',
+                    parentUUID: null
+                }]
+            }
+        ] satisfies NormalizedMessage[], null)
+
+        const block = reduced.blocks[0]
+        expect(block?.kind).toBe('tool-call')
+        if (!block || block.kind !== 'tool-call') {
+            throw new Error('Expected ReadBatch block')
+        }
+
+        expect(block.tool.name).toBe('ReadBatch')
+        expect(block.tool.input).toEqual({
+            count: 1,
+            files: ['web/src/components/ToolCard/ToolCard.tsx']
+        })
+    })
+
     test('dedupes webapp user message and Claude cli echo with the same text', () => {
         const reduced = reduceChatBlocks([
             {

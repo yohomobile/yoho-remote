@@ -17,6 +17,8 @@ export const queryKeys = {
     typing: (sessionId: string) => ['typing', sessionId] as const,
     me: ['me'] as const,
     userPreferences: ['user-preferences'] as const,
+    identityCandidates: (orgId?: string | null, status = 'open') => ['identity-candidates', orgId ?? null, status] as const,
+    identityPersons: (orgId?: string | null, q?: string | null) => ['identity-persons', orgId ?? null, q?.trim() ?? ''] as const,
     aiProfiles: (orgId?: string | null) => ['ai-profiles', orgId ?? null] as const,
     tokenSources: (orgId: string, includeSecrets: boolean) => ['token-sources', orgId, includeSecrets ? 'secret' : 'public'] as const,
     orgs: ['orgs'] as const,

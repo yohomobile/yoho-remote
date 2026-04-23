@@ -31,6 +31,7 @@ describe('brainChildToolAllowlist', () => {
         expect(tools).toContain('functions.yoho_remote__project_create')
         expect(tools).toContain('functions.yoho_vault__get_credential')
         expect(tools).toContain('functions.yoho_vault__session_messages')
+        expect(tools).toContain('functions.yoho_vault__skill_doctor')
         expect(tools).not.toContain('functions.yoho_remote__session_send')
     })
 
@@ -58,6 +59,7 @@ describe('brainChildToolAllowlist', () => {
         expect(tools).toContain('mcp__yoho_remote__session_search')
         expect(tools).toContain('mcp__yoho_remote__ask_user_question')
         expect(tools).toContain('mcp__yoho-vault__skill_search')
+        expect(tools).toContain('mcp__yoho-vault__skill_doctor')
         expect(tools).toContain('mcp__yoho-vault__get_credential')
         expect(tools).not.toContain('mcp__yoho_remote__session_send')
     })

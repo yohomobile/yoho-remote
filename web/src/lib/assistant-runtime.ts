@@ -6,6 +6,7 @@ import { deriveStableMessageId } from '@/chat/ids'
 import { activeItem, buildDisplayTurns, renderEventLabel, type DisplayItem, type DisplayTurn } from '@/chat/presentation'
 import type { ChatBlock, CliOutputBlock } from '@/chat/types'
 import type { AgentEvent, ToolCallBlock } from '@/chat/types'
+import { getMessageActorAttribution, type MessageActorAttribution } from '@/chat/identityAttribution'
 import { hashStableValueSync } from '@/lib/hash'
 import type { BrainMessageDelivery, MessageStatus as YohoRemoteMessageStatus, Session } from '@/types/api'
 import { canQueueMessagesWhenInactive } from '@/lib/sessionActivity'
@@ -29,6 +30,7 @@ export type YohoRemoteChatMessageMetadata = {
     activeItemKind?: DisplayItem['kind'] | null
     localId?: string | null
     originalText?: string
+    actorAttribution?: MessageActorAttribution
     toolCallId?: string
     event?: AgentEvent
     source?: CliOutputBlock['source']
@@ -43,6 +45,7 @@ function createUserThreadMessage(
     turn?: DisplayTurn,
 ): ThreadMessageLike {
     const active = turn ? activeItem(turn) : null
+    const actorAttribution = getMessageActorAttribution(block.meta)
     return {
         role: 'user',
         id: `user:${block.id}`,
@@ -57,7 +60,8 @@ function createUserThreadMessage(
                 activeItemId: active?.id ?? null,
                 activeItemKind: active?.kind ?? null,
                 localId: block.localId,
-                originalText: block.originalText
+                originalText: block.originalText,
+                ...(actorAttribution ? { actorAttribution } : {})
             } satisfies YohoRemoteChatMessageMetadata
         }
     }

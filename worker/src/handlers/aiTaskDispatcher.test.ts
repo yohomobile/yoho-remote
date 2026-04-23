@@ -213,7 +213,8 @@ describe('handleAiTaskDispatcher', () => {
         const updateCall = harness.getUpdateNextFireAtCalls()[0]!
         const nextFireAt = updateCall.params[0] as number
         expect(nextFireAt).toBe(MONDAY_905_MS + 60_000)
-        expect(updateCall.params[1]).toBe(scheduleId)
+        expect(updateCall.params[1]).toBe(MONDAY_905_MS)
+        expect(updateCall.params[2]).toBe(scheduleId)
     })
 
     it('calls disableSchedule (not updateNextFireAt) for recurring=false after firing', async () => {
@@ -262,5 +263,23 @@ describe('handleAiTaskDispatcher', () => {
         expect(bossPayload.machineId).toBe('machine-x')
         expect(typeof bossPayload.runId).toBe('string')
         expect(bossPayload.prompt).toBe('test prompt')
+    })
+
+    it('deduped boss.send result marks run as deduped and does not advance schedule', async () => {
+        const scheduleId = 'sched-deduped'
+        const row = makeScheduleRow({ id: scheduleId, cron: '* * * * *', recurring: true })
+        const harness = makeTestHarness([row], MONDAY_905_MS)
+        ;(harness.ctx.boss as { send: unknown }).send = async () => null
+
+        try {
+            await handleAiTaskDispatcher(null, harness.ctx)
+        } finally {
+            harness.restore()
+        }
+
+        const finishedRunCalls = harness.poolCalls.filter(c => c.sql.includes('finished_at'))
+        expect(finishedRunCalls).toHaveLength(1)
+        expect(finishedRunCalls[0]?.params[0]).toBe('deduped')
+        expect(harness.getUpdateNextFireAtCalls()).toHaveLength(0)
     })
 })

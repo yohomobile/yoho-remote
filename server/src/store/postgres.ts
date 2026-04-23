@@ -39,6 +39,15 @@ import type {
     StoredOrgLicense,
     StoredAdminOrgLicense,
     StoredDownloadFile,
+    StoredPerson,
+    StoredPersonIdentity,
+    StoredPersonIdentityLink,
+    StoredPersonIdentityCandidate,
+    StoredPersonIdentityAudit,
+    PersonIdentityAuditAction,
+    IdentityObservation,
+    ResolvedActorContext,
+    IdentityCandidateSummary,
     StoredBrainConfig,
     BrainAgent,
     LicenseStatus,
@@ -676,6 +685,122 @@ export class PostgresStore implements IStore {
                 created_at BIGINT NOT NULL,
                 updated_at BIGINT NOT NULL
             );
+
+            -- Identity Graph: Persons
+            CREATE TABLE IF NOT EXISTS persons (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                person_type TEXT NOT NULL DEFAULT 'human',
+                status TEXT NOT NULL DEFAULT 'active',
+                canonical_name TEXT,
+                primary_email TEXT,
+                employee_code TEXT,
+                avatar_url TEXT,
+                attributes JSONB NOT NULL DEFAULT '{}',
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL,
+                created_by TEXT,
+                merged_into_person_id TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_persons_namespace_org ON persons(namespace, org_id);
+            CREATE INDEX IF NOT EXISTS idx_persons_primary_email ON persons(namespace, org_id, primary_email);
+            CREATE INDEX IF NOT EXISTS idx_persons_employee_code ON persons(namespace, org_id, employee_code);
+
+            -- Identity Graph: Channel identities
+            CREATE TABLE IF NOT EXISTS person_identities (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                channel TEXT NOT NULL,
+                provider_tenant_id TEXT,
+                external_id TEXT NOT NULL,
+                secondary_id TEXT,
+                account_type TEXT NOT NULL DEFAULT 'human',
+                assurance TEXT NOT NULL DEFAULT 'medium',
+                canonical_email TEXT,
+                display_name TEXT,
+                login_name TEXT,
+                employee_code TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                attributes JSONB NOT NULL DEFAULT '{}',
+                first_seen_at BIGINT NOT NULL,
+                last_seen_at BIGINT NOT NULL,
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL,
+                UNIQUE(channel, provider_tenant_id, external_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_person_identities_namespace_org ON person_identities(namespace, org_id);
+            CREATE INDEX IF NOT EXISTS idx_person_identities_email ON person_identities(namespace, org_id, canonical_email);
+            CREATE INDEX IF NOT EXISTS idx_person_identities_employee_code ON person_identities(namespace, org_id, employee_code);
+
+            -- Identity Graph: Person <-> identity links
+            CREATE TABLE IF NOT EXISTS person_identity_links (
+                id TEXT PRIMARY KEY,
+                person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+                identity_id TEXT NOT NULL REFERENCES person_identities(id) ON DELETE CASCADE,
+                relation_type TEXT NOT NULL DEFAULT 'primary',
+                state TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 0,
+                source TEXT NOT NULL,
+                evidence JSONB NOT NULL DEFAULT '[]',
+                decision_reason TEXT,
+                valid_from BIGINT NOT NULL,
+                valid_to BIGINT,
+                decided_by TEXT,
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_person_identity_link
+                ON person_identity_links(identity_id, relation_type)
+                WHERE valid_to IS NULL AND state IN ('auto_verified', 'admin_verified');
+            CREATE INDEX IF NOT EXISTS idx_person_identity_links_person ON person_identity_links(person_id);
+
+            -- Identity Graph: Admin review candidates
+            CREATE TABLE IF NOT EXISTS person_identity_candidates (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                identity_id TEXT NOT NULL REFERENCES person_identities(id) ON DELETE CASCADE,
+                candidate_person_id TEXT REFERENCES persons(id) ON DELETE CASCADE,
+                score REAL NOT NULL,
+                auto_action TEXT NOT NULL DEFAULT 'review',
+                status TEXT NOT NULL DEFAULT 'open',
+                risk_flags JSONB NOT NULL DEFAULT '[]',
+                evidence JSONB NOT NULL DEFAULT '[]',
+                matcher_version TEXT NOT NULL,
+                suppress_until BIGINT,
+                decided_by TEXT,
+                decided_at BIGINT,
+                decision_reason TEXT,
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_person_identity_candidates_open
+                ON person_identity_candidates(namespace, org_id, status, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_person_identity_candidates_identity ON person_identity_candidates(identity_id);
+
+            -- Identity Graph: Admin audit trail
+            CREATE TABLE IF NOT EXISTS person_identity_audits (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                action TEXT NOT NULL,
+                actor_email TEXT,
+                person_id TEXT REFERENCES persons(id) ON DELETE SET NULL,
+                target_person_id TEXT REFERENCES persons(id) ON DELETE SET NULL,
+                identity_id TEXT REFERENCES person_identities(id) ON DELETE SET NULL,
+                link_id TEXT REFERENCES person_identity_links(id) ON DELETE SET NULL,
+                reason TEXT,
+                payload JSONB NOT NULL DEFAULT '{}',
+                created_at BIGINT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_person_identity_audits_scope
+                ON person_identity_audits(namespace, org_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_person_identity_audits_person
+                ON person_identity_audits(person_id, target_person_id);
+            CREATE INDEX IF NOT EXISTS idx_person_identity_audits_identity
+                ON person_identity_audits(identity_id);
 
             -- Control Plane: Approval Requests
             CREATE TABLE IF NOT EXISTS approval_requests (
@@ -1606,6 +1731,15 @@ export class PostgresStore implements IStore {
         } finally {
             client.release()
         }
+    }
+
+    async getMessageByLocalId(sessionId: string, localId: string): Promise<StoredMessage | null> {
+        const result = await this.pool.query(
+            'SELECT * FROM messages WHERE session_id = $1 AND local_id = $2 LIMIT 1',
+            [sessionId, localId]
+        )
+        const row = result.rows[0]
+        return row ? this.toStoredMessage(row) : null
     }
 
     async getMessages(sessionId: string, limit: number = 200, beforeSeq?: number): Promise<StoredMessage[]> {
@@ -4865,6 +4999,160 @@ export class PostgresStore implements IStore {
         return email.trim().toLowerCase()
     }
 
+    private normalizeOptionalEmail(email: string | null | undefined): string | null {
+        const trimmed = email?.trim()
+        return trimmed ? trimmed.toLowerCase() : null
+    }
+
+    private normalizeOptionalString(value: string | null | undefined): string | null {
+        const trimmed = value?.trim()
+        return trimmed ? trimmed : null
+    }
+
+    private toStoredPerson(row: any): StoredPerson {
+        return {
+            id: row.id,
+            namespace: row.namespace,
+            orgId: row.org_id ?? null,
+            personType: row.person_type,
+            status: row.status,
+            canonicalName: row.canonical_name ?? null,
+            primaryEmail: row.primary_email ?? null,
+            employeeCode: row.employee_code ?? null,
+            avatarUrl: row.avatar_url ?? null,
+            attributes: row.attributes ?? {},
+            createdAt: Number(row.created_at),
+            updatedAt: Number(row.updated_at),
+            createdBy: row.created_by ?? null,
+            mergedIntoPersonId: row.merged_into_person_id ?? null,
+        }
+    }
+
+    private toStoredPersonIdentity(row: any): StoredPersonIdentity {
+        return {
+            id: row.id,
+            namespace: row.namespace,
+            orgId: row.org_id ?? null,
+            channel: row.channel,
+            providerTenantId: row.provider_tenant_id ? row.provider_tenant_id : null,
+            externalId: row.external_id,
+            secondaryId: row.secondary_id ?? null,
+            accountType: row.account_type,
+            assurance: row.assurance,
+            canonicalEmail: row.canonical_email ?? null,
+            displayName: row.display_name ?? null,
+            loginName: row.login_name ?? null,
+            employeeCode: row.employee_code ?? null,
+            status: row.status,
+            attributes: row.attributes ?? {},
+            firstSeenAt: Number(row.first_seen_at),
+            lastSeenAt: Number(row.last_seen_at),
+            createdAt: Number(row.created_at),
+            updatedAt: Number(row.updated_at),
+        }
+    }
+
+    private toStoredPersonIdentityLink(row: any): StoredPersonIdentityLink {
+        return {
+            id: row.id,
+            personId: row.person_id,
+            identityId: row.identity_id,
+            relationType: row.relation_type,
+            state: row.state,
+            confidence: Number(row.confidence),
+            source: row.source,
+            evidence: Array.isArray(row.evidence) ? row.evidence : [],
+            decisionReason: row.decision_reason ?? null,
+            validFrom: Number(row.valid_from),
+            validTo: row.valid_to ? Number(row.valid_to) : null,
+            decidedBy: row.decided_by ?? null,
+            createdAt: Number(row.created_at),
+            updatedAt: Number(row.updated_at),
+        }
+    }
+
+    private toStoredPersonIdentityCandidate(row: any): StoredPersonIdentityCandidate {
+        return {
+            id: row.id,
+            namespace: row.namespace,
+            orgId: row.org_id ?? null,
+            identityId: row.identity_id,
+            candidatePersonId: row.candidate_person_id ?? null,
+            score: Number(row.score),
+            autoAction: row.auto_action,
+            status: row.status,
+            riskFlags: Array.isArray(row.risk_flags) ? row.risk_flags : [],
+            evidence: Array.isArray(row.evidence) ? row.evidence : [],
+            matcherVersion: row.matcher_version,
+            suppressUntil: row.suppress_until ? Number(row.suppress_until) : null,
+            decidedBy: row.decided_by ?? null,
+            decidedAt: row.decided_at ? Number(row.decided_at) : null,
+            decisionReason: row.decision_reason ?? null,
+            createdAt: Number(row.created_at),
+            updatedAt: Number(row.updated_at),
+        }
+    }
+
+    private toStoredPersonIdentityAudit(row: any): StoredPersonIdentityAudit {
+        return {
+            id: row.id,
+            namespace: row.namespace,
+            orgId: row.org_id ?? null,
+            action: row.action as PersonIdentityAuditAction,
+            actorEmail: row.actor_email ?? null,
+            personId: row.person_id ?? null,
+            targetPersonId: row.target_person_id ?? null,
+            identityId: row.identity_id ?? null,
+            linkId: row.link_id ?? null,
+            reason: row.reason ?? null,
+            payload: row.payload ?? {},
+            createdAt: Number(row.created_at),
+        }
+    }
+
+    private buildResolvedActor(
+        identity: StoredPersonIdentity,
+        person: StoredPerson | null,
+        resolution: ResolvedActorContext['resolution'],
+    ): ResolvedActorContext {
+        return {
+            identityId: identity.id,
+            personId: person?.id ?? null,
+            channel: identity.channel,
+            resolution,
+            displayName: identity.displayName ?? person?.canonicalName ?? null,
+            email: identity.canonicalEmail ?? person?.primaryEmail ?? null,
+            externalId: identity.externalId,
+            accountType: identity.accountType,
+        }
+    }
+
+    private async findPersonsByExactEmail(namespace: string, orgId: string | null | undefined, email: string): Promise<StoredPerson[]> {
+        const result = await this.pool.query(
+            `SELECT * FROM persons
+             WHERE namespace = $1
+               AND org_id IS NOT DISTINCT FROM $2
+               AND LOWER(primary_email) = $3
+               AND status = 'active'
+             ORDER BY created_at ASC`,
+            [namespace, orgId ?? null, this.normalizeEmail(email)]
+        )
+        return result.rows.map((row: any) => this.toStoredPerson(row))
+    }
+
+    private async findPersonsByEmployeeCode(namespace: string, orgId: string | null | undefined, employeeCode: string): Promise<StoredPerson[]> {
+        const result = await this.pool.query(
+            `SELECT * FROM persons
+             WHERE namespace = $1
+               AND org_id IS NOT DISTINCT FROM $2
+               AND employee_code = $3
+               AND status = 'active'
+             ORDER BY created_at ASC`,
+            [namespace, orgId ?? null, employeeCode]
+        )
+        return result.rows.map((row: any) => this.toStoredPerson(row))
+    }
+
     async createOrganization(data: { name: string; slug: string; createdBy: string }): Promise<StoredOrganization | null> {
         const now = Date.now()
         const id = randomUUID()
@@ -5112,6 +5400,689 @@ export class PostgresStore implements IStore {
         }
         const result = await this.pool.query('DELETE FROM org_invitations WHERE id = $1', [id])
         return (result.rowCount ?? 0) > 0
+    }
+
+    // ========== Identity Graph 操作 ==========
+
+    async createPerson(data: {
+        namespace: string
+        orgId?: string | null
+        personType?: StoredPerson['personType']
+        canonicalName?: string | null
+        primaryEmail?: string | null
+        employeeCode?: string | null
+        avatarUrl?: string | null
+        attributes?: Record<string, unknown>
+        createdBy?: string | null
+    }): Promise<StoredPerson> {
+        const now = Date.now()
+        const id = randomUUID()
+        const result = await this.pool.query(
+            `INSERT INTO persons (
+                id, namespace, org_id, person_type, status, canonical_name,
+                primary_email, employee_code, avatar_url, attributes,
+                created_at, updated_at, created_by, merged_into_person_id
+             ) VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10, $10, $11, NULL)
+             RETURNING *`,
+            [
+                id,
+                data.namespace,
+                data.orgId ?? null,
+                data.personType ?? 'human',
+                this.normalizeOptionalString(data.canonicalName),
+                this.normalizeOptionalEmail(data.primaryEmail),
+                this.normalizeOptionalString(data.employeeCode),
+                this.normalizeOptionalString(data.avatarUrl),
+                JSON.stringify(data.attributes ?? {}),
+                now,
+                data.createdBy ?? null,
+            ]
+        )
+        return this.toStoredPerson(result.rows[0])
+    }
+
+    async getPerson(id: string): Promise<StoredPerson | null> {
+        const result = await this.pool.query('SELECT * FROM persons WHERE id = $1', [id])
+        return result.rows.length > 0 ? this.toStoredPerson(result.rows[0]) : null
+    }
+
+    async searchPersons(options: {
+        namespace: string
+        orgId?: string | null
+        q?: string | null
+        limit?: number
+    }): Promise<StoredPerson[]> {
+        const q = this.normalizeOptionalString(options.q)
+        const limit = Math.min(Math.max(options.limit ?? 20, 1), 100)
+        const params: unknown[] = [options.namespace, options.orgId ?? null]
+        let sql = `
+            SELECT * FROM persons
+            WHERE namespace = $1
+              AND org_id IS NOT DISTINCT FROM $2
+              AND status <> 'merged'
+        `
+        if (q) {
+            params.push(`%${q.toLowerCase()}%`)
+            sql += ` AND (
+                LOWER(COALESCE(canonical_name, '')) LIKE $${params.length}
+                OR LOWER(COALESCE(primary_email, '')) LIKE $${params.length}
+                OR LOWER(COALESCE(employee_code, '')) LIKE $${params.length}
+            )`
+        }
+        params.push(limit)
+        sql += ` ORDER BY updated_at DESC, created_at DESC LIMIT $${params.length}`
+        const result = await this.pool.query(sql, params)
+        return result.rows.map((row: any) => this.toStoredPerson(row))
+    }
+
+    async upsertPersonIdentity(observation: IdentityObservation): Promise<StoredPersonIdentity> {
+        const now = Date.now()
+        const providerTenantId = this.normalizeOptionalString(observation.providerTenantId) ?? ''
+        const result = await this.pool.query(
+            `INSERT INTO person_identities (
+                id, namespace, org_id, channel, provider_tenant_id, external_id,
+                secondary_id, account_type, assurance, canonical_email, display_name,
+                login_name, employee_code, status, attributes, first_seen_at,
+                last_seen_at, created_at, updated_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'active', $14, $15, $15, $15, $15)
+             ON CONFLICT (channel, provider_tenant_id, external_id) DO UPDATE SET
+                namespace = EXCLUDED.namespace,
+                org_id = EXCLUDED.org_id,
+                secondary_id = COALESCE(EXCLUDED.secondary_id, person_identities.secondary_id),
+                account_type = EXCLUDED.account_type,
+                assurance = EXCLUDED.assurance,
+                canonical_email = COALESCE(EXCLUDED.canonical_email, person_identities.canonical_email),
+                display_name = COALESCE(EXCLUDED.display_name, person_identities.display_name),
+                login_name = COALESCE(EXCLUDED.login_name, person_identities.login_name),
+                employee_code = COALESCE(EXCLUDED.employee_code, person_identities.employee_code),
+                attributes = person_identities.attributes || EXCLUDED.attributes,
+                last_seen_at = EXCLUDED.last_seen_at,
+                updated_at = EXCLUDED.updated_at
+             RETURNING *`,
+            [
+                randomUUID(),
+                observation.namespace,
+                observation.orgId ?? null,
+                observation.channel,
+                providerTenantId,
+                observation.externalId.trim(),
+                this.normalizeOptionalString(observation.secondaryId),
+                observation.accountType ?? 'human',
+                observation.assurance,
+                this.normalizeOptionalEmail(observation.canonicalEmail),
+                this.normalizeOptionalString(observation.displayName),
+                this.normalizeOptionalString(observation.loginName),
+                this.normalizeOptionalString(observation.employeeCode),
+                JSON.stringify(observation.attributes ?? {}),
+                now,
+            ]
+        )
+        return this.toStoredPersonIdentity(result.rows[0])
+    }
+
+    async getPersonIdentity(id: string): Promise<StoredPersonIdentity | null> {
+        const result = await this.pool.query('SELECT * FROM person_identities WHERE id = $1', [id])
+        return result.rows.length > 0 ? this.toStoredPersonIdentity(result.rows[0]) : null
+    }
+
+    async getActiveIdentityLink(identityId: string): Promise<StoredPersonIdentityLink | null> {
+        const result = await this.pool.query(
+            `SELECT * FROM person_identity_links
+             WHERE identity_id = $1
+               AND valid_to IS NULL
+               AND state IN ('auto_verified', 'admin_verified')
+             ORDER BY confidence DESC, updated_at DESC
+             LIMIT 1`,
+            [identityId]
+        )
+        return result.rows.length > 0 ? this.toStoredPersonIdentityLink(result.rows[0]) : null
+    }
+
+    async createPersonIdentityLink(data: {
+        personId: string
+        identityId: string
+        relationType?: StoredPersonIdentityLink['relationType']
+        state: StoredPersonIdentityLink['state']
+        confidence?: number
+        source: StoredPersonIdentityLink['source']
+        evidence?: unknown[]
+        decisionReason?: string | null
+        decidedBy?: string | null
+    }): Promise<StoredPersonIdentityLink> {
+        const now = Date.now()
+        const result = await this.pool.query(
+            `INSERT INTO person_identity_links (
+                id, person_id, identity_id, relation_type, state, confidence,
+                source, evidence, decision_reason, valid_from, valid_to,
+                decided_by, created_at, updated_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, $11, $10, $10)
+             RETURNING *`,
+            [
+                randomUUID(),
+                data.personId,
+                data.identityId,
+                data.relationType ?? 'primary',
+                data.state,
+                data.confidence ?? 0,
+                data.source,
+                JSON.stringify(data.evidence ?? []),
+                data.decisionReason ?? null,
+                now,
+                data.decidedBy ?? null,
+            ]
+        )
+        return this.toStoredPersonIdentityLink(result.rows[0])
+    }
+
+    private async insertPersonIdentityAudit(
+        queryable: Queryable,
+        data: {
+            namespace: string
+            orgId?: string | null
+            action: PersonIdentityAuditAction
+            actorEmail?: string | null
+            personId?: string | null
+            targetPersonId?: string | null
+            identityId?: string | null
+            linkId?: string | null
+            reason?: string | null
+            payload?: unknown
+            createdAt?: number
+        },
+    ): Promise<StoredPersonIdentityAudit> {
+        const createdAt = data.createdAt ?? Date.now()
+        const result = await queryable.query(
+            `INSERT INTO person_identity_audits (
+                id, namespace, org_id, action, actor_email, person_id,
+                target_person_id, identity_id, link_id, reason, payload, created_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             RETURNING *`,
+            [
+                randomUUID(),
+                data.namespace,
+                data.orgId ?? null,
+                data.action,
+                data.actorEmail ?? null,
+                data.personId ?? null,
+                data.targetPersonId ?? null,
+                data.identityId ?? null,
+                data.linkId ?? null,
+                data.reason ?? null,
+                data.payload ?? {},
+                createdAt,
+            ],
+        )
+        return this.toStoredPersonIdentityAudit(result.rows[0])
+    }
+
+    async createPersonIdentityCandidate(data: {
+        namespace: string
+        orgId?: string | null
+        identityId: string
+        candidatePersonId?: string | null
+        score: number
+        autoAction?: StoredPersonIdentityCandidate['autoAction']
+        riskFlags?: unknown[]
+        evidence?: unknown[]
+        matcherVersion: string
+        suppressUntil?: number | null
+    }): Promise<StoredPersonIdentityCandidate> {
+        const now = Date.now()
+        const result = await this.pool.query(
+            `INSERT INTO person_identity_candidates (
+                id, namespace, org_id, identity_id, candidate_person_id, score,
+                auto_action, status, risk_flags, evidence, matcher_version,
+                suppress_until, decided_by, decided_at, decision_reason, created_at, updated_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8, $9, $10, $11, NULL, NULL, NULL, $12, $12)
+             RETURNING *`,
+            [
+                randomUUID(),
+                data.namespace,
+                data.orgId ?? null,
+                data.identityId,
+                data.candidatePersonId ?? null,
+                data.score,
+                data.autoAction ?? 'review',
+                JSON.stringify(data.riskFlags ?? []),
+                JSON.stringify(data.evidence ?? []),
+                data.matcherVersion,
+                data.suppressUntil ?? null,
+                now,
+            ]
+        )
+        return this.toStoredPersonIdentityCandidate(result.rows[0])
+    }
+
+    async listPersonIdentityCandidates(options: {
+        namespace: string
+        orgId?: string | null
+        status?: StoredPersonIdentityCandidate['status']
+        limit?: number
+    }): Promise<IdentityCandidateSummary[]> {
+        const limit = Math.min(Math.max(options.limit ?? 50, 1), 100)
+        const params: unknown[] = [options.namespace, options.orgId ?? null]
+        let sql = `
+            SELECT
+                c.*,
+                row_to_json(i.*) AS identity,
+                CASE WHEN p.id IS NULL THEN NULL ELSE row_to_json(p.*) END AS candidate_person
+            FROM person_identity_candidates c
+            INNER JOIN person_identities i ON i.id = c.identity_id
+            LEFT JOIN persons p ON p.id = c.candidate_person_id
+            WHERE c.namespace = $1
+              AND c.org_id IS NOT DISTINCT FROM $2
+        `
+        if (options.status) {
+            params.push(options.status)
+            sql += ` AND c.status = $${params.length}`
+        }
+        params.push(limit)
+        sql += ` ORDER BY c.created_at DESC LIMIT $${params.length}`
+        const result = await this.pool.query(sql, params)
+        return result.rows.map((row: any) => ({
+            ...this.toStoredPersonIdentityCandidate(row),
+            identity: this.toStoredPersonIdentity(row.identity),
+            candidatePerson: row.candidate_person ? this.toStoredPerson(row.candidate_person) : null,
+        }))
+    }
+
+    async decidePersonIdentityCandidate(candidateId: string, decision: {
+        action: 'confirm_existing_person' | 'create_person_and_confirm' | 'mark_shared' | 'reject'
+        personId?: string | null
+        createPerson?: {
+            canonicalName?: string | null
+            primaryEmail?: string | null
+            employeeCode?: string | null
+        }
+        reason?: string | null
+        decidedBy?: string | null
+    }): Promise<StoredPersonIdentityCandidate | null> {
+        const existingResult = await this.pool.query('SELECT * FROM person_identity_candidates WHERE id = $1', [candidateId])
+        if (existingResult.rows.length === 0) {
+            return null
+        }
+        const candidate = this.toStoredPersonIdentityCandidate(existingResult.rows[0])
+        const identity = await this.getPersonIdentity(candidate.identityId)
+        if (!identity) {
+            return null
+        }
+
+        let nextStatus: StoredPersonIdentityCandidate['status'] = 'confirmed'
+        if (decision.action === 'confirm_existing_person') {
+            if (!decision.personId) {
+                throw new Error('personId is required for confirm_existing_person')
+            }
+            await this.createPersonIdentityLink({
+                personId: decision.personId,
+                identityId: candidate.identityId,
+                state: 'admin_verified',
+                confidence: candidate.score,
+                source: 'admin',
+                evidence: candidate.evidence,
+                decisionReason: decision.reason ?? null,
+                decidedBy: decision.decidedBy ?? null,
+            })
+        } else if (decision.action === 'create_person_and_confirm') {
+            const person = await this.createPerson({
+                namespace: candidate.namespace,
+                orgId: candidate.orgId,
+                canonicalName: decision.createPerson?.canonicalName ?? identity.displayName,
+                primaryEmail: decision.createPerson?.primaryEmail ?? identity.canonicalEmail,
+                employeeCode: decision.createPerson?.employeeCode ?? identity.employeeCode,
+                createdBy: decision.decidedBy ?? null,
+            })
+            await this.createPersonIdentityLink({
+                personId: person.id,
+                identityId: candidate.identityId,
+                state: 'admin_verified',
+                confidence: candidate.score,
+                source: 'admin',
+                evidence: candidate.evidence,
+                decisionReason: decision.reason ?? null,
+                decidedBy: decision.decidedBy ?? null,
+            })
+        } else if (decision.action === 'mark_shared') {
+            await this.pool.query(
+                `UPDATE person_identities
+                 SET account_type = 'shared', updated_at = $2
+                 WHERE id = $1`,
+                [candidate.identityId, Date.now()]
+            )
+        } else if (decision.action === 'reject') {
+            nextStatus = 'rejected'
+        }
+
+        const now = Date.now()
+        const result = await this.pool.query(
+            `UPDATE person_identity_candidates
+             SET status = $2, decided_by = $3, decided_at = $4, decision_reason = $5, updated_at = $4
+             WHERE id = $1
+             RETURNING *`,
+            [candidateId, nextStatus, decision.decidedBy ?? null, now, decision.reason ?? null]
+        )
+        return result.rows.length > 0 ? this.toStoredPersonIdentityCandidate(result.rows[0]) : null
+    }
+
+    async mergePersons(data: {
+        namespace: string
+        orgId?: string | null
+        sourcePersonId: string
+        targetPersonId: string
+        reason?: string | null
+        decidedBy?: string | null
+    }): Promise<StoredPerson | null> {
+        if (data.sourcePersonId === data.targetPersonId) {
+            throw new Error('sourcePersonId and targetPersonId must be different')
+        }
+
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
+            const sourceResult = await client.query(
+                `SELECT * FROM persons
+                 WHERE id = $1
+                   AND namespace = $2
+                   AND org_id IS NOT DISTINCT FROM $3
+                 FOR UPDATE`,
+                [data.sourcePersonId, data.namespace, data.orgId ?? null],
+            )
+            const targetResult = await client.query(
+                `SELECT * FROM persons
+                 WHERE id = $1
+                   AND namespace = $2
+                   AND org_id IS NOT DISTINCT FROM $3
+                 FOR UPDATE`,
+                [data.targetPersonId, data.namespace, data.orgId ?? null],
+            )
+            if (sourceResult.rows.length === 0 || targetResult.rows.length === 0) {
+                await client.query('ROLLBACK')
+                return null
+            }
+
+            const source = this.toStoredPerson(sourceResult.rows[0])
+            const target = this.toStoredPerson(targetResult.rows[0])
+            if (source.status === 'merged') {
+                throw new Error('source person is already merged')
+            }
+            if (target.status === 'merged') {
+                throw new Error('target person is merged')
+            }
+
+            const now = Date.now()
+            const updateResult = await client.query(
+                `UPDATE persons
+                 SET status = 'merged',
+                     merged_into_person_id = $2,
+                     updated_at = $3
+                 WHERE id = $1
+                 RETURNING *`,
+                [source.id, target.id, now],
+            )
+            const merged = this.toStoredPerson(updateResult.rows[0])
+            await this.insertPersonIdentityAudit(client, {
+                namespace: data.namespace,
+                orgId: data.orgId ?? null,
+                action: 'merge_persons',
+                actorEmail: data.decidedBy ?? null,
+                personId: source.id,
+                targetPersonId: target.id,
+                reason: data.reason ?? null,
+                payload: {
+                    sourcePerson: source,
+                    targetPerson: target,
+                },
+                createdAt: now,
+            })
+            await client.query('COMMIT')
+            return merged
+        } catch (error) {
+            try { await client.query('ROLLBACK') } catch {}
+            throw error
+        } finally {
+            client.release()
+        }
+    }
+
+    async unmergePerson(data: {
+        namespace: string
+        orgId?: string | null
+        personId: string
+        reason?: string | null
+        decidedBy?: string | null
+    }): Promise<StoredPerson | null> {
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
+            const personResult = await client.query(
+                `SELECT * FROM persons
+                 WHERE id = $1
+                   AND namespace = $2
+                   AND org_id IS NOT DISTINCT FROM $3
+                 FOR UPDATE`,
+                [data.personId, data.namespace, data.orgId ?? null],
+            )
+            if (personResult.rows.length === 0) {
+                await client.query('ROLLBACK')
+                return null
+            }
+
+            const person = this.toStoredPerson(personResult.rows[0])
+            if (person.status !== 'merged') {
+                throw new Error('person is not merged')
+            }
+
+            const now = Date.now()
+            const updateResult = await client.query(
+                `UPDATE persons
+                 SET status = 'active',
+                     merged_into_person_id = NULL,
+                     updated_at = $2
+                 WHERE id = $1
+                 RETURNING *`,
+                [person.id, now],
+            )
+            const unmerged = this.toStoredPerson(updateResult.rows[0])
+            await this.insertPersonIdentityAudit(client, {
+                namespace: data.namespace,
+                orgId: data.orgId ?? null,
+                action: 'unmerge_person',
+                actorEmail: data.decidedBy ?? null,
+                personId: person.id,
+                targetPersonId: person.mergedIntoPersonId,
+                reason: data.reason ?? null,
+                payload: {
+                    personBefore: person,
+                },
+                createdAt: now,
+            })
+            await client.query('COMMIT')
+            return unmerged
+        } catch (error) {
+            try { await client.query('ROLLBACK') } catch {}
+            throw error
+        } finally {
+            client.release()
+        }
+    }
+
+    async detachPersonIdentityLink(data: {
+        namespace: string
+        orgId?: string | null
+        linkId: string
+        reason?: string | null
+        decidedBy?: string | null
+    }): Promise<StoredPersonIdentityLink | null> {
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
+            const linkResult = await client.query(
+                `SELECT l.*
+                 FROM person_identity_links l
+                 INNER JOIN persons p ON p.id = l.person_id
+                 WHERE l.id = $1
+                   AND p.namespace = $2
+                   AND p.org_id IS NOT DISTINCT FROM $3
+                   AND l.valid_to IS NULL
+                   AND l.state IN ('auto_verified', 'admin_verified')
+                 FOR UPDATE`,
+                [data.linkId, data.namespace, data.orgId ?? null],
+            )
+            if (linkResult.rows.length === 0) {
+                await client.query('ROLLBACK')
+                return null
+            }
+
+            const previousLink = this.toStoredPersonIdentityLink(linkResult.rows[0])
+            const now = Date.now()
+            const updateResult = await client.query(
+                `UPDATE person_identity_links
+                 SET state = 'detached',
+                     valid_to = $2,
+                     decision_reason = $3,
+                     decided_by = $4,
+                     updated_at = $2
+                 WHERE id = $1
+                 RETURNING *`,
+                [data.linkId, now, data.reason ?? null, data.decidedBy ?? null],
+            )
+            const detached = this.toStoredPersonIdentityLink(updateResult.rows[0])
+            await this.insertPersonIdentityAudit(client, {
+                namespace: data.namespace,
+                orgId: data.orgId ?? null,
+                action: 'detach_identity_link',
+                actorEmail: data.decidedBy ?? null,
+                personId: previousLink.personId,
+                identityId: previousLink.identityId,
+                linkId: previousLink.id,
+                reason: data.reason ?? null,
+                payload: {
+                    linkBefore: previousLink,
+                },
+                createdAt: now,
+            })
+            await client.query('COMMIT')
+            return detached
+        } catch (error) {
+            try { await client.query('ROLLBACK') } catch {}
+            throw error
+        } finally {
+            client.release()
+        }
+    }
+
+    async listPersonIdentityAudits(options: {
+        namespace: string
+        orgId?: string | null
+        personId?: string | null
+        identityId?: string | null
+        limit?: number
+    }): Promise<StoredPersonIdentityAudit[]> {
+        const params: unknown[] = [options.namespace, options.orgId ?? null]
+        let sql = `
+            SELECT * FROM person_identity_audits
+            WHERE namespace = $1
+              AND org_id IS NOT DISTINCT FROM $2
+        `
+        if (options.personId) {
+            params.push(options.personId)
+            sql += ` AND (person_id = $${params.length} OR target_person_id = $${params.length})`
+        }
+        if (options.identityId) {
+            params.push(options.identityId)
+            sql += ` AND identity_id = $${params.length}`
+        }
+        const limit = Math.min(Math.max(options.limit ?? 50, 1), 100)
+        params.push(limit)
+        sql += ` ORDER BY created_at DESC LIMIT $${params.length}`
+        const result = await this.pool.query(sql, params)
+        return result.rows.map((row) => this.toStoredPersonIdentityAudit(row))
+    }
+
+    async resolveActorByIdentityObservation(observation: IdentityObservation): Promise<ResolvedActorContext> {
+        const identity = await this.upsertPersonIdentity(observation)
+        const activeLink = await this.getActiveIdentityLink(identity.id)
+        if (activeLink) {
+            let linkedPerson = await this.getPerson(activeLink.personId)
+            if (linkedPerson?.status === 'merged' && linkedPerson.mergedIntoPersonId) {
+                linkedPerson = await this.getPerson(linkedPerson.mergedIntoPersonId) ?? linkedPerson
+            }
+            return this.buildResolvedActor(identity, linkedPerson, activeLink.state)
+        }
+
+        if (identity.accountType === 'shared' || identity.accountType === 'service' || identity.accountType === 'bot') {
+            return this.buildResolvedActor(identity, null, identity.accountType === 'shared' ? 'shared' : 'unresolved')
+        }
+        if (identity.assurance === 'low') {
+            return this.buildResolvedActor(identity, null, 'unresolved')
+        }
+
+        const employeeMatches = identity.employeeCode
+            ? await this.findPersonsByEmployeeCode(identity.namespace, identity.orgId, identity.employeeCode)
+            : []
+        const emailMatches = employeeMatches.length === 0 && identity.canonicalEmail
+            ? await this.findPersonsByExactEmail(identity.namespace, identity.orgId, identity.canonicalEmail)
+            : []
+        const matches = employeeMatches.length > 0 ? employeeMatches : emailMatches
+
+        if (matches.length === 1) {
+            await this.createPersonIdentityLink({
+                personId: matches[0].id,
+                identityId: identity.id,
+                state: 'auto_verified',
+                confidence: employeeMatches.length > 0 ? 0.98 : 0.95,
+                source: 'auto',
+                evidence: employeeMatches.length > 0 ? ['employee_code_exact'] : ['email_exact_unique'],
+                decisionReason: 'identity resolver auto match',
+            })
+            return this.buildResolvedActor(identity, matches[0], 'auto_verified')
+        }
+
+        if (matches.length > 1) {
+            await this.createPersonIdentityCandidate({
+                namespace: identity.namespace,
+                orgId: identity.orgId,
+                identityId: identity.id,
+                score: 0.75,
+                riskFlags: ['ambiguous_person_match'],
+                evidence: identity.employeeCode ? ['employee_code_multiple'] : ['email_multiple'],
+                matcherVersion: 'identity-graph-v1',
+            })
+            return this.buildResolvedActor(identity, null, 'unresolved')
+        }
+
+        if (identity.channel === 'keycloak' && identity.canonicalEmail) {
+            const person = await this.createPerson({
+                namespace: identity.namespace,
+                orgId: identity.orgId,
+                canonicalName: identity.displayName,
+                primaryEmail: identity.canonicalEmail,
+                employeeCode: identity.employeeCode,
+                createdBy: identity.canonicalEmail,
+            })
+            await this.createPersonIdentityLink({
+                personId: person.id,
+                identityId: identity.id,
+                state: 'auto_verified',
+                confidence: 0.99,
+                source: 'auto',
+                evidence: ['keycloak_authenticated', 'new_person_from_verified_login'],
+                decisionReason: 'first keycloak login for verified email',
+            })
+            return this.buildResolvedActor(identity, person, 'auto_verified')
+        }
+
+        if (identity.canonicalEmail || identity.displayName) {
+            await this.createPersonIdentityCandidate({
+                namespace: identity.namespace,
+                orgId: identity.orgId,
+                identityId: identity.id,
+                score: 0.7,
+                evidence: ['new_identity_review'],
+                matcherVersion: 'identity-graph-v1',
+            })
+        }
+
+        return this.buildResolvedActor(identity, null, 'unresolved')
     }
 
     // ========== Org License 操作 ==========

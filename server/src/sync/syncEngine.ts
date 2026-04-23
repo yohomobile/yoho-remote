@@ -277,6 +277,7 @@ export type SyncEventType =
     | 'typing-changed'
     | 'group-message'
     | 'file-ready'
+    | 'identity-candidate-updated'
 
 export type OnlineUser = {
     email: string

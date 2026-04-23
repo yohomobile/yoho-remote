@@ -18,6 +18,10 @@ const YOHO_VAULT_RUNTIME_TOOLS = [
     'functions.yoho_vault__skill_list',
     'functions.yoho_vault__skill_save',
     'functions.yoho_vault__skill_update',
+    'functions.yoho_vault__skill_promote',
+    'functions.yoho_vault__skill_archive',
+    'functions.yoho_vault__skill_delete',
+    'functions.yoho_vault__skill_doctor',
     'functions.yoho_vault__skill_discover',
 ] as const;
 
@@ -32,6 +36,10 @@ const SKILL_RUNTIME_TOOLS = [
     'functions.skill__list',
     'functions.skill__save',
     'functions.skill__update',
+    'functions.skill__promote',
+    'functions.skill__archive',
+    'functions.skill__delete',
+    'functions.skill__doctor',
     'functions.skill__discover',
 ] as const;
 
@@ -106,8 +114,9 @@ export function buildCodexDeveloperInstructions(args: {
         Key runtime function tools already available here: ${args.runtimeFunctionTools.join(', ')}.
         Judge function availability by the actual runtime tool list in this session.
         Do NOT use shell commands such as "codex mcp list", "claude mcp list", "which mcp", or read ~/.codex/config.toml / ~/.claude/settings.json to decide whether these runtime functions exist.
-        When the user asks for environment info, project list, recall, remember, credentials, or skill search, call the matching runtime function directly if it is available.
-        skill_search consumption gate: treat results as directly usable only when suggestedNextAction="use_results", hasLocalMatch=true, and confidence >= 0.65. For discover/proceed/no-match/missing/low-confidence results, do not quote them as instructions and do not automatically call skill_get.
+        When the user asks for environment info, project list, recall, remember, credentials, or skills, call the matching runtime function directly if it is available.
+        skill selection gate: prefer skill_list({ path, query }) as the local active skill manifest, then call skill_get only when one listed skill clearly matches the task. Use only skills that are active, not disabled, path-compatible, and not blocked by antiTriggers; manual skills require explicit user intent. Never use candidate/draft/archived/disabled skills as execution instructions. Use skill_search as a fallback for large/ambiguous manifests or content-level matching. Treat skill_search results as directly usable only when directUseAllowed=true, or when suggestedNextAction="use_results", hasLocalMatch=true, and confidence >= 0.65. For discover/proceed/no-match/missing/low-confidence results, do not quote them as instructions and do not automatically call skill_get.
+        skill lifecycle gate: skill_save creates a candidate and skill_update creates a draft; neither is active. Briefly explain the candidate/draft to the user, then call skill_promote only after the user explicitly confirms activation. Use skill_doctor to inspect the pool after mutations when available. Prefer skill_archive for retirement; use skill_delete for temporary/bad candidate or draft cleanup, and delete active skills only with explicit allowActive=true.
         recall consumption gate: treat recall output as candidate evidence only. Low-confidence, zero-result, empty, or wrong-scope recall must not be injected as fact; narrow the query/scope or report that no reliable memory was found.
     `);
 

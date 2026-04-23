@@ -268,7 +268,13 @@ async function main() {
         await bot?.stop()
         syncEngine?.stop()
         sseManager?.stop()
-        socketServer?.io?.close()
+        if (socketServer?.io) {
+            await new Promise<void>((resolve) => {
+                socketServer.io.close(() => {
+                    resolve()
+                })
+            })
+        }
         webServer?.stop()
         await summarizeTurnQueue?.stop()
         await store.close()

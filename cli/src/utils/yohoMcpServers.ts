@@ -17,6 +17,7 @@ export interface YohoAuxMcpServerOptions {
 }
 
 export const YOHO_MEMORY_REPO_ROOT = '/home/workspaces/tools/yoho-memory';
+export const YOHO_MEMORY_MCP_DB_MAX_CONNECTIONS = '2';
 
 function resolveHomeDir(): string {
     const homeDir = process.env.HOME?.trim();
@@ -38,7 +39,12 @@ export async function getYohoAuxMcpServers(flavor: 'codex', options?: YohoAuxMcp
 export async function getYohoAuxMcpServers(flavor: 'claude', options?: YohoAuxMcpServerOptions): Promise<Record<string, YohoMcpServerConfig>>;
 export async function getYohoAuxMcpServers(flavor: 'claude' | 'codex', options?: YohoAuxMcpServerOptions): Promise<Record<string, YohoMcpServerConfig>> {
     const homeDir = resolveHomeDir();
-    const env: Record<string, string> = { PATH: buildPathEnv(homeDir) };
+    const env: Record<string, string> = {
+        PATH: buildPathEnv(homeDir),
+        // These stdio MCP servers are spawned per agent session, so a large default
+        // DB pool is multiplied by the number of active remote sessions.
+        DB_MAX_CONNECTIONS: YOHO_MEMORY_MCP_DB_MAX_CONNECTIONS,
+    };
     if (options?.orgId) env.YOHO_ORG_ID = options.orgId;
 
     const serverName = flavor === 'codex' ? 'yoho_vault' : 'yoho-vault';

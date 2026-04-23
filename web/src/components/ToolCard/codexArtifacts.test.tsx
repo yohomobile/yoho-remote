@@ -94,9 +94,9 @@ describe('Codex tool presentation', () => {
             metadata: null
         })
 
-        expect(presentation.minimal).toBe(true)
+        expect(presentation.minimal).toBe(false)
         expect(presentation.title).toBe('Read 3 files')
-        expect(presentation.subtitle).toBe('README.md, web/src/app.ts, web/src/chat/reducer.ts')
+        expect(presentation.subtitle).toBe('README.md, app.ts, reducer.ts')
     })
 
     test('keeps CodexPatch inline when a diff is available', () => {

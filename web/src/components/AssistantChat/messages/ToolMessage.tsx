@@ -1,6 +1,5 @@
 import type { ToolCallMessagePartProps } from '@assistant-ui/react'
 import type { AgentEvent, ChatBlock, ToolCallBlock } from '@/chat/types'
-import type { SessionMetadataSummary } from '@/types/api'
 import { getEventPresentation } from '@/chat/presentation'
 import { CodeBlock } from '@/components/CodeBlock'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
@@ -9,7 +8,6 @@ import { MessageStatusIndicator } from '@/components/AssistantChat/messages/Mess
 import { ToolCard } from '@/components/ToolCard/ToolCard'
 import { useYohoRemoteChatContext } from '@/components/AssistantChat/context'
 import { CliOutputBlock } from '@/components/CliOutputBlock'
-import { ReadBatchView } from '@/components/ToolCard/views/ReadBatchView'
 import type { BrainChildCallbackEvent } from '@/chat/brainChildCallback'
 import { renderStructuredAgentEvent } from '@/components/AssistantChat/messages/StructuredAgentEvent'
 import { BrainChildCallbackCard } from '@/components/AssistantChat/messages/BrainChildCallbackCard'
@@ -74,35 +72,8 @@ function getTaskDetailsLabel(toolName: string): string {
     return toolName === 'Agent' ? 'Agent details' : 'Task details'
 }
 
-function getReadBatchDetailsLabel(count: number): string {
-    return count === 1 ? 'File read (1)' : `Files read (${count})`
-}
-
-function getReadBatchCount(block: ToolCallBlock): number {
-    if (isObject(block.tool.input) && typeof block.tool.input.count === 'number' && Number.isFinite(block.tool.input.count)) {
-        return block.tool.input.count
-    }
-    return block.children.length
-}
-
 function isBrainChildCallbackEvent(event: AgentEvent): event is BrainChildCallbackEvent {
     return event.type === 'brain-child-callback'
-}
-
-export function ReadBatchDisclosure(props: {
-    block: ToolCallBlock
-    metadata: SessionMetadataSummary | null
-}) {
-    return (
-        <details className="mt-1">
-            <summary className="cursor-pointer text-xs text-[var(--app-hint)]">
-                {getReadBatchDetailsLabel(getReadBatchCount(props.block))}
-            </summary>
-            <div className="mt-2 pl-3">
-                <ReadBatchView block={props.block} metadata={props.metadata} />
-            </div>
-        </details>
-    )
 }
 
 function YohoRemoteNestedBlockList(props: {
@@ -194,18 +165,14 @@ function YohoRemoteNestedBlockList(props: {
 
                     return (
                         <div key={`tool:${block.id}`} className="py-1">
-                            {isReadBatch ? (
-                                <ReadBatchDisclosure block={block} metadata={ctx.metadata} />
-                            ) : (
-                                <ToolCard
-                                    api={ctx.api}
-                                    sessionId={ctx.sessionId}
-                                    metadata={ctx.metadata}
-                                    disabled={ctx.disabled}
-                                    onDone={ctx.onRefresh}
-                                    block={block}
-                                />
-                            )}
+                            <ToolCard
+                                api={ctx.api}
+                                sessionId={ctx.sessionId}
+                                metadata={ctx.metadata}
+                                disabled={ctx.disabled}
+                                onDone={ctx.onRefresh}
+                                block={block}
+                            />
                             {block.children.length > 0 ? (
                                 isTask ? (
                                     <>
@@ -289,18 +256,14 @@ export function YohoRemoteToolMessage(props: ToolCallMessagePartProps) {
 
     return (
         <div className="py-1 min-w-0 max-w-full overflow-x-hidden">
-            {isReadBatch ? (
-                <ReadBatchDisclosure block={block} metadata={ctx.metadata} />
-            ) : (
-                <ToolCard
-                    api={ctx.api}
-                    sessionId={ctx.sessionId}
-                    metadata={ctx.metadata}
-                    disabled={ctx.disabled}
-                    onDone={ctx.onRefresh}
-                    block={block}
-                />
-            )}
+            <ToolCard
+                api={ctx.api}
+                sessionId={ctx.sessionId}
+                metadata={ctx.metadata}
+                disabled={ctx.disabled}
+                onDone={ctx.onRefresh}
+                block={block}
+            />
             {block.children.length > 0 ? (
                 isTask ? (
                     <>

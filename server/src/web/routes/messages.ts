@@ -4,6 +4,7 @@ import type { SyncEngine } from '../../sync/syncEngine'
 import type { IStore } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
 import { requireSessionFromParamWithShareCheck, requireSyncEngine } from './guards'
+import { mergeMessageMeta } from '../identityContext'
 
 const querySchema = z.object({
     limit: z.coerce.number().int().min(1).max(200).optional(),
@@ -84,12 +85,13 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null, sto
                 acceptedAt,
             }
             : undefined
+        const baseMeta = brainDelivery ? { brainDelivery } : undefined
 
         const outcome = await engine.sendMessage(sessionId, {
             text: parsed.data.text,
             localId: parsed.data.localId,
             sentFrom: sentFrom as 'webapp' | 'telegram-bot',
-            meta: brainDelivery ? { brainDelivery } : undefined,
+            meta: mergeMessageMeta(c.get('identityActor'), baseMeta),
         })
 
         return c.json({

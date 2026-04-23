@@ -11,6 +11,7 @@ vi.mock('node:fs', () => ({
 
 import {
     getYohoAuxMcpServers,
+    YOHO_MEMORY_MCP_DB_MAX_CONNECTIONS,
     YOHO_MEMORY_REPO_ROOT,
     type YohoStdioMcpServerConfig,
 } from './yohoMcpServers';
@@ -66,6 +67,13 @@ describe('getYohoAuxMcpServers', () => {
 
         const cfg = servers.yoho_vault as YohoStdioMcpServerConfig;
         expect(cfg.env?.YOHO_ORG_ID).toBe('test-org-id');
+    });
+
+    it('caps yoho-memory MCP DB pools for every spawned session', async () => {
+        const servers = await getYohoAuxMcpServers('codex');
+
+        expect(servers.yoho_vault?.env?.DB_MAX_CONNECTIONS).toBe(YOHO_MEMORY_MCP_DB_MAX_CONNECTIONS);
+        expect(servers.skill?.env?.DB_MAX_CONNECTIONS).toBe(YOHO_MEMORY_MCP_DB_MAX_CONNECTIONS);
     });
 
     it('does not use YOHO_MEMORY_PATH, Project list, or working-directory fallbacks', async () => {

@@ -11,8 +11,13 @@ describe('buildRuntimeMcpSystemPrompt', () => {
             'mcp__yoho_remote__environment_info',
             'mcp__yoho_remote__ask_user_question',
             'mcp__yoho-vault__recall',
+            'mcp__yoho-vault__skill_list',
+            'mcp__yoho-vault__skill_doctor',
             'mcp__yoho-memory__remember',
             'mcp__skill__search',
+            'mcp__skill__list',
+            'mcp__skill__promote',
+            'mcp__skill__doctor',
         ])
 
         expect(prompt).toContain('Detected ordinary Claude tools in this session: Task, WebFetch, WebSearch.')
@@ -25,6 +30,12 @@ describe('buildRuntimeMcpSystemPrompt', () => {
         expect(prompt).toContain('mcp__yoho_remote__environment_info')
         expect(prompt).toContain('mcp__yoho_remote__ask_user_question')
         expect(prompt).toContain('mcp__skill__search')
+        expect(prompt).toContain('mcp__skill__promote')
+        expect(prompt).toContain('mcp__skill__doctor')
+        expect(prompt).toContain('skill_list({ path, query })')
+        expect(prompt).toContain('candidate/draft/archived/disabled')
+        expect(prompt).toContain('skill lifecycle gate')
+        expect(prompt).toContain('allowActive=true')
         expect(prompt).toContain('Do not assume a generic "request_user_input" alias exists')
         expect(prompt).toContain('do not assume Bash, Read, Edit, Write, Grep, Glob, Task, Agent, or AskUserQuestion exist')
     })

@@ -80,4 +80,73 @@ describe('DeepSeekClient.summarizeTurn', () => {
             },
         })
     })
+
+    it('sends prompts that preserve failures, fixes, evidence, and operational detail across levels', async () => {
+        const requestBodies: Array<Record<string, unknown>> = []
+
+        globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+            requestBodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>)
+
+            return new Response(JSON.stringify({
+                choices: [{
+                    finish_reason: 'stop',
+                    message: {
+                        content: JSON.stringify({
+                            summary: '摘要保留了失败、修正路径、验证依据和最终状态。',
+                            topic: '部署验证',
+                            tools: ['systemd'],
+                            entities: ['DeepSeek', 'pg-boss'],
+                        }),
+                    },
+                }],
+                usage: {
+                    prompt_tokens: 100,
+                    completion_tokens: 20,
+                },
+            }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        }) as typeof fetch
+
+        const client = new DeepSeekClient({
+            apiKey: 'test-key',
+            baseUrl: 'https://api.deepseek.com',
+            model: 'deepseek-chat',
+            timeoutMs: 5_000,
+        })
+
+        await client.summarizeTurn({
+            userText: '部署 worker',
+            assistantText: '第一次配置失败，修正后 healthz ready。',
+            toolUses: ['systemctl restart yoho-remote-worker'],
+            files: [],
+        })
+        await client.summarizeSegment([
+            { topic: '部署验证', summary: 'worker 启动失败，补 token 后 health ready。' },
+        ])
+        await client.summarizeSession([
+            { topic: '部署验证', summary: 'L2 记录了配置失败、修正路径和最终 ready。' },
+            { topic: '最后验证', summary: 'orphan L1 记录了 session summary smoke 结果。' },
+        ], 2)
+
+        const systemPrompts = requestBodies.map((body) => {
+            const messages = body.messages as Array<{ role: string; content: string }>
+            return messages.find((message) => message.role === 'system')?.content ?? ''
+        })
+
+        expect(systemPrompts[0]).toContain('失败/修正路径')
+        expect(systemPrompts[0]).toContain('不要把失败过程抹平成')
+        expect(systemPrompts[0]).toContain('成功依据')
+        expect(systemPrompts[0]).toContain('不要复述 secret 值')
+
+        expect(systemPrompts[1]).toContain('operational segment')
+        expect(systemPrompts[1]).toContain('被废弃方案')
+        expect(systemPrompts[1]).toContain('成功结论必须带依据')
+
+        expect(systemPrompts[2]).toContain('长期 operational memory')
+        expect(systemPrompts[2]).toContain('不要把过程抹平成')
+        expect(systemPrompts[2]).toContain('orphan L1')
+        expect(systemPrompts[2]).toContain('未验证项')
+    })
 })

@@ -542,8 +542,117 @@ export type SyncEvent =
     | { type: 'online-users-changed'; users: OnlineUser[]; namespace?: string }
     | { type: 'typing-changed'; sessionId: string; typing: TypingUser; namespace?: string }
     | { type: 'file-ready'; sessionId: string; fileInfo: DownloadFileInfo; namespace?: string }
+    | {
+        type: 'identity-candidate-updated'
+        namespace?: string
+        data: {
+            orgId: string | null
+            candidateId: string
+            identityId: string
+            status: IdentityCandidateStatus
+            score: number
+        }
+    }
 
 export type OnlineUsersResponse = { users: OnlineUser[] }
+
+export type IdentityChannel = 'keycloak' | 'feishu' | 'wecom' | 'custom-im' | 'telegram' | 'cli'
+export type IdentityAccountType = 'human' | 'shared' | 'service' | 'bot' | 'unknown'
+export type IdentityAssurance = 'high' | 'medium' | 'low'
+export type IdentityStatus = 'active' | 'disabled' | 'departed' | 'conflict'
+export type IdentityActorResolution = 'auto_verified' | 'admin_verified' | 'pending' | 'rejected' | 'detached' | 'unresolved' | 'shared'
+export type PersonType = 'human' | 'shared' | 'service' | 'bot'
+export type PersonStatus = 'active' | 'suspended' | 'departed' | 'merged'
+export type IdentityCandidateStatus = 'open' | 'confirmed' | 'rejected' | 'superseded' | 'expired'
+
+export type StoredPerson = {
+    id: string
+    namespace: string
+    orgId: string | null
+    personType: PersonType
+    status: PersonStatus
+    canonicalName: string | null
+    primaryEmail: string | null
+    employeeCode: string | null
+    avatarUrl: string | null
+    attributes: Record<string, unknown>
+    createdAt: number
+    updatedAt: number
+    createdBy: string | null
+    mergedIntoPersonId: string | null
+}
+
+export type StoredPersonIdentity = {
+    id: string
+    namespace: string
+    orgId: string | null
+    channel: IdentityChannel
+    providerTenantId: string | null
+    externalId: string
+    secondaryId: string | null
+    accountType: IdentityAccountType
+    assurance: IdentityAssurance
+    canonicalEmail: string | null
+    displayName: string | null
+    loginName: string | null
+    employeeCode: string | null
+    status: IdentityStatus
+    attributes: Record<string, unknown>
+    firstSeenAt: number
+    lastSeenAt: number
+    createdAt: number
+    updatedAt: number
+}
+
+export type IdentityActorMeta = {
+    identityId: string
+    personId: string | null
+    channel: IdentityChannel
+    resolution: IdentityActorResolution
+    displayName: string | null
+    email: string | null
+    externalId: string
+    accountType: IdentityAccountType
+}
+
+export type IdentityCandidate = {
+    id: string
+    namespace: string
+    orgId: string | null
+    identityId: string
+    candidatePersonId: string | null
+    score: number
+    autoAction: 'auto_bind' | 'review' | 'ignore'
+    status: IdentityCandidateStatus
+    riskFlags: unknown[]
+    evidence: unknown[]
+    matcherVersion: string
+    suppressUntil: number | null
+    decidedBy: string | null
+    decidedAt: number | null
+    decisionReason: string | null
+    createdAt: number
+    updatedAt: number
+    identity: StoredPersonIdentity
+    candidatePerson: StoredPerson | null
+}
+
+export type IdentityCandidatesResponse = { candidates: IdentityCandidate[] }
+export type IdentityPersonsResponse = { persons: StoredPerson[] }
+export type IdentityCandidateDecision =
+    | { action: 'confirm_existing_person'; personId: string; reason?: string }
+    | {
+        action: 'create_person_and_confirm'
+        createPerson?: {
+            canonicalName?: string | null
+            primaryEmail?: string | null
+            employeeCode?: string | null
+        }
+        reason?: string
+    }
+    | { action: 'mark_shared'; reason?: string }
+    | { action: 'reject'; reason?: string }
+export type IdentityCandidateDecisionResponse = { ok: true; candidate: IdentityCandidate }
 
 // Organization 类型
 export type OrgRole = 'owner' | 'admin' | 'member'

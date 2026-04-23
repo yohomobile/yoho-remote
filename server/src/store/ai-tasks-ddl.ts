@@ -43,5 +43,5 @@ export const AI_TASK_INDEXES_DDL = `
     CREATE INDEX IF NOT EXISTS idx_atr_schedule ON ai_task_runs(schedule_id, started_at DESC);
     CREATE INDEX IF NOT EXISTS idx_atr_namespace ON ai_task_runs(namespace, started_at DESC);
     CREATE INDEX IF NOT EXISTS idx_atr_status ON ai_task_runs(status)
-        WHERE status NOT IN ('succeeded', 'failed', 'timeout');
+        WHERE status NOT IN ('succeeded', 'failed', 'timeout', 'deduped');
 `

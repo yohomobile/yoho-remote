@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
 
-export type AiTaskRunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'timeout'
+export type AiTaskRunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'timeout' | 'deduped'
 
 export type AiTaskSchedule = {
     id: string
@@ -69,6 +69,8 @@ export type UpdateRunResultInput = {
     subsessionId?: string | null
     error?: string | null
 }
+
+export type AiTaskRunMetadataPatch = Record<string, unknown>
 
 function rowToSchedule(row: Record<string, unknown>): AiTaskSchedule {
     return {
@@ -197,7 +199,14 @@ export class AiTaskStore {
         )
     }
 
-    async disableSchedule(id: string): Promise<void> {
+    async disableSchedule(id: string, lastFireAt?: number): Promise<void> {
+        if (lastFireAt != null) {
+            await this.pool.query(
+                `UPDATE ai_task_schedules SET enabled = FALSE, last_fire_at = $1 WHERE id = $2`,
+                [lastFireAt, id]
+            )
+            return
+        }
         await this.pool.query(
             `UPDATE ai_task_schedules SET enabled = FALSE WHERE id = $1`,
             [id]
@@ -224,6 +233,41 @@ export class AiTaskStore {
             ]
         )
         return rowToRun(result.rows[0] as Record<string, unknown>)
+    }
+
+    async getRun(id: string): Promise<AiTaskRun | null> {
+        const result = await this.pool.query(
+            `SELECT * FROM ai_task_runs WHERE id = $1 LIMIT 1`,
+            [id]
+        )
+        const row = result.rows[0] as Record<string, unknown> | undefined
+        return row ? rowToRun(row) : null
+    }
+
+    async updateRunSession(
+        id: string,
+        sessionId: string,
+        metadataPatch: AiTaskRunMetadataPatch = {}
+    ): Promise<void> {
+        await this.pool.query(
+            `UPDATE ai_task_runs
+             SET subsession_id = $1,
+                 metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
+             WHERE id = $3`,
+            [sessionId, JSON.stringify(metadataPatch), id]
+        )
+    }
+
+    async mergeRunMetadata(
+        id: string,
+        metadataPatch: AiTaskRunMetadataPatch
+    ): Promise<void> {
+        await this.pool.query(
+            `UPDATE ai_task_runs
+             SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+             WHERE id = $2`,
+            [JSON.stringify(metadataPatch), id]
+        )
     }
 
     async updateRunStatus(

@@ -9,6 +9,10 @@ import type { DbMessage, L1SummaryRecord, ProviderTelemetry, WorkerContext } fro
 const TRIVIAL_ASSISTANT_CHAR_THRESHOLD = 200
 const MAX_USER_TEXT_CHARS = 4_000
 const MAX_ASSISTANT_TEXT_CHARS = 8_000
+const OPERATIONAL_IMPORTANCE_PATTERNS: RegExp[] = [
+    /\b(error|failed|failure|exception|timeout|blocked|blocker|fix|fixed|rollback|deploy|deployment|config|configuration|token|secret|key|env|systemd|healthz|readyz|stats|smoke|test|typecheck|queue|schema|worker|server|postgres|pg-boss|deepseek|max_connections|http\s*[45]\d\d)\b/i,
+    /(失败|错误|异常|超时|阻塞|修正|修复|回滚|部署|配置|凭据|密钥|脱敏|队列|摘要|验证|测试|通过|健康检查|连接|权限|残留|风险|不兼容|误判)/,
+]
 
 function truncate(value: string, maxLength: number): string {
     if (value.length <= maxLength) {
@@ -22,6 +26,15 @@ function asEpochMs(value: Date | null | undefined): number | null {
         return null
     }
     return value.getTime()
+}
+
+function hasOperationalImportance(input: { userText: string; assistantText: string; files: string[] }): boolean {
+    if (input.files.length > 0) {
+        return true
+    }
+
+    const text = `${input.userText}\n${input.assistantText}`
+    return OPERATIONAL_IMPORTANCE_PATTERNS.some((pattern) => pattern.test(text))
 }
 
 function extractProviderTelemetry(error: unknown): ProviderTelemetry | null {
@@ -356,7 +369,12 @@ export async function handleSummarizeTurn(
             return
         }
 
-        if (extracted.assistantText.length < TRIVIAL_ASSISTANT_CHAR_THRESHOLD && extracted.toolUses.length === 0) {
+        const isShortNoToolTurn = extracted.assistantText.length < TRIVIAL_ASSISTANT_CHAR_THRESHOLD && extracted.toolUses.length === 0
+        if (isShortNoToolTurn && !hasOperationalImportance({
+            userText: extracted.userText,
+            assistantText: extracted.assistantText,
+            files: extracted.files,
+        })) {
             providerSkippedReason = 'trivial_turn'
             await recordRun(buildRunInput({
                 status: 'skipped',

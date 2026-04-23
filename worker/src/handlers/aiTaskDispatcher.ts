@@ -18,6 +18,13 @@ function minuteSingletonKey(scheduleId: string, minuteDate: Date): string {
     return `aitask:${scheduleId}:${iso}`
 }
 
+function singletonKeyForSchedule(scheduleId: string, recurring: boolean, dueAt: number): string {
+    if (!recurring) {
+        return `aitask:${scheduleId}:oneshot`
+    }
+    return minuteSingletonKey(scheduleId, floorToMinute(dueAt))
+}
+
 function cronFiresAtMinute(expr: string, minuteStart: Date): boolean {
     try {
         const interval = cronParser.parseExpression(expr, {
@@ -65,8 +72,13 @@ export async function handleAiTaskDispatcher(
 
     for (const schedule of schedules) {
         try {
+            const dueAt = schedule.nextFireAt != null && schedule.nextFireAt <= now
+                ? schedule.nextFireAt
+                : minuteStart.getTime()
             const shouldFire = isOneShotDelay(schedule.cron)
                 ? schedule.nextFireAt != null && schedule.nextFireAt <= now
+                : schedule.nextFireAt != null
+                ? schedule.nextFireAt <= now
                 : cronFiresAtMinute(schedule.cron, minuteStart)
 
             if (!shouldFire) continue
@@ -92,20 +104,29 @@ export async function handleAiTaskDispatcher(
                 machineId: schedule.machineId,
             }
 
-            await sendAiTaskRun(
+            const sentJobId = await sendAiTaskRun(
                 ctx.boss,
                 payload,
                 config,
-                minuteSingletonKey(schedule.id, minuteStart),
+                singletonKeyForSchedule(schedule.id, schedule.recurring, dueAt),
             )
 
+            if (sentJobId == null) {
+                await store.updateRunResult(runId, {
+                    status: 'deduped',
+                    finishedAt: Date.now(),
+                    error: 'pg-boss returned null; job was deduped by singletonKey',
+                })
+                continue
+            }
+
             if (schedule.recurring) {
-                const next = computeNextFireAt(schedule.cron, minuteStart)
+                const next = computeNextFireAt(schedule.cron, new Date(now))
                 if (next != null) {
-                    await store.updateScheduleNextFireAt(schedule.id, next)
+                    await store.updateScheduleNextFireAt(schedule.id, next, now)
                 }
             } else {
-                await store.disableSchedule(schedule.id)
+                await store.disableSchedule(schedule.id, now)
             }
         } catch (err) {
             console.error(

@@ -17,6 +17,7 @@ import { useMyOrgs, useOrg, usePendingInvitations, useOrgInvitations } from '@/h
 import { useCreateOrg, useInviteMember, useUpdateMemberRole, useRemoveMember, useAcceptInvitation, useRevokeOrgInvitation } from '@/hooks/mutations/useOrgMutations'
 import { formatMachineTimestamp, getMachineIp, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
 import { LicenseAdminPanel } from '@/components/LicenseAdminPanel'
+import { IdentityReviewPanel } from '@/components/IdentityReviewPanel'
 import { isFlutterApp } from '@/hooks/useFlutterApp'
 import { safeCopyToClipboard } from '@/lib/clipboard'
 import toast from 'react-hot-toast'
@@ -1847,6 +1848,8 @@ export default function SettingsPage() {
                             {licenseExempt && canManageMembers && (
                                 <LicenseAdminPanel api={api} currentOrgId={currentOrgId ?? null} />
                             )}
+
+                            <IdentityReviewPanel orgId={currentOrgId} canManage={canManageMembers} />
 
                             {/* Members Section */}
                             <div id="section-members" className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">

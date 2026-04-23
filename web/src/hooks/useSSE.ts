@@ -277,6 +277,12 @@ export function useSSE(options: {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.machines })
             }
 
+            if (event.type === 'identity-candidate-updated') {
+                void queryClient.invalidateQueries({
+                    queryKey: queryKeys.identityCandidates(event.data.orgId, 'open')
+                })
+            }
+
             if (event.type === 'file-ready' && 'sessionId' in event) {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.sessionDownloads(event.sessionId) })
             }
