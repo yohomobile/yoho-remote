@@ -43,6 +43,12 @@ export function parseArgs(argv: string[]): { url: string | null } {
     return { url };
 }
 
+function resolveHttpMcpAuthToken(): string | null {
+    return process.env.YR_HTTP_MCP_AUTH_TOKEN?.trim()
+        || process.env.YOHO_MEMORY_HTTP_AUTH_TOKEN?.trim()
+        || null;
+}
+
 export function createYohoRemoteMcpBridgeHandlers(
     ensureHttpClient: () => Promise<YohoRemoteBridgeClient>
 ): {
@@ -268,7 +274,11 @@ export async function runYohoRemoteMcpStdioBridge(argv: string[]): Promise<void>
                 { capabilities: {} }
             );
             const orgId = process.env.YOHO_ORG_ID?.trim() || null;
+            const authToken = resolveHttpMcpAuthToken();
             const headers: Record<string, string> = orgId ? { 'x-org-id': orgId } : {};
+            if (authToken) {
+                headers.authorization = `Bearer ${authToken}`;
+            }
             const transport = new StreamableHTTPClientTransport(new URL(baseUrl), { requestInit: { headers } });
             await client.connect(transport);
             httpClient = client;

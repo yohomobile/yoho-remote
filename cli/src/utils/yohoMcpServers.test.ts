@@ -31,21 +31,62 @@ describe('getYohoAuxMcpServers', () => {
         }
     });
 
-    it('falls back to HTTP for Claude when local path is missing and YOHO_REMOTE_URL is set', async () => {
-        if (vaultExists) return; // skip on machines with local path
-
-        const original = process.env.YOHO_REMOTE_URL;
+    it('falls back to authenticated HTTP for Claude when local path is missing', async () => {
+        const tempHome = mkdtempSync(join(tmpdir(), 'yoho-vault-home-'));
+        const originalHome = process.env.HOME;
+        const originalMemoryPath = process.env.YOHO_MEMORY_PATH;
+        const originalRemoteUrl = process.env.YOHO_REMOTE_URL;
+        const originalAuthToken = process.env.YOHO_MEMORY_HTTP_AUTH_TOKEN;
+        process.env.HOME = tempHome;
+        delete process.env.YOHO_MEMORY_PATH;
         process.env.YOHO_REMOTE_URL = 'http://192.168.122.1:3006';
+        process.env.YOHO_MEMORY_HTTP_AUTH_TOKEN = 'memory-token';
         try {
             const servers = await getYohoAuxMcpServers('claude');
-            if (!vaultExists) {
-                const cfg = servers['yoho-vault'] as YohoHttpMcpServerConfig;
-                expect(cfg.type).toBe('http');
-                expect(cfg.url).toContain(':3100/mcp');
-            }
+            const cfg = servers['yoho-vault'] as YohoHttpMcpServerConfig;
+            expect(cfg.type).toBe('http');
+            expect(cfg.url).toContain(':3100/mcp');
+            expect(cfg.headers?.authorization).toBe('Bearer memory-token');
         } finally {
-            if (original !== undefined) process.env.YOHO_REMOTE_URL = original;
+            if (originalHome !== undefined) process.env.HOME = originalHome;
+            else delete process.env.HOME;
+            if (originalMemoryPath !== undefined) process.env.YOHO_MEMORY_PATH = originalMemoryPath;
+            else delete process.env.YOHO_MEMORY_PATH;
+            if (originalRemoteUrl !== undefined) process.env.YOHO_REMOTE_URL = originalRemoteUrl;
             else delete process.env.YOHO_REMOTE_URL;
+            if (originalAuthToken !== undefined) process.env.YOHO_MEMORY_HTTP_AUTH_TOKEN = originalAuthToken;
+            else delete process.env.YOHO_MEMORY_HTTP_AUTH_TOKEN;
+            rmSync(tempHome, { recursive: true, force: true });
+        }
+    });
+
+    it('omits Claude HTTP fallback when auth token is unavailable', async () => {
+        const tempHome = mkdtempSync(join(tmpdir(), 'yoho-vault-home-'));
+        const originalHome = process.env.HOME;
+        const originalMemoryPath = process.env.YOHO_MEMORY_PATH;
+        const originalRemoteUrl = process.env.YOHO_REMOTE_URL;
+        const originalAuthToken = process.env.YOHO_MEMORY_HTTP_AUTH_TOKEN;
+        const originalBridgeToken = process.env.YR_HTTP_MCP_AUTH_TOKEN;
+        process.env.HOME = tempHome;
+        delete process.env.YOHO_MEMORY_PATH;
+        process.env.YOHO_REMOTE_URL = 'http://192.168.122.1:3006';
+        delete process.env.YOHO_MEMORY_HTTP_AUTH_TOKEN;
+        delete process.env.YR_HTTP_MCP_AUTH_TOKEN;
+        try {
+            const servers = await getYohoAuxMcpServers('claude');
+            expect(servers).not.toHaveProperty('yoho-vault');
+        } finally {
+            if (originalHome !== undefined) process.env.HOME = originalHome;
+            else delete process.env.HOME;
+            if (originalMemoryPath !== undefined) process.env.YOHO_MEMORY_PATH = originalMemoryPath;
+            else delete process.env.YOHO_MEMORY_PATH;
+            if (originalRemoteUrl !== undefined) process.env.YOHO_REMOTE_URL = originalRemoteUrl;
+            else delete process.env.YOHO_REMOTE_URL;
+            if (originalAuthToken !== undefined) process.env.YOHO_MEMORY_HTTP_AUTH_TOKEN = originalAuthToken;
+            else delete process.env.YOHO_MEMORY_HTTP_AUTH_TOKEN;
+            if (originalBridgeToken !== undefined) process.env.YR_HTTP_MCP_AUTH_TOKEN = originalBridgeToken;
+            else delete process.env.YR_HTTP_MCP_AUTH_TOKEN;
+            rmSync(tempHome, { recursive: true, force: true });
         }
     });
 

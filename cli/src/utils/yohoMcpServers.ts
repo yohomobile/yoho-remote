@@ -102,6 +102,12 @@ async function resolveProjectRepoRoot(
 /** Well-known HTTP port for the unified yoho-vault MCP server (co-located with yoho-remote-server) */
 export const VAULT_HTTP_PORT = 3100;
 
+export function resolveYohoMemoryHttpAuthToken(): string | null {
+    return process.env.YR_HTTP_MCP_AUTH_TOKEN?.trim()
+        || process.env.YOHO_MEMORY_HTTP_AUTH_TOKEN?.trim()
+        || null;
+}
+
 function deriveAuxMcpHost(): string | null {
     const serverUrl = process.env.YOHO_REMOTE_URL;
     if (!serverUrl) return null;
@@ -157,8 +163,10 @@ export async function getYohoAuxMcpServers(flavor: 'claude' | 'codex', options?:
         }
     } else if (flavor === 'claude') {
         const host = deriveAuxMcpHost();
-        if (host) {
+        const authToken = resolveYohoMemoryHttpAuthToken();
+        if (host && authToken) {
             const headers: Record<string, string> = {};
+            headers.authorization = `Bearer ${authToken}`;
             if (options?.orgId) headers['x-org-id'] = options.orgId;
             result[serverName] = { type: 'http', url: `http://${host}:${VAULT_HTTP_PORT}/mcp`, headers };
         }

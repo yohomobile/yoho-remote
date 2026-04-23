@@ -22,7 +22,7 @@ import { restoreTerminalState } from '@/ui/terminalState';
 import { hasCodexCliOverrides } from './utils/codexCliOverrides';
 import { buildCodexStartConfig, TITLE_INSTRUCTION } from './utils/codexStartConfig';
 import { convertCodexEvent, extractCodexReasoningId } from './utils/codexEventConverter';
-import { getYohoAuxMcpServers, VAULT_HTTP_PORT } from '@/utils/yohoMcpServers';
+import { getYohoAuxMcpServers, resolveYohoMemoryHttpAuthToken, VAULT_HTTP_PORT } from '@/utils/yohoMcpServers';
 
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
 
@@ -601,11 +601,15 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
     if (!auxServers.yoho_vault) {
         try {
             const host = new URL(process.env.YOHO_REMOTE_URL || '').hostname;
-            if (host) {
+            const authToken = resolveYohoMemoryHttpAuthToken();
+            if (host && authToken) {
                 const vaultBridge = getYohoRemoteCliCommand(['mcp', '--url', `http://${host}:${VAULT_HTTP_PORT}/mcp`]);
-                const vaultBridgeEnv: Record<string, string> = {};
-                if (session.client.orgId) vaultBridgeEnv.YOHO_ORG_ID = session.client.orgId;
+                const vaultBridgeEnv: Record<string, string> | undefined = session.client.orgId
+                    ? { YOHO_ORG_ID: session.client.orgId }
+                    : undefined;
                 mcpServers.yoho_vault = { command: vaultBridge.command, args: vaultBridge.args, env: vaultBridgeEnv };
+            } else if (host) {
+                logger.warn('[Codex] Skipping remote yoho_vault MCP fallback because YOHO_MEMORY_HTTP_AUTH_TOKEN/YR_HTTP_MCP_AUTH_TOKEN is not available');
             }
         } catch { /* invalid URL, skip */ }
     }

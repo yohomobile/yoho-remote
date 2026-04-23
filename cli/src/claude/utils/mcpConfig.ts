@@ -12,12 +12,33 @@ export type McpConfigOptions = {
     baseDir?: string;
 };
 
+function containsSensitiveConfig(value: unknown): boolean {
+    if (!value || typeof value !== 'object') {
+        return false;
+    }
+
+    if (Array.isArray(value)) {
+        return value.some(containsSensitiveConfig);
+    }
+
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+        if (/(authorization|token|secret|password|api[_-]?key)/i.test(key)) {
+            return true;
+        }
+        if (containsSensitiveConfig(nested)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 export function resolveMcpConfigArg(
     mcpServers: Record<string, unknown>,
     options?: McpConfigOptions
 ): McpConfigArg {
     const configJson = JSON.stringify({ mcpServers });
-    const useFile = options?.useFile ?? process.platform === 'win32';
+    const useFile = options?.useFile ?? (process.platform === 'win32' || containsSensitiveConfig(mcpServers));
     if (!useFile) {
         return { value: configJson };
     }

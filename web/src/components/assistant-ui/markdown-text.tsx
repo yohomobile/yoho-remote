@@ -223,14 +223,12 @@ function Code(props: ComponentPropsWithoutRef<'code'>) {
 }
 
 function A(props: ComponentPropsWithoutRef<'a'>) {
-    // 所有链接都在新标签页打开
+    const { children, className } = props
+
     return (
-        <a
-            {...props}
-            target="_blank"
-            rel="noreferrer"
-            className={cn('aui-md-a text-[var(--app-link)] underline', props.className)}
-        />
+        <span className={cn('aui-md-a', className)}>
+            {children}
+        </span>
     )
 }
 
