@@ -22,7 +22,7 @@ import { restoreTerminalState } from '@/ui/terminalState';
 import { hasCodexCliOverrides } from './utils/codexCliOverrides';
 import { buildCodexStartConfig, TITLE_INSTRUCTION } from './utils/codexStartConfig';
 import { convertCodexEvent, extractCodexReasoningId } from './utils/codexEventConverter';
-import { getYohoAuxMcpServers, resolveYohoMemoryHttpAuthToken, VAULT_HTTP_PORT } from '@/utils/yohoMcpServers';
+import { getYohoAuxMcpServers } from '@/utils/yohoMcpServers';
 
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
 
@@ -585,8 +585,6 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
     });
     const bridgeCommand = getYohoRemoteCliCommand(['mcp', '--url', yohoRemoteServer.url]);
     const auxServers = await getYohoAuxMcpServers('codex', {
-        apiClient: session.api,
-        sessionId: session.client.sessionId,
         orgId: session.client.orgId,
     });
     const mcpServers: Record<string, { command: string; args: string[]; cwd?: string; env?: Record<string, string> }> = {
@@ -596,23 +594,6 @@ export async function codexRemoteLauncher(session: CodexSession): Promise<'switc
         },
         ...auxServers
     };
-
-    // Add stdio bridge for remote vault MCP server when local files are absent
-    if (!auxServers.yoho_vault) {
-        try {
-            const host = new URL(process.env.YOHO_REMOTE_URL || '').hostname;
-            const authToken = resolveYohoMemoryHttpAuthToken();
-            if (host && authToken) {
-                const vaultBridge = getYohoRemoteCliCommand(['mcp', '--url', `http://${host}:${VAULT_HTTP_PORT}/mcp`]);
-                const vaultBridgeEnv: Record<string, string> | undefined = session.client.orgId
-                    ? { YOHO_ORG_ID: session.client.orgId }
-                    : undefined;
-                mcpServers.yoho_vault = { command: vaultBridge.command, args: vaultBridge.args, env: vaultBridgeEnv };
-            } else if (host) {
-                logger.warn('[Codex] Skipping remote yoho_vault MCP fallback because YOHO_MEMORY_HTTP_AUTH_TOKEN/YR_HTTP_MCP_AUTH_TOKEN is not available');
-            }
-        } catch { /* invalid URL, skip */ }
-    }
 
     let abortController = new AbortController();
     let storedSessionIdForResume: string | null = null;

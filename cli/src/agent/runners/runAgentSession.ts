@@ -166,8 +166,6 @@ export async function runAgentSession(opts: {
         return;
     }
     const auxMcpServers = await getYohoAuxMcpServers('codex', {
-        apiClient: api,
-        sessionId: response.id,
         orgId: response.orgId ?? null,
     });
     const bridgeCommand = getYohoRemoteCliCommand(['mcp', '--url', yohoRemoteServer.url]);

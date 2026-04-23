@@ -512,8 +512,6 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
     logger.debug(`[START] Using Claude executable: ${claudeExecutable}`);
 
     const auxMcpServers = await getYohoAuxMcpServers('claude', {
-        apiClient: api,
-        sessionId: response.id,
         orgId: response.orgId ?? null,
     });
     const mcpServers = {
