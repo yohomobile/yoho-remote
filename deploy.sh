@@ -123,12 +123,38 @@ force_kill_process() {
 ALL_DAEMON_TARGET_NAMES="ncu"
 
 MODE="${1:-}"
-shift 2>/dev/null || true
+DAEMON_FILTER=()
+shift 1 2>/dev/null || true
+
+case "$MODE" in
+    "")
+        # 兼容旧用法：无参数时默认仅部署 server
+        MODE="server"
+        ;;
+    --daemon)
+        MODE="daemon"
+        ;;
+    --server)
+        MODE="server"
+        ;;
+    --all)
+        MODE="all"
+        ;;
+    server|daemon|all)
+        ;;
+    *)
+        echo "ERROR: Unknown mode '$MODE'"
+        exit 1
+        ;;
+esac
+shift 0
 DAEMON_FILTER=("$@")  # 剩余参数作为 daemon 目标过滤器
 
 if [[ -z "$MODE" || ! "$MODE" =~ ^(server|daemon|all)$ ]]; then
     cat << 'USAGE'
-Usage: deploy.sh <server|daemon|all> [target...]
+Usage: deploy.sh [server|daemon|all|--server|--daemon|--all]
+
+  无参数等价于 server
 
   server              Build & deploy server + CLI to ncu only
   daemon              Build & deploy daemon + CLI to ncu
