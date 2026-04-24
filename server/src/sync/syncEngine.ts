@@ -910,7 +910,8 @@ export class SyncEngine {
 
     emit(event: SyncEvent): void {
         const namespace = this.resolveNamespace(event)
-        const enrichedEvent = namespace ? { ...event, namespace } : event
+        const orgId = event.orgId ?? this.resolveOrgId(event)
+        const enrichedEvent = namespace ? { ...event, namespace, orgId } : { ...event, orgId }
 
         for (const listener of this.listeners) {
             try {
@@ -996,6 +997,16 @@ export class SyncEngine {
         }
         if (event.machineId) {
             return this.machines.get(event.machineId)?.namespace
+        }
+        return undefined
+    }
+
+    private resolveOrgId(event: SyncEvent): string | null | undefined {
+        if (event.sessionId) {
+            return this.sessions.get(event.sessionId)?.orgId
+        }
+        if (event.machineId) {
+            return this.machines.get(event.machineId)?.orgId
         }
         return undefined
     }
