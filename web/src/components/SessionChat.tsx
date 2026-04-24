@@ -221,6 +221,7 @@ export function SessionChat(props: {
     onRetryMessage?: (localId: string) => void
     autocompleteSuggestions?: (query: string) => Promise<Suggestion[]>
     otherUserTyping?: TypingUser | null
+    currentUserEmail?: string | null
 }) {
     const { haptic } = usePlatform()
     const navigate = useNavigate()
@@ -239,10 +240,17 @@ export function SessionChat(props: {
     const isOrchestrationChildSession =
         isSessionOrchestrationChildSource(childSessionSource)
 
+    // Only the session owner can read privacy mode (backend returns 403 for
+    // non-owners). Skip the query for viewers/sharers to avoid noisy 403s.
+    const isSessionOwner = Boolean(
+        props.currentUserEmail &&
+        props.session.createdBy &&
+        props.session.createdBy === props.currentUserEmail
+    )
     const { data: privacyData } = useQuery({
         queryKey: ['session-privacy-mode', props.session.id],
         queryFn: async () => props.api.getSessionPrivacyMode(props.session.id),
-        enabled: Boolean(props.session.id),
+        enabled: Boolean(props.session.id) && isSessionOwner,
     })
     const privacyMode = privacyData?.privacyMode ?? false
     const normalizedCacheRef = useRef<

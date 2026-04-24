@@ -408,7 +408,7 @@ function SessionsPage() {
 }
 
 function SessionPage() {
-    const { api, currentOrgId } = useAppContext()
+    const { api, userEmail, currentOrgId } = useAppContext()
     const goBack = useAppGoBack()
     const navigate = useNavigate()
     const { sessionId } = useParams({ from: '/sessions/$sessionId' })
@@ -511,6 +511,7 @@ function SessionPage() {
             onRetryMessage={retryMessage}
             autocompleteSuggestions={getAutocompleteSuggestions}
             otherUserTyping={otherUserTyping}
+            currentUserEmail={userEmail}
         />
     )
 }
