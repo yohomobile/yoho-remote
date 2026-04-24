@@ -92,9 +92,7 @@ class FakePgBoss {
     }
 }
 
-mock.module('pg-boss', () => ({
-    PgBoss: FakePgBoss
-}))
+mock.module('pg-boss', () => ({ PgBoss: FakePgBoss }))
 
 describe('createSummarizeTurnQueuePublisher', () => {
     beforeEach(() => {

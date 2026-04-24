@@ -1,6 +1,6 @@
 {
   "name": "@twsxtd/hapi",
-  "version": "v2026.04.24.1454",
+  "version": "v2026.04.24.1553",
   "description": "App for agentic coding - access coding agent anywhere",
   "author": "Kirill Dubovitskiy & weishu",
   "license": "LGPL-3.0-or-later",
@@ -66,6 +66,7 @@
     "ink": "^6.6.0",
     "ps-list": "^9.0.0",
     "react": "^19.2.3",
+    "pg-boss": "^12.15.0",
     "socket.io-client": "^4.8.3",
     "tar": "^7.5.2",
     "zod": "^4.2.1"

@@ -30,6 +30,21 @@ const publicPaths = [
     '/api/auth/keycloak/logout',
 ]
 
+const IDENTITY_RESOLVE_TTL_MS = 10 * 60 * 1000
+const identityResolveCache = new Map<string, number>()
+
+function shouldResolveIdentity(cacheKey: string, now: number): boolean {
+    const expiresAt = identityResolveCache.get(cacheKey)
+    if (expiresAt && expiresAt > now) return false
+    identityResolveCache.set(cacheKey, now + IDENTITY_RESOLVE_TTL_MS)
+    if (identityResolveCache.size > 5000) {
+        for (const [key, ts] of identityResolveCache) {
+            if (ts <= now) identityResolveCache.delete(key)
+        }
+    }
+    return true
+}
+
 export function createAuthMiddleware(store: IStore): MiddlewareHandler<WebAppEnv> {
     return async (c, next) => {
         const path = c.req.path
@@ -76,18 +91,44 @@ export function createAuthMiddleware(store: IStore): MiddlewareHandler<WebAppEnv
             c.set('orgs', orgsWithRoles)
 
             if (typeof store.resolveActorByIdentityObservation === 'function') {
-                try {
-                    const requestedOrgId = c.req.query('orgId') || null
-                    const identityOrgId = requestedOrgId && (
-                        user.role === 'operator'
-                        || orgsWithRoles.some((org) => org.id === requestedOrgId)
-                    )
-                        ? requestedOrgId
-                        : null
-                    if (identityOrgId) {
-                        const actor = await store.resolveActorByIdentityObservation({
-                            namespace: identityOrgId,
-                            orgId: identityOrgId,
+                const resolve = store.resolveActorByIdentityObservation.bind(store)
+                const now = Date.now()
+                const requestedOrgId = c.req.query('orgId') || null
+                const currentOrgId = requestedOrgId && (
+                    user.role === 'operator'
+                    || orgsWithRoles.some((org) => org.id === requestedOrgId)
+                )
+                    ? requestedOrgId
+                    : null
+
+                for (const org of orgsWithRoles) {
+                    const cacheKey = `${user.sub}::${org.id}`
+                    if (!shouldResolveIdentity(cacheKey, now)) continue
+                    try {
+                        const actor = await resolve({
+                            namespace: org.id,
+                            orgId: org.id,
+                            channel: 'keycloak',
+                            externalId: user.sub,
+                            canonicalEmail: user.email,
+                            displayName: user.name ?? user.email,
+                            accountType: 'human',
+                            assurance: 'high',
+                        })
+                        if (org.id === currentOrgId) {
+                            c.set('identityActor', actor)
+                        }
+                    } catch (error) {
+                        identityResolveCache.delete(cacheKey)
+                        console.warn('[Auth] Identity graph resolution failed:', error)
+                    }
+                }
+
+                if (currentOrgId && !c.get('identityActor')) {
+                    try {
+                        const actor = await resolve({
+                            namespace: currentOrgId,
+                            orgId: currentOrgId,
                             channel: 'keycloak',
                             externalId: user.sub,
                             canonicalEmail: user.email,
@@ -96,9 +137,9 @@ export function createAuthMiddleware(store: IStore): MiddlewareHandler<WebAppEnv
                             assurance: 'high',
                         })
                         c.set('identityActor', actor)
+                    } catch (error) {
+                        console.warn('[Auth] Identity graph resolution failed:', error)
                     }
-                } catch (error) {
-                    console.warn('[Auth] Identity graph resolution failed:', error)
                 }
             }
 

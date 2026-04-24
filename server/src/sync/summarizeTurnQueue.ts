@@ -1,3 +1,5 @@
+import { PgBoss } from 'pg-boss'
+
 export const SUMMARIZE_TURN_QUEUE_NAME = 'summarize-turn'
 export const SUMMARIZE_TURN_JOB_VERSION = 1 as const
 
@@ -64,24 +66,6 @@ export type SummarizeTurnQueuePgConfig = {
     bossSchema: string
 }
 
-type PgBossLike = {
-    start(): Promise<void>
-    stop(): Promise<void>
-    createQueue(queueName: string, options?: QueueOptions): Promise<unknown>
-    updateQueue(queueName: string, options?: QueueOptions): Promise<unknown>
-    send(
-        queueName: string,
-        payload: SummarizeTurnJobData,
-        options?: SendOptions
-    ): Promise<unknown>
-}
-
-type PgBossConstructor = new (
-    connection: string | Record<string, unknown>,
-    config?: Record<string, unknown>
-) => PgBossLike
-
-const PG_BOSS_MODULE_NAME = 'pg-boss'
 const DEFAULT_RETRY_LIMIT = 4
 const DEFAULT_RETRY_DELAY_SECONDS = 15
 const DEFAULT_RETRY_BACKOFF = true
@@ -134,25 +118,6 @@ function buildConnectionString(config: SummarizeTurnQueuePgConfig): string {
 export async function createSummarizeTurnQueuePublisher(
     config: SummarizeTurnQueuePgConfig
 ): Promise<SummarizeTurnQueuePublisher | null> {
-    let importedModule: unknown
-    try {
-        importedModule = await import(PG_BOSS_MODULE_NAME)
-    } catch (error) {
-        console.warn('[Server] summarize-turn queue disabled: pg-boss not available', error)
-        return null
-    }
-
-    const PgBoss = (
-        (importedModule as { PgBoss?: PgBossConstructor }).PgBoss
-        ?? (importedModule as { default?: PgBossConstructor }).default
-        ?? importedModule
-    ) as PgBossConstructor
-
-    if (typeof PgBoss !== 'function') {
-        console.warn('[Server] summarize-turn queue disabled: invalid pg-boss export')
-        return null
-    }
-
     try {
         const queueOptions = getSummarizeTurnQueueOptions()
         const boss = new PgBoss({
@@ -163,7 +128,6 @@ export async function createSummarizeTurnQueuePublisher(
         await boss.start()
         await boss.createQueue(SUMMARIZE_TURN_QUEUE_NAME, queueOptions)
         await boss.updateQueue(SUMMARIZE_TURN_QUEUE_NAME, queueOptions)
-        // Pre-create the session summary queue so enqueue never races with worker startup
         const sessionQueueOptions: QueueOptions = { retryLimit: 3, retryDelay: 60, retryBackoff: true, retryDelayMax: 900 }
         await boss.createQueue(SUMMARIZE_SESSION_QUEUE_NAME, sessionQueueOptions).catch(() => {})
         console.log(
@@ -182,8 +146,6 @@ export async function createSummarizeTurnQueuePublisher(
                     idempotencyKey: singletonKey,
                     payload: { sessionId, namespace, scheduledAtMs: Date.now() },
                 }
-                // Delay 30s so the last in-flight L1 job has time to write
-                // before L3 runs (mirrors the +3s turn-enqueue pattern).
                 return boss.send(SUMMARIZE_SESSION_QUEUE_NAME, data as unknown as SummarizeTurnJobData, {
                     singletonKey,
                     startAfter: 30,
