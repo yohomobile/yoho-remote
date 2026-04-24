@@ -18,6 +18,7 @@ describe('sessionSourcePolicy', () => {
         expect(isSupportedSessionSource('brain-child')).toBe(true)
         expect(isSupportedSessionSource('external-api')).toBe(true)
         expect(isSupportedSessionSource('automation:repair')).toBe(true)
+        expect(isSupportedSessionSource('worker-ai-task')).toBe(true)
         expect(isSupportedSessionSource('legacy-source')).toBe(false)
         expect(isSupportedSessionSource(undefined)).toBe(true)
     })

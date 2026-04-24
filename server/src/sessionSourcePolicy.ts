@@ -13,6 +13,7 @@ const EXACT_SESSION_SOURCES = new Set([
     'external-api',
     'manual',
     'webapp',
+    'worker-ai-task',
 ])
 
 const PREFIX_SESSION_SOURCES = [
