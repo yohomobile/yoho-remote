@@ -247,12 +247,15 @@ maybe_self_detach() {
     export XDG_RUNTIME_DIR="$xdg"
     export DBUS_SESSION_BUS_ADDRESS="unix:path=$xdg/bus"
     # The child bash also needs them; pass via --setenv so systemd's env-sanitiser keeps them.
+    # Also forward PATH so bun / node / etc. are reachable in the clean scope environment.
     exec systemd-run --user --pipe --collect --wait \
         --unit="yr-deploy-$$" \
         --working-directory="$(pwd)" \
         --setenv=YR_DEPLOY_DETACHED=1 \
         --setenv=XDG_RUNTIME_DIR="$xdg" \
         --setenv=DBUS_SESSION_BUS_ADDRESS="unix:path=$xdg/bus" \
+        --setenv=PATH="$PATH" \
+        --setenv=HOME="$HOME" \
         bash "$0" "${orig_args[@]}"
 }
 
