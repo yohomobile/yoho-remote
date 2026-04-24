@@ -141,6 +141,7 @@ export interface IStore {
     getMessagesAfter(sessionId: string, afterSeq: number, limit?: number): Promise<StoredMessage[]>
     getMessageCount(sessionId: string): Promise<number>
     clearMessages(sessionId: string, keepCount?: number): Promise<{ deleted: number; remaining: number }>
+    getSessionParticipants(sessionIds: string[], options?: { limitPerSession?: number }): Promise<Map<string, unknown[]>>
 
     // === User 操作 ===
     getUser(platform: string, platformUserId: string): Promise<StoredUser | null>
@@ -573,6 +574,14 @@ export interface IStore {
         createdBy?: string | null
     }): Promise<StoredPerson>
     getPerson(id: string): Promise<StoredPerson | null>
+    getPersonWithIdentities(options: {
+        namespace: string
+        orgId?: string | null
+        personId: string
+    }): Promise<{
+        person: StoredPerson
+        identities: Array<{ identity: StoredPersonIdentity; link: StoredPersonIdentityLink }>
+    } | null>
     searchPersons(options: {
         namespace: string
         orgId?: string | null

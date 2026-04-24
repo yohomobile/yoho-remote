@@ -531,9 +531,12 @@ describe('/session/find-or-create', () => {
         expect(patchId).toBe('spawned-child')
         expect(patch).toEqual({ callbackOnFailureOnly: true })
         expect(orgId).toBe('org-1')
+        // brain-spawned children must NOT carry the automation preamble — the brain
+        // owns its own child guidance.
+        expect((patch as Record<string, unknown>).pendingAutomationPreamble).toBeUndefined()
     })
 
-    it('no mainSessionId → spawn options have no source/mainSessionId override and no metadata patch', async () => {
+    it('no mainSessionId → spawn options have no source/mainSessionId override, but post-spawn patch carries automation preamble', async () => {
         const engine = makeEngine({ spawnResult: { type: 'success', sessionId: 'spawned-plain' } })
         const store = makeStore()
         const app = buildApp(() => engine, store)
@@ -547,7 +550,38 @@ describe('/session/find-or-create', () => {
         expect(spawnOpts.mainSessionId).toBeUndefined()
         // Legacy callers without mainSessionId default the source to 'worker-ai-task'.
         expect(spawnOpts.source).toBe('worker-ai-task')
-        expect(store.patchSessionMetadata.mock.calls).toHaveLength(0)
+        // Plain worker-ai-task spawns now ALWAYS get a one-shot automation preamble
+        // patched into metadata so /session/send can splice it onto the first message.
+        expect(store.patchSessionMetadata.mock.calls).toHaveLength(1)
+        const [patchId, patch] = store.patchSessionMetadata.mock.calls[0] as unknown as [string, Record<string, unknown>]
+        expect(patchId).toBe('spawned-plain')
+        const preamble = patch.pendingAutomationPreamble
+        expect(typeof preamble).toBe('string')
+        expect(preamble as string).toContain('Yoho 自动化任务')
+        expect(preamble as string).toContain('当前会话工作目录：/test/dir')
+        expect(preamble as string).toContain('mcp__yoho_remote__change_title')
+    })
+
+    it('automation preamble carries the schedule ownerEmail + label when provided', async () => {
+        const engine = makeEngine({ spawnResult: { type: 'success', sessionId: 'spawned-plain' } })
+        const store = makeStore()
+        const app = buildApp(() => engine, store)
+
+        const res = await app.request('/session/find-or-create', json({
+            directory: '/test/dir',
+            agent: 'claude',
+            machineId: 'machine-1',
+            ownerEmail: 'guang@example.com',
+            label: 'nightly backup',
+            scheduleId: 'sched-7',
+        }))
+
+        expect(res.status).toBe(200)
+        // Patch also carries scheduleId/label/ownerEmail (existing behaviour).
+        const [, patch] = store.patchSessionMetadata.mock.calls[0] as unknown as [string, Record<string, unknown>]
+        const preamble = patch.pendingAutomationPreamble as string
+        expect(preamble).toContain('guang@example.com')
+        expect(preamble).toContain('nightly backup')
     })
 
     it('mainSessionId mismatch on existing session → spawn new one instead of reusing', async () => {
@@ -769,6 +803,74 @@ describe('/session/send', () => {
         }))
 
         expect(res.status).toBe(404)
+    })
+
+    it('session metadata holds pendingAutomationPreamble → first send splices it onto the user message and clears the metadata flag', async () => {
+        const session: FakeSession = {
+            id: 'sess-1',
+            namespace: 'org-1',
+            active: true,
+            thinking: false,
+            metadata: {
+                machineId: 'machine-1',
+                path: '/test/dir',
+                runtimeAgent: 'claude',
+                source: 'worker-ai-task',
+                pendingAutomationPreamble: '#InitPrompt-Yoho 自动化任务\n...规则正文...\n下面是要执行的任务：',
+            } as any,
+        }
+        const engine = makeEngine({ sessions: [session] })
+        const store = makeStore()
+        const app = buildApp(() => engine, store)
+
+        const res = await app.request('/session/send', json({
+            sessionId: 'sess-1',
+            message: '请把 README 里的过时段落删掉',
+        }))
+
+        expect(res.status).toBe(200)
+        expect(engine.sendMessage.mock.calls).toHaveLength(1)
+        const [sid, payload] = engine.sendMessage.mock.calls[0] as unknown as [string, { text: string }]
+        expect(sid).toBe('sess-1')
+        expect(payload.text.startsWith('#InitPrompt-Yoho 自动化任务')).toBe(true)
+        expect(payload.text).toContain('请把 README 里的过时段落删掉')
+        // Metadata flag must be cleared so subsequent sends don't re-prepend the preamble.
+        expect(store.patchSessionMetadata.mock.calls).toHaveLength(1)
+        const [patchId, patch, orgId] = store.patchSessionMetadata.mock.calls[0] as unknown as [string, Record<string, unknown>, string]
+        expect(patchId).toBe('sess-1')
+        expect(patch).toEqual({ pendingAutomationPreamble: null })
+        expect(orgId).toBe('org-1')
+        // In-memory session metadata should also drop the field so back-to-back sends
+        // (without a fresh getSession round-trip) don't double-splice.
+        expect((session.metadata as Record<string, unknown> | null)?.pendingAutomationPreamble).toBeUndefined()
+    })
+
+    it('session metadata without pendingAutomationPreamble → user message goes through unchanged, no metadata patch', async () => {
+        const session: FakeSession = {
+            id: 'sess-1',
+            namespace: 'org-1',
+            active: true,
+            thinking: false,
+            metadata: {
+                machineId: 'machine-1',
+                path: '/test/dir',
+                runtimeAgent: 'claude',
+                source: 'worker-ai-task',
+            },
+        }
+        const engine = makeEngine({ sessions: [session] })
+        const store = makeStore()
+        const app = buildApp(() => engine, store)
+
+        const res = await app.request('/session/send', json({
+            sessionId: 'sess-1',
+            message: '继续上一轮的工作',
+        }))
+
+        expect(res.status).toBe(200)
+        const [, payload] = engine.sendMessage.mock.calls[0] as unknown as [string, { text: string }]
+        expect(payload.text).toBe('继续上一轮的工作')
+        expect(store.patchSessionMetadata.mock.calls).toHaveLength(0)
     })
 })
 

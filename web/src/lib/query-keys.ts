@@ -19,6 +19,12 @@ export const queryKeys = {
     userPreferences: ['user-preferences'] as const,
     identityCandidates: (orgId?: string | null, status = 'open') => ['identity-candidates', orgId ?? null, status] as const,
     identityPersons: (orgId?: string | null, q?: string | null) => ['identity-persons', orgId ?? null, q?.trim() ?? ''] as const,
+    identityPersonDetail: (orgId?: string | null, personId?: string | null) => ['identity-person-detail', orgId ?? null, personId ?? null] as const,
+    identityAudits: (
+        orgId?: string | null,
+        personId?: string | null,
+        identityId?: string | null,
+    ) => ['identity-audits', orgId ?? null, personId ?? null, identityId ?? null] as const,
     aiProfiles: (orgId?: string | null) => ['ai-profiles', orgId ?? null] as const,
     brainConfig: (orgId?: string | null) => ['brain-config', orgId ?? null] as const,
     selfSystem: (orgId?: string | null) => ['self-system', orgId ?? null] as const,

@@ -40,4 +40,30 @@ describe('MessageAttributionLine', () => {
         expect(html).toContain('2 speakers · Feishu')
         expect(html).toContain('aria-label="Dev User · Feishu · admin_verified')
     })
+
+    test('wraps the attribution line in a popover trigger button', () => {
+        const attribution: MessageActorAttribution = {
+            primaryActor: null,
+            actors: [
+                {
+                    identityId: 'identity-cli-1',
+                    personId: null,
+                    channel: 'cli',
+                    resolution: 'unresolved',
+                    displayName: null,
+                    email: null,
+                    externalId: 'cli-token',
+                    accountType: 'service',
+                },
+            ],
+            label: 'cli-token',
+            detail: 'CLI',
+            title: 'cli-token · CLI · unresolved',
+        }
+
+        const html = renderToStaticMarkup(<MessageAttributionLine attribution={attribution} />)
+
+        expect(html).toContain('data-testid="message-attribution-trigger"')
+        expect(html).toContain('type="button"')
+    })
 })

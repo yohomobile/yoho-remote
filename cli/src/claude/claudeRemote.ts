@@ -210,16 +210,56 @@ export async function claudeRemote(opts: {
         const iterator = response[Symbol.asyncIterator]();
         resetThinkingTimeout();
 
+        // Race iterator.next() and nextMessage() concurrently so that SDK-emitted events
+        // (e.g. Claude Code's internal <task-notification> injections for Monitor callbacks)
+        // drain in real time even while we're waiting for the next user input.
+        let pendingIter: Promise<IteratorResult<SDKMessage>> | null = null;
+        let pendingNext: Promise<{ message: string, mode: EnhancedMode } | null> | null = null;
+        let noMoreInput = false;
+
+        type RaceResult =
+            | { kind: 'iter', value: IteratorResult<SDKMessage> }
+            | { kind: 'input', value: { message: string, mode: EnhancedMode } | null };
+
         while (true) {
+            if (!pendingIter) pendingIter = iterator.next();
+            if (!pendingNext && !noMoreInput) pendingNext = opts.nextMessage();
+
             const timeoutPromise = new Promise<never>((_, reject) => {
                 thinkingTimeoutReject = reject;
             });
-            const result = await Promise.race([
-                iterator.next(),
-                timeoutPromise,
-            ]);
-            if (result.done) break;
-            const message = result.value;
+
+            const racers: Promise<RaceResult>[] = [
+                pendingIter.then(v => ({ kind: 'iter' as const, value: v })),
+            ];
+            if (pendingNext) {
+                racers.push(pendingNext.then(v => ({ kind: 'input' as const, value: v })));
+            }
+
+            const r = await Promise.race<RaceResult | never>([...racers, timeoutPromise]);
+
+            if (r.kind === 'input') {
+                pendingNext = null;
+                const next = r.value;
+                if (!next) {
+                    noMoreInput = true;
+                    messages.end();
+                    continue;
+                }
+                mode = next.mode;
+                turnStartTime = Date.now();
+                const nextResolved = await resolveFileReferences(next.message, opts.path);
+                const nextContent = await buildMessageContent(nextResolved, opts.path);
+                messages.push({ type: 'user', message: { role: 'user', content: nextContent } });
+                resetThinkingTimeout();
+                continue;
+            }
+
+            // r.kind === 'iter'
+            pendingIter = null;
+            const iterResult = r.value;
+            if (iterResult.done) break;
+            const message = iterResult.value;
 
             // Reset timeout on each message
             resetThinkingTimeout();
@@ -279,9 +319,9 @@ export async function claudeRemote(opts: {
                 } as SDKMessage);
 
                 updateThinking(false);
-                clearThinkingTimeout(); // No need for timeout while waiting for user
+                clearThinkingTimeout();
                 const resultMsg = message as SDKResultMessage;
-                logger.debug('[claudeRemote] Result received, exiting claudeRemote');
+                logger.debug('[claudeRemote] Result received');
 
                 // If the result is an error and the session never started (0 turns),
                 // throw so the launcher catch block can handle it (e.g. retry without --resume)
@@ -315,18 +355,9 @@ export async function claudeRemote(opts: {
                 // Send ready event
                 opts.onReady();
 
-                // Push next message with image support
-                const next = await opts.nextMessage();
-                if (!next) {
-                    messages.end();
-                    return;
-                }
-                mode = next.mode;
-                turnStartTime = Date.now(); // Reset turn timer
-                const nextResolved = await resolveFileReferences(next.message, opts.path);
-                const nextContent = await buildMessageContent(nextResolved, opts.path);
-                messages.push({ type: 'user', message: { role: 'user', content: nextContent } });
-                resetThinkingTimeout(); // Restart timeout after sending new message
+                // Reset turn timer so buffered Monitor-triggered turns have a meaningful
+                // turn_duration that reflects their actual latency, not accumulated idle time.
+                turnStartTime = Date.now();
             }
 
             // Handle tool result

@@ -197,6 +197,47 @@ ${workspaceBlock(projectRoot)}
 `
 }
 
+export type AutomationPreambleOptions = {
+    projectRoot?: string | null
+    userName?: string | null
+    scheduleLabel?: string | null
+}
+
+export async function buildAutomationPreamble(options?: AutomationPreambleOptions): Promise<string> {
+    const projectRoot = options?.projectRoot
+    const userName = options?.userName
+    const scheduleLabel = options?.scheduleLabel
+
+    return `#InitPrompt-Yoho 自动化任务（最高优先级）
+
+你是被 Yoho Remote 自动调度执行的子 session，目标是把下面这一条任务执行完并给出清晰结果。
+
+## 最高优先级规则
+- 始终使用中文沟通
+- 安装软件和依赖时，永远不使用 docker
+${userName ? `- 当前任务的发起人：${userName}\n` : ''}\
+- 当前运行环境信息（机器名、公网 IP、平台等）请调用 \`mcp__yoho_remote__environment_info\` 获取，不要依赖提示词中的静态信息
+
+## 工作空间
+${workspaceBlock(projectRoot)}
+
+## MCP 工具规则（自动化场景必读）
+- 涉及 Yoho 项目/服务/服务器/数据库/外部 API/业务逻辑/团队成员等问题时，先调用 \`mcp__yoho-vault__recall\`（或 \`mcp__yoho-memory__recall\`）查询知识库；调用时必须传 \`keywords\`（string 数组）。
+- 部署、发布、运行测试、SSH 连接远程服务器、安装依赖前，必须先 recall 查询当前项目的命令和配置，不要凭猜测执行。
+- 需要凭证（数据库、API、SSH、SMTP 等）时，调用 \`mcp__yoho-vault__get_credential\`（或 \`mcp__yoho-credentials__get_credential\`）获取，不要从 .env 或代码硬编码查找。
+- 任务完成时，如果出现新决策、配置、bug 根因等值得保存的知识，调用 \`mcp__yoho-vault__remember\` 保存。
+- 以当前会话里的运行时 MCP 工具列表为准判断工具是否可用，不要通过 \`claude mcp list\` 或读取 settings 文件判断。
+
+## 自动化任务约定
+- 你是单轮任务，没有人会接着跟你聊；不要询问用户、不要等待确认；按你的判断推进。
+- 遇到致命阻塞时，把原因清晰写在最终结果里，不要静默失败。
+- 如果 \`mcp__yoho_remote__change_title\` 工具可用，立即调用一次设置一个 12 字以内、能体现本次任务的中文标题${scheduleLabel ? `（任务定义为：${scheduleLabel}）` : ''}。
+- 完成任务后给出简明的执行报告：步骤、修改的文件、关键细节、结论。
+
+下面是要执行的任务：
+`
+}
+
 export async function buildBrainInitPrompt(_role: UserRole, options?: InitPromptOptions): Promise<string> {
     const userName = options?.userName
     const projectRoot = options?.projectRoot

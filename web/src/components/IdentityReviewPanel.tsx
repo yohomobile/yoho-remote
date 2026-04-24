@@ -308,10 +308,12 @@ export function IdentityReviewPanel(props: {
 
     const invalidateIdentityQueries = useCallback(async () => {
         await Promise.all([
-            queryClient.invalidateQueries({ queryKey: queryKeys.identityCandidates(props.orgId, 'open') }),
-            queryClient.invalidateQueries({ queryKey: queryKeys.identityPersons(props.orgId, personQuery) }),
+            queryClient.invalidateQueries({ queryKey: ['identity-candidates'] }),
+            queryClient.invalidateQueries({ queryKey: ['identity-persons'] }),
+            queryClient.invalidateQueries({ queryKey: ['identity-person-detail'] }),
+            queryClient.invalidateQueries({ queryKey: ['identity-audits'] }),
         ])
-    }, [personQuery, props.orgId, queryClient])
+    }, [queryClient])
 
     const decisionMutation = useMutation({
         mutationFn: async (input: { candidateId: string; decision: IdentityCandidateDecision }) => (

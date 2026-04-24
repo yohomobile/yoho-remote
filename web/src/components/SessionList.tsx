@@ -1,6 +1,7 @@
 import { useMemo, useState, type KeyboardEvent } from 'react'
 import type { Machine, Project, SessionSummary } from '@/types/api'
 import { ViewersBadge } from './ViewersBadge'
+import { ParticipantsBadge } from './ParticipantsBadge'
 import { LoadingState } from './LoadingState'
 import { useVibingMessage } from '@/hooks/useVibingMessage'
 import { useDebouncedThinking } from '@/hooks/useDebouncedThinking'
@@ -484,6 +485,9 @@ function SessionItem(props: {
                     )}
                     {s.viewers && s.viewers.length > 0 && (
                         <ViewersBadge viewers={s.viewers} />
+                    )}
+                    {s.participants && s.participants.length > 0 && (
+                        <ParticipantsBadge actors={s.participants} />
                     )}
                 </div>
                 <div className="flex items-center gap-1 mt-0.5 text-[11px] text-[var(--app-hint)] flex-wrap">

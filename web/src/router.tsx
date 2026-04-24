@@ -304,7 +304,7 @@ function SessionsPage() {
                         </span>
                         <button
                             type="button"
-                            onClick={() => navigate({ to: '/self-system' })}
+                            onClick={() => navigate({ to: '/self-system', search: { openPerson: undefined } })}
                             className="flex items-center justify-center h-7 w-7 rounded-lg text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors"
                             title="Self System"
                         >
@@ -705,6 +705,11 @@ const settingsRoute = createRoute({
 const selfSystemRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/self-system',
+    validateSearch: (search: Record<string, unknown>) => ({
+        openPerson: typeof search.openPerson === 'string' && search.openPerson.trim().length > 0
+            ? search.openPerson
+            : undefined,
+    }),
     component: SelfSystemPage,
 })
 

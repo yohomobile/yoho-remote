@@ -1,10 +1,14 @@
 import { useCallback, useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate, useSearch } from '@tanstack/react-router'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { isFlutterApp } from '@/hooks/useFlutterApp'
 import { Spinner } from '@/components/Spinner'
 import { AIProfileSettings } from '@/components/AIProfileSettings'
+import { IdentityReviewPanel } from '@/components/IdentityReviewPanel'
+import { IdentityPersonsPanel } from '@/components/IdentityPersonsPanel'
+import { IdentityAuditPanel } from '@/components/IdentityAuditPanel'
 import { queryKeys } from '@/lib/query-keys'
 import type { AIProfile, Machine } from '@/types/api'
 import {
@@ -61,6 +65,9 @@ export default function SelfSystemPage() {
     const { api, currentOrgId } = useAppContext()
     const goBack = useAppGoBack()
     const queryClient = useQueryClient()
+    const navigate = useNavigate()
+    const search = useSearch({ from: '/self-system' })
+    const openPersonId = search.openPerson ?? null
 
     const { data: meData } = useQuery({
         queryKey: queryKeys.me,
@@ -484,6 +491,24 @@ export default function SelfSystemPage() {
                             </div>
 
                             <AIProfileSettings orgId={currentOrgId} canManage={canManageOrgProfiles} />
+
+                            {canManageOrgProfiles && currentOrgId && (
+                                <>
+                                    <IdentityReviewPanel orgId={currentOrgId} canManage={canManageOrgProfiles} />
+                                    <IdentityPersonsPanel
+                                        orgId={currentOrgId}
+                                        initialPersonId={openPersonId}
+                                        onSelectedPersonChange={(personId) => {
+                                            navigate({
+                                                to: '/self-system',
+                                                search: { openPerson: personId ?? undefined },
+                                                replace: true,
+                                            })
+                                        }}
+                                    />
+                                    <IdentityAuditPanel orgId={currentOrgId} />
+                                </>
+                            )}
                         </div>
                     )}
                 </div>

@@ -280,4 +280,62 @@ describe('createIdentityRoutes', () => {
             decidedBy: 'admin@example.com',
         }])
     })
+
+    it('returns person detail with active identities for admins', async () => {
+        const calls: Array<Record<string, unknown>> = []
+        const person = {
+            id: 'person-1',
+            namespace: 'org-1',
+            orgId: 'org-1',
+            personType: 'human',
+            canonicalName: 'Guang Yang',
+            status: 'active',
+        }
+        const identity = {
+            id: 'ident-1',
+            namespace: 'org-1',
+            channel: 'feishu',
+            externalId: 'feishu-guang',
+            status: 'active',
+        }
+        const link = {
+            id: 'link-1',
+            personId: 'person-1',
+            identityId: 'ident-1',
+            state: 'admin_verified',
+            confidence: 0.98,
+        }
+        const app = createApp({
+            getUserOrgRole: async () => 'admin',
+            getPersonWithIdentities: async (options: Record<string, unknown>) => {
+                calls.push(options)
+                return { person, identities: [{ identity, link }] }
+            },
+        })
+
+        const response = await app.request('/api/identity/persons/person-1?orgId=org-1')
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            person,
+            identities: [{ identity, link }],
+        })
+        expect(calls).toEqual([{
+            namespace: 'org-1',
+            orgId: 'org-1',
+            personId: 'person-1',
+        }])
+    })
+
+    it('returns 404 when person detail is missing or cross-org', async () => {
+        const app = createApp({
+            getUserOrgRole: async () => 'admin',
+            getPersonWithIdentities: async () => null,
+        })
+
+        const response = await app.request('/api/identity/persons/person-missing?orgId=org-1')
+
+        expect(response.status).toBe(404)
+        expect(await response.json()).toEqual({ error: 'Person not found' })
+    })
 })

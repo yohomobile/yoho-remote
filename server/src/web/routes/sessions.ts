@@ -48,7 +48,7 @@ import {
 } from '../../resumeSpawnMetadata'
 import { getSessionSourceFromMetadata } from '../../sessionSourcePolicy'
 import { appendSelfSystemPrompt, resolveSessionSelfSystemContext } from '../../brain/selfSystem'
-import { buildSessionIdentityContextPatch } from '../identityContext'
+import { buildSessionIdentityContextPatch, type WebActorMeta } from '../identityContext'
 import {
     getSessionOrchestrationParentSessionId,
     isSessionOrchestrationChildForParentMetadata,
@@ -126,6 +126,7 @@ type SessionSummary = {
     activeMonitorCount?: number
     viewers?: SessionViewer[]
     terminationReason?: string
+    participants?: WebActorMeta[]
 }
 
 function getStoredActiveMonitorCount(stored: StoredSession): number | undefined {
@@ -1586,6 +1587,22 @@ export function createSessionsRoutes(
 
             return summary
         })
+
+        if (typeof (store as { getSessionParticipants?: unknown }).getSessionParticipants === 'function' && sessionSummaries.length > 0) {
+            try {
+                const participantMap = await (store as unknown as {
+                    getSessionParticipants: (ids: string[], opts?: { limitPerSession?: number }) => Promise<Map<string, unknown[]>>
+                }).getSessionParticipants(sessionSummaries.map((s) => s.id), { limitPerSession: 10 })
+                for (const summary of sessionSummaries) {
+                    const actors = participantMap.get(summary.id)
+                    if (actors && actors.length > 0) {
+                        summary.participants = actors.filter((a): a is WebActorMeta => !!a && typeof a === 'object')
+                    }
+                }
+            } catch (error) {
+                console.error('[sessions] Failed to aggregate participants', error)
+            }
+        }
 
         // Sort: active first, then by recent activity, and only use pending requests as a tie-breaker.
         const allSessions = sessionSummaries.sort((a, b) => {

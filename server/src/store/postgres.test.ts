@@ -427,6 +427,99 @@ describe('PostgresStore identity graph governance', () => {
 
         expect(calls[0]?.params).toEqual(['feishu', 'ou_user_1'])
     })
+
+    it('getPersonWithIdentities returns person + active verified identity/link pairs', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            if (sql.includes('SELECT * FROM persons') && sql.includes('namespace = $2')) {
+                return { rows: [createPersonRow({ id: 'person-1' })] }
+            }
+            if (sql.includes('FROM person_identity_links') && sql.includes('person_id = $1')) {
+                return {
+                    rows: [
+                        createPersonIdentityLinkRow({ id: 'link-1', identity_id: 'ident-1' }),
+                        createPersonIdentityLinkRow({ id: 'link-2', identity_id: 'ident-2', confidence: 0.8 }),
+                    ],
+                }
+            }
+            if (sql.includes('FROM person_identities WHERE id = ANY')) {
+                return {
+                    rows: [
+                        createPersonIdentityRow({ id: 'ident-1', external_id: 'ou_user_1' }),
+                        createPersonIdentityRow({ id: 'ident-2', external_id: 'keycloak-xyz', channel: 'keycloak' }),
+                    ],
+                }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const result = await store.getPersonWithIdentities({
+            namespace: 'default',
+            orgId: 'org-1',
+            personId: 'person-1',
+        })
+
+        expect(result).not.toBeNull()
+        expect(result!.person.id).toBe('person-1')
+        expect(result!.identities).toHaveLength(2)
+        expect(result!.identities[0]).toEqual({
+            link: expect.objectContaining({ id: 'link-1', identityId: 'ident-1' }),
+            identity: expect.objectContaining({ id: 'ident-1', externalId: 'ou_user_1' }),
+        })
+        expect(result!.identities[1]).toEqual({
+            link: expect.objectContaining({ id: 'link-2', identityId: 'ident-2' }),
+            identity: expect.objectContaining({ id: 'ident-2', channel: 'keycloak' }),
+        })
+
+        const linksCall = calls.find((call) => call.sql.includes('FROM person_identity_links') && call.sql.includes('person_id = $1'))
+        expect(linksCall?.sql).toContain("state IN ('auto_verified', 'admin_verified')")
+        expect(linksCall?.sql).toContain('valid_to IS NULL')
+    })
+
+    it('getPersonWithIdentities returns null when person does not belong to the org namespace', async () => {
+        const store = createStore(async (sql) => {
+            if (sql.includes('SELECT * FROM persons') && sql.includes('namespace = $2')) {
+                return { rows: [] }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const result = await store.getPersonWithIdentities({
+            namespace: 'default',
+            orgId: 'org-1',
+            personId: 'person-missing',
+        })
+
+        expect(result).toBeNull()
+    })
+
+    it('getPersonWithIdentities skips the identity lookup when there are no active links', async () => {
+        const queries: string[] = []
+        const store = createStore(async (sql) => {
+            queries.push(sql)
+            if (sql.includes('SELECT * FROM persons') && sql.includes('namespace = $2')) {
+                return { rows: [createPersonRow()] }
+            }
+            if (sql.includes('FROM person_identity_links')) {
+                return { rows: [] }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const result = await store.getPersonWithIdentities({
+            namespace: 'default',
+            orgId: 'org-1',
+            personId: 'person-1',
+        })
+
+        expect(result).not.toBeNull()
+        expect(result!.identities).toEqual([])
+        expect(queries.some((q) => q.includes('FROM person_identities WHERE id = ANY'))).toBe(false)
+    })
 })
 
 describe('PostgresStore AI profile cleanup transaction', () => {

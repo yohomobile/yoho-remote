@@ -335,6 +335,7 @@ export type SessionSummary = {
     activeMonitorCount?: number
     viewers?: SessionViewer[]
     terminationReason?: string  // e.g. 'LICENSE_EXPIRED', 'LICENSE_SUSPENDED'
+    participants?: IdentityActorMeta[]
 }
 
 export type MessageStatus = 'sending' | 'sent' | 'failed'
@@ -756,6 +757,68 @@ export type IdentityCandidateDecision =
     | { action: 'mark_shared'; reason?: string }
     | { action: 'reject'; reason?: string }
 export type IdentityCandidateDecisionResponse = { ok: true; candidate: IdentityCandidate }
+
+export type IdentityLinkState =
+    | 'pending'
+    | 'auto_verified'
+    | 'admin_verified'
+    | 'rejected'
+    | 'detached'
+    | 'superseded'
+
+export type StoredPersonIdentityLink = {
+    id: string
+    personId: string
+    identityId: string
+    relationType: 'primary' | 'alias' | 'shared'
+    state: IdentityLinkState
+    confidence: number
+    source: 'auto' | 'admin' | 'import' | 'system'
+    evidence: unknown[]
+    decisionReason: string | null
+    validFrom: number
+    validTo: number | null
+    decidedBy: string | null
+    createdAt: number
+    updatedAt: number
+}
+
+export type StoredPersonIdentityAudit = {
+    id: string
+    namespace: string
+    orgId: string | null
+    action:
+        | 'merge_persons'
+        | 'unmerge_persons'
+        | 'confirm_existing_person'
+        | 'create_person_and_confirm'
+        | 'mark_shared'
+        | 'reject_candidate'
+        | 'detach_identity_link'
+        | string
+    actorEmail: string | null
+    personId: string | null
+    targetPersonId: string | null
+    identityId: string | null
+    linkId: string | null
+    reason: string | null
+    payload: Record<string, unknown>
+    createdAt: number
+}
+
+export type IdentityPersonDetail = {
+    person: StoredPerson
+    identities: Array<{
+        identity: StoredPersonIdentity
+        link: StoredPersonIdentityLink
+    }>
+}
+
+export type IdentityPersonDetailResponse = IdentityPersonDetail
+export type IdentityAuditsResponse = { audits: StoredPersonIdentityAudit[] }
+export type IdentityMergeResponse = { ok: true; person: StoredPerson }
+export type IdentityUnmergeResponse = { ok: true; person: StoredPerson }
+export type IdentityDetachResponse = { ok: true; link: StoredPersonIdentityLink }
 
 // Organization 类型
 export type OrgRole = 'owner' | 'admin' | 'member'

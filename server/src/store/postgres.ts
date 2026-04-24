@@ -1855,6 +1855,69 @@ export class PostgresStore implements IStore {
         return { deleted, remaining: total - deleted }
     }
 
+    async getSessionParticipants(
+        sessionIds: string[],
+        options: { limitPerSession?: number } = {},
+    ): Promise<Map<string, unknown[]>> {
+        const result = new Map<string, unknown[]>()
+        if (sessionIds.length === 0) return result
+        const limitPerSession = Math.max(1, options.limitPerSession ?? 10)
+
+        const rows = await this.pool.query<{
+            session_id: string
+            actor: unknown
+        }>(
+            `
+            SELECT session_id, actor
+            FROM (
+                SELECT
+                    session_id,
+                    actor,
+                    MAX(created_at) AS last_at
+                FROM (
+                    SELECT session_id, content->'meta'->'actor' AS actor, created_at
+                    FROM messages
+                    WHERE session_id = ANY($1::text[])
+                      AND jsonb_typeof(content->'meta'->'actor') = 'object'
+                    UNION ALL
+                    SELECT session_id, jsonb_array_elements(content->'meta'->'actors') AS actor, created_at
+                    FROM messages
+                    WHERE session_id = ANY($1::text[])
+                      AND jsonb_typeof(content->'meta'->'actors') = 'array'
+                ) AS raw
+                GROUP BY session_id, actor
+            ) AS grouped
+            ORDER BY session_id, last_at DESC
+            `,
+            [sessionIds],
+        )
+
+        const seenKeys = new Map<string, Set<string>>()
+        for (const row of rows.rows) {
+            if (!row.actor || typeof row.actor !== 'object') continue
+            const a = row.actor as Record<string, unknown>
+            const key = typeof a.identityId === 'string' && a.identityId.length > 0
+                ? a.identityId
+                : `${String(a.channel ?? '')}:${String(a.externalId ?? '')}`
+            if (!key) continue
+            let keys = seenKeys.get(row.session_id)
+            if (!keys) {
+                keys = new Set<string>()
+                seenKeys.set(row.session_id, keys)
+            }
+            if (keys.has(key)) continue
+            let list = result.get(row.session_id)
+            if (!list) {
+                list = []
+                result.set(row.session_id, list)
+            }
+            if (list.length >= limitPerSession) continue
+            keys.add(key)
+            list.push(row.actor)
+        }
+        return result
+    }
+
     // ========== User 操作 ==========
 
     async getUser(platform: string, platformUserId: string): Promise<StoredUser | null> {
@@ -5773,6 +5836,63 @@ export class PostgresStore implements IStore {
     async getPerson(id: string): Promise<StoredPerson | null> {
         const result = await this.pool.query('SELECT * FROM persons WHERE id = $1', [id])
         return result.rows.length > 0 ? this.toStoredPerson(result.rows[0]) : null
+    }
+
+    async getPersonWithIdentities(options: {
+        namespace: string
+        orgId?: string | null
+        personId: string
+    }): Promise<{
+        person: StoredPerson
+        identities: Array<{ identity: StoredPersonIdentity; link: StoredPersonIdentityLink }>
+    } | null> {
+        const personResult = await this.pool.query(
+            `SELECT * FROM persons
+             WHERE id = $1
+               AND namespace = $2
+               AND org_id IS NOT DISTINCT FROM $3`,
+            [options.personId, options.namespace, options.orgId ?? null]
+        )
+        if (personResult.rows.length === 0) {
+            return null
+        }
+        const person = this.toStoredPerson(personResult.rows[0])
+
+        const linksResult = await this.pool.query(
+            `SELECT * FROM person_identity_links
+             WHERE person_id = $1
+               AND valid_to IS NULL
+               AND state IN ('auto_verified', 'admin_verified')
+             ORDER BY confidence DESC, updated_at DESC`,
+            [options.personId]
+        )
+
+        if (linksResult.rows.length === 0) {
+            return { person, identities: [] }
+        }
+
+        const links: StoredPersonIdentityLink[] = linksResult.rows.map((row: any) => this.toStoredPersonIdentityLink(row))
+        const identityIds = links.map((link) => link.identityId)
+
+        const identitiesResult = await this.pool.query(
+            'SELECT * FROM person_identities WHERE id = ANY($1::text[])',
+            [identityIds]
+        )
+        const identityMap = new Map<string, StoredPersonIdentity>()
+        for (const row of identitiesResult.rows) {
+            const identity = this.toStoredPersonIdentity(row)
+            identityMap.set(identity.id, identity)
+        }
+
+        const identities: Array<{ identity: StoredPersonIdentity; link: StoredPersonIdentityLink }> = []
+        for (const link of links) {
+            const identity = identityMap.get(link.identityId)
+            if (identity) {
+                identities.push({ identity, link })
+            }
+        }
+
+        return { person, identities }
     }
 
     async searchPersons(options: {

@@ -113,6 +113,24 @@ export function createIdentityRoutes(
         return c.json({ persons })
     })
 
+    app.get('/identity/persons/:personId', async (c) => {
+        const orgId = requireIdentityOrgId(c)
+        if (orgId instanceof Response) return orgId
+        const namespace = orgId
+        const permissionError = await requireIdentityAdmin(c, store, orgId)
+        if (permissionError) return permissionError
+
+        const detail = await store.getPersonWithIdentities({
+            namespace,
+            orgId,
+            personId: c.req.param('personId'),
+        })
+        if (!detail) {
+            return c.json({ error: 'Person not found' }, 404)
+        }
+        return c.json(detail)
+    })
+
     app.get('/identity/audits', async (c) => {
         const orgId = requireIdentityOrgId(c)
         if (orgId instanceof Response) return orgId

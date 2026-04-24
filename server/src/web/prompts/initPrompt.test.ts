@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { buildBrainInitPrompt, buildInitPrompt } from './initPrompt'
+import { buildAutomationPreamble, buildBrainInitPrompt, buildInitPrompt } from './initPrompt'
 
 describe('buildInitPrompt', () => {
     it('renders the standard workspace section for regular sessions', async () => {
@@ -170,6 +170,16 @@ describe('buildInitPrompt', () => {
         expect(prompt).not.toContain('gpt-5.3-codex')
     })
 
+    it('omits the bundled preamble content from the standard init prompt', async () => {
+        const prompt = await buildInitPrompt('developer', { projectRoot: '/x' })
+
+        // standard init prompt is for interactive sessions and should not advertise
+        // itself as the automation single-shot variant.
+        expect(prompt).not.toContain('Yoho 自动化任务')
+        expect(prompt).not.toContain('当前任务的发起人：')
+        expect(prompt).not.toContain('下面是要执行的任务：')
+    })
+
     it('keeps the default model label correct when only part of the model range is allowed', async () => {
         const prompt = await buildBrainInitPrompt('developer', {
             brainPreferences: {
@@ -195,5 +205,66 @@ describe('buildInitPrompt', () => {
         expect(prompt).toContain('| codex | gpt-5.4-mini（默认） |')
         expect(prompt).toContain('| codex | gpt-5.3-codex |')
         expect(prompt).toContain('未出现在上表的模型当前不可用')
+    })
+})
+
+describe('buildAutomationPreamble', () => {
+    it('renders Yoho rules + MCP guidance + change_title for automation sessions', async () => {
+        const prompt = await buildAutomationPreamble({
+            projectRoot: '/workspace/yoho-task',
+            userName: 'guang@example.com',
+            scheduleLabel: 'daily backup',
+        })
+
+        expect(prompt).toContain('Yoho 自动化任务')
+        expect(prompt).toContain('当前会话工作目录：/workspace/yoho-task')
+        expect(prompt).toContain('当前任务的发起人：guang@example.com')
+        expect(prompt).toContain('始终使用中文')
+        expect(prompt).toContain('永远不使用 docker')
+        expect(prompt).toContain('mcp__yoho_remote__environment_info')
+        expect(prompt).toContain('mcp__yoho_remote__change_title')
+        expect(prompt).toContain('任务定义为：daily backup')
+        expect(prompt).toContain('mcp__yoho-vault__recall')
+        expect(prompt).toContain('mcp__yoho-vault__get_credential')
+        expect(prompt).toContain('mcp__yoho-vault__remember')
+        expect(prompt).toContain('keywords')
+        expect(prompt.trimEnd().endsWith('下面是要执行的任务：')).toBe(true)
+    })
+
+    it('drops the user line when userName is missing', async () => {
+        const prompt = await buildAutomationPreamble({
+            projectRoot: '/workspace/yoho-task',
+        })
+
+        expect(prompt).not.toContain('当前任务的发起人：')
+    })
+
+    it('drops the schedule label suffix when label is missing', async () => {
+        const prompt = await buildAutomationPreamble({
+            projectRoot: '/workspace/yoho-task',
+        })
+
+        expect(prompt).toContain('mcp__yoho_remote__change_title')
+        expect(prompt).not.toContain('（任务定义为：')
+    })
+
+    it('does not leak K1 self-system, brain orchestration, skill, or feishu instructions', async () => {
+        const prompt = await buildAutomationPreamble({
+            projectRoot: '/workspace/yoho-task',
+            userName: 'guang@example.com',
+            scheduleLabel: 'daily backup',
+        })
+
+        // Automation preamble must stay focused — no K1 persona, no brain orchestration,
+        // no skill lifecycle rules, no feishu-specific guidance.
+        expect(prompt).not.toContain('K1')
+        expect(prompt).not.toContain('编排中枢')
+        expect(prompt).not.toContain('Brain')
+        expect(prompt).not.toContain('skill_list')
+        expect(prompt).not.toContain('skill_promote')
+        expect(prompt).not.toContain('飞书')
+        expect(prompt).not.toContain('selfSystem')
+        expect(prompt).not.toContain('feishu')
+        expect(prompt).not.toContain('session_find_or_create')
     })
 })

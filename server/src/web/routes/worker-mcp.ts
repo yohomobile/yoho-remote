@@ -10,6 +10,7 @@ import {
     parseCronOrDelay,
     serializeAiTaskScheduleRow,
 } from './aiTaskScheduleShared'
+import { buildAutomationPreamble } from '../prompts/initPrompt'
 
 const findOrCreateSchema = z.object({
     directory: z.string().min(1),
@@ -293,6 +294,18 @@ export function createWorkerMcpRoutes(
         if (callbackOnFailureOnly !== undefined) {
             spawnPatch.callbackOnFailureOnly = callbackOnFailureOnly
         }
+
+        // Plain worker-ai-task sessions (no brain parent) get a one-shot preamble
+        // that /session/send will splice onto the first user message. brain-spawned
+        // children skip this — the brain handles its own child guidance.
+        if (resolvedSource === 'worker-ai-task') {
+            spawnPatch.pendingAutomationPreamble = await buildAutomationPreamble({
+                projectRoot: directory,
+                userName: ownerEmail ?? null,
+                scheduleLabel: label ?? null,
+            })
+        }
+
         await applyMetadataPatch(spawnResult.sessionId, spawnPatch)
 
         return c.json({ sessionId: spawnResult.sessionId })
@@ -342,8 +355,34 @@ export function createWorkerMcpRoutes(
             sendMeta.appendSystemPrompt = parsed.data.appendSystemPrompt
         }
 
+        // Pop the one-shot automation preamble if present. Splice it onto the user
+        // message so claude sees Yoho rules + MCP guidance before the actual task.
+        // Cleared from metadata immediately so subsequent sends don't re-prepend it.
+        const sessionMeta = session.metadata as Record<string, unknown> | null
+        const pendingPreamble = typeof sessionMeta?.pendingAutomationPreamble === 'string'
+            ? sessionMeta.pendingAutomationPreamble
+            : null
+        let messageText = parsed.data.message
+        if (pendingPreamble) {
+            messageText = `${pendingPreamble}\n${parsed.data.message}`
+            const orgIdForPatch = (session as { namespace?: string | null }).namespace ?? ''
+            await store.patchSessionMetadata(
+                parsed.data.sessionId,
+                { pendingAutomationPreamble: null },
+                orgIdForPatch,
+            ).catch((err: unknown) => {
+                console.warn(
+                    `[worker-mcp] Failed to clear pendingAutomationPreamble on ${parsed.data.sessionId}:`,
+                    err,
+                )
+            })
+            if (sessionMeta) {
+                delete (sessionMeta as Record<string, unknown>).pendingAutomationPreamble
+            }
+        }
+
         await engine.sendMessage(parsed.data.sessionId, {
-            text: parsed.data.message,
+            text: messageText,
             localId: requestLocalId,
             sentFrom: 'worker-ai-task',
             meta: Object.keys(sendMeta).length > 0 ? sendMeta : undefined,

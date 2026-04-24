@@ -5,21 +5,33 @@ import type { YohoRemoteChatMessageMetadata } from '@/lib/assistant-runtime'
 import { MessageStatusIndicator } from '@/components/AssistantChat/messages/MessageStatusIndicator'
 import { CliOutputBlock } from '@/components/CliOutputBlock'
 import type { MessageActorAttribution } from '@/chat/identityAttribution'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { MessageAttributionPopover } from '@/components/AssistantChat/messages/MessageAttributionPopover'
 
 export function MessageAttributionLine(props: { attribution: MessageActorAttribution }) {
     return (
-        <div
-            className="mb-1 flex min-w-0 max-w-full flex-wrap items-center gap-1 text-[11px] leading-4 text-[var(--app-muted-fg)]"
-            title={props.attribution.title}
-            aria-label={props.attribution.title}
-        >
-            <span className="min-w-0 max-w-full truncate font-medium text-[var(--app-fg)]">
-                {props.attribution.label}
-            </span>
-            <span className="shrink-0 rounded bg-[var(--app-bg)] px-1 py-0 text-[10px] leading-4">
-                {props.attribution.detail}
-            </span>
-        </div>
+        <Popover>
+            <PopoverTrigger asChild>
+                <button
+                    type="button"
+                    className="mb-1 flex min-w-0 max-w-full flex-wrap items-center gap-1 rounded text-left text-[11px] leading-4 text-[var(--app-muted-fg)] hover:bg-[var(--app-subtle-bg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
+                    title={props.attribution.title}
+                    aria-label={props.attribution.title}
+                    onClick={(event) => event.stopPropagation()}
+                    data-testid="message-attribution-trigger"
+                >
+                    <span className="min-w-0 max-w-full truncate font-medium text-[var(--app-fg)]">
+                        {props.attribution.label}
+                    </span>
+                    <span className="shrink-0 rounded bg-[var(--app-bg)] px-1 py-0 text-[10px] leading-4">
+                        {props.attribution.detail}
+                    </span>
+                </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" sideOffset={4} onClick={(event) => event.stopPropagation()}>
+                <MessageAttributionPopover attribution={props.attribution} />
+            </PopoverContent>
+        </Popover>
     )
 }
 

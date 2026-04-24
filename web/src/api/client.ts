@@ -45,6 +45,11 @@ import type {
     IdentityCandidateStatus,
     IdentityCandidatesResponse,
     IdentityPersonsResponse,
+    IdentityPersonDetailResponse,
+    IdentityAuditsResponse,
+    IdentityMergeResponse,
+    IdentityUnmergeResponse,
+    IdentityDetachResponse,
     OrgsResponse,
     OrgDetailResponse,
     CreateOrgResponse,
@@ -348,6 +353,50 @@ export class ApiClient {
         return await this.request<IdentityCandidateDecisionResponse>(`/api/identity/candidates/${encodeURIComponent(candidateId)}/decision${qs}`, {
             method: 'POST',
             body: JSON.stringify(decision)
+        })
+    }
+
+    async getIdentityPersonDetail(personId: string, orgId?: string | null): Promise<IdentityPersonDetailResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<IdentityPersonDetailResponse>(`/api/identity/persons/${encodeURIComponent(personId)}${qs}`)
+    }
+
+    async getIdentityAuditLog(options: {
+        orgId?: string | null
+        personId?: string | null
+        identityId?: string | null
+        limit?: number
+    } = {}): Promise<IdentityAuditsResponse> {
+        const params = new URLSearchParams()
+        if (options.orgId) params.set('orgId', options.orgId)
+        if (options.personId) params.set('personId', options.personId)
+        if (options.identityId) params.set('identityId', options.identityId)
+        if (options.limit) params.set('limit', String(options.limit))
+        const qs = params.toString()
+        return await this.request<IdentityAuditsResponse>(`/api/identity/audits${qs ? `?${qs}` : ''}`)
+    }
+
+    async mergeIdentityPersons(sourcePersonId: string, targetPersonId: string, reason?: string | null, orgId?: string | null): Promise<IdentityMergeResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<IdentityMergeResponse>(`/api/identity/persons/${encodeURIComponent(sourcePersonId)}/merge${qs}`, {
+            method: 'POST',
+            body: JSON.stringify({ targetPersonId, reason: reason ?? undefined })
+        })
+    }
+
+    async unmergeIdentityPerson(personId: string, reason?: string | null, orgId?: string | null): Promise<IdentityUnmergeResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<IdentityUnmergeResponse>(`/api/identity/persons/${encodeURIComponent(personId)}/unmerge${qs}`, {
+            method: 'POST',
+            body: JSON.stringify({ reason: reason ?? undefined })
+        })
+    }
+
+    async detachIdentityLink(linkId: string, reason?: string | null, orgId?: string | null): Promise<IdentityDetachResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<IdentityDetachResponse>(`/api/identity/links/${encodeURIComponent(linkId)}/detach${qs}`, {
+            method: 'POST',
+            body: JSON.stringify({ reason: reason ?? undefined })
         })
     }
 
