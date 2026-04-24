@@ -12,62 +12,8 @@ export type ReadBatchItem = {
     state: ToolCallBlock['tool']['state']
 }
 
-const READ_LIKE_COMMANDS = new Set(['cat', 'head', 'tail', 'nl', 'sed', 'less', 'more', 'bat', 'awk'])
-
 function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object'
-}
-
-function getInputStringAny(input: unknown, keys: string[]): string | null {
-    if (!isObject(input)) return null
-    for (const key of keys) {
-        const value = input[key]
-        if (typeof value === 'string' && value.trim().length > 0) {
-            return value.trim()
-        }
-    }
-    return null
-}
-
-function getCommandString(input: unknown): string | null {
-    if (!isObject(input)) return null
-
-    const directCommand = input.command
-    if (typeof directCommand === 'string' && directCommand.trim().length > 0) {
-        return directCommand.trim()
-    }
-
-    if (Array.isArray(directCommand)) {
-        const parts = directCommand.filter((part): part is string => typeof part === 'string' && part.length > 0)
-        if (parts.length > 0) {
-            return parts.join(' ')
-        }
-    }
-
-    const cmd = input.cmd
-    if (typeof cmd === 'string' && cmd.trim().length > 0) {
-        return cmd.trim()
-    }
-
-    return null
-}
-
-function unwrapShellCommand(command: string): string {
-    let inner = command.trim()
-    const shellWrapped = inner.match(/-[lc]c\s+"([\s\S]+)"$/) ?? inner.match(/-[lc]c\s+'([\s\S]+)'$/)
-    if (shellWrapped?.[1]) {
-        inner = shellWrapped[1].trim()
-    }
-
-    const chained = inner.split(/\s+&&\s+/)
-    return (chained[chained.length - 1] ?? inner).trim()
-}
-
-function tokenizeShellCommand(command: string): string[] {
-    const matches = command.match(/"[^"]*"|'[^']*'|\S+/g) ?? []
-    return matches
-        .map((token) => token.replace(/^['"]|['"]$/g, ''))
-        .filter((token) => token.length > 0)
 }
 
 function getInputFiles(input: unknown): string[] {

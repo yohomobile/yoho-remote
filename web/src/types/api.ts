@@ -174,6 +174,7 @@ export type AIProfile = {
     name: string
     role: AIProfileRole
     specialties: string[]
+    behaviorAnchors: string[]
     personality: string | null
     greetingTemplate: string | null
     preferredProjects: string[]
@@ -194,6 +195,7 @@ export type CreateAIProfileInput = {
     name: string
     role: AIProfileRole
     specialties?: string[]
+    behaviorAnchors?: string[]
     personality?: string | null
     greetingTemplate?: string | null
     preferredProjects?: string[]

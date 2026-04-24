@@ -55,6 +55,7 @@ type AIProfileFormData = {
     name: string
     role: AIProfileRole
     specialties: string
+    behaviorAnchors: string
     personality: string
     greetingTemplate: string
     preferredProjects: string
@@ -66,6 +67,7 @@ const defaultFormData: AIProfileFormData = {
     name: '',
     role: 'developer',
     specialties: '',
+    behaviorAnchors: '',
     personality: '',
     greetingTemplate: '',
     preferredProjects: '',

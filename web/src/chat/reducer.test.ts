@@ -306,6 +306,175 @@ describe('reduceChatBlocks duplicate handling', () => {
         })
     })
 
+    test('groups file-scoped grep and bash grep tools into the same read batch', () => {
+        const reduced = reduceChatBlocks([
+            {
+                id: 'grep-call-1',
+                localId: null,
+                createdAt: 1,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'grep-1',
+                    name: 'Grep',
+                    input: {
+                        pattern: 'message-added',
+                        path: 'web/src/hooks/useSSE.ts',
+                        output_mode: 'content'
+                    },
+                    description: null,
+                    uuid: 'grep-call-1',
+                    parentUUID: null
+                }]
+            },
+            {
+                id: 'grep-result-1',
+                localId: null,
+                createdAt: 2,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'grep-1',
+                    content: {
+                        stdout: '120: message-added'
+                    },
+                    is_error: false,
+                    uuid: 'grep-result-1',
+                    parentUUID: null
+                }]
+            },
+            {
+                id: 'read-call-1',
+                localId: null,
+                createdAt: 3,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'read-1',
+                    name: 'Read',
+                    input: { file_path: 'web/src/hooks/useSSE.ts' },
+                    description: null,
+                    uuid: 'read-call-1',
+                    parentUUID: null
+                }]
+            },
+            {
+                id: 'read-result-1',
+                localId: null,
+                createdAt: 4,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'read-1',
+                    content: {
+                        file: {
+                            filePath: 'web/src/hooks/useSSE.ts',
+                            content: 'export function useSSE() {}'
+                        }
+                    },
+                    is_error: false,
+                    uuid: 'read-result-1',
+                    parentUUID: null
+                }]
+            },
+            {
+                id: 'grep-call-2',
+                localId: null,
+                createdAt: 5,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'grep-2',
+                    name: 'Bash',
+                    input: {
+                        command: 'grep -n "broadcast" server/src/sse/sseManager.ts | head -20'
+                    },
+                    description: null,
+                    uuid: 'grep-call-2',
+                    parentUUID: null
+                }]
+            },
+            {
+                id: 'grep-result-2',
+                localId: null,
+                createdAt: 6,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'grep-2',
+                    content: {
+                        stdout: '88: broadcast(message)'
+                    },
+                    is_error: false,
+                    uuid: 'grep-result-2',
+                    parentUUID: null
+                }]
+            },
+            {
+                id: 'read-call-2',
+                localId: null,
+                createdAt: 7,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'read-2',
+                    name: 'Read',
+                    input: { file_path: 'server/src/sse/sseManager.ts' },
+                    description: null,
+                    uuid: 'read-call-2',
+                    parentUUID: null
+                }]
+            },
+            {
+                id: 'read-result-2',
+                localId: null,
+                createdAt: 8,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'read-2',
+                    content: {
+                        file: {
+                            filePath: 'server/src/sse/sseManager.ts',
+                            content: 'export class SSEManager {}'
+                        }
+                    },
+                    is_error: false,
+                    uuid: 'read-result-2',
+                    parentUUID: null
+                }]
+            }
+        ] satisfies NormalizedMessage[], null)
+
+        expect(reduced.blocks).toHaveLength(1)
+        const block = reduced.blocks[0]
+        expect(block?.kind).toBe('tool-call')
+        if (!block || block.kind !== 'tool-call') {
+            throw new Error('Expected ReadBatch block')
+        }
+
+        expect(block.tool.name).toBe('ReadBatch')
+        expect(block.children).toHaveLength(4)
+        expect(block.children.map((child) => child.kind === 'tool-call' ? child.tool.name : null)).toEqual(['Grep', 'Read', 'Bash', 'Read'])
+        expect(block.tool.input).toEqual({
+            count: 4,
+            files: [
+                'web/src/hooks/useSSE.ts',
+                'web/src/hooks/useSSE.ts',
+                'server/src/sse/sseManager.ts',
+                'server/src/sse/sseManager.ts'
+            ]
+        })
+    })
+
     test('uses the command file path when Codex parsed_cmd reports a sed line range as the read name', () => {
         const reduced = reduceChatBlocks([
             {

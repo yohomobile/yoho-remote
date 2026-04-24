@@ -366,10 +366,14 @@ export function App() {
 
     const handleSseEvent = useCallback((event: SyncEvent) => {
         if (event.type === 'online-users-changed') {
+            // Only touch the online-users cache. session list viewers can be
+            // derived from this cache (see useSessionViewers), so we do NOT
+            // invalidate sessions here — doing so would cause a refetch storm
+            // whenever a client reconnects, because every subscribe/unsubscribe
+            // triggers broadcastOnlineUsers for the whole org.
             if (event.orgId) {
                 queryClient.setQueryData(queryKeys.onlineUsers(event.orgId), { users: event.users })
             }
-            void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
             return
         }
 

@@ -523,6 +523,7 @@ export class PostgresStore implements IStore {
                 updated_at BIGINT DEFAULT FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)
             );
             ALTER TABLE ai_profiles ADD COLUMN IF NOT EXISTS org_id TEXT;
+            ALTER TABLE ai_profiles ADD COLUMN IF NOT EXISTS behavior_anchors JSONB NOT NULL DEFAULT '[]'::jsonb;
             CREATE INDEX IF NOT EXISTS idx_ai_profiles_namespace ON ai_profiles(namespace);
             CREATE INDEX IF NOT EXISTS idx_ai_profiles_org_id ON ai_profiles(org_id);
             CREATE INDEX IF NOT EXISTS idx_ai_profiles_role ON ai_profiles(role);
@@ -3107,6 +3108,7 @@ export class PostgresStore implements IStore {
         name: string
         role: AIProfileRole
         specialties?: string[]
+        behaviorAnchors?: string[]
         personality?: string | null
         greetingTemplate?: string | null
         preferredProjects?: string[]
@@ -3119,9 +3121,9 @@ export class PostgresStore implements IStore {
 
         await this.pool.query(`
             INSERT INTO ai_profiles (
-                id, namespace, org_id, name, role, specialties, personality, greeting_template,
+                id, namespace, org_id, name, role, specialties, behavior_anchors, personality, greeting_template,
                 preferred_projects, work_style, avatar_emoji, status, stats_json, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         `, [
             id,
             data.namespace,
@@ -3129,6 +3131,7 @@ export class PostgresStore implements IStore {
             data.name,
             data.role,
             JSON.stringify(data.specialties ?? []),
+            JSON.stringify(data.behaviorAnchors ?? []),
             data.personality ?? null,
             data.greetingTemplate ?? null,
             JSON.stringify(data.preferredProjects ?? []),
@@ -3147,6 +3150,7 @@ export class PostgresStore implements IStore {
         name?: string
         role?: AIProfileRole
         specialties?: string[]
+        behaviorAnchors?: string[]
         personality?: string | null
         greetingTemplate?: string | null
         preferredProjects?: string[]
@@ -3168,6 +3172,10 @@ export class PostgresStore implements IStore {
         if (data.specialties !== undefined) {
             fields.push(`specialties = $${paramIndex++}`)
             values.push(JSON.stringify(data.specialties))
+        }
+        if (data.behaviorAnchors !== undefined) {
+            fields.push(`behavior_anchors = $${paramIndex++}`)
+            values.push(JSON.stringify(data.behaviorAnchors))
         }
         if (data.personality !== undefined) {
             fields.push(`personality = $${paramIndex++}`)
@@ -4724,6 +4732,7 @@ export class PostgresStore implements IStore {
             name: row.name,
             role: row.role as AIProfileRole,
             specialties: Array.isArray(row.specialties) ? row.specialties : [],
+            behaviorAnchors: Array.isArray(row.behavior_anchors) ? row.behavior_anchors : [],
             personality: row.personality,
             greetingTemplate: row.greeting_template,
             preferredProjects: Array.isArray(row.preferred_projects) ? row.preferred_projects : [],

@@ -21,9 +21,15 @@ export class SSEManager {
     private readonly connections: Map<string, SSEConnection> = new Map()
     private heartbeatTimer: NodeJS.Timeout | null = null
     private readonly heartbeatMs: number
+    // Debounce online-users broadcasts per org. Reconnect storms (server restart,
+    // Wi-Fi flap, PWA resume) would otherwise fan out N subscribe/unsubscribe
+    // events into N broadcasts to every connection in the org.
+    private readonly onlineUsersBroadcastTimers: Map<string, NodeJS.Timeout> = new Map()
+    private readonly onlineUsersBroadcastDebounceMs: number
 
-    constructor(heartbeatMs = 30_000) {
+    constructor(heartbeatMs = 30_000, onlineUsersBroadcastDebounceMs = 500) {
         this.heartbeatMs = heartbeatMs
+        this.onlineUsersBroadcastDebounceMs = onlineUsersBroadcastDebounceMs
     }
 
     subscribe(options: {
@@ -56,8 +62,8 @@ export class SSEManager {
         this.connections.set(subscription.id, subscription)
         this.ensureHeartbeat()
 
-        // 广播在线用户更新
-        this.broadcastOnlineUsers(options.orgId)
+        // 广播在线用户更新（debounced）
+        this.scheduleOnlineUsersBroadcast(options.orgId)
 
         return {
             id: subscription.id,
@@ -79,9 +85,9 @@ export class SSEManager {
         if (this.connections.size === 0) {
             this.stopHeartbeat()
         }
-        // 广播在线用户更新
+        // 广播在线用户更新（debounced）
         if (orgId) {
-            this.broadcastOnlineUsers(orgId)
+            this.scheduleOnlineUsersBroadcast(orgId)
         }
     }
 
@@ -103,7 +109,30 @@ export class SSEManager {
 
     stop(): void {
         this.stopHeartbeat()
+        for (const timer of this.onlineUsersBroadcastTimers.values()) {
+            clearTimeout(timer)
+        }
+        this.onlineUsersBroadcastTimers.clear()
         this.connections.clear()
+    }
+
+    private scheduleOnlineUsersBroadcast(orgId: string): void {
+        const existing = this.onlineUsersBroadcastTimers.get(orgId)
+        if (existing) {
+            clearTimeout(existing)
+        }
+
+        if (this.onlineUsersBroadcastDebounceMs <= 0) {
+            this.onlineUsersBroadcastTimers.delete(orgId)
+            this.broadcastOnlineUsers(orgId)
+            return
+        }
+
+        const timer = setTimeout(() => {
+            this.onlineUsersBroadcastTimers.delete(orgId)
+            this.broadcastOnlineUsers(orgId)
+        }, this.onlineUsersBroadcastDebounceMs)
+        this.onlineUsersBroadcastTimers.set(orgId, timer)
     }
 
     private ensureHeartbeat(): void {

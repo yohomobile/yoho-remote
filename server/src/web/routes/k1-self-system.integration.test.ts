@@ -84,6 +84,7 @@ describe('K1 self system phase 1 flow', () => {
             const profile = {
                 id: 'profile-k1',
                 namespace: 'default',
+                orgId: 'default',
                 name: 'K1',
                 role: 'architect',
                 specialties: ['TypeScript', '系统编排'],
@@ -104,10 +105,11 @@ describe('K1 self system phase 1 flow', () => {
 
             const store = {
                 getAIProfile: async (id: string) => id === profile.id ? profile : null,
-                getBrainConfig: async () => brainConfig,
-                setBrainConfig: async (namespace: string, config: Record<string, unknown>) => {
+                getBrainConfigByOrg: async () => brainConfig,
+                setBrainConfigByOrg: async (orgId: string, config: Record<string, unknown>) => {
                     brainConfig = {
-                        namespace,
+                        namespace: `org:${orgId}`,
+                        orgId,
                         agent: config.agent,
                         claudeModelMode: config.claudeModelMode ?? 'sonnet',
                         codexModel: config.codexModel ?? 'gpt-5.4',
@@ -137,6 +139,7 @@ describe('K1 self system phase 1 flow', () => {
                         id: 'machine-1',
                         active: true,
                         namespace: 'default',
+                        orgId: 'default',
                         metadata: { homeDir: '/home/dev' },
                         supportedAgents: ['claude', 'codex'],
                     }
@@ -221,7 +224,7 @@ describe('K1 self system phase 1 flow', () => {
             app.route('/api', createSettingsRoutes(store))
             app.route('/api', createSessionsRoutes(() => engine, () => null, store))
 
-            const settingsResponse = await app.request('/api/settings/brain-config', {
+            const settingsResponse = await app.request('/api/settings/brain-config?orgId=default', {
                 method: 'PUT',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({
@@ -240,7 +243,8 @@ describe('K1 self system phase 1 flow', () => {
             expect(await settingsResponse.json()).toEqual({
                 ok: true,
                 config: expect.objectContaining({
-                    namespace: 'default',
+                    namespace: 'org:default',
+                    orgId: 'default',
                     updatedBy: 'operator@example.com',
                     extra: {
                         selfSystem: {
@@ -252,7 +256,7 @@ describe('K1 self system phase 1 flow', () => {
                 }),
             })
 
-            const createResponse = await app.request('/api/brain/sessions', {
+            const createResponse = await app.request('/api/brain/sessions?orgId=default', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({
@@ -289,7 +293,7 @@ describe('K1 self system phase 1 flow', () => {
             expect(sendCalls[0]?.text).toContain('## K1 自我系统')
             expect(sendCalls[0]?.text).toContain('K1 默认先收敛任务边界')
 
-            const listResponse = await app.request('/api/sessions')
+            const listResponse = await app.request('/api/sessions?orgId=default')
             expect(listResponse.status).toBe(200)
             const listPayload = await listResponse.json() as {
                 sessions: Array<{ id: string; metadata: Record<string, unknown> | null }>

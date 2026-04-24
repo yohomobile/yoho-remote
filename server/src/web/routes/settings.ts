@@ -33,12 +33,16 @@ const setRolePromptSchema = z.object({
     prompt: z.string().max(10000)
 })
 
-const aiProfileRoleSchema = z.enum(['developer', 'architect', 'reviewer', 'pm', 'tester', 'devops'])
+const aiProfileRoleSchema = z.enum([
+    'developer', 'architect', 'reviewer', 'pm', 'tester', 'devops',
+    'INTP', 'INTJ', 'ENTP', 'ISTJ', 'ISTP', 'ENFP', 'INFJ',
+])
 
 const createAIProfileSchema = z.object({
     name: z.string().min(1).max(100),
     role: aiProfileRoleSchema,
     specialties: z.array(z.string().min(1).max(100)).max(20).optional(),
+    behaviorAnchors: z.array(z.string().min(1).max(500)).max(10).optional(),
     personality: z.string().max(2000).nullable().optional(),
     greetingTemplate: z.string().max(500).nullable().optional(),
     preferredProjects: z.array(z.string().min(1).max(200)).max(20).optional(),

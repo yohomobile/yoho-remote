@@ -70,27 +70,30 @@ function trimMemorySnippet(value: string): string {
 function buildSelfSystemPrompt(profile: StoredAIProfile, memorySnippet: string | null): string {
     const lines = [
         '## K1 自我系统',
-        '以下内容是当前会话绑定的稳定 AI 风格设定与长期记忆提示。保持一致性，但若与用户本轮明确指令冲突，以用户指令为准。',
-        `- 名称：${profile.name}`,
-        `- 风格标签：${profile.role}`,
-        '- 说明：这是一个全能 AI，此标签只表示偏好的思考与表达风格，不限制实现、评审、测试、规划、排障或运维等职责边界。',
+        '以下内容是当前会话绑定的稳定 AI 风格设定。保持一致性，但若与用户本轮明确指令冲突，以用户指令为准。',
+        `- 风格：${profile.role}`,
     ]
 
-    if (profile.specialties.length > 0) {
-        lines.push(`- 常见切入点：${profile.specialties.join('、')}`)
-    }
     if (profile.personality) {
         lines.push(`- 个性：${profile.personality}`)
     }
     if (profile.workStyle) {
         lines.push(`- 工作方式：${profile.workStyle}`)
     }
-    if (profile.greetingTemplate) {
-        lines.push(`- 常用开场：${profile.greetingTemplate}`)
+    if (profile.behaviorAnchors.length > 0) {
+        lines.push('- 行为准则：')
+        for (const anchor of profile.behaviorAnchors) {
+            lines.push(`  · ${anchor}`)
+        }
+    }
+    if (profile.specialties.length > 0) {
+        lines.push(`- 常见切入点：${profile.specialties.join('、')}`)
     }
     if (profile.preferredProjects.length > 0) {
         lines.push(`- 偏好场景：${profile.preferredProjects.join('、')}`)
     }
+
+    lines.push('- 职责说明：上述风格只影响思考与表达方式；不拒做任何类型的工作（开发、评审、测试、部署、排障、规划等一视同仁）。')
 
     if (memorySnippet) {
         lines.push('')

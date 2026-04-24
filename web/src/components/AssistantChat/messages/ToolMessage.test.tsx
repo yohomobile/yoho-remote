@@ -220,6 +220,106 @@ describe('ReadBatch card rendering', () => {
         expect(html).not.toContain('File content is not available')
     })
 
+    test('detail view recovers file names from Grep and bash grep children', () => {
+        const block: ToolCallBlock = {
+            kind: 'tool-call',
+            id: 'read-batch:grep-detail',
+            localId: null,
+            createdAt: 1,
+            seq: null,
+            tool: {
+                id: 'read-batch-tool:grep-detail',
+                name: 'ReadBatch',
+                state: 'completed',
+                input: {
+                    count: 2,
+                    files: ['command-1', 'command-2'],
+                },
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                parentUUID: null,
+            },
+            children: [
+                {
+                    kind: 'tool-call',
+                    id: 'grep-tool',
+                    localId: null,
+                    createdAt: 1,
+                    seq: null,
+                    tool: {
+                        id: 'grep-tool',
+                        name: 'Grep',
+                        state: 'completed',
+                        input: {
+                            pattern: 'message-added',
+                            path: '/home/workspaces/repos/yoho-remote/web/src/hooks/useSSE.ts',
+                            output_mode: 'content',
+                        },
+                        result: {
+                            stdout: '120: message-added',
+                        },
+                        createdAt: 1,
+                        startedAt: 1,
+                        completedAt: 2,
+                        description: null,
+                        parentUUID: null,
+                    },
+                    children: [],
+                },
+                {
+                    kind: 'tool-call',
+                    id: 'bash-grep-tool',
+                    localId: null,
+                    createdAt: 1,
+                    seq: null,
+                    tool: {
+                        id: 'bash-grep-tool',
+                        name: 'Bash',
+                        state: 'completed',
+                        input: {
+                            command: 'grep -n "broadcast" /home/workspaces/repos/yoho-remote/server/src/sse/sseManager.ts | head -20',
+                        },
+                        result: {
+                            stdout: '88: broadcast(message)',
+                        },
+                        createdAt: 1,
+                        startedAt: 1,
+                        completedAt: 2,
+                        description: null,
+                        parentUUID: null,
+                    },
+                    children: [],
+                },
+            ],
+            meta: undefined,
+        }
+
+        const cardHtml = renderToStaticMarkup(
+            <ToolCard
+                api={{} as never}
+                sessionId="session-1"
+                metadata={null}
+                disabled={false}
+                onDone={() => undefined}
+                block={block}
+            />
+        )
+        const html = renderToStaticMarkup(
+            <ReadBatchView block={block} metadata={null} />
+        )
+
+        expect(cardHtml).toContain('useSSE.ts')
+        expect(cardHtml).toContain('sseManager.ts')
+        expect(html).toContain('useSSE.ts')
+        expect(html).toContain('sseManager.ts')
+        expect(html).toContain('message-added')
+        expect(html).toContain('broadcast(message)')
+        expect(html).not.toContain('Read command 1')
+        expect(html).not.toContain('Read command 2')
+    })
+
     test('renders nested brain-child-callback events with the rich callback card', () => {
         const event: Extract<AgentEvent, { type: 'brain-child-callback' }> = {
             type: 'brain-child-callback',
