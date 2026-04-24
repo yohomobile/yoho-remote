@@ -28,13 +28,18 @@ export function requireRequestedOrgId(
 ): string | Response {
     const queryName = options?.queryName ?? 'orgId'
     const orgId = c.req.query(queryName)?.trim()
-    if (!orgId) {
-        return c.json({ error: 'orgId is required' }, 400)
+    if (orgId) {
+        if (!hasOrgAccess(c, orgId)) {
+            return c.json({ error: 'Organization access denied' }, 403)
+        }
+        return orgId
     }
-    if (!hasOrgAccess(c, orgId)) {
-        return c.json({ error: 'Organization access denied' }, 403)
+    // Auto-infer from the user's sole org so callers don't need to pass ?orgId=
+    const userOrgs = c.get('orgs') ?? []
+    if (userOrgs.length === 1) {
+        return userOrgs[0].id
     }
-    return orgId
+    return c.json({ error: 'orgId is required' }, 400)
 }
 
 export function requireSyncEngine(

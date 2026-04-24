@@ -6,6 +6,7 @@ import type { SSEManager } from '../../sse/sseManager'
 import type { WebAppEnv } from '../middleware/auth'
 import { resolvePersonalWorktreeSpawnOptions } from '../personalWorktree'
 import { buildInitPrompt } from '../prompts/initPrompt'
+import { resolveSessionSelfSystemContext, appendSelfSystemPrompt } from '../../brain/selfSystem'
 import { getLocalTokenSourceEnabledForOrg, resolveTokenSourceForAgent } from '../tokenSources'
 import { requireMachine, requireMachineInOrg, requireRequestedOrgId } from './guards'
 import { isMachineBlocked } from './blocklist'
@@ -39,7 +40,16 @@ const pathsExistsSchema = z.object({
     paths: z.array(z.string().min(1)).max(1000)
 })
 
-async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserRole, userName?: string | null, machineId?: string): Promise<void> {
+async function sendInitPrompt(
+    engine: SyncEngine,
+    store: IStore,
+    sessionId: string,
+    role: UserRole,
+    userName?: string | null,
+    userEmail?: string | null,
+    orgId?: string | null,
+    machineId?: string,
+): Promise<void> {
     try {
         const session = engine.getSession(sessionId)
         const worktree = session?.metadata?.worktree
@@ -48,7 +58,20 @@ async function sendInitPrompt(engine: SyncEngine, sessionId: string, role: UserR
             || null
 
         console.log(`[machines/sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}`)
-        const prompt = await buildInitPrompt(role, { projectRoot, userName, worktree })
+        let prompt = await buildInitPrompt(role, { projectRoot, userName, worktree })
+
+        if (session) {
+            const selfSystem = await resolveSessionSelfSystemContext({
+                store,
+                orgId: orgId ?? null,
+                userEmail: userEmail ?? null,
+            })
+            prompt = appendSelfSystemPrompt(prompt, selfSystem.prompt)
+            if (typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
+                await engine.patchSessionMetadata(sessionId, selfSystem.metadataPatch)
+            }
+        }
+
         if (!prompt.trim()) {
             console.warn(`[machines/sendInitPrompt] Empty prompt for session ${sessionId}, skipping`)
             return
@@ -268,7 +291,7 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
                 if (identityPatch && typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
                     await engine.patchSessionMetadata(result.sessionId, identityPatch)
                 }
-                await sendInitPrompt(engine, result.sessionId, role, userName, machineId)
+                await sendInitPrompt(engine, store, result.sessionId, role, userName, email, requestedOrgId, machineId)
             })().catch((err: unknown) => {
                 console.error(`[machines/spawn] Post-spawn setup failed for session ${result.sessionId}:`, err)
             })

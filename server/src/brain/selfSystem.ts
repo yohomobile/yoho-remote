@@ -305,6 +305,13 @@ async function resolveEffectiveSelfSystemConfig(
         return orgConfig ? extractSelfSystemConfig(orgConfig.extra) : DEFAULT_SELF_SYSTEM_CONFIG
     }
 
+    // 当 session 没有 orgId 时，fallback 到平台默认 org 的配置
+    const fallbackOrgId = cleanOptionalString(process.env.YR_DEFAULT_SELF_ORG_ID)
+    if (fallbackOrgId && typeof storeWithOrgConfig.getBrainConfigByOrg === 'function') {
+        const orgConfig = await storeWithOrgConfig.getBrainConfigByOrg(fallbackOrgId)
+        return orgConfig ? extractSelfSystemConfig(orgConfig.extra) : DEFAULT_SELF_SYSTEM_CONFIG
+    }
+
     return DEFAULT_SELF_SYSTEM_CONFIG
 }
 
