@@ -453,7 +453,7 @@ export function useWebPushSubscription(apiClient: ApiClient | null, orgId: strin
                 return false
             }
 
-            const result = await apiClient.subscribePush({
+            const result = await apiClient.subscribePush(orgId, {
                 endpoint: subscription.endpoint,
                 keys: {
                     p256dh: arrayBufferToBase64(p256dh),
@@ -484,7 +484,7 @@ export function useWebPushSubscription(apiClient: ApiClient | null, orgId: strin
         } finally {
             setIsSubscribing(false)
         }
-    }, [apiClient])
+    }, [apiClient, orgId])
 
     const unsubscribe = useCallback(async (): Promise<boolean> => {
         if (!apiClient) return false
@@ -500,8 +500,10 @@ export function useWebPushSubscription(apiClient: ApiClient | null, orgId: strin
                 // Unsubscribe locally
                 await subscription.unsubscribe()
 
-                // Notify server
-                await apiClient.unsubscribePush(subscription.endpoint)
+                // Notify server (best-effort — skip if we don't have an orgId)
+                if (orgId) {
+                    await apiClient.unsubscribePush(orgId, subscription.endpoint)
+                }
             }
 
             setStoredPushEndpoint(null)
@@ -512,7 +514,7 @@ export function useWebPushSubscription(apiClient: ApiClient | null, orgId: strin
             console.error('[webpush] unsubscribe failed:', error)
             return false
         }
-    }, [apiClient])
+    }, [apiClient, orgId])
 
     return {
         state,

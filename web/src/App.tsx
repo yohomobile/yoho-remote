@@ -89,7 +89,7 @@ export function App() {
     }, [])
 
     // Subscribe to Web Push notifications when authenticated
-    useWebPushSubscription(api)
+    useWebPushSubscription(api, currentOrgId)
     const goBack = useAppGoBack()
     const navigate = useNavigate()
     const pathname = useLocation({ select: (location) => location.pathname })

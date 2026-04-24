@@ -1183,7 +1183,7 @@ export default function SettingsPage() {
     } = useNotificationPermission()
 
     // Web Push subscription
-    const { subscribe: subscribePush, unsubscribe: unsubscribePush } = useWebPushSubscription(api)
+    const { subscribe: subscribePush, unsubscribe: unsubscribePush } = useWebPushSubscription(api, currentOrgId)
 
     // User Preferences (Privacy Settings)
     const { data: userPreferences, isLoading: preferencesLoading } = useQuery({
