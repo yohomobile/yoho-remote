@@ -222,7 +222,7 @@ async function startWorker(
             PG_BOSS_SCHEMA: config.pg.bossSchema,
             DEEPSEEK_API_KEY: config.deepseekApiKey,
             DEEPSEEK_BASE_URL: deepseekBaseUrl,
-            DEEPSEEK_MODEL: 'deepseek-chat',
+            DEEPSEEK_MODEL: 'deepseek-v4-flash',
             DEEPSEEK_TIMEOUT_MS: String(config.deepseekTimeoutMs),
             WORKER_CONCURRENCY: String(config.workerConcurrency),
         },
@@ -369,7 +369,7 @@ async function main(): Promise<void> {
         const entities = Array.isArray(summaryMetadata.entities) ? summaryMetadata.entities : []
 
         console.log('[smoke] success')
-        console.log(`[smoke] mode=${config.deepseekMode} model=deepseek-chat`)
+        console.log(`[smoke] mode=${config.deepseekMode} model=deepseek-v4-flash`)
         console.log(`[smoke] sessionId=${config.sessionId} namespace=${config.namespace} schema=${config.pg.bossSchema}`)
         console.log(`[smoke] run.status=${verification.run.status}`)
         console.log(`[smoke] run.tokens=${verification.run.tokensIn ?? 'null'}/${verification.run.tokensOut ?? 'null'}`)

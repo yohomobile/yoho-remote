@@ -64,7 +64,7 @@ const envSchema = z.object({
     WORKER_HEALTH_PORT: z.string().optional(),
     DEEPSEEK_API_KEY: z.string().min(1, 'DEEPSEEK_API_KEY is required'),
     DEEPSEEK_BASE_URL: z.string().default('https://api.deepseek.com'),
-    DEEPSEEK_MODEL: z.literal('deepseek-chat').default('deepseek-chat'),
+    DEEPSEEK_MODEL: z.literal('deepseek-v4-flash').default('deepseek-v4-flash'),
     DEEPSEEK_TIMEOUT_MS: z.string().optional(),
     WORKER_CONCURRENCY: z.string().optional(),
     SUMMARIZATION_RUN_RETENTION_DAYS: z.string().optional(),
