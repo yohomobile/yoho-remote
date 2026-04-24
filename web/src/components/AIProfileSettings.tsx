@@ -262,9 +262,6 @@ function ProfileCard({
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                         <span className="text-sm font-medium truncate">{profile.name}</span>
-                        <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${STATUS_COLORS[profile.status]}`}>
-                            {STATUS_LABELS[profile.status]}
-                        </span>
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
                         <span className="text-xs text-[var(--app-hint)]">{ROLE_LABELS[profile.role]}</span>
