@@ -396,6 +396,19 @@ export function SessionChat(props: {
         return normalizedMessagesAll.filter((m) => actorFilter.matches(m.meta))
     }, [normalizedMessagesAll, actorFilter])
 
+    useEffect(() => {
+        actorFilter.clear()
+    }, [props.session.id, actorFilter.clear])
+
+    useEffect(() => {
+        const selected = actorFilter.selectedIdentityId
+        if (!selected) return
+        const stillPresent = participantsFromMessages.some(
+            (a) => a.identityId === selected
+        )
+        if (!stillPresent) actorFilter.clear()
+    }, [participantsFromMessages, actorFilter.selectedIdentityId, actorFilter.clear])
+
     const reduced = useMemo(
         () => reduceChatBlocks(normalizedMessages, props.session.agentState),
         [normalizedMessages, props.session.agentState]
@@ -1080,7 +1093,15 @@ export function SessionChat(props: {
 
                 {participantsFromMessages.length >= 2 ? (
                     <div className="px-3 pt-2">
-                        <div className="mx-auto flex w-full max-w-content items-center justify-end">
+                        <div className="mx-auto flex w-full max-w-content items-center justify-end gap-2">
+                            {actorFilter.selectedIdentityId ? (
+                                <span
+                                    className="text-xs text-amber-700"
+                                    data-testid="actor-filter-active-hint"
+                                >
+                                    筛选已启用，发送已禁用
+                                </span>
+                            ) : null}
                             <ActorFilterDropdown
                                 actors={participantsFromMessages}
                                 selectedIdentityId={actorFilter.selectedIdentityId}
@@ -1117,7 +1138,8 @@ export function SessionChat(props: {
                                     props.isSending ||
                                     isResuming ||
                                     controlsDisabled ||
-                                    automationReadOnly
+                                    automationReadOnly ||
+                                    actorFilter.selectedIdentityId !== null
                                 }
                                 modelMode={resolvedModelMode}
                                 modelReasoningEffort={resolvedReasoningEffort}

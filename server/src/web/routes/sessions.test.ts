@@ -1781,6 +1781,7 @@ describe('createSessionsRoutes', () => {
                     greetingTemplate: '先把问题拆开。',
                     preferredProjects: ['yoho-remote'],
                     workStyle: '先澄清再执行',
+                    behaviorAnchors: [],
                     avatarEmoji: '🤖',
                     status: 'idle',
                     stats: {
