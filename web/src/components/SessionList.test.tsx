@@ -125,6 +125,127 @@ describe('SessionList', () => {
         expect(html).toContain('Self: K1 + memory')
     })
 
+    test('hides automation sessions (worker-ai-task, orchestrator-child) from owner=mine list', () => {
+        const html = renderToStaticMarkup(
+            <SessionList
+                sessions={[
+                    createSession({
+                        id: 'session-mine-codex',
+                        metadata: {
+                            path: '/tmp/mine-codex',
+                            source: 'codex',
+                        },
+                    }),
+                    createSession({
+                        id: 'session-worker-ai-task',
+                        metadata: {
+                            path: '/tmp/worker-ai-task',
+                            source: 'worker-ai-task',
+                            scheduleId: 'sched-1',
+                        },
+                    }),
+                    createSession({
+                        id: 'session-orchestrator-child',
+                        metadata: {
+                            path: '/tmp/orchestrator-child',
+                            source: 'orchestrator-child',
+                            scheduleId: 'sched-2',
+                            mainSessionId: 'parent-session',
+                        },
+                    }),
+                ]}
+                projects={[] as Project[]}
+                currentUserEmail={null}
+                archiveFilter="active"
+                ownerFilter="mine"
+                onArchiveFilterChange={() => {}}
+                onOwnerFilterChange={() => {}}
+                onSelect={() => {}}
+                onNewSession={() => {}}
+                onRefresh={() => {}}
+                isLoading={false}
+                machines={[] as Machine[]}
+                renderHeader={false}
+            />
+        )
+
+        expect(html).toContain('mine-codex')
+        expect(html).not.toContain('worker-ai-task')
+        expect(html).not.toContain('orchestrator-child')
+    })
+
+    test('shows automation sessions (worker-ai-task, orchestrator-child) under owner=automation', () => {
+        const html = renderToStaticMarkup(
+            <SessionList
+                sessions={[
+                    createSession({
+                        id: 'session-worker-ai-task',
+                        metadata: {
+                            path: '/tmp/worker-ai-task',
+                            source: 'worker-ai-task',
+                            scheduleId: 'sched-1',
+                        },
+                    }),
+                    createSession({
+                        id: 'session-orchestrator-child',
+                        metadata: {
+                            path: '/tmp/orchestrator-child',
+                            source: 'orchestrator-child',
+                            scheduleId: 'sched-2',
+                            mainSessionId: 'parent-session',
+                        },
+                    }),
+                ]}
+                projects={[] as Project[]}
+                currentUserEmail={null}
+                archiveFilter="active"
+                ownerFilter="automation"
+                onArchiveFilterChange={() => {}}
+                onOwnerFilterChange={() => {}}
+                onSelect={() => {}}
+                onNewSession={() => {}}
+                onRefresh={() => {}}
+                isLoading={false}
+                machines={[] as Machine[]}
+                renderHeader={false}
+            />
+        )
+
+        expect(html).toContain('worker-ai-task')
+        expect(html).toContain('orchestrator-child')
+    })
+
+    test('keeps orchestrator-child sessions without scheduleId in owner=mine list', () => {
+        const html = renderToStaticMarkup(
+            <SessionList
+                sessions={[
+                    createSession({
+                        id: 'session-orchestrator-child-no-schedule',
+                        metadata: {
+                            path: '/tmp/orchestrator-child-no-schedule',
+                            source: 'orchestrator-child',
+                            mainSessionId: 'parent-session',
+                        },
+                    }),
+                ]}
+                projects={[] as Project[]}
+                currentUserEmail={null}
+                archiveFilter="active"
+                ownerFilter="mine"
+                onArchiveFilterChange={() => {}}
+                onOwnerFilterChange={() => {}}
+                onSelect={() => {}}
+                onNewSession={() => {}}
+                onRefresh={() => {}}
+                isLoading={false}
+                machines={[] as Machine[]}
+                renderHeader={false}
+            />
+        )
+
+        expect(html).toContain('orchestrator-child-no-schedule')
+    })
+
     test('renders orchestrator sessions through the regular session list', () => {
         const html = renderToStaticMarkup(
             <SessionList

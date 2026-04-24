@@ -26,7 +26,10 @@ import {
     type OwnerFilter,
 } from '@/lib/session-filters'
 import { isLicenseTermination, getLicenseTerminationLabel } from '@/lib/license'
-import { getSessionOrchestrationLabels } from '@/lib/sessionOrchestration'
+import {
+    getSessionOrchestrationLabels,
+    isAutomationSessionMetadata,
+} from '@/lib/sessionOrchestration'
 
 const EXPANDED_BRAIN_SESSION_IDS_STORAGE_KEY = 'yr:expandedBrainSessionIds'
 
@@ -69,8 +72,9 @@ function filterSessions(
         const isBrainSession =
             session.metadata?.source === 'brain' ||
             session.metadata?.source === 'brain-child'
-        const isAutomationSession =
-            session.metadata?.source === 'worker-ai-task'
+        const isAutomationSession = isAutomationSessionMetadata(
+            session.metadata
+        )
         if (ownerFilter === 'mine') {
             if (session.ownerEmail) return false
             if (isBrainSession) return false
@@ -190,7 +194,7 @@ function getSourceTag(
     if (source === 'external-api') {
         return { label: '🔌 API', color: 'bg-blue-500/15 text-blue-600' }
     }
-    if (source === 'worker-ai-task') {
+    if (source === 'worker-ai-task' || source === 'orchestrator-child') {
         return { label: '🤖 Automation', color: 'bg-purple-500/15 text-purple-600' }
     }
     if (
@@ -663,8 +667,8 @@ export function SessionList(props: {
     )
     const hasAutomationSessions = useMemo(
         () =>
-            props.sessions.some(
-                (s) => s.metadata?.source === 'worker-ai-task'
+            props.sessions.some((s) =>
+                isAutomationSessionMetadata(s.metadata)
             ),
         [props.sessions]
     )

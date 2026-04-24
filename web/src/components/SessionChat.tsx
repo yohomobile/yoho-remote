@@ -46,6 +46,7 @@ import {
 import {
     getSessionOrchestrationInactiveQueueCopy,
     getSessionOrchestrationReadyPhaseCopy,
+    isAutomationSessionMetadata,
 } from '@/lib/sessionOrchestration'
 import {
     clearBrainSessionReadyMarker,
@@ -235,8 +236,9 @@ export function SessionChat(props: {
     const controlsDisabled =
         connectionState !== 'active' && !canQueueWhileInactive
     const showComposer = shouldShowSessionComposer(props.session)
-    const isAutomationSession =
-        props.session.metadata?.source === 'worker-ai-task'
+    const isAutomationSession = isAutomationSessionMetadata(
+        props.session.metadata
+    )
     const automationReadOnly =
         isAutomationSession && !props.session.metadata?.takeoverBy
     const brainChildActionState = useMemo(

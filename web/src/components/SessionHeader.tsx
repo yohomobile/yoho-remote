@@ -15,7 +15,10 @@ import { useAppContext } from '@/lib/app-context'
 import { getMachineTitle, getMobileSessionAgentSummary } from '@/lib/machines'
 import { queryKeys } from '@/lib/query-keys'
 import { formatSessionModelLabel } from '@/lib/sessionModelLabel'
-import { getSessionOrchestrationPresentation } from '@/lib/sessionOrchestration'
+import {
+    getSessionOrchestrationPresentation,
+    isAutomationSessionMetadata,
+} from '@/lib/sessionOrchestration'
 import { matchSessionToProject } from '@/lib/projectMatching'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { isFlutterApp } from '@/hooks/useFlutterApp'
@@ -445,7 +448,7 @@ export function SessionHeader(props: {
         return null
     }
 
-    const isAutomationSession = props.session.metadata?.source === 'worker-ai-task'
+    const isAutomationSession = isAutomationSessionMetadata(props.session.metadata)
     const takeoverBy = props.session.metadata?.takeoverBy
     const automationSystemPrompt = props.session.metadata?.automationSystemPrompt
     const scheduleLabel = props.session.metadata?.label

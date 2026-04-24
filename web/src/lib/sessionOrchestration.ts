@@ -79,6 +79,56 @@ export function isSessionOrchestrationChildSource(
     return Boolean(profile && profile.childSource === normalizeSource(source))
 }
 
+// Sources whose mere presence marks the session as automation.
+const AUTOMATION_EXACT_SOURCES: ReadonlySet<string> = new Set([
+    'worker-ai-task',
+])
+
+const AUTOMATION_SOURCE_PREFIXES: readonly string[] = [
+    'automation:',
+    'bot:',
+    'script:',
+]
+
+// orchestrator-child is a generic orchestration marker — only treat it as
+// automation when accompanied by a scheduleId so non-schedule orchestrations
+// (potential future use) keep their regular session UX.
+const SCHEDULE_GATED_AUTOMATION_SOURCES: ReadonlySet<string> = new Set([
+    'orchestrator-child',
+])
+
+type AutomationCheckMetadata = {
+    source?: string
+    scheduleId?: string
+}
+
+function hasScheduleId(metadata: AutomationCheckMetadata): boolean {
+    const value = metadata.scheduleId
+    return typeof value === 'string' && value.trim().length > 0
+}
+
+export function isAutomationSessionMetadata(
+    metadata: AutomationCheckMetadata | null | undefined
+): boolean {
+    if (!metadata) {
+        return false
+    }
+    const source = normalizeSource(metadata.source)
+    if (!source) {
+        return false
+    }
+    if (AUTOMATION_EXACT_SOURCES.has(source)) {
+        return true
+    }
+    if (AUTOMATION_SOURCE_PREFIXES.some((prefix) => source.startsWith(prefix))) {
+        return true
+    }
+    if (SCHEDULE_GATED_AUTOMATION_SOURCES.has(source)) {
+        return hasScheduleId(metadata)
+    }
+    return false
+}
+
 export function getSessionOrchestrationChildSourceForParentSource(
     source: string | null | undefined
 ): string | undefined {

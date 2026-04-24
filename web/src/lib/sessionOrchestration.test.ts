@@ -5,6 +5,7 @@ import {
     getSessionOrchestrationParentSessionId,
     getSessionOrchestrationPresentation,
     getSessionOrchestrationReadyPhaseCopy,
+    isAutomationSessionMetadata,
     isSessionOrchestrationChildSource,
     isSessionOrchestrationParentSource,
 } from './sessionOrchestration'
@@ -63,6 +64,46 @@ describe('sessionOrchestration', () => {
 
         expect(getSessionOrchestrationPresentation('orchestrator')).toBeNull()
         expect(getSessionOrchestrationPresentation('orchestrator-child')).toBeNull()
+    })
+
+    test('classifies automation sessions across legacy, orchestrator, and prefix variants', () => {
+        const meta = (
+            source: string,
+            extra: { scheduleId?: string } = {}
+        ): Parameters<typeof isAutomationSessionMetadata>[0] => ({
+            source,
+            ...extra,
+        })
+
+        expect(isAutomationSessionMetadata(meta('worker-ai-task'))).toBe(true)
+        expect(isAutomationSessionMetadata(meta('automation:cron'))).toBe(true)
+        expect(isAutomationSessionMetadata(meta('bot:slack'))).toBe(true)
+        expect(isAutomationSessionMetadata(meta('script:cleanup'))).toBe(true)
+
+        // orchestrator-child only counts as automation when accompanied by scheduleId.
+        expect(
+            isAutomationSessionMetadata(
+                meta('orchestrator-child', { scheduleId: 'sched-1' })
+            )
+        ).toBe(true)
+        expect(isAutomationSessionMetadata(meta('orchestrator-child'))).toBe(false)
+        expect(
+            isAutomationSessionMetadata(
+                meta('orchestrator-child', { scheduleId: '' })
+            )
+        ).toBe(false)
+        expect(
+            isAutomationSessionMetadata(
+                meta('orchestrator-child', { scheduleId: '   ' })
+            )
+        ).toBe(false)
+
+        expect(isAutomationSessionMetadata(meta('orchestrator'))).toBe(false)
+        expect(isAutomationSessionMetadata(meta('brain'))).toBe(false)
+        expect(isAutomationSessionMetadata(meta('brain-child'))).toBe(false)
+        expect(isAutomationSessionMetadata(meta('webapp'))).toBe(false)
+        expect(isAutomationSessionMetadata(undefined)).toBe(false)
+        expect(isAutomationSessionMetadata(null)).toBe(false)
     })
 
     test('returns queue and ready copy only for Brain UI', () => {
