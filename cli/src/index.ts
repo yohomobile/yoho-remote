@@ -32,6 +32,15 @@ import { runYohoRemoteMcpStdioBridge } from './codex/yohoRemoteMcpStdioBridge'
 import { withBunRuntimeEnv } from './utils/bunRuntime'
 import { getCliArgs } from './utils/cliArgs'
 
+function shouldEnsureRuntimeAssets(args: string[]): boolean {
+  const [subcommand, daemonSubcommand] = args
+
+  if (subcommand === 'daemon' && (daemonSubcommand === 'install' || daemonSubcommand === 'uninstall')) {
+    return false
+  }
+
+  return true
+}
 
 (async () => {
   const args = getCliArgs()
@@ -72,7 +81,9 @@ import { getCliArgs } from './utils/cliArgs'
     return
   }
 
-  await ensureRuntimeAssets()
+  if (shouldEnsureRuntimeAssets(args)) {
+    await ensureRuntimeAssets()
+  }
 
   logger.debug('Starting YR CLI with args: ', process.argv)
 

@@ -246,16 +246,40 @@ maybe_self_detach() {
     # process to locate the user manager's D-Bus socket. Export them before exec.
     export XDG_RUNTIME_DIR="$xdg"
     export DBUS_SESSION_BUS_ADDRESS="unix:path=$xdg/bus"
-    # The child bash also needs them; pass via --setenv so systemd's env-sanitiser keeps them.
-    # Also forward PATH so bun / node / etc. are reachable in the clean scope environment.
+
+    # Build --setenv list. systemd-run sanitises the scope environment, so we must
+    # re-inject everything the child deploy.sh needs:
+    #   • Fixed vars the child always needs
+    #   • YOHO_/YR_/CLI_/ANTHROPIC_/OPENAI_ prefixes (daemon env passthrough group)
+    #   • NCU_SUDO_PASS for sudo calls inside deploy.sh
+    local setenv_args=(
+        "--setenv=YR_DEPLOY_DETACHED=1"
+        "--setenv=XDG_RUNTIME_DIR=$xdg"
+        "--setenv=DBUS_SESSION_BUS_ADDRESS=unix:path=$xdg/bus"
+        "--setenv=PATH=$PATH"
+        "--setenv=HOME=$HOME"
+    )
+    local passthrough_prefixes=(YOHO_ YR_ CLI_ ANTHROPIC_ OPENAI_ GEMINI_ GOOGLE_ OPENROUTER_)
+    local passthrough_keys=(NCU_SUDO_PASS HTTPS_PROXY HTTP_PROXY NO_PROXY)
+    while IFS='=' read -r key _; do
+        [[ -z "$key" ]] && continue
+        local forward=false
+        for pfx in "${passthrough_prefixes[@]}"; do
+            [[ "$key" == "${pfx}"* ]] && forward=true && break
+        done
+        for kk in "${passthrough_keys[@]}"; do
+            [[ "$key" == "$kk" ]] && forward=true && break
+        done
+        if $forward; then
+            local val="${!key:-}"
+            [[ -n "$val" ]] && setenv_args+=("--setenv=${key}=${val}")
+        fi
+    done < <(compgen -e)
+
     exec systemd-run --user --pipe --collect --wait \
         --unit="yr-deploy-$$" \
         --working-directory="$(pwd)" \
-        --setenv=YR_DEPLOY_DETACHED=1 \
-        --setenv=XDG_RUNTIME_DIR="$xdg" \
-        --setenv=DBUS_SESSION_BUS_ADDRESS="unix:path=$xdg/bus" \
-        --setenv=PATH="$PATH" \
-        --setenv=HOME="$HOME" \
+        "${setenv_args[@]}" \
         bash "$0" "${orig_args[@]}"
 }
 

@@ -46,7 +46,9 @@ export type SendMessageToSessionResult = z.infer<typeof SendMessageToSessionResp
 
 export class ApiClient {
     static async create(): Promise<ApiClient> {
-        return new ApiClient(getAuthToken())
+        const client = new ApiClient(getAuthToken())
+        void client.orgId
+        return client
     }
 
     private _orgId: string | null = null

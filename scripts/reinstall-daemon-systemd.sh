@@ -57,6 +57,8 @@ load_current_daemon_env() {
 
 load_current_daemon_env
 
+daemon_home="${YOHO_REMOTE_HOME:-$service_home/.yoho-remote}"
+
 if [[ -z "${CLI_API_TOKEN:-}" ]]; then
     echo "[daemon-deploy] Error: CLI_API_TOKEN is missing from the current daemon environment" >&2
     exit 1
@@ -69,6 +71,11 @@ fi
 
 echo "[daemon-deploy] Reinstalling managed daemon unit via: $CLI_BIN daemon install"
 "$CLI_BIN" daemon install
+
+if [[ -d "$daemon_home/runtime" ]]; then
+    echo "[daemon-deploy] Restoring runtime ownership under $daemon_home/runtime to $service_user"
+    chown -R "$service_user:$service_user" "$daemon_home/runtime"
+fi
 
 echo "[daemon-deploy] Restarting $SYSTEMD_SERVICE_NAME to load the deployed binary"
 systemctl restart "$SYSTEMD_SERVICE_NAME"
