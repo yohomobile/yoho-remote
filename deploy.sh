@@ -242,12 +242,17 @@ maybe_self_detach() {
 
     echo ""
     echo "  → Re-executing under isolated systemd unit (unit=yr-deploy-$$) to escape daemon cgroup"
-    # systemd-run does NOT inherit the caller's environment; pass vars explicitly via --setenv.
+    # systemd-run --user needs XDG_RUNTIME_DIR + DBUS_SESSION_BUS_ADDRESS in the CALLING
+    # process to locate the user manager's D-Bus socket. Export them before exec.
+    export XDG_RUNTIME_DIR="$xdg"
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=$xdg/bus"
+    # The child bash also needs them; pass via --setenv so systemd's env-sanitiser keeps them.
     exec systemd-run --user --pipe --collect --wait \
         --unit="yr-deploy-$$" \
         --working-directory="$(pwd)" \
         --setenv=YR_DEPLOY_DETACHED=1 \
         --setenv=XDG_RUNTIME_DIR="$xdg" \
+        --setenv=DBUS_SESSION_BUS_ADDRESS="unix:path=$xdg/bus" \
         bash "$0" "${orig_args[@]}"
 }
 
