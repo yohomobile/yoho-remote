@@ -298,10 +298,6 @@ function ProfileCard({
                             )}
                         </div>
                     )}
-                    <div className="flex items-center gap-3 mt-1.5 text-[10px] text-[var(--app-hint)]">
-                        <span>{profile.stats.tasksCompleted} tasks</span>
-                        <span>{Math.floor(profile.stats.activeMinutes / 60)}h active</span>
-                    </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                     <button
