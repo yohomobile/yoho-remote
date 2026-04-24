@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
+import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join, basename, resolve } from 'node:path'
 import { configuration, getConfiguration } from '../../configuration'
@@ -32,13 +33,27 @@ import { SESSION_PERMISSION_MODE_VALUES, normalizeSessionPermissionMode } from '
 import { getLocalTokenSourceEnabledForOrg, resolveTokenSourceForAgent } from '../tokenSources'
 import { validatePermissionModeForSessionFlavor } from './sessionConfigPolicy'
 import {
-    getBrainChildMainSessionId,
     getSessionMetadataPersistenceError,
     getUnsupportedSessionSourceError,
     getSessionSourceFromMetadata,
     isSupportedSessionSource,
     normalizeSessionMetadataInvariants,
 } from '../../sessionSourcePolicy'
+import {
+    getSessionOrchestrationParentSessionId,
+    getSessionOrchestrationParentSourceForChildSource,
+    isSessionOrchestrationChildForParentMetadata,
+    isSessionOrchestrationChildSource,
+    isSessionOrchestrationParentMetadata,
+    isSessionOrchestrationParentSource,
+} from '../../sessionOrchestrationPolicy'
+import {
+    aiTaskScheduleCancelSchema,
+    aiTaskScheduleCreateSchema,
+    aiTaskScheduleListSchema,
+    parseCronOrDelay,
+    serializeAiTaskScheduleRow,
+} from './aiTaskScheduleShared'
 
 /** Derive a PascalCase project name from an absolute path's basename. e.g. "yoho-remote" → "YohoRemote" */
 function toPascalCase(path: string): string {
@@ -136,11 +151,11 @@ const brainSpawnSchema = z.object({
     caller: z.string().min(1).optional(),
     brainPreferences: z.record(z.string(), z.unknown()).optional(),
 }).superRefine((data, ctx) => {
-    if (data.source === 'brain-child' && !data.mainSessionId) {
+    if (isSessionOrchestrationChildSource(data.source) && !data.mainSessionId) {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['mainSessionId'],
-            message: 'mainSessionId is required for brain-child sessions',
+            message: getMainSessionIdRequiredErrorForChildSource(data.source),
         })
     }
 })
@@ -148,7 +163,7 @@ const brainSpawnSchema = z.object({
 
 type CliEnv = {
     Variables: {
-        namespace: string
+        orgId: string
     }
 }
 
@@ -966,7 +981,7 @@ async function buildBrainSessionInspectPayload(engine: SyncEngine, session: Sess
             caller: asNonEmptyString(metadataRecord?.caller) ?? null,
             machineId: asNonEmptyString(session.metadata?.machineId) ?? null,
             flavor: asNonEmptyString(session.metadata?.flavor) ?? null,
-            mainSessionId: getBrainChildMainSessionId(metadataRecord) ?? null,
+            mainSessionId: getSessionOrchestrationParentSessionId(metadataRecord) ?? null,
             ...getSelfSystemInspectMetadata(metadataRecord),
         },
     }
@@ -997,14 +1012,18 @@ function buildBrainSessionSearchPayload(args: {
         }
     }>
     engine: SyncEngine | null
-    namespace: string
+    orgId: string
     query: string
 }): BrainSessionSearchPayload {
     return {
         query: args.query,
         returned: args.storedResults.length,
         results: args.storedResults.map((item) => {
-            const memorySession = args.engine?.getSessionByNamespace(item.session.id, args.namespace)
+            const memorySession = args.engine
+                ? (typeof args.engine.getSessionByOrg === 'function'
+                    ? args.engine.getSessionByOrg(item.session.id, args.orgId)
+                    : args.engine.getSessionByNamespace(item.session.id, args.orgId))
+                : undefined
             const metadata = asRecord(memorySession?.metadata ?? item.session.metadata)
             const summaryRecord = asRecord(metadata?.summary)
             const requests = memorySession?.agentState?.requests
@@ -1039,7 +1058,7 @@ function buildBrainSessionSearchPayload(args: {
                     caller: asNonEmptyString(metadata?.caller) ?? null,
                     machineId: asNonEmptyString(metadata?.machineId) ?? null,
                     flavor: asNonEmptyString(metadata?.flavor) ?? null,
-                    mainSessionId: getBrainChildMainSessionId(metadata) ?? null,
+                    mainSessionId: getSessionOrchestrationParentSessionId(metadata) ?? null,
                     ...getSelfSystemInspectMetadata(metadata),
                 },
                 match: {
@@ -1070,13 +1089,13 @@ type CliSessionConfigInput = z.infer<typeof cliSessionConfigSchema>
 
 type CliSessionConfig = {
     permissionMode?: typeof SESSION_PERMISSION_MODE_VALUES[number]
-    modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'glm-5.1' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.2' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini'
+    modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'glm-5.1' | 'gpt-5.5' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.2' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini'
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     fastMode?: boolean
 }
 
 const CLAUDE_CONFIG_MODELS = new Set(['sonnet', 'opus', 'opus-4-7', 'glm-5.1'])
-const CODEX_CONFIG_MODELS = new Set(['default', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2-codex', 'gpt-5.2', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini'])
+const CODEX_CONFIG_MODELS = new Set(['default', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2-codex', 'gpt-5.2', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini'])
 
 function validateCliSessionConfig(
     session: Session,
@@ -1161,12 +1180,14 @@ async function applyCliSessionConfig(
     }
 }
 
-function resolveSessionForNamespace(
+function resolveSessionForOrg(
     engine: SyncEngine,
     sessionId: string,
-    namespace: string
+    orgId: string
 ): { ok: true; session: Session } | { ok: false; status: 403 | 404; error: string } {
-    const session = engine.getSessionByNamespace(sessionId, namespace)
+    const session = typeof engine.getSessionByOrg === 'function'
+        ? engine.getSessionByOrg(sessionId, orgId)
+        : engine.getSessionByNamespace(sessionId, orgId)
     if (session) {
         return { ok: true, session }
     }
@@ -1176,12 +1197,14 @@ function resolveSessionForNamespace(
     return { ok: false, status: 404, error: 'Session not found' }
 }
 
-function resolveMachineForNamespace(
+function resolveMachineForOrg(
     engine: SyncEngine,
     machineId: string,
-    namespace: string
+    orgId: string
 ): { ok: true; machine: Machine } | { ok: false; status: 403 | 404; error: string } {
-    const machine = engine.getMachineByNamespace(machineId, namespace)
+    const machine = typeof engine.getMachineByOrg === 'function'
+        ? engine.getMachineByOrg(machineId, orgId)
+        : engine.getMachineByNamespace(machineId, orgId)
     if (machine) {
         return { ok: true, machine }
     }
@@ -1191,46 +1214,44 @@ function resolveMachineForNamespace(
     return { ok: false, status: 404, error: 'Machine not found' }
 }
 
-function getSessionMetadataSource(session: Session): string | undefined {
-    const metadata = asRecord(session.metadata)
-    return asNonEmptyString(metadata?.source)
+function getMainSessionIdRequiredErrorForChildSource(childSource: string): string {
+    return `${childSource} sessions require mainSessionId`
 }
 
-function getSessionMetadataMainSessionId(session: Session): string | undefined {
-    const metadata = asRecord(session.metadata)
-    return asNonEmptyString(metadata?.mainSessionId)
-}
-
-function isBrainMainSession(session: Session): boolean {
-    return getSessionMetadataSource(session) === 'brain'
-}
-
-function isBrainChildSessionForMain(session: Session, mainSessionId: string): boolean {
-    return getSessionMetadataSource(session) === 'brain-child'
-        && getSessionMetadataMainSessionId(session) === mainSessionId
+function getMainSessionReferenceErrorForChildSource(childSource: string): string {
+    const parentSource = getSessionOrchestrationParentSourceForChildSource(childSource)
+    if (parentSource === 'brain') {
+        return 'mainSessionId must reference a brain session'
+    }
+    if (parentSource) {
+        return `mainSessionId must reference a ${parentSource} session`
+    }
+    return 'mainSessionId must reference an orchestration parent session'
 }
 
 function resolveBrainChildSessionForMain(
     engine: SyncEngine,
     sessionId: string,
-    namespace: string,
+    orgId: string,
     mainSessionId: string,
+    childSource: string,
 ): { ok: true; session: Session } | { ok: false; status: 403 | 404; error: string } {
-    const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+    const resolved = resolveSessionForOrg(engine, sessionId, orgId)
     if (!resolved.ok) {
         return resolved
     }
 
-    const mainResolved = resolveSessionForNamespace(engine, mainSessionId, namespace)
+    const mainResolved = resolveSessionForOrg(engine, mainSessionId, orgId)
     if (!mainResolved.ok) {
         return mainResolved
     }
 
-    if (!isBrainMainSession(mainResolved.session)) {
-        return { ok: false, status: 403, error: 'mainSessionId must reference a brain session' }
+    const expectedParentSource = getSessionOrchestrationParentSourceForChildSource(childSource)
+    if (!isSessionOrchestrationParentMetadata(mainResolved.session.metadata, expectedParentSource)) {
+        return { ok: false, status: 403, error: getMainSessionReferenceErrorForChildSource(childSource) }
     }
 
-    if (!isBrainChildSessionForMain(resolved.session, mainSessionId)) {
+    if (!isSessionOrchestrationChildForParentMetadata(resolved.session.metadata, mainResolved.session.metadata, mainSessionId)) {
         return { ok: false, status: 403, error: 'Session access denied' }
     }
 
@@ -1240,45 +1261,47 @@ function resolveBrainChildSessionForMain(
 function resolveSessionForMutationScope(
     engine: SyncEngine,
     sessionId: string,
-    namespace: string,
+    orgId: string,
     mainSessionId?: string,
 ): { ok: true; session: Session } | { ok: false; status: 400 | 403 | 404; error: string } {
-    const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+    const resolved = resolveSessionForOrg(engine, sessionId, orgId)
     if (!resolved.ok) {
         return resolved
     }
 
-    if (getSessionSourceFromMetadata(resolved.session.metadata) !== 'brain-child') {
+    const childSource = getSessionSourceFromMetadata(resolved.session.metadata)
+    if (!childSource || !isSessionOrchestrationChildSource(childSource)) {
         return resolved
     }
 
     if (!mainSessionId) {
-        return { ok: false, status: 400, error: 'mainSessionId is required for brain-child sessions' }
+        return { ok: false, status: 400, error: getMainSessionIdRequiredErrorForChildSource(childSource) }
     }
 
-    return resolveBrainChildSessionForMain(engine, sessionId, namespace, mainSessionId)
+    return resolveBrainChildSessionForMain(engine, sessionId, orgId, mainSessionId, childSource)
 }
 
 function resolveSessionForReadScope(
     engine: SyncEngine,
     sessionId: string,
-    namespace: string,
+    orgId: string,
     mainSessionId?: string,
 ): { ok: true; session: Session } | { ok: false; status: 400 | 403 | 404; error: string } {
-    const resolved = resolveSessionForNamespace(engine, sessionId, namespace)
+    const resolved = resolveSessionForOrg(engine, sessionId, orgId)
     if (!resolved.ok) {
         return resolved
     }
 
-    if (getSessionSourceFromMetadata(resolved.session.metadata) !== 'brain-child') {
+    const childSource = getSessionSourceFromMetadata(resolved.session.metadata)
+    if (!childSource || !isSessionOrchestrationChildSource(childSource)) {
         return resolved
     }
 
     if (!mainSessionId) {
-        return { ok: false, status: 400, error: 'mainSessionId is required for brain-child sessions' }
+        return { ok: false, status: 400, error: getMainSessionIdRequiredErrorForChildSource(childSource) }
     }
 
-    return resolveBrainChildSessionForMain(engine, sessionId, namespace, mainSessionId)
+    return resolveBrainChildSessionForMain(engine, sessionId, orgId, mainSessionId, childSource)
 }
 
 function toSessionSendResponse(sessionId: string, outcome: SendMessageOutcome): SessionSendResponse {
@@ -1306,6 +1329,16 @@ export function createCliRoutes(
 ): Hono<CliEnv> {
     const app = new Hono<CliEnv>()
 
+    const getStoredSessionForOrg = async (sessionId: string, orgId: string) => {
+        if (!store) {
+            return null
+        }
+        if (typeof store.getSessionByOrg === 'function') {
+            return await store.getSessionByOrg(sessionId, orgId)
+        }
+        return await store.getSessionByNamespace?.(sessionId, orgId) ?? null
+    }
+
     app.use('*', async (c, next) => {
         const raw = c.req.header('authorization')
         if (!raw) {
@@ -1323,7 +1356,12 @@ export function createCliRoutes(
             return c.json({ error: 'Invalid token' }, 401)
         }
 
-        c.set('namespace', parsedToken.namespace)
+        const orgId = c.req.header('x-org-id')?.trim()
+        if (!orgId) {
+            return c.json({ error: 'Missing x-org-id header' }, 401)
+        }
+
+        c.set('orgId', orgId)
         return await next()
     })
 
@@ -1347,9 +1385,9 @@ export function createCliRoutes(
             return c.json({ error: metadataError }, 400)
         }
 
-        const namespace = c.get('namespace')
+        const orgId = c.get('orgId')
         const normalizedMetadata = normalizeSessionMetadataInvariants(parsed.data.metadata)
-        const session = await engine.getOrCreateSession(parsed.data.tag, normalizedMetadata, parsed.data.agentState ?? null, namespace)
+        const session = await engine.getOrCreateSession(parsed.data.tag, normalizedMetadata, parsed.data.agentState ?? null, orgId)
         return c.json({ session })
     })
 
@@ -1362,15 +1400,15 @@ export function createCliRoutes(
             return c.json({ error: 'Store not available' }, 503)
         }
         const requestedSource = parsed.data.source ? getSessionSourceFromMetadata({ source: parsed.data.source }) : null
-        if (parsed.data.mainSessionId && requestedSource && requestedSource !== 'brain-child') {
-            return c.json({ error: 'mainSessionId filter requires source=brain-child when source is provided' }, 400)
+        if (parsed.data.mainSessionId && requestedSource && !isSessionOrchestrationChildSource(requestedSource)) {
+            return c.json({ error: 'mainSessionId filter requires an orchestration child source when source is provided' }, 400)
         }
 
-        const namespace = c.get('namespace')
+        const orgId = c.get('orgId')
         const engine = getSyncEngine()
         const limit = parsed.data.limit ?? 5
         const storedResults = await store.searchSessionHistory({
-            namespace,
+            orgId,
             query: parsed.data.query,
             limit,
             includeOffline: parsed.data.includeOffline ?? true,
@@ -1383,7 +1421,7 @@ export function createCliRoutes(
         return c.json(buildBrainSessionSearchPayload({
             storedResults,
             engine,
-            namespace,
+            orgId,
             query: parsed.data.query,
         }))
     })
@@ -1394,12 +1432,12 @@ export function createCliRoutes(
             return c.json({ error: 'Not ready' }, 503)
         }
         const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
+        const orgId = c.get('orgId')
         const queryParsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
         if (!queryParsed.success) {
             return c.json({ error: 'Invalid query', details: queryParsed.error.issues }, 400)
         }
-        const resolved = resolveSessionForReadScope(engine, sessionId, namespace, queryParsed.data.mainSessionId)
+        const resolved = resolveSessionForReadScope(engine, sessionId, orgId, queryParsed.data.mainSessionId)
         if (!resolved.ok) {
             console.warn(`[cli/read] GET /cli/sessions/${sessionId} rejected: ${resolved.error} (mainSessionId=${queryParsed.data.mainSessionId ?? 'NONE'})`)
             return c.json({ error: resolved.error }, resolved.status)
@@ -1413,12 +1451,12 @@ export function createCliRoutes(
             return c.json({ error: 'Not ready' }, 503)
         }
         const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
+        const orgId = c.get('orgId')
         const scopeParsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
         if (!scopeParsed.success) {
             return c.json({ error: 'Invalid query', details: scopeParsed.error.issues }, 400)
         }
-        const resolved = resolveSessionForReadScope(engine, sessionId, namespace, scopeParsed.data.mainSessionId)
+        const resolved = resolveSessionForReadScope(engine, sessionId, orgId, scopeParsed.data.mainSessionId)
         if (!resolved.ok) {
             console.warn(`[cli/read] GET /cli/sessions/${sessionId}/messages rejected: ${resolved.error} (mainSessionId=${scopeParsed.data.mainSessionId ?? 'NONE'})`)
             return c.json({ error: resolved.error }, resolved.status)
@@ -1441,12 +1479,12 @@ export function createCliRoutes(
             return c.json({ error: 'Not ready' }, 503)
         }
         const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
+        const orgId = c.get('orgId')
         const scopeParsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
         if (!scopeParsed.success) {
             return c.json({ error: 'Invalid query', details: scopeParsed.error.issues }, 400)
         }
-        const resolved = resolveSessionForMutationScope(engine, sessionId, namespace, scopeParsed.data.mainSessionId)
+        const resolved = resolveSessionForMutationScope(engine, sessionId, orgId, scopeParsed.data.mainSessionId)
         if (!resolved.ok) {
             if (resolved.status === 400) {
                 return c.json({ error: resolved.error }, 400)
@@ -1518,12 +1556,12 @@ export function createCliRoutes(
             return c.json({ error: 'Not ready' }, 503)
         }
         const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
+        const orgId = c.get('orgId')
         const queryParsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
         if (!queryParsed.success) {
             return c.json({ error: 'Invalid query', details: queryParsed.error.issues }, 400)
         }
-        const resolved = resolveSessionForMutationScope(engine, sessionId, namespace, queryParsed.data.mainSessionId)
+        const resolved = resolveSessionForMutationScope(engine, sessionId, orgId, queryParsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
@@ -1542,12 +1580,12 @@ export function createCliRoutes(
         }
 
         const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
+        const orgId = c.get('orgId')
         const parsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
         if (!parsed.success) {
             return c.json({ error: 'Invalid query', details: parsed.error.issues }, 400)
         }
-        const resolved = resolveSessionForMutationScope(engine, sessionId, namespace, parsed.data.mainSessionId)
+        const resolved = resolveSessionForMutationScope(engine, sessionId, orgId, parsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
@@ -1563,7 +1601,7 @@ export function createCliRoutes(
             return c.json({ type: 'already-active', sessionId })
         }
 
-        const storedSession = await store.getSessionByNamespace(sessionId, namespace)
+        const storedSession = await getStoredSessionForOrg(sessionId, orgId)
         const licenseError = await checkCliSessionLicense(c, storedSession?.orgId)
         if (licenseError) {
             return licenseError
@@ -1579,7 +1617,7 @@ export function createCliRoutes(
             return c.json({ error: 'Session machine not found' }, 409)
         }
 
-        const machineResolved = resolveMachineForNamespace(engine, machineId, namespace)
+        const machineResolved = resolveMachineForOrg(engine, machineId, orgId)
         if (!machineResolved.ok) {
             return c.json({ error: machineResolved.error }, machineResolved.status)
         }
@@ -1619,12 +1657,12 @@ export function createCliRoutes(
 
         console.log(
             `[cli/resume] Begin resume session=${sessionId} source=${getSessionSourceFromMetadata(session.metadata) ?? 'unknown'} ` +
-            `mainSessionId=${getBrainChildMainSessionId(session.metadata) ?? 'NONE'} flavor=${flavor} ` +
+            `mainSessionId=${getSessionOrchestrationParentSessionId(session.metadata) ?? 'NONE'} flavor=${flavor} ` +
             `machineId=${machineId} resumeSessionId=${resumeSessionId ?? 'NONE'}`
         )
 
         const now = Date.now()
-        await store.setSessionActive(sessionId, true, now, namespace)
+        await store.setSessionActive(sessionId, true, now, orgId)
         session.active = true
         session.activeAt = now
         session.thinking = false
@@ -1656,7 +1694,7 @@ export function createCliRoutes(
         session.active = false
         session.thinking = false
         session.resumingUntil = undefined
-        await store.setSessionActive(sessionId, false, Date.now(), namespace)
+        await store.setSessionActive(sessionId, false, Date.now(), orgId)
 
         const fallbackResult = await engine.spawnSession(
             machineId,
@@ -1679,24 +1717,23 @@ export function createCliRoutes(
         console.warn(
             `[cli/resume] Fallback created replacement session old=${sessionId} new=${newSessionId} ` +
             `source=${getSessionSourceFromMetadata(session.metadata) ?? 'unknown'} ` +
-            `mainSessionId=${getBrainChildMainSessionId(session.metadata) ?? 'NONE'}`
+            `mainSessionId=${getSessionOrchestrationParentSessionId(session.metadata) ?? 'NONE'}`
         )
 
         if (storedSession?.orgId) {
-            await store.setSessionOrgId(newSessionId, storedSession.orgId, namespace).catch(() => {})
+            await store.setSessionOrgId(newSessionId, storedSession.orgId).catch(() => {})
         }
 
         const resumedSource = getSessionSourceFromMetadata(session.metadata)
-        if (resumedSource === 'brain' && newSessionId !== sessionId) {
-            const childSessions = engine.getSessionsByNamespace(namespace).filter((candidate) => {
-                const metadata = candidate.metadata as { source?: unknown; mainSessionId?: unknown } | null | undefined
-                return getSessionSourceFromMetadata(metadata) === 'brain-child' && metadata?.mainSessionId === sessionId
+        if (isSessionOrchestrationParentSource(resumedSource) && newSessionId !== sessionId) {
+            const childSessions = engine.getSessionsByOrg(orgId).filter((candidate) => {
+                return isSessionOrchestrationChildForParentMetadata(candidate.metadata, session.metadata, sessionId)
             })
 
             for (const child of childSessions) {
                 const patchResult = await engine.patchSessionMetadata(child.id, { mainSessionId: newSessionId })
                 if (!patchResult.ok) {
-                    console.warn(`[cli/resume] Failed to rebind brain-child ${child.id} to resumed brain session ${newSessionId}: ${patchResult.error}`)
+                    console.warn(`[cli/resume] Failed to rebind child ${child.id} to resumed parent session ${newSessionId}: ${patchResult.error}`)
                 }
             }
         }
@@ -1730,12 +1767,12 @@ export function createCliRoutes(
             return c.json({ error: 'Not ready' }, 503)
         }
         const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
+        const orgId = c.get('orgId')
         const queryParsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
         if (!queryParsed.success) {
             return c.json({ error: 'Invalid query', details: queryParsed.error.issues }, 400)
         }
-        const resolved = resolveSessionForMutationScope(engine, sessionId, namespace, queryParsed.data.mainSessionId)
+        const resolved = resolveSessionForMutationScope(engine, sessionId, orgId, queryParsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
@@ -1755,8 +1792,12 @@ export function createCliRoutes(
         if (!engine) {
             return c.json({ error: 'Not ready' }, 503)
         }
-        const namespace = c.get('namespace')
-        const machines = sortMachinesForDisplay(engine.getMachinesByNamespace(namespace))
+        const orgId = c.get('orgId')
+        const machines = sortMachinesForDisplay(
+            typeof engine.getMachinesByOrg === 'function'
+                ? engine.getMachinesByOrg(orgId)
+                : engine.getMachinesByNamespace(orgId)
+        )
         return c.json({
             machines: machines.map(serializeMachine)
         })
@@ -1773,12 +1814,12 @@ export function createCliRoutes(
             return c.json({ error: 'Invalid body' }, 400)
         }
 
-        const namespace = c.get('namespace')
+        const orgId = c.get('orgId')
         const existing = engine.getMachine(parsed.data.id)
-        if (existing && existing.namespace !== namespace) {
+        if (existing && existing.orgId !== orgId) {
             return c.json({ error: 'Machine access denied' }, 403)
         }
-        const machine = await engine.getOrCreateMachine(parsed.data.id, parsed.data.metadata, parsed.data.daemonState ?? null, namespace)
+        const machine = await engine.getOrCreateMachine(parsed.data.id, parsed.data.metadata, parsed.data.daemonState ?? null, orgId)
         return c.json({ machine })
     })
 
@@ -1788,8 +1829,8 @@ export function createCliRoutes(
             return c.json({ error: 'Not ready' }, 503)
         }
         const machineId = c.req.param('id')
-        const namespace = c.get('namespace')
-        const resolved = resolveMachineForNamespace(engine, machineId, namespace)
+        const orgId = c.get('orgId')
+        const resolved = resolveMachineForOrg(engine, machineId, orgId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
@@ -1870,7 +1911,7 @@ export function createCliRoutes(
         }
     })
 
-    // Brain: spawn a child session
+    // Spawn an orchestration child session. Brain keeps using this route unchanged.
     app.post('/brain/spawn', async (c) => {
         const engine = getSyncEngine()
         if (!engine) {
@@ -1882,10 +1923,10 @@ export function createCliRoutes(
             return c.json({ error: 'Invalid body', details: parsed.error.issues }, 400)
         }
 
-        const namespace = c.get('namespace')
-        let mainSession: Awaited<ReturnType<NonNullable<typeof store>['getSessionByNamespace']>> | null = null
+        const orgId = c.get('orgId')
+        let mainSession: Awaited<ReturnType<typeof getStoredSessionForOrg>> = null
         let liveMainSession: Session | null = null
-        const machineResolved = resolveMachineForNamespace(engine, parsed.data.machineId, namespace)
+        const machineResolved = resolveMachineForOrg(engine, parsed.data.machineId, orgId)
         if (!machineResolved.ok) {
             return c.json({ error: machineResolved.error }, machineResolved.status)
         }
@@ -1893,24 +1934,25 @@ export function createCliRoutes(
             return c.json({ error: 'Machine is offline' }, 503)
         }
 
-        if (parsed.data.source === 'brain-child') {
+        if (isSessionOrchestrationChildSource(parsed.data.source)) {
             const mainSessionId = parsed.data.mainSessionId
             if (!mainSessionId) {
-                return c.json({ error: 'mainSessionId is required for brain-child sessions' }, 400)
+                return c.json({ error: getMainSessionIdRequiredErrorForChildSource(parsed.data.source) }, 400)
             }
-            const mainResolved = resolveSessionForNamespace(engine, mainSessionId, namespace)
+            const mainResolved = resolveSessionForOrg(engine, mainSessionId, orgId)
             if (!mainResolved.ok) {
                 return c.json({ error: mainResolved.error }, mainResolved.status)
             }
-            if (getSessionSourceFromMetadata(mainResolved.session.metadata) !== 'brain') {
-                return c.json({ error: 'mainSessionId must reference a brain session' }, 400)
+            const expectedParentSource = getSessionOrchestrationParentSourceForChildSource(parsed.data.source)
+            if (!isSessionOrchestrationParentMetadata(mainResolved.session.metadata, expectedParentSource)) {
+                return c.json({ error: getMainSessionReferenceErrorForChildSource(parsed.data.source) }, 400)
             }
             liveMainSession = mainResolved.session
         }
 
         // License check: 从 mainSession 继承 orgId 进行校验
         if (parsed.data.mainSessionId && store) {
-            mainSession = await store.getSessionByNamespace(parsed.data.mainSessionId, namespace)
+            mainSession = await getStoredSessionForOrg(parsed.data.mainSessionId, orgId)
             const brainOrgId = mainSession?.orgId || machineResolved.machine.orgId
             if (brainOrgId) {
                 try {
@@ -2041,13 +2083,13 @@ export function createCliRoutes(
 
         // Inherit org_id from main (brain) session
         if (result.type === 'success' && parsed.data.mainSessionId && store) {
-            mainSession = mainSession ?? await store.getSessionByNamespace(parsed.data.mainSessionId, namespace)
+            mainSession = mainSession ?? await getStoredSessionForOrg(parsed.data.mainSessionId, orgId)
             if (mainSession?.orgId) {
-                await store.setSessionOrgId(result.sessionId, mainSession.orgId, namespace)
+                await store.setSessionOrgId(result.sessionId, mainSession.orgId)
             }
         }
 
-        // Send init prompt to brain-child session (fire-and-forget)
+        // Send init prompt to the spawned orchestration child session (fire-and-forget)
         if (result.type === 'success') {
             void (async () => {
                 try {
@@ -2078,7 +2120,7 @@ export function createCliRoutes(
                     const prompt = await buildInitPrompt('developer', { projectRoot })
                     if (prompt.trim()) {
                         await engine.sendMessage(result.sessionId, { text: prompt, sentFrom: 'webapp' })
-                        console.log(`[brain/spawn] Sent init prompt to brain-child session ${result.sessionId}`)
+                        console.log(`[brain/spawn] Sent init prompt to ${parsed.data.source} session ${result.sessionId}`)
                     }
                 } catch (err) {
                     console.error(`[brain/spawn] Failed to send init prompt to ${result.sessionId}:`, err)
@@ -2095,24 +2137,28 @@ export function createCliRoutes(
         if (!engine) {
             return c.json({ error: 'Not ready' }, 503)
         }
-        const namespace = c.get('namespace')
+        const orgId = c.get('orgId')
         const parsed = listSessionsQuerySchema.safeParse(c.req.query())
         if (!parsed.success) {
             return c.json({ error: 'Invalid query', details: parsed.error.issues }, 400)
         }
 
-        const allSessions = engine.getSessionsByNamespace(namespace)
+        const allSessions = typeof engine.getSessionsByOrg === 'function'
+            ? engine.getSessionsByOrg(orgId)
+            : engine.getSessionsByNamespace(orgId)
         let scopedSessions = allSessions
 
         if (parsed.data.mainSessionId) {
-            const mainResolved = resolveSessionForNamespace(engine, parsed.data.mainSessionId, namespace)
+            const mainResolved = resolveSessionForOrg(engine, parsed.data.mainSessionId, orgId)
             if (!mainResolved.ok) {
                 return c.json({ error: mainResolved.error }, mainResolved.status)
             }
-            if (!isBrainMainSession(mainResolved.session)) {
-                return c.json({ error: 'mainSessionId must reference a brain session' }, 403)
+            if (!isSessionOrchestrationParentMetadata(mainResolved.session.metadata)) {
+                return c.json({ error: 'mainSessionId must reference an orchestration parent session' }, 403)
             }
-            scopedSessions = allSessions.filter((session) => isBrainChildSessionForMain(session, parsed.data.mainSessionId!))
+            scopedSessions = allSessions.filter((session) =>
+                isSessionOrchestrationChildForParentMetadata(session.metadata, mainResolved.session.metadata, parsed.data.mainSessionId!)
+            )
         }
 
         const sessions = parsed.data.includeOffline ? scopedSessions : scopedSessions.filter(s => s.active)
@@ -2121,7 +2167,7 @@ export function createCliRoutes(
             active: s.active,
             activeAt: s.activeAt,
             thinking: s.thinking ?? false,
-            initDone: s.metadata?.source === 'brain-child' ? engine.isBrainChildInitDone(s.id) : true,
+            initDone: isSessionOrchestrationChildSource(s.metadata?.source) ? engine.isBrainChildInitDone(s.id) : true,
             modelMode: s.modelMode ?? 'default',
             pendingRequestsCount: s.agentState?.requests ? Object.keys(s.agentState.requests).length : 0,
             metadata: s.metadata ? {
@@ -2130,7 +2176,7 @@ export function createCliRoutes(
                 machineId: s.metadata.machineId,
                 flavor: s.metadata.flavor,
                 summary: s.metadata.summary,
-                mainSessionId: getBrainChildMainSessionId(s.metadata),
+                mainSessionId: getSessionOrchestrationParentSessionId(s.metadata),
                 brainSummary: (s.metadata as any).brainSummary,
             } : null,
         }))
@@ -2144,12 +2190,12 @@ export function createCliRoutes(
             return c.json({ error: 'Not ready' }, 503)
         }
         const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
+        const orgId = c.get('orgId')
         const parsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
         if (!parsed.success) {
             return c.json({ error: 'Invalid query', details: parsed.error.issues }, 400)
         }
-        const resolved = resolveSessionForMutationScope(engine, sessionId, namespace, parsed.data.mainSessionId)
+        const resolved = resolveSessionForMutationScope(engine, sessionId, orgId, parsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
@@ -2181,12 +2227,12 @@ export function createCliRoutes(
             return c.json({ error: 'Not ready' }, 503)
         }
         const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
+        const orgId = c.get('orgId')
         const queryParsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
         if (!queryParsed.success) {
             return c.json({ error: 'Invalid query', details: queryParsed.error.issues }, 400)
         }
-        const resolved = resolveSessionForMutationScope(engine, sessionId, namespace, queryParsed.data.mainSessionId)
+        const resolved = resolveSessionForMutationScope(engine, sessionId, orgId, queryParsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
@@ -2216,12 +2262,12 @@ export function createCliRoutes(
             return c.json({ error: 'Not ready' }, 503)
         }
         const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
+        const orgId = c.get('orgId')
         const queryParsed = optionalBrainChildScopeQuerySchema.safeParse(c.req.query())
         if (!queryParsed.success) {
             return c.json({ error: 'Invalid query', details: queryParsed.error.issues }, 400)
         }
-        const resolved = resolveSessionForMutationScope(engine, sessionId, namespace, queryParsed.data.mainSessionId)
+        const resolved = resolveSessionForMutationScope(engine, sessionId, orgId, queryParsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
@@ -2244,12 +2290,12 @@ export function createCliRoutes(
             return c.json({ error: 'Not ready' }, 503)
         }
         const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
+        const orgId = c.get('orgId')
         const parsed = brainChildScopeQuerySchema.safeParse(c.req.query())
         if (!parsed.success) {
             return c.json({ error: 'Invalid query', details: parsed.error.issues }, 400)
         }
-        const resolved = resolveBrainChildSessionForMain(engine, sessionId, namespace, parsed.data.mainSessionId)
+        const resolved = resolveSessionForReadScope(engine, sessionId, orgId, parsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
@@ -2264,13 +2310,13 @@ export function createCliRoutes(
             return c.json({ error: 'Not ready' }, 503)
         }
         const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
+        const orgId = c.get('orgId')
         const parsed = tailQuerySchema.safeParse(c.req.query())
         if (!parsed.success) {
             return c.json({ error: 'Invalid query', details: parsed.error.issues }, 400)
         }
 
-        const resolved = resolveBrainChildSessionForMain(engine, sessionId, namespace, parsed.data.mainSessionId)
+        const resolved = resolveSessionForReadScope(engine, sessionId, orgId, parsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }
@@ -2326,7 +2372,7 @@ export function createCliRoutes(
 
     async function resolveProjectContext(
         sessionId: string | undefined,
-        namespace: string
+        orgId: string
     ): Promise<
         | { ok: true; orgId: string | null; machineId: string | null }
         | { ok: false; status: 400 | 404 | 503; error: string }
@@ -2338,7 +2384,7 @@ export function createCliRoutes(
             return { ok: false, status: 400, error: 'sessionId is required' }
         }
 
-        const session = await store.getSessionByNamespace(sessionId, namespace)
+        const session = await getStoredSessionForOrg(sessionId, orgId)
         if (!session) {
             return { ok: false, status: 404, error: 'Session not found' }
         }
@@ -2362,10 +2408,22 @@ export function createCliRoutes(
         return { ok: true, machineId: context.machineId }
     }
 
+    type QueryablePool = {
+        query: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>
+    }
+
+    function resolveAiTaskPool(): { ok: true; pool: QueryablePool } | { ok: false; status: 503; error: string } {
+        const pool = (store as { getPool?: () => QueryablePool } | undefined)?.getPool?.()
+        if (!pool) {
+            return { ok: false, status: 503, error: 'Store pool not available' }
+        }
+        return { ok: true, pool }
+    }
+
     // List projects visible to the current session's machine.
     app.get('/projects', async (c) => {
         if (!store) return c.json({ error: 'Store not available' }, 503)
-        const context = await resolveProjectContext(c.req.query('sessionId'), c.get('namespace'))
+        const context = await resolveProjectContext(c.req.query('sessionId'), c.get('orgId'))
         if (!context.ok) {
             return c.json({ error: context.error }, context.status)
         }
@@ -2384,7 +2442,7 @@ export function createCliRoutes(
         const parsed = addProjectSchema.safeParse(json)
         if (!parsed.success) return c.json({ error: 'Invalid project data' }, 400)
 
-        const context = await resolveProjectContext(c.req.query('sessionId'), c.get('namespace'))
+        const context = await resolveProjectContext(c.req.query('sessionId'), c.get('orgId'))
         if (!context.ok) {
             return c.json({ error: context.error }, context.status)
         }
@@ -2413,7 +2471,7 @@ export function createCliRoutes(
         const json = await c.req.json().catch(() => null)
         const parsed = updateProjectSchema.safeParse(json)
         if (!parsed.success) return c.json({ error: 'Invalid project data' }, 400)
-        const context = await resolveProjectContext(c.req.query('sessionId'), c.get('namespace'))
+        const context = await resolveProjectContext(c.req.query('sessionId'), c.get('orgId'))
         if (!context.ok) {
             return c.json({ error: context.error }, context.status)
         }
@@ -2447,7 +2505,7 @@ export function createCliRoutes(
     app.delete('/projects/:id', async (c) => {
         if (!store) return c.json({ error: 'Store not available' }, 503)
         const id = c.req.param('id')
-        const context = await resolveProjectContext(c.req.query('sessionId'), c.get('namespace'))
+        const context = await resolveProjectContext(c.req.query('sessionId'), c.get('orgId'))
         if (!context.ok) {
             return c.json({ error: context.error }, context.status)
         }
@@ -2473,6 +2531,157 @@ export function createCliRoutes(
         return c.json({ ok: true, projects })
     })
 
+    // ==================== AI Task Schedules ====================
+
+    app.get('/worker/schedules', async (c) => {
+        if (!store) return c.json({ error: 'Store not available' }, 503)
+        const parsed = aiTaskScheduleListSchema.safeParse({
+            includeDisabled: c.req.query('includeDisabled') === 'true'
+                ? true
+                : c.req.query('includeDisabled') === 'false'
+                    ? false
+                    : undefined,
+        })
+        if (!parsed.success) return c.json({ error: 'Invalid schedule query' }, 400)
+
+        const context = await resolveProjectContext(c.req.query('sessionId'), c.get('orgId'))
+        if (!context.ok) {
+            return c.json({ error: context.error }, context.status)
+        }
+        const machineContext = ensureMachineBoundProjectContext(context)
+        if (!machineContext.ok) {
+            return c.json({ error: machineContext.error }, machineContext.status)
+        }
+        const poolResult = resolveAiTaskPool()
+        if (!poolResult.ok) {
+            return c.json({ error: poolResult.error }, poolResult.status)
+        }
+
+        const conditions = ['machine_id = $1']
+        const params: unknown[] = [machineContext.machineId]
+        if (!parsed.data.includeDisabled) {
+            conditions.push('enabled = true')
+        }
+
+        const result = await poolResult.pool.query(
+            `SELECT id, machine_id, label, cron_expr, payload_prompt, recurring, directory, agent, mode, enabled, created_at, next_fire_at, last_fire_at, last_run_status
+             FROM ai_task_schedules
+             WHERE ${conditions.join(' AND ')}
+             ORDER BY created_at DESC`,
+            params
+        )
+
+        return c.json({
+            schedules: (result.rows as Record<string, unknown>[]).map(serializeAiTaskScheduleRow),
+        })
+    })
+
+    app.post('/worker/schedules', async (c) => {
+        if (!store) return c.json({ error: 'Store not available' }, 503)
+        const json = await c.req.json().catch(() => null)
+        const parsed = aiTaskScheduleCreateSchema.safeParse(json)
+        if (!parsed.success) return c.json({ error: 'Invalid schedule data' }, 400)
+
+        const context = await resolveProjectContext(c.req.query('sessionId'), c.get('orgId'))
+        if (!context.ok) {
+            return c.json({ error: context.error }, context.status)
+        }
+        const machineContext = ensureMachineBoundProjectContext(context)
+        if (!machineContext.ok) {
+            return c.json({ error: machineContext.error }, machineContext.status)
+        }
+        const poolResult = resolveAiTaskPool()
+        if (!poolResult.ok) {
+            return c.json({ error: poolResult.error }, poolResult.status)
+        }
+
+        const cronResult = parseCronOrDelay(parsed.data.cronOrDelay)
+        if (!cronResult.ok) return c.json({ error: cronResult.error }, 400)
+        if (cronResult.kind === 'delay' && parsed.data.recurring) {
+            return c.json({ error: 'delay_requires_non_recurring' }, 400)
+        }
+
+        const projects = await store.getProjects(machineContext.machineId, context.orgId)
+        const project = projects.find((item) => item.path === parsed.data.directory)
+        if (!project) {
+            return c.json({ error: 'directory_not_registered' }, 400)
+        }
+
+        const countResult = await poolResult.pool.query(
+            'SELECT COUNT(*)::int AS count FROM ai_task_schedules WHERE machine_id = $1 AND enabled = true',
+            [machineContext.machineId]
+        )
+        const enabledCount = Number(countResult.rows[0]?.count ?? 0)
+        if (enabledCount >= 20) {
+            return c.json({ error: 'quota_exceeded' }, 429)
+        }
+
+        const id = randomUUID()
+        const now = Date.now()
+        // Persist the caller's sessionId so the dispatcher can thread it through
+        // aiTask.mainSessionId and the worker session shows up as an
+        // orchestrator-child under the creator brain/session UI.
+        const createdBySessionId = c.req.query('sessionId') ?? null
+        await poolResult.pool.query(
+            `INSERT INTO ai_task_schedules
+                (id, namespace, machine_id, label, cron_expr, payload_prompt, directory, agent, mode, recurring, enabled, created_at, next_fire_at, created_by_session_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+            [
+                id,
+                c.get('orgId'),
+                machineContext.machineId,
+                parsed.data.label ?? null,
+                cronResult.normalizedCron,
+                parsed.data.prompt,
+                parsed.data.directory,
+                parsed.data.agent,
+                parsed.data.mode ?? null,
+                parsed.data.recurring,
+                true,
+                now,
+                cronResult.nextFireAt ?? null,
+                createdBySessionId,
+            ]
+        )
+
+        return c.json({
+            scheduleId: id,
+            nextFireAt: cronResult.nextFireAt != null ? new Date(cronResult.nextFireAt).toISOString() : null,
+            status: 'registered',
+        })
+    })
+
+    app.post('/worker/schedules/:id/cancel', async (c) => {
+        if (!store) return c.json({ error: 'Store not available' }, 503)
+        const parsed = aiTaskScheduleCancelSchema.safeParse({
+            scheduleId: c.req.param('id'),
+        })
+        if (!parsed.success) return c.json({ error: 'Invalid schedule id' }, 400)
+
+        const context = await resolveProjectContext(c.req.query('sessionId'), c.get('orgId'))
+        if (!context.ok) {
+            return c.json({ error: context.error }, context.status)
+        }
+        const machineContext = ensureMachineBoundProjectContext(context)
+        if (!machineContext.ok) {
+            return c.json({ error: machineContext.error }, machineContext.status)
+        }
+        const poolResult = resolveAiTaskPool()
+        if (!poolResult.ok) {
+            return c.json({ error: poolResult.error }, poolResult.status)
+        }
+
+        const result = await poolResult.pool.query(
+            'UPDATE ai_task_schedules SET enabled = false WHERE id = $1 AND machine_id = $2 RETURNING id',
+            [parsed.data.scheduleId, machineContext.machineId]
+        )
+        if (result.rows.length === 0) {
+            return c.json({ error: 'schedule_not_found' }, 404)
+        }
+
+        return c.json({ ok: true })
+    })
+
     // Brain: get session status with token stats
     app.get('/sessions/:id/status', async (c) => {
         const engine = getSyncEngine()
@@ -2480,12 +2689,12 @@ export function createCliRoutes(
             return c.json({ error: 'Not ready' }, 503)
         }
         const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
+        const orgId = c.get('orgId')
         const parsed = brainChildScopeQuerySchema.safeParse(c.req.query())
         if (!parsed.success) {
             return c.json({ error: 'Invalid query', details: parsed.error.issues }, 400)
         }
-        const resolved = resolveBrainChildSessionForMain(engine, sessionId, namespace, parsed.data.mainSessionId)
+        const resolved = resolveSessionForReadScope(engine, sessionId, orgId, parsed.data.mainSessionId)
         if (!resolved.ok) {
             return c.json({ error: resolved.error }, resolved.status)
         }

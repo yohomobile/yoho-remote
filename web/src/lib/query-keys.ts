@@ -20,6 +20,8 @@ export const queryKeys = {
     identityCandidates: (orgId?: string | null, status = 'open') => ['identity-candidates', orgId ?? null, status] as const,
     identityPersons: (orgId?: string | null, q?: string | null) => ['identity-persons', orgId ?? null, q?.trim() ?? ''] as const,
     aiProfiles: (orgId?: string | null) => ['ai-profiles', orgId ?? null] as const,
+    brainConfig: (orgId?: string | null) => ['brain-config', orgId ?? null] as const,
+    selfSystem: (orgId?: string | null) => ['self-system', orgId ?? null] as const,
     tokenSources: (orgId: string, includeSecrets: boolean) => ['token-sources', orgId, includeSecrets ? 'secret' : 'public'] as const,
     orgs: ['orgs'] as const,
     org: (orgId: string) => ['org', orgId] as const,

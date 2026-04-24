@@ -2,7 +2,7 @@ import type { SyncEvent, OnlineUser } from '../sync/syncEngine'
 
 export type SSESubscription = {
     id: string
-    namespace: string
+    orgId: string
     all: boolean
     sessionId: string | null
     machineId: string | null
@@ -28,7 +28,7 @@ export class SSEManager {
 
     subscribe(options: {
         id: string
-        namespace: string
+        orgId: string
         all?: boolean
         sessionId?: string | null
         machineId?: string | null
@@ -41,7 +41,7 @@ export class SSEManager {
     }): SSESubscription {
         const subscription: SSEConnection = {
             id: options.id,
-            namespace: options.namespace,
+            orgId: options.orgId,
             all: Boolean(options.all),
             sessionId: options.sessionId ?? null,
             machineId: options.machineId ?? null,
@@ -57,11 +57,11 @@ export class SSEManager {
         this.ensureHeartbeat()
 
         // 广播在线用户更新
-        this.broadcastOnlineUsers(options.namespace)
+        this.broadcastOnlineUsers(options.orgId)
 
         return {
             id: subscription.id,
-            namespace: subscription.namespace,
+            orgId: subscription.orgId,
             all: subscription.all,
             sessionId: subscription.sessionId,
             machineId: subscription.machineId,
@@ -74,14 +74,14 @@ export class SSEManager {
 
     unsubscribe(id: string): void {
         const connection = this.connections.get(id)
-        const namespace = connection?.namespace
+        const orgId = connection?.orgId
         this.connections.delete(id)
         if (this.connections.size === 0) {
             this.stopHeartbeat()
         }
         // 广播在线用户更新
-        if (namespace) {
-            this.broadcastOnlineUsers(namespace)
+        if (orgId) {
+            this.broadcastOnlineUsers(orgId)
         }
     }
 
@@ -131,8 +131,10 @@ export class SSEManager {
 
     private shouldSend(connection: SSEConnection, event: SyncEvent): boolean {
         if (event.type !== 'connection-changed') {
-            const eventNamespace = event.namespace
-            if (!eventNamespace || eventNamespace !== connection.namespace) {
+            const eventOrgId =
+                event.orgId
+                ?? (typeof event.namespace === 'string' ? event.namespace : undefined)
+            if (!eventOrgId || eventOrgId !== connection.orgId) {
                 return false
             }
         }
@@ -200,13 +202,13 @@ export class SSEManager {
     }
 
     /**
-     * 获取指定 namespace 的所有在线用户
+     * 获取指定 org 的所有在线用户
      */
-    getOnlineUsers(namespace: string): OnlineUser[] {
+    getOnlineUsers(orgId: string): OnlineUser[] {
         const usersMap = new Map<string, OnlineUser>()  // 用 clientId 去重
 
         for (const conn of this.connections.values()) {
-            if (conn.namespace !== namespace) continue
+            if (conn.orgId !== orgId) continue
             if (!conn.email || !conn.clientId) continue
 
             // 用 clientId 作为 key，如果有多个连接（如多个 tab），取最新的
@@ -224,11 +226,11 @@ export class SSEManager {
     /**
      * 获取指定 session 的所有查看者
      */
-    getSessionViewers(namespace: string, sessionId: string): OnlineUser[] {
+    getSessionViewers(orgId: string, sessionId: string): OnlineUser[] {
         const usersMap = new Map<string, OnlineUser>()
 
         for (const conn of this.connections.values()) {
-            if (conn.namespace !== namespace) continue
+            if (conn.orgId !== orgId) continue
             if (conn.sessionId !== sessionId) continue
             if (!conn.email || !conn.clientId) continue
 
@@ -246,16 +248,16 @@ export class SSEManager {
     /**
      * 广播在线用户更新事件
      */
-    private broadcastOnlineUsers(namespace: string): void {
-        const onlineUsers = this.getOnlineUsers(namespace)
+    private broadcastOnlineUsers(orgId: string): void {
+        const onlineUsers = this.getOnlineUsers(orgId)
         const event: SyncEvent = {
             type: 'online-users-changed',
-            namespace,
+            orgId,
             users: onlineUsers
         }
 
         for (const connection of this.connections.values()) {
-            if (connection.namespace !== namespace) continue
+            if (connection.orgId !== orgId) continue
             if (!connection.all) continue
 
             try {

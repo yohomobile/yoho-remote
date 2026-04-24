@@ -1,26 +1,25 @@
 import { describe, expect, it } from 'bun:test'
-import { DEFAULT_NAMESPACE, parseAccessToken } from './accessToken'
+import { parseAccessToken } from './accessToken'
 
 describe('parseAccessToken', () => {
-    it('defaults namespace when missing', () => {
+    it('parses a plain token', () => {
         const parsed = parseAccessToken('token')
-        expect(parsed).toEqual({ baseToken: 'token', namespace: DEFAULT_NAMESPACE })
+        expect(parsed).toEqual({ baseToken: 'token' })
     })
 
-    it('parses namespace suffix', () => {
-        const parsed = parseAccessToken('token:alice')
-        expect(parsed).toEqual({ baseToken: 'token', namespace: 'alice' })
+    it('rejects namespace suffixes', () => {
+        expect(parseAccessToken('token:alice')).toBeNull()
     })
 
-    it('rejects empty namespace', () => {
+    it('rejects empty suffix', () => {
         expect(parseAccessToken('token:')).toBeNull()
     })
 
-    it('rejects missing base token', () => {
+    it('rejects missing base token before suffix', () => {
         expect(parseAccessToken(':alice')).toBeNull()
     })
 
-    it('rejects whitespace inside namespace', () => {
+    it('rejects whitespace after suffix separator', () => {
         expect(parseAccessToken('token: alice')).toBeNull()
     })
 })

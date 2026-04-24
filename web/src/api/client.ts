@@ -57,6 +57,9 @@ import type {
     AcceptInvitationResponse,
     BrainConfigResponse,
     UpdateBrainConfigResponse,
+    UserSelfSystemConfigResponse,
+    UpdateUserSelfSystemConfigInput,
+    UpdateUserSelfSystemConfigResponse,
     BrainAgent,
     CreateTokenSourceInput,
     CreateTokenSourceResponse,
@@ -363,6 +366,22 @@ export class ApiClient {
     }, orgId?: string | null): Promise<UpdateBrainConfigResponse> {
         const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
         return await this.request<UpdateBrainConfigResponse>(`/api/settings/brain-config${qs}`, {
+            method: 'PUT',
+            body: JSON.stringify(config)
+        })
+    }
+
+    async getSelfSystemConfig(orgId?: string | null): Promise<UserSelfSystemConfigResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<UserSelfSystemConfigResponse>(`/api/settings/self-system${qs}`)
+    }
+
+    async updateSelfSystemConfig(
+        config: UpdateUserSelfSystemConfigInput,
+        orgId?: string | null,
+    ): Promise<UpdateUserSelfSystemConfigResponse> {
+        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
+        return await this.request<UpdateUserSelfSystemConfigResponse>(`/api/settings/self-system${qs}`, {
             method: 'PUT',
             body: JSON.stringify(config)
         })
@@ -693,6 +712,7 @@ export class ApiClient {
         claudeModel?: 'sonnet' | 'opus' | 'opus-4-7',
         codexModel?: string,
         modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh',
+        source?: string,
         orgId?: string | null
     ): Promise<SpawnResponse> {
         const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
@@ -710,7 +730,7 @@ export class ApiClient {
                 claudeModel,
                 codexModel,
                 modelReasoningEffort,
-                source: 'webapp'
+                source: source ?? 'webapp'
             })
         })
     }

@@ -321,7 +321,11 @@ export class WebPushService {
     /**
      * Unsubscribe a client from push notifications
      */
-    async unsubscribe(endpoint: string): Promise<boolean> {
+    async unsubscribe(namespace: string, endpoint: string): Promise<boolean> {
+        const subscriptions = await this.store.getPushSubscriptions(namespace)
+        if (!subscriptions.some((subscription) => subscription.endpoint === endpoint)) {
+            return false
+        }
         return await this.store.removePushSubscription(endpoint)
     }
 

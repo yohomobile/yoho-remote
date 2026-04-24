@@ -6,6 +6,7 @@ function createSession(id: string, metadata: Record<string, unknown>): Session {
     return {
         id,
         namespace: 'default',
+        orgId: null,
         seq: 0,
         createdAt: 0,
         updatedAt: 0,
@@ -175,6 +176,74 @@ describe('SyncEngine auto-resume', () => {
         await (engine as any).autoResumeSessions(machine.id, machine.namespace)
 
         expect(spawnCalls).toEqual([brain.id, child.id])
+    })
+
+    test('auto-resumes running orchestrator-child sessions together with their parent orchestrator even when child is not in DB active set', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActive: async () => true,
+            setSessionThinking: async () => true,
+            getSession: async () => null,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const rpcRegistry = {
+            getSocketIdForMethod: () => 'socket-1',
+        } as any
+
+        const engine = new SyncEngine(store, io, rpcRegistry, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const machine = createMachine('machine-1')
+        const orchestrator = createSession('session-orchestrator-main', {
+            machineId: machine.id,
+            path: '/tmp/project-orchestrator-main',
+            flavor: 'codex',
+            codexSessionId: 'thread-orchestrator-main',
+            startedFromDaemon: true,
+            source: 'orchestrator',
+            lifecycleState: 'running',
+        })
+        const child = createSession('session-orchestrator-child-running', {
+            machineId: machine.id,
+            path: '/tmp/project-orchestrator-child',
+            flavor: 'codex',
+            codexSessionId: 'thread-orchestrator-child',
+            startedFromDaemon: true,
+            source: 'orchestrator-child',
+            mainSessionId: orchestrator.id,
+            lifecycleState: 'running',
+        })
+
+        ;(engine as any).machines.set(machine.id, machine)
+        ;(engine as any).sessions.set(orchestrator.id, orchestrator)
+        ;(engine as any).sessions.set(child.id, child)
+        ;(engine as any)._dbActiveSessionIds = new Set([orchestrator.id])
+
+        const spawnCalls: string[] = []
+        ;(engine as any).spawnSession = async (_machineId: string, _directory: string, _agent: string, _yolo: boolean | undefined, options?: { sessionId?: string }) => {
+            if (options?.sessionId) {
+                spawnCalls.push(options.sessionId)
+            }
+            return { type: 'success', sessionId: options?.sessionId ?? 'unknown' }
+        }
+        ;(engine as any).listDaemonLiveSessions = async () => []
+        ;(engine as any).waitForSessionHeartbeatAfter = async () => true
+
+        await (engine as any).autoResumeSessions(machine.id, machine.namespace)
+
+        expect(spawnCalls).toEqual([orchestrator.id, child.id])
     })
 
     test('does not auto-resume historical brain-child sessions when parent brain is not resumable', async () => {

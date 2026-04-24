@@ -49,6 +49,7 @@ import type {
     ResolvedActorContext,
     IdentityCandidateSummary,
     StoredBrainConfig,
+    StoredUserSelfSystemConfig,
     BrainAgent,
     LicenseStatus,
     OrgRole,
@@ -71,8 +72,10 @@ import type {
     ApprovalRequestStatus,
     ApprovalDecisionResult,
     CapabilityGrantStatus,
+    IdentityChannel,
 } from './types'
 import { normalizeSessionSource } from '../sessionSourcePolicy'
+import { getAllSessionOrchestrationChildSources } from '../sessionOrchestrationPolicy'
 import { isRealActivityMessage, isTurnStartUserMessage } from './messageUtils'
 
 function parseTimestampCandidate(value: unknown): number | null {
@@ -88,6 +91,10 @@ function parseTimestampCandidate(value: unknown): number | null {
         return Number.isFinite(parsed) ? parsed : null
     }
     return null
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object'
 }
 
 function extractMessageSourceTimestamp(value: unknown, depth = 0, seen = new Set<unknown>()): number | null {
@@ -501,6 +508,7 @@ export class PostgresStore implements IStore {
             CREATE TABLE IF NOT EXISTS ai_profiles (
                 id TEXT PRIMARY KEY,
                 namespace TEXT NOT NULL,
+                org_id TEXT,
                 name TEXT NOT NULL,
                 role TEXT NOT NULL,
                 specialties JSONB,
@@ -514,8 +522,11 @@ export class PostgresStore implements IStore {
                 created_at BIGINT DEFAULT FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000),
                 updated_at BIGINT DEFAULT FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)
             );
+            ALTER TABLE ai_profiles ADD COLUMN IF NOT EXISTS org_id TEXT;
             CREATE INDEX IF NOT EXISTS idx_ai_profiles_namespace ON ai_profiles(namespace);
+            CREATE INDEX IF NOT EXISTS idx_ai_profiles_org_id ON ai_profiles(org_id);
             CREATE INDEX IF NOT EXISTS idx_ai_profiles_role ON ai_profiles(role);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_profiles_org_role_unique ON ai_profiles(org_id, role) WHERE org_id IS NOT NULL;
 
             -- AI Profile Memories 表
             CREATE TABLE IF NOT EXISTS ai_profile_memories (
@@ -624,6 +635,7 @@ export class PostgresStore implements IStore {
             -- Brain Config 表（K1 配置，独立于 IM 平台）
             CREATE TABLE IF NOT EXISTS brain_config (
                 namespace TEXT PRIMARY KEY,
+                org_id TEXT,
                 agent TEXT NOT NULL DEFAULT 'claude',
                 claude_model_mode TEXT NOT NULL DEFAULT 'opus',
                 codex_model TEXT NOT NULL DEFAULT 'gpt-5.4',
@@ -631,6 +643,20 @@ export class PostgresStore implements IStore {
                 updated_at BIGINT NOT NULL DEFAULT FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000),
                 updated_by TEXT
             );
+            ALTER TABLE brain_config ADD COLUMN IF NOT EXISTS org_id TEXT;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_brain_config_org_id_unique ON brain_config(org_id) WHERE org_id IS NOT NULL;
+
+            CREATE TABLE IF NOT EXISTS user_self_system_settings (
+                org_id TEXT NOT NULL,
+                user_email TEXT NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT false,
+                default_profile_id TEXT,
+                memory_provider TEXT NOT NULL DEFAULT 'yoho-memory',
+                updated_at BIGINT NOT NULL DEFAULT FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000),
+                updated_by TEXT,
+                PRIMARY KEY (org_id, user_email)
+            );
+            CREATE INDEX IF NOT EXISTS idx_user_self_system_profile_id ON user_self_system_settings(default_profile_id);
 
             -- Organizations 表
             CREATE TABLE IF NOT EXISTS organizations (
@@ -980,21 +1006,21 @@ export class PostgresStore implements IStore {
 
     // ========== Session 操作 ==========
 
-    async getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string): Promise<StoredSession> {
+    async getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, orgId: string): Promise<StoredSession> {
         const now = Date.now()
         const id = tag
         const result = await this.pool.query(`
             INSERT INTO sessions (
-                id, tag, namespace, machine_id, created_at, updated_at,
+                id, tag, namespace, org_id, machine_id, created_at, updated_at,
                 metadata, metadata_version,
                 agent_state, agent_state_version,
                 todos, todos_updated_at,
                 active, active_at, seq
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-            ON CONFLICT (id) DO UPDATE SET updated_at = $6
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            ON CONFLICT (id) DO UPDATE SET updated_at = $7
             RETURNING *
         `, [
-            id, tag, namespace, null, now, now,
+            id, tag, orgId, orgId, null, now, now,
             metadata ? JSON.stringify(metadata) : null, 1,
             agentState ? JSON.stringify(agentState) : null, 1,
             null, null,
@@ -1003,7 +1029,7 @@ export class PostgresStore implements IStore {
         return this.toStoredSession(result.rows[0])
     }
 
-    async updateSessionMetadata(id: string, metadata: unknown, expectedVersion: number, namespace: string): Promise<VersionedUpdateResult<unknown | null>> {
+    async updateSessionMetadata(id: string, metadata: unknown, expectedVersion: number, orgId: string): Promise<VersionedUpdateResult<unknown | null>> {
         const client = await this.pool.connect()
         try {
             await client.query('BEGIN')
@@ -1014,9 +1040,9 @@ export class PostgresStore implements IStore {
                     metadata_version = metadata_version + 1,
                     updated_at = $2,
                     seq = seq + 1
-                WHERE id = $3 AND namespace = $4 AND metadata_version = $5
+                WHERE id = $3 AND org_id = $4 AND metadata_version = $5
                 RETURNING metadata_version
-            `, [JSON.stringify(metadata), Date.now(), id, namespace, expectedVersion])
+            `, [JSON.stringify(metadata), Date.now(), id, orgId, expectedVersion])
 
             if (result.rowCount === 1) {
                 await client.query('COMMIT')
@@ -1024,8 +1050,8 @@ export class PostgresStore implements IStore {
             }
 
             const current = await client.query(
-                'SELECT metadata, metadata_version FROM sessions WHERE id = $1 AND namespace = $2',
-                [id, namespace]
+                'SELECT metadata, metadata_version FROM sessions WHERE id = $1 AND org_id = $2',
+                [id, orgId]
             )
             await client.query('COMMIT')
 
@@ -1046,7 +1072,7 @@ export class PostgresStore implements IStore {
         }
     }
 
-    async updateSessionAgentState(id: string, agentState: unknown, expectedVersion: number, namespace: string): Promise<VersionedUpdateResult<unknown | null>> {
+    async updateSessionAgentState(id: string, agentState: unknown, expectedVersion: number, orgId: string): Promise<VersionedUpdateResult<unknown | null>> {
         const client = await this.pool.connect()
         try {
             await client.query('BEGIN')
@@ -1057,9 +1083,9 @@ export class PostgresStore implements IStore {
                     agent_state_version = agent_state_version + 1,
                     updated_at = $2,
                     seq = seq + 1
-                WHERE id = $3 AND namespace = $4 AND agent_state_version = $5
+                WHERE id = $3 AND org_id = $4 AND agent_state_version = $5
                 RETURNING agent_state_version
-            `, [JSON.stringify(agentState), Date.now(), id, namespace, expectedVersion])
+            `, [JSON.stringify(agentState), Date.now(), id, orgId, expectedVersion])
 
             if (result.rowCount === 1) {
                 await client.query('COMMIT')
@@ -1067,8 +1093,8 @@ export class PostgresStore implements IStore {
             }
 
             const current = await client.query(
-                'SELECT agent_state, agent_state_version FROM sessions WHERE id = $1 AND namespace = $2',
-                [id, namespace]
+                'SELECT agent_state, agent_state_version FROM sessions WHERE id = $1 AND org_id = $2',
+                [id, orgId]
             )
             await client.query('COMMIT')
 
@@ -1089,33 +1115,33 @@ export class PostgresStore implements IStore {
         }
     }
 
-    async setSessionTodos(id: string, todos: unknown, todosUpdatedAt: number, namespace: string): Promise<boolean> {
+    async setSessionTodos(id: string, todos: unknown, todosUpdatedAt: number, orgId: string): Promise<boolean> {
         const result = await this.pool.query(`
             UPDATE sessions
             SET todos = $1, todos_updated_at = $2, updated_at = $3, seq = seq + 1
-            WHERE id = $4 AND namespace = $5
-        `, [JSON.stringify(todos), todosUpdatedAt, Date.now(), id, namespace])
+            WHERE id = $4 AND org_id = $5
+        `, [JSON.stringify(todos), todosUpdatedAt, Date.now(), id, orgId])
         return (result.rowCount ?? 0) > 0
     }
 
-    async setSessionAdvisorTaskId(id: string, advisorTaskId: string, namespace: string): Promise<boolean> {
+    async setSessionAdvisorTaskId(id: string, advisorTaskId: string, orgId: string): Promise<boolean> {
         const result = await this.pool.query(`
-            UPDATE sessions SET advisor_task_id = $1, updated_at = $2 WHERE id = $3 AND namespace = $4
-        `, [advisorTaskId, Date.now(), id, namespace])
+            UPDATE sessions SET advisor_task_id = $1, updated_at = $2 WHERE id = $3 AND org_id = $4
+        `, [advisorTaskId, Date.now(), id, orgId])
         return (result.rowCount ?? 0) > 0
     }
 
-    async setSessionAdvisorMode(id: string, advisorMode: boolean, namespace: string): Promise<boolean> {
+    async setSessionAdvisorMode(id: string, advisorMode: boolean, orgId: string): Promise<boolean> {
         const result = await this.pool.query(`
-            UPDATE sessions SET advisor_mode = $1, updated_at = $2 WHERE id = $3 AND namespace = $4
-        `, [advisorMode, Date.now(), id, namespace])
+            UPDATE sessions SET advisor_mode = $1, updated_at = $2 WHERE id = $3 AND org_id = $4
+        `, [advisorMode, Date.now(), id, orgId])
         return (result.rowCount ?? 0) > 0
     }
 
-    async setSessionAdvisorPromptInjected(id: string, namespace: string): Promise<boolean> {
+    async setSessionAdvisorPromptInjected(id: string, orgId: string): Promise<boolean> {
         const result = await this.pool.query(`
-            UPDATE sessions SET advisor_prompt_injected = TRUE, updated_at = $1 WHERE id = $2 AND namespace = $3
-        `, [Date.now(), id, namespace])
+            UPDATE sessions SET advisor_prompt_injected = TRUE, updated_at = $1 WHERE id = $2 AND org_id = $3
+        `, [Date.now(), id, orgId])
         return (result.rowCount ?? 0) > 0
     }
 
@@ -1134,54 +1160,54 @@ export class PostgresStore implements IStore {
         return result.rows.length > 0 && result.rows[0].role_prompt_sent === true
     }
 
-    async setSessionRolePromptSent(id: string, namespace: string): Promise<boolean> {
+    async setSessionRolePromptSent(id: string, orgId: string): Promise<boolean> {
         const result = await this.pool.query(`
-            UPDATE sessions SET role_prompt_sent = TRUE, updated_at = $1 WHERE id = $2 AND namespace = $3
-        `, [Date.now(), id, namespace])
+            UPDATE sessions SET role_prompt_sent = TRUE, updated_at = $1 WHERE id = $2 AND org_id = $3
+        `, [Date.now(), id, orgId])
         return (result.rowCount ?? 0) > 0
     }
 
-    async setSessionCreatedBy(id: string, email: string, namespace: string): Promise<boolean> {
+    async setSessionCreatedBy(id: string, email: string, orgId: string): Promise<boolean> {
         // 只在 created_by 为空时设置，避免覆盖已有的创建者信息
         const result = await this.pool.query(`
             UPDATE sessions SET created_by = $1, updated_at = $2
-            WHERE id = $3 AND namespace = $4 AND created_by IS NULL
-        `, [email, Date.now(), id, namespace])
+            WHERE id = $3 AND org_id = $4 AND created_by IS NULL
+        `, [email, Date.now(), id, orgId])
         return (result.rowCount ?? 0) > 0
     }
 
-    async setSessionOrgId(id: string, orgId: string, namespace: string): Promise<boolean> {
+    async setSessionOrgId(id: string, orgId: string): Promise<boolean> {
         const result = await this.pool.query(`
-            UPDATE sessions SET org_id = $1, updated_at = $2
-            WHERE id = $3 AND namespace = $4 AND org_id IS NULL
-        `, [orgId, Date.now(), id, namespace])
+            UPDATE sessions SET org_id = $1, namespace = $1, updated_at = $2
+            WHERE id = $3 AND org_id IS NULL
+        `, [orgId, Date.now(), id])
         return (result.rowCount ?? 0) > 0
     }
 
-    async setSessionActive(id: string, active: boolean, activeAt: number, namespace: string, terminationReason?: string | null): Promise<boolean> {
+    async setSessionActive(id: string, active: boolean, activeAt: number, orgId: string, terminationReason?: string | null): Promise<boolean> {
         const result = terminationReason === undefined
             ? await this.pool.query(`
                 UPDATE sessions SET active = $1, active_at = $2
-                WHERE id = $3 AND namespace = $4
-            `, [active, activeAt, id, namespace])
+                WHERE id = $3 AND org_id = $4
+            `, [active, activeAt, id, orgId])
             : terminationReason === null
                 ? await this.pool.query(`
                     UPDATE sessions SET active = $1, active_at = $2, termination_reason = NULL
-                    WHERE id = $3 AND namespace = $4
-                `, [active, activeAt, id, namespace])
+                    WHERE id = $3 AND org_id = $4
+                `, [active, activeAt, id, orgId])
                 : await this.pool.query(`
                     UPDATE sessions SET active = $1, active_at = $2, termination_reason = $5
-                    WHERE id = $3 AND namespace = $4
-                `, [active, activeAt, id, namespace, terminationReason])
+                    WHERE id = $3 AND org_id = $4
+                `, [active, activeAt, id, orgId, terminationReason])
         return (result.rowCount ?? 0) > 0
     }
 
-    async setSessionThinking(id: string, thinking: boolean, namespace: string): Promise<void> {
+    async setSessionThinking(id: string, thinking: boolean, orgId: string): Promise<void> {
         await this.pool.query(`
             UPDATE sessions
             SET thinking = $1, thinking_at = $2
-            WHERE id = $3 AND namespace = $4
-        `, [thinking, Date.now(), id, namespace])
+            WHERE id = $3 AND org_id = $4
+        `, [thinking, Date.now(), id, orgId])
     }
 
     async getTurnBoundary(sessionId: string): Promise<{ turnStartSeq: number; turnEndSeq: number } | null> {
@@ -1238,7 +1264,7 @@ export class PostgresStore implements IStore {
         modelMode?: string
         modelReasoningEffort?: string
         fastMode?: boolean
-    }, namespace: string): Promise<boolean> {
+    }, orgId: string): Promise<boolean> {
         const updates: string[] = []
         const values: any[] = []
         let paramIndex = 1
@@ -1268,25 +1294,25 @@ export class PostgresStore implements IStore {
         values.push(Date.now())
 
         values.push(id)
-        values.push(namespace)
+        values.push(orgId)
 
         const result = await this.pool.query(`
             UPDATE sessions SET ${updates.join(', ')}
-            WHERE id = $${paramIndex} AND namespace = $${paramIndex + 1}
+            WHERE id = $${paramIndex} AND org_id = $${paramIndex + 1}
         `, values)
         return (result.rowCount ?? 0) > 0
     }
 
-    async setSessionActiveMonitors(id: string, activeMonitors: unknown, namespace: string): Promise<boolean> {
+    async setSessionActiveMonitors(id: string, activeMonitors: unknown, orgId: string): Promise<boolean> {
         const result = await this.pool.query(`
             UPDATE sessions
             SET active_monitors = $1, updated_at = $2, seq = seq + 1
-            WHERE id = $3 AND namespace = $4
+            WHERE id = $3 AND org_id = $4
         `, [
             JSON.stringify(activeMonitors),
             Date.now(),
             id,
-            namespace
+            orgId
         ])
         return (result.rowCount ?? 0) > 0
     }
@@ -1296,16 +1322,19 @@ export class PostgresStore implements IStore {
         return result.rows.length > 0 ? this.toStoredSession(result.rows[0]) : null
     }
 
-    async getSessionByNamespace(id: string, namespace: string): Promise<StoredSession | null> {
-        const result = await this.pool.query('SELECT * FROM sessions WHERE id = $1 AND namespace = $2', [id, namespace])
+    async getSessionByOrg(id: string, orgId: string): Promise<StoredSession | null> {
+        const result = await this.pool.query('SELECT * FROM sessions WHERE id = $1 AND org_id = $2', [id, orgId])
         return result.rows.length > 0 ? this.toStoredSession(result.rows[0]) : null
+    }
+
+    async getSessionByNamespace(id: string, namespace: string): Promise<StoredSession | null> {
+        return await this.getSessionByOrg(id, namespace)
     }
 
     async getSessions(orgId?: string | null): Promise<StoredSession[]> {
         if (orgId) {
-            // Include brain/brain-child sessions regardless of org_id (they may have org_id=NULL)
             const result = await this.pool.query(
-                `SELECT * FROM sessions WHERE org_id = $1 OR (LOWER(COALESCE(metadata->>'source', '')) IN ('brain', 'brain-child') AND org_id IS NULL) ORDER BY COALESCE(last_message_at, updated_at) DESC`,
+                'SELECT * FROM sessions WHERE org_id = $1 ORDER BY COALESCE(last_message_at, updated_at) DESC',
                 [orgId]
             )
             return result.rows.map(row => this.toStoredSession(row))
@@ -1314,13 +1343,18 @@ export class PostgresStore implements IStore {
         return result.rows.map(row => this.toStoredSession(row))
     }
 
-    async getSessionsByNamespace(namespace: string): Promise<StoredSession[]> {
-        const result = await this.pool.query('SELECT * FROM sessions WHERE namespace = $1 ORDER BY COALESCE(last_message_at, updated_at) DESC', [namespace])
+    async getSessionsByOrg(orgId: string): Promise<StoredSession[]> {
+        const result = await this.pool.query('SELECT * FROM sessions WHERE org_id = $1 ORDER BY COALESCE(last_message_at, updated_at) DESC', [orgId])
         return result.rows.map(row => this.toStoredSession(row))
     }
 
+    async getSessionsByNamespace(namespace: string): Promise<StoredSession[]> {
+        return await this.getSessionsByOrg(namespace)
+    }
+
     async searchSessionHistory(input: {
-        namespace: string
+        orgId?: string
+        namespace?: string
         query: string
         limit: number
         includeOffline?: boolean
@@ -1343,15 +1377,23 @@ export class PostgresStore implements IStore {
         const patternTerms = Array.from(new Set([normalizedQuery, ...tokens]))
         const patterns = patternTerms.map(term => `%${escapeLikePattern(term)}%`)
 
-        const conditions = ['s.namespace = $1']
-        const params: unknown[] = [input.namespace]
+        const effectiveOrgId = input.orgId ?? input.namespace
+        if (!effectiveOrgId) {
+            return []
+        }
+
+        const conditions = ['s.org_id = $1']
+        const params: unknown[] = [effectiveOrgId]
         let paramIndex = params.length + 1
 
         if (!input.includeOffline) {
             conditions.push('s.active = true')
         }
         if (input.mainSessionId) {
-            conditions.push(`LOWER(COALESCE(s.metadata->>'source', '')) = 'brain-child'`)
+            const childSourceList = getAllSessionOrchestrationChildSources()
+                .map((source) => `'${source}'`)
+                .join(', ')
+            conditions.push(`LOWER(COALESCE(s.metadata->>'source', '')) IN (${childSourceList})`)
             conditions.push(`s.metadata->>'mainSessionId' = $${paramIndex++}`)
             params.push(input.mainSessionId)
         }
@@ -1527,22 +1569,22 @@ export class PostgresStore implements IStore {
         return (result.rowCount ?? 0) > 0
     }
 
-    async patchSessionMetadata(id: string, patch: Record<string, unknown>, namespace: string): Promise<boolean> {
+    async patchSessionMetadata(id: string, patch: Record<string, unknown>, orgId: string): Promise<boolean> {
         const result = await this.pool.query(`
             UPDATE sessions
             SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
                 metadata_version = metadata_version + 1,
                 updated_at = $2,
                 seq = seq + 1
-            WHERE id = $3 AND namespace = $4
-        `, [JSON.stringify(patch), Date.now(), id, namespace])
+            WHERE id = $3 AND org_id = $4
+        `, [JSON.stringify(patch), Date.now(), id, orgId])
         return (result.rowCount ?? 0) > 0
     }
 
     // ========== Machine 操作 ==========
 
-    async getOrCreateMachine(id: string, metadata: unknown, daemonState: unknown, namespace: string): Promise<StoredMachine> {
-        const existing = await this.pool.query('SELECT * FROM machines WHERE id = $1 AND namespace = $2', [id, namespace])
+    async getOrCreateMachine(id: string, metadata: unknown, daemonState: unknown, orgId: string): Promise<StoredMachine> {
+        const existing = await this.pool.query('SELECT * FROM machines WHERE id = $1 AND org_id = $2', [id, orgId])
 
         if (existing.rows.length > 0) {
             return this.toStoredMachine(existing.rows[0])
@@ -1550,17 +1592,17 @@ export class PostgresStore implements IStore {
 
         const now = Date.now()
         await this.pool.query(`
-            INSERT INTO machines (id, namespace, created_at, updated_at, metadata, metadata_version, daemon_state, daemon_state_version, active, active_at, seq)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        `, [id, namespace, now, now, metadata ? JSON.stringify(metadata) : null, 1, daemonState ? JSON.stringify(daemonState) : null, 1, false, null, 0])
+            INSERT INTO machines (id, namespace, org_id, created_at, updated_at, metadata, metadata_version, daemon_state, daemon_state_version, active, active_at, seq)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        `, [id, orgId, orgId, now, now, metadata ? JSON.stringify(metadata) : null, 1, daemonState ? JSON.stringify(daemonState) : null, 1, false, null, 0])
 
         const result = await this.pool.query('SELECT * FROM machines WHERE id = $1', [id])
         return this.toStoredMachine(result.rows[0])
     }
 
-    async updateMachineMetadata(id: string, metadata: unknown, expectedVersion: number, namespace: string): Promise<VersionedUpdateResult<unknown | null>> {
+    async updateMachineMetadata(id: string, metadata: unknown, expectedVersion: number, orgId: string): Promise<VersionedUpdateResult<unknown | null>> {
         // Preserve manually configured metadata fields when daemon heartbeats do not send them.
-        const currentMetadata = await this.pool.query('SELECT metadata FROM machines WHERE id = $1 AND namespace = $2', [id, namespace])
+        const currentMetadata = await this.pool.query('SELECT metadata FROM machines WHERE id = $1 AND org_id = $2', [id, orgId])
         let finalMetadata = metadata
 
         if (currentMetadata.rows.length > 0 && metadata && typeof metadata === 'object') {
@@ -1578,31 +1620,31 @@ export class PostgresStore implements IStore {
 
         const result = await this.pool.query(`
             UPDATE machines SET metadata = $1, metadata_version = metadata_version + 1, updated_at = $2, seq = seq + 1
-            WHERE id = $3 AND namespace = $4 AND metadata_version = $5
+            WHERE id = $3 AND org_id = $4 AND metadata_version = $5
             RETURNING metadata_version
-        `, [JSON.stringify(finalMetadata), Date.now(), id, namespace, expectedVersion])
+        `, [JSON.stringify(finalMetadata), Date.now(), id, orgId, expectedVersion])
 
         if ((result.rowCount ?? 0) === 1) {
             return { result: 'success', version: expectedVersion + 1, value: finalMetadata }
         }
 
-        const current = await this.pool.query('SELECT metadata, metadata_version FROM machines WHERE id = $1 AND namespace = $2', [id, namespace])
+        const current = await this.pool.query('SELECT metadata, metadata_version FROM machines WHERE id = $1 AND org_id = $2', [id, orgId])
         if (current.rows.length === 0) return { result: 'error' }
         return { result: 'version-mismatch', version: current.rows[0].metadata_version, value: current.rows[0].metadata }
     }
 
-    async updateMachineDaemonState(id: string, daemonState: unknown, expectedVersion: number, namespace: string): Promise<VersionedUpdateResult<unknown | null>> {
+    async updateMachineDaemonState(id: string, daemonState: unknown, expectedVersion: number, orgId: string): Promise<VersionedUpdateResult<unknown | null>> {
         const result = await this.pool.query(`
             UPDATE machines SET daemon_state = $1, daemon_state_version = daemon_state_version + 1, updated_at = $2, seq = seq + 1
-            WHERE id = $3 AND namespace = $4 AND daemon_state_version = $5
+            WHERE id = $3 AND org_id = $4 AND daemon_state_version = $5
             RETURNING daemon_state_version
-        `, [JSON.stringify(daemonState), Date.now(), id, namespace, expectedVersion])
+        `, [JSON.stringify(daemonState), Date.now(), id, orgId, expectedVersion])
 
         if ((result.rowCount ?? 0) === 1) {
             return { result: 'success', version: expectedVersion + 1, value: daemonState }
         }
 
-        const current = await this.pool.query('SELECT daemon_state, daemon_state_version FROM machines WHERE id = $1 AND namespace = $2', [id, namespace])
+        const current = await this.pool.query('SELECT daemon_state, daemon_state_version FROM machines WHERE id = $1 AND org_id = $2', [id, orgId])
         if (current.rows.length === 0) return { result: 'error' }
         return { result: 'version-mismatch', version: current.rows[0].daemon_state_version, value: current.rows[0].daemon_state }
     }
@@ -1612,9 +1654,13 @@ export class PostgresStore implements IStore {
         return result.rows.length > 0 ? this.toStoredMachine(result.rows[0]) : null
     }
 
-    async getMachineByNamespace(id: string, namespace: string): Promise<StoredMachine | null> {
-        const result = await this.pool.query('SELECT * FROM machines WHERE id = $1 AND namespace = $2', [id, namespace])
+    async getMachineByOrg(id: string, orgId: string): Promise<StoredMachine | null> {
+        const result = await this.pool.query('SELECT * FROM machines WHERE id = $1 AND org_id = $2', [id, orgId])
         return result.rows.length > 0 ? this.toStoredMachine(result.rows[0]) : null
+    }
+
+    async getMachineByNamespace(id: string, namespace: string): Promise<StoredMachine | null> {
+        return await this.getMachineByOrg(id, namespace)
     }
 
     async getMachines(orgId?: string | null): Promise<StoredMachine[]> {
@@ -1626,27 +1672,27 @@ export class PostgresStore implements IStore {
         return result.rows.map(row => this.toStoredMachine(row))
     }
 
-    async getMachinesByNamespace(namespace: string, orgId?: string | null): Promise<StoredMachine[]> {
-        if (orgId) {
-            const result = await this.pool.query('SELECT * FROM machines WHERE namespace = $1 AND org_id = $2 ORDER BY updated_at DESC', [namespace, orgId])
-            return result.rows.map(row => this.toStoredMachine(row))
-        }
-        const result = await this.pool.query('SELECT * FROM machines WHERE namespace = $1 ORDER BY updated_at DESC', [namespace])
+    async getMachinesByOrg(orgId: string): Promise<StoredMachine[]> {
+        const result = await this.pool.query('SELECT * FROM machines WHERE org_id = $1 ORDER BY updated_at DESC', [orgId])
         return result.rows.map(row => this.toStoredMachine(row))
     }
 
-    async setMachineOrgId(id: string, orgId: string, namespace: string): Promise<boolean> {
+    async getMachinesByNamespace(namespace: string, orgId?: string | null): Promise<StoredMachine[]> {
+        return await this.getMachinesByOrg(orgId ?? namespace)
+    }
+
+    async setMachineOrgId(id: string, orgId: string): Promise<boolean> {
         const result = await this.pool.query(
-            'UPDATE machines SET org_id = $1, updated_at = $2 WHERE id = $3 AND namespace = $4',
-            [orgId, Date.now(), id, namespace]
+            'UPDATE machines SET org_id = $1, namespace = $1, updated_at = $2 WHERE id = $3',
+            [orgId, Date.now(), id]
         )
         return (result.rowCount ?? 0) > 0
     }
 
-    async setMachineSupportedAgents(id: string, supportedAgents: SpawnAgentType[] | null, namespace: string): Promise<boolean> {
+    async setMachineSupportedAgents(id: string, supportedAgents: SpawnAgentType[] | null, orgId: string): Promise<boolean> {
         const result = await this.pool.query(
-            'UPDATE machines SET supported_agents = $1, updated_at = $2, seq = seq + 1 WHERE id = $3 AND namespace = $4',
-            [supportedAgents ? JSON.stringify(supportedAgents) : null, Date.now(), id, namespace]
+            'UPDATE machines SET supported_agents = $1, updated_at = $2, seq = seq + 1 WHERE id = $3 AND org_id = $4',
+            [supportedAgents ? JSON.stringify(supportedAgents) : null, Date.now(), id, orgId]
         )
         return (result.rowCount ?? 0) > 0
     }
@@ -3026,6 +3072,11 @@ export class PostgresStore implements IStore {
         return result.rows.map(row => this.toStoredAIProfile(row))
     }
 
+    async getAIProfilesByOrg(orgId: string): Promise<StoredAIProfile[]> {
+        const result = await this.pool.query('SELECT * FROM ai_profiles WHERE org_id = $1 ORDER BY role, name', [orgId])
+        return result.rows.map(row => this.toStoredAIProfile(row))
+    }
+
     async getAIProfile(id: string): Promise<StoredAIProfile | null> {
         const result = await this.pool.query('SELECT * FROM ai_profiles WHERE id = $1', [id])
         if (result.rows.length === 0) return null
@@ -3041,8 +3092,18 @@ export class PostgresStore implements IStore {
         return this.toStoredAIProfile(result.rows[0])
     }
 
+    async getAIProfileByOrgAndRole(orgId: string, role: AIProfileRole): Promise<StoredAIProfile | null> {
+        const result = await this.pool.query(
+            'SELECT * FROM ai_profiles WHERE org_id = $1 AND role = $2',
+            [orgId, role]
+        )
+        if (result.rows.length === 0) return null
+        return this.toStoredAIProfile(result.rows[0])
+    }
+
     async createAIProfile(data: {
         namespace: string
+        orgId?: string | null
         name: string
         role: AIProfileRole
         specialties?: string[]
@@ -3058,12 +3119,13 @@ export class PostgresStore implements IStore {
 
         await this.pool.query(`
             INSERT INTO ai_profiles (
-                id, namespace, name, role, specialties, personality, greeting_template,
+                id, namespace, org_id, name, role, specialties, personality, greeting_template,
                 preferred_projects, work_style, avatar_emoji, status, stats_json, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         `, [
             id,
             data.namespace,
+            data.orgId ?? null,
             data.name,
             data.role,
             JSON.stringify(data.specialties ?? []),
@@ -4658,6 +4720,7 @@ export class PostgresStore implements IStore {
         return {
             id: row.id,
             namespace: row.namespace,
+            orgId: row.org_id ?? null,
             name: row.name,
             role: row.role as AIProfileRole,
             specialties: Array.isArray(row.specialties) ? row.specialties : [],
@@ -4908,6 +4971,26 @@ export class PostgresStore implements IStore {
         const r = result.rows[0]
         return {
             namespace: r.namespace,
+            orgId: r.org_id ?? null,
+            agent: r.agent,
+            claudeModelMode: r.claude_model_mode,
+            codexModel: r.codex_model,
+            extra: r.extra || {},
+            updatedAt: Number(r.updated_at),
+            updatedBy: r.updated_by,
+        }
+    }
+
+    async getBrainConfigByOrg(orgId: string): Promise<StoredBrainConfig | null> {
+        const result = await this.pool.query(
+            'SELECT * FROM brain_config WHERE org_id = $1',
+            [orgId]
+        )
+        if (result.rows.length === 0) return null
+        const r = result.rows[0]
+        return {
+            namespace: r.namespace,
+            orgId: r.org_id ?? null,
             agent: r.agent,
             claudeModelMode: r.claude_model_mode,
             codexModel: r.codex_model,
@@ -4948,12 +5031,249 @@ export class PostgresStore implements IStore {
         const r = result.rows[0]
         return {
             namespace: r.namespace,
+            orgId: r.org_id ?? null,
             agent: r.agent,
             claudeModelMode: r.claude_model_mode,
             codexModel: r.codex_model,
             extra: r.extra || {},
             updatedAt: Number(r.updated_at),
             updatedBy: r.updated_by,
+        }
+    }
+
+    async setBrainConfigByOrg(orgId: string, config: {
+        agent: BrainAgent
+        claudeModelMode?: string
+        codexModel?: string
+        extra?: Record<string, unknown>
+        updatedBy?: string | null
+    }): Promise<StoredBrainConfig> {
+        const now = Date.now()
+        const namespace = `org:${orgId}`
+        const result = await this.pool.query(`
+            INSERT INTO brain_config (namespace, org_id, agent, claude_model_mode, codex_model, extra, updated_at, updated_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (namespace) DO UPDATE SET
+                org_id = EXCLUDED.org_id,
+                agent = EXCLUDED.agent,
+                claude_model_mode = EXCLUDED.claude_model_mode,
+                codex_model = EXCLUDED.codex_model,
+                extra = EXCLUDED.extra,
+                updated_at = EXCLUDED.updated_at,
+                updated_by = EXCLUDED.updated_by
+            RETURNING *
+        `, [
+            namespace,
+            orgId,
+            config.agent,
+            config.claudeModelMode ?? 'opus',
+            config.codexModel ?? 'gpt-5.4',
+            JSON.stringify(config.extra ?? {}),
+            now,
+            config.updatedBy ?? null,
+        ])
+        const r = result.rows[0]
+        return {
+            namespace: r.namespace,
+            orgId: r.org_id ?? null,
+            agent: r.agent,
+            claudeModelMode: r.claude_model_mode,
+            codexModel: r.codex_model,
+            extra: r.extra || {},
+            updatedAt: Number(r.updated_at),
+            updatedBy: r.updated_by,
+        }
+    }
+
+    async getUserSelfSystemConfig(orgId: string, userEmail: string): Promise<StoredUserSelfSystemConfig | null> {
+        const result = await this.pool.query(
+            'SELECT * FROM user_self_system_settings WHERE org_id = $1 AND user_email = $2',
+            [orgId, this.normalizeEmail(userEmail)]
+        )
+        if (result.rows.length === 0) return null
+        const row = result.rows[0]
+        return {
+            orgId: row.org_id,
+            userEmail: row.user_email,
+            enabled: row.enabled === true,
+            defaultProfileId: row.default_profile_id ?? null,
+            memoryProvider: row.memory_provider === 'none' ? 'none' : 'yoho-memory',
+            updatedAt: Number(row.updated_at),
+            updatedBy: row.updated_by ?? null,
+        }
+    }
+
+    async setUserSelfSystemConfig(input: {
+        orgId: string
+        userEmail: string
+        enabled: boolean
+        defaultProfileId?: string | null
+        memoryProvider: 'yoho-memory' | 'none'
+        updatedBy?: string | null
+    }): Promise<StoredUserSelfSystemConfig> {
+        const now = Date.now()
+        const normalizedEmail = this.normalizeEmail(input.userEmail)
+        const result = await this.pool.query(`
+            INSERT INTO user_self_system_settings (
+                org_id, user_email, enabled, default_profile_id, memory_provider, updated_at, updated_by
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (org_id, user_email) DO UPDATE SET
+                enabled = EXCLUDED.enabled,
+                default_profile_id = EXCLUDED.default_profile_id,
+                memory_provider = EXCLUDED.memory_provider,
+                updated_at = EXCLUDED.updated_at,
+                updated_by = EXCLUDED.updated_by
+            RETURNING *
+        `, [
+            input.orgId,
+            normalizedEmail,
+            input.enabled,
+            input.defaultProfileId ?? null,
+            input.memoryProvider,
+            now,
+            input.updatedBy ?? null,
+        ])
+        const row = result.rows[0]
+        return {
+            orgId: row.org_id,
+            userEmail: row.user_email,
+            enabled: row.enabled === true,
+            defaultProfileId: row.default_profile_id ?? null,
+            memoryProvider: row.memory_provider === 'none' ? 'none' : 'yoho-memory',
+            updatedAt: Number(row.updated_at),
+            updatedBy: row.updated_by ?? null,
+        }
+    }
+
+    async clearSelfSystemProfileReferences(
+        orgId: string,
+        profileId: string,
+        updatedBy?: string | null,
+    ): Promise<{ clearedUserConfigs: number; clearedOrgConfig: boolean }> {
+        const now = Date.now()
+        const userResult = await this.pool.query(`
+            UPDATE user_self_system_settings
+            SET enabled = false,
+                default_profile_id = NULL,
+                updated_at = $3,
+                updated_by = $4
+            WHERE org_id = $1 AND default_profile_id = $2
+        `, [
+            orgId,
+            profileId,
+            now,
+            updatedBy ?? null,
+        ])
+
+        let clearedOrgConfig = false
+        const currentBrainConfig = await this.getBrainConfigByOrg(orgId)
+        const currentExtra = isRecord(currentBrainConfig?.extra) ? currentBrainConfig.extra : null
+        const currentSelfSystem = currentExtra && isRecord(currentExtra.selfSystem)
+            ? currentExtra.selfSystem
+            : null
+        const currentDefaultProfileId = typeof currentSelfSystem?.defaultProfileId === 'string'
+            ? currentSelfSystem.defaultProfileId.trim()
+            : ''
+
+        if (currentBrainConfig && currentDefaultProfileId === profileId) {
+            await this.setBrainConfigByOrg(orgId, {
+                agent: currentBrainConfig.agent,
+                claudeModelMode: currentBrainConfig.claudeModelMode,
+                codexModel: currentBrainConfig.codexModel,
+                extra: {
+                    ...currentBrainConfig.extra,
+                    selfSystem: {
+                        ...currentSelfSystem,
+                        enabled: false,
+                        defaultProfileId: null,
+                    },
+                },
+                updatedBy: updatedBy ?? null,
+            })
+            clearedOrgConfig = true
+        }
+
+        return {
+            clearedUserConfigs: userResult.rowCount ?? 0,
+            clearedOrgConfig,
+        }
+    }
+
+    async deleteAIProfileWithSelfSystemCleanup(
+        orgId: string,
+        profileId: string,
+        updatedBy?: string | null,
+    ): Promise<boolean> {
+        const client = await this.pool.connect()
+        const now = Date.now()
+        try {
+            await client.query('BEGIN')
+
+            const brainConfigNamespace = `org:${orgId}`
+            const brainConfigResult = await client.query(
+                'SELECT * FROM brain_config WHERE namespace = $1 FOR UPDATE',
+                [brainConfigNamespace],
+            )
+            if (brainConfigResult.rows.length > 0) {
+                const row = brainConfigResult.rows[0]
+                const extra = isRecord(row.extra) ? row.extra : {}
+                const selfSystem = isRecord(extra.selfSystem) ? extra.selfSystem : null
+                const currentDefaultProfileId = typeof selfSystem?.defaultProfileId === 'string'
+                    ? selfSystem.defaultProfileId.trim()
+                    : ''
+                if (currentDefaultProfileId === profileId) {
+                    await client.query(`
+                        UPDATE brain_config
+                        SET extra = $1,
+                            updated_at = $2,
+                            updated_by = $3
+                        WHERE namespace = $4
+                    `, [
+                        JSON.stringify({
+                            ...extra,
+                            selfSystem: {
+                                ...selfSystem,
+                                enabled: false,
+                                defaultProfileId: null,
+                            },
+                        }),
+                        now,
+                        updatedBy ?? null,
+                        brainConfigNamespace,
+                    ])
+                }
+            }
+
+            await client.query(`
+                UPDATE user_self_system_settings
+                SET enabled = false,
+                    default_profile_id = NULL,
+                    updated_at = $3,
+                    updated_by = $4
+                WHERE org_id = $1 AND default_profile_id = $2
+            `, [
+                orgId,
+                profileId,
+                now,
+                updatedBy ?? null,
+            ])
+
+            const deleteResult = await client.query(
+                'DELETE FROM ai_profiles WHERE id = $1 AND org_id = $2',
+                [profileId, orgId],
+            )
+            if ((deleteResult.rowCount ?? 0) === 0) {
+                await client.query('ROLLBACK')
+                return false
+            }
+
+            await client.query('COMMIT')
+            return true
+        } catch (error) {
+            await client.query('ROLLBACK')
+            throw error
+        } finally {
+            client.release()
         }
     }
 
@@ -5523,6 +5843,36 @@ export class PostgresStore implements IStore {
     async getPersonIdentity(id: string): Promise<StoredPersonIdentity | null> {
         const result = await this.pool.query('SELECT * FROM person_identities WHERE id = $1', [id])
         return result.rows.length > 0 ? this.toStoredPersonIdentity(result.rows[0]) : null
+    }
+
+    async findResolvedActorByChannelExternalId(channel: IdentityChannel, externalId: string): Promise<ResolvedActorContext | null> {
+        const normalizedExternalId = this.normalizeOptionalString(externalId)
+        if (!normalizedExternalId) {
+            return null
+        }
+
+        const result = await this.pool.query(
+            `SELECT * FROM person_identities
+             WHERE channel = $1
+               AND external_id = $2
+             ORDER BY updated_at DESC`,
+            [channel, normalizedExternalId]
+        )
+        if (result.rows.length !== 1) {
+            return null
+        }
+
+        const identity = this.toStoredPersonIdentity(result.rows[0])
+        const activeLink = await this.getActiveIdentityLink(identity.id)
+        if (!activeLink) {
+            return this.buildResolvedActor(identity, null, 'unresolved')
+        }
+
+        let linkedPerson = await this.getPerson(activeLink.personId)
+        if (linkedPerson?.status === 'merged' && linkedPerson.mergedIntoPersonId) {
+            linkedPerson = await this.getPerson(linkedPerson.mergedIntoPersonId) ?? linkedPerson
+        }
+        return this.buildResolvedActor(identity, linkedPerson, activeLink.state)
     }
 
     async getActiveIdentityLink(identityId: string): Promise<StoredPersonIdentityLink | null> {

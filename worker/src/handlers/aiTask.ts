@@ -18,6 +18,12 @@ export const aiTaskPayloadSchema = z.object({
     agent: z.enum(['claude', 'codex']),
     mode: z.string().nullish(),
     machineId: z.string().min(1),
+    // mainSessionId: when the schedule was created by another session, the worker
+    // session becomes its orchestrator-child so brain-child callback UI lights up.
+    mainSessionId: z.string().min(1).nullish(),
+    // recurring: suppresses auto-callback on success — only failures fire the callback
+    // so the brain doesn't react to every normal cron tick.
+    recurring: z.boolean().optional(),
 })
 
 export type AiTaskPayload = z.infer<typeof aiTaskPayloadSchema>
@@ -55,7 +61,18 @@ function buildMessageLocalId(runId: string): string {
 }
 
 function buildFindOrCreateBody(payload: AiTaskPayload): Record<string, unknown> {
-    const { directory, agent, mode, machineId } = payload
+    const { directory, agent, mode, machineId, mainSessionId, recurring } = payload
+
+    // Only attach orchestrator-child fields when we have a creator session — legacy
+    // payloads (no mainSessionId) keep the neutral 'worker-ai-task' tag path.
+    const orchestrationExtras: Record<string, unknown> = {}
+    if (mainSessionId) {
+        orchestrationExtras.mainSessionId = mainSessionId
+        orchestrationExtras.source = 'orchestrator-child'
+        // Recurring schedules only want the brain to hear about failures. The
+        // worker will explicitly trigger the callback on error paths.
+        orchestrationExtras.callbackOnFailureOnly = recurring === true
+    }
 
     if (agent === 'claude') {
         return {
@@ -63,6 +80,7 @@ function buildFindOrCreateBody(payload: AiTaskPayload): Record<string, unknown> 
             agent,
             machineId,
             modelMode: mode ?? 'sonnet',
+            ...orchestrationExtras,
         }
     }
 
@@ -72,6 +90,37 @@ function buildFindOrCreateBody(payload: AiTaskPayload): Record<string, unknown> 
         machineId,
         codexModel: mode ?? 'gpt-5.4',
         permissionMode: 'safe-yolo',
+        ...orchestrationExtras,
+    }
+}
+
+// Forces a brain-child callback for recurring-schedule failures whose sessions
+// were spawned with callbackOnFailureOnly=true. Safe to call even when the flag
+// wasn't set — the server side treats it as a manual re-trigger.
+async function triggerFailureCallbackIfNeeded(
+    baseUrl: string,
+    token: string,
+    payload: AiTaskPayload,
+    sessionId: string | null,
+): Promise<void> {
+    if (!sessionId) return
+    if (!payload.mainSessionId) return
+    if (payload.recurring !== true) return
+    try {
+        const res = await internalPost(baseUrl, token, '/api/internal/session/trigger-callback', {
+            sessionId,
+        })
+        if (!res.ok) {
+            const errText = await res.text().catch(() => String(res.status))
+            console.warn(
+                `[aiTask] trigger-callback failed: runId=${payload.runId} sessionId=${sessionId} status=${res.status} body=${errText}`,
+            )
+        }
+    } catch (err) {
+        console.warn(
+            `[aiTask] trigger-callback threw: runId=${payload.runId} sessionId=${sessionId}`,
+            err,
+        )
     }
 }
 
@@ -164,6 +213,8 @@ export async function handleAiTask(
                     finishedAt: Date.now(),
                     error: `find-or-create failed ${spawnRes.status}: ${errText}`,
                 })
+                // No sessionId to trigger callback for — the orchestration path
+                // can't fire yet. Nothing to notify the brain about.
                 return
             }
 
@@ -196,6 +247,7 @@ export async function handleAiTask(
                     subsessionId: sessionId,
                     error: `send failed ${sendRes.status}: ${errText}`,
                 })
+                await triggerFailureCallbackIfNeeded(baseUrl, token, payload, sessionId)
                 return
             }
 
@@ -230,6 +282,7 @@ export async function handleAiTask(
                     subsessionId: sessionId,
                     error: `timed out after ${timeoutMs}ms`,
                 })
+                await triggerFailureCallbackIfNeeded(baseUrl, token, payload, sessionId)
                 return
             }
 
@@ -273,6 +326,8 @@ export async function handleAiTask(
                 storeErr,
             )
         })
+
+        await triggerFailureCallbackIfNeeded(baseUrl, token, payload, sessionId)
 
         throw error
     }

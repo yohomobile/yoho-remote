@@ -173,17 +173,6 @@ export default defineConfig({
                                 maxAgeSeconds: 60 * 60 * 24 * 30
                             }
                         }
-                    },
-                    {
-                        urlPattern: /^https:\/\/telegram\.org\/.*/,
-                        handler: 'CacheFirst',
-                        options: {
-                            cacheName: 'cdn-telegram',
-                            expiration: {
-                                maxEntries: 5,
-                                maxAgeSeconds: 60 * 60 * 24 * 7
-                            }
-                        }
                     }
                 ]
             },

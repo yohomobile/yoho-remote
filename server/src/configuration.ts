@@ -7,9 +7,8 @@
  *
  * Optional environment variables:
  * - CLI_API_TOKEN: Shared secret for CLI authentication (auto-generated if not set)
- * - TELEGRAM_BOT_TOKEN: Telegram Bot API token from @BotFather
  * - WEBAPP_PORT: Port for Mini App HTTP server (default: 3006)
- * - WEBAPP_URL: Public URL for Telegram Mini App
+ * - WEBAPP_URL: Public URL for the web app
  * - CORS_ORIGINS: Comma-separated CORS origins
  * - FEISHU_APP_ID: Feishu/Lark app ID for speech-to-text
  * - FEISHU_APP_SECRET: Feishu/Lark app secret for speech-to-text
@@ -26,7 +25,6 @@ import { getOrCreateCliApiToken } from './web/cliApiToken'
 export type ConfigSource = 'env' | 'file' | 'default'
 
 export interface ConfigSources {
-    telegramBotToken: ConfigSource
     webappPort: ConfigSource
     webappUrl: ConfigSource
     corsOrigins: ConfigSource
@@ -41,12 +39,6 @@ export interface ConfigSources {
 }
 
 class Configuration {
-    /** Telegram Bot API token */
-    public readonly telegramBotToken: string | null
-
-    /** Telegram bot enabled status (token present) */
-    public readonly telegramEnabled: boolean
-
     /** CLI auth token (shared secret) */
     public cliApiToken: string
 
@@ -65,7 +57,7 @@ class Configuration {
     /** Port for the Mini App HTTP server */
     public readonly webappPort: number
 
-    /** Public HTTPS URL for the Telegram Mini App (used in WebApp buttons) */
+    /** Public HTTPS URL for the web app */
     public readonly miniAppUrl: string
 
     /** Allowed CORS origins for Mini App + Socket.IO (comma-separated env override) */
@@ -105,8 +97,6 @@ class Configuration {
         this.settingsFile = join(dataDir, 'settings.json')
 
         // Apply server settings
-        this.telegramBotToken = serverSettings.telegramBotToken
-        this.telegramEnabled = Boolean(this.telegramBotToken)
         this.webappPort = serverSettings.webappPort
         this.miniAppUrl = serverSettings.webappUrl
         this.corsOrigins = serverSettings.corsOrigins

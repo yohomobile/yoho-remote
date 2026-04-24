@@ -106,6 +106,63 @@ describe('session-list-brain', () => {
         })
     })
 
+    test('groups orchestrator children under their matching orchestrator parent', () => {
+        const orchestrator = createSession('orch-1', {
+            updatedAt: 100,
+            metadata: {
+                path: '/tmp/orch-1',
+                source: 'orchestrator',
+            },
+        })
+        const child = createSession('orch-child-1', {
+            updatedAt: 200,
+            metadata: {
+                path: '/tmp/orch-child-1',
+                source: 'orchestrator-child',
+                mainSessionId: 'orch-1',
+            },
+        })
+
+        const entries = buildSessionListEntries([child, orchestrator])
+
+        expect(entries).toHaveLength(1)
+        expect(entries[0]).toMatchObject({
+            kind: 'brain-group',
+            session: { id: 'orch-1' },
+            children: [{ id: 'orch-child-1' }],
+        })
+    })
+
+    test('does not group mismatched orchestration child sources under the wrong parent profile', () => {
+        const orchestrator = createSession('orch-1', {
+            updatedAt: 100,
+            metadata: {
+                path: '/tmp/orch-1',
+                source: 'orchestrator',
+            },
+        })
+        const wrongChild = createSession('brain-child-1', {
+            updatedAt: 200,
+            metadata: {
+                path: '/tmp/brain-child-1',
+                source: 'brain-child',
+                mainSessionId: 'orch-1',
+            },
+        })
+
+        const entries = buildSessionListEntries([wrongChild, orchestrator])
+
+        expect(entries).toHaveLength(2)
+        expect(entries[0]).toMatchObject({
+            kind: 'session',
+            session: { id: 'brain-child-1' },
+        })
+        expect(entries[1]).toMatchObject({
+            kind: 'session',
+            session: { id: 'orch-1' },
+        })
+    })
+
     test('prefers recent activity over pending count for top-level active entries', () => {
         const stalePending = createSession('session-stale-pending', {
             updatedAt: 100,

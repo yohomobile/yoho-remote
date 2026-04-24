@@ -72,10 +72,11 @@ export async function handleAiTaskDispatcher(
 
     for (const schedule of schedules) {
         try {
+            const oneShotDelay = isOneShotDelay(schedule.cron)
             const dueAt = schedule.nextFireAt != null && schedule.nextFireAt <= now
                 ? schedule.nextFireAt
                 : minuteStart.getTime()
-            const shouldFire = isOneShotDelay(schedule.cron)
+            const shouldFire = oneShotDelay
                 ? schedule.nextFireAt != null && schedule.nextFireAt <= now
                 : schedule.nextFireAt != null
                 ? schedule.nextFireAt <= now
@@ -102,6 +103,8 @@ export async function handleAiTaskDispatcher(
                 agent: schedule.agent as 'claude' | 'codex',
                 mode: schedule.model ?? null,
                 machineId: schedule.machineId,
+                mainSessionId: schedule.createdBySessionId ?? null,
+                recurring: schedule.recurring,
             }
 
             const sentJobId = await sendAiTaskRun(
@@ -120,13 +123,13 @@ export async function handleAiTaskDispatcher(
                 continue
             }
 
-            if (schedule.recurring) {
+            if (oneShotDelay || !schedule.recurring) {
+                await store.disableSchedule(schedule.id, now)
+            } else {
                 const next = computeNextFireAt(schedule.cron, new Date(now))
                 if (next != null) {
                     await store.updateScheduleNextFireAt(schedule.id, next, now)
                 }
-            } else {
-                await store.disableSchedule(schedule.id, now)
             }
         } catch (err) {
             console.error(

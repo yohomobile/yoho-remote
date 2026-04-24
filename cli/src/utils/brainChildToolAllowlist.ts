@@ -1,5 +1,11 @@
 import { CLAUDE_BUILTIN_TOOLS } from '@/claude/utils/claudeBuiltinTools';
 
+const CLAUDE_BRAIN_CHILD_EXCLUDED_BUILTIN_TOOLS = new Set([
+    'Agent',
+    'Task',
+    'ExitPlanMode',
+]);
+
 export const BRAIN_CHILD_YOHO_REMOTE_TOOL_NAMES = [
     'change_title',
     'environment_info',
@@ -77,6 +83,9 @@ export function buildBrainChildClaudeAllowedTools(args: {
     sessionCaller?: string | null;
     includeInteractionTools?: boolean;
 }): string[] {
+    const builtinTools = CLAUDE_BUILTIN_TOOLS.filter(
+        (toolName) => !CLAUDE_BRAIN_CHILD_EXCLUDED_BUILTIN_TOOLS.has(toolName)
+    );
     const yohoRemoteTools = [
         ...filterBrainChildYohoRemoteToolNames(args.yohoRemoteToolNames),
         ...(args.includeInteractionTools ? filterBrainChildInteractionToolNames(args.yohoRemoteToolNames) : []),
@@ -86,7 +95,7 @@ export function buildBrainChildClaudeAllowedTools(args: {
     const yohoVaultTools = BRAIN_CHILD_YOHO_VAULT_TOOL_NAMES.map((toolName) => `mcp__yoho-vault__${toolName}`);
 
     return uniqueSorted([
-        ...CLAUDE_BUILTIN_TOOLS,
+        ...builtinTools,
         ...yohoRemoteTools,
         ...yohoVaultTools,
     ]);

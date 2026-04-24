@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { invalidateSessionCachesForSidOnlyUpdate } from './useSSE'
+import { buildSseSubscriptionKey, invalidateSessionCachesForSidOnlyUpdate } from './useSSE'
 import { queryKeys } from '@/lib/query-keys'
 
 describe('useSSE sid-only update cache invalidation', () => {
@@ -18,5 +18,15 @@ describe('useSSE sid-only update cache invalidation', () => {
             queryKeys.sessions,
             queryKeys.session('brain-child-1'),
         ])
+    })
+
+    test('includes orgId in the subscription key so org switches reconnect SSE', () => {
+        expect(buildSseSubscriptionKey({
+            all: true,
+            orgId: 'org-a',
+        })).not.toBe(buildSseSubscriptionKey({
+            all: true,
+            orgId: 'org-b',
+        }))
     })
 })

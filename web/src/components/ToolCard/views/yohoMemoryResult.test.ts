@@ -7,7 +7,6 @@ function withWindowStub<T>(run: () => T): T {
     const globalWithWindow = globalThis as unknown as { window?: Window }
     const previousWindow = globalWithWindow.window
     globalWithWindow.window = {
-        Telegram: undefined,
         matchMedia: () => ({
             matches: false,
         } as MediaQueryList),

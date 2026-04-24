@@ -76,16 +76,27 @@ describe('brainChildActions', () => {
 
     test('explains available child-page actions when the session is inactive', () => {
         expect(getBrainChildPageInactiveHint({
+            childSource: 'brain-child',
             resumeError: false,
             hasMainSessionId: true,
             hasMessages: true,
         })).toBe('子任务当前未运行。此页不接受直接发消息；可使用上方操作条返回主 Brain、恢复或查看最近片段。')
 
         expect(getBrainChildPageInactiveHint({
+            childSource: 'brain-child',
             resumeError: true,
             hasMainSessionId: false,
             hasMessages: true,
         })).toBe('恢复失败。此页不接受直接发消息；可使用上方操作条恢复或查看最近片段。')
+    })
+
+    test('uses orchestration-specific labels for orchestrator child pages', () => {
+        expect(getBrainChildPageInactiveHint({
+            childSource: 'orchestrator-child',
+            resumeError: false,
+            hasMainSessionId: true,
+            hasMessages: false,
+        })).toBe('正在等待编排子任务启动。此页不接受直接发消息；可使用上方操作条返回主编排 Session、恢复或查看最近片段。')
     })
 
     test('extracts recent tail preview items from normalized messages', () => {

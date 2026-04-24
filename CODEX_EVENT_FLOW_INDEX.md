@@ -149,7 +149,7 @@ DecryptedMessage (Claude 格式)
   ↓
 SyncEvent 发布
   ↓
-SSEManager / BrainBridge / Telegram
+SSEManager / BrainBridge / Web API
 ```
 
 ### Codex 工具调用示例
@@ -172,7 +172,7 @@ Server: 转换为 Claude 格式
 ### 为什么有统一的 SyncEvent?
 
 - **多源**: Claude + Codex 两种会话类型
-- **多订阅**: SSE、Web、Telegram、Brain 都需要事件
+- **多订阅**: SSE、Web、Brain 都需要事件
 - **格式统一**: 所有消息最终以 Claude 格式存储
 
 ### Flavor 的作用
@@ -207,11 +207,10 @@ A: type (thread.started/item.*/turn.* 等), thread_id, item (ExecItem)
 A: message, reasoning, reasoning-delta, token_count, tool-call, tool-call-result
 
 **Q: SyncEvent 发布给谁?**  
-A: SSEManager, BrainBridge, Telegram Bot, 以及 Web API 路由
+A: SSEManager, BrainBridge, 以及 Web API 路由
 
 ---
 
 ## 📖 详细文档
 
 完整的分析报告: `CODEX_SESSION_EVENT_FLOW_ANALYSIS.md`
-

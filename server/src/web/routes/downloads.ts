@@ -22,25 +22,40 @@ const uploadSchema = z.object({
     mimeType: z.string().optional(),
 })
 
-type CliEnv = { Variables: { namespace: string } }
+type CliEnv = { Variables: { orgId: string } }
 
 async function requireDownloadSessionAccess(
     c: { get: (key: string) => unknown; json: (data: unknown, status?: number) => Response },
     store: IStore,
     sessionId: string,
 ): Promise<Response | null> {
-    const namespace = c.get('namespace') as string | undefined
     const session = await store.getSession(sessionId)
     if (!session) {
         return c.json({ error: 'Session not found' }, 404)
     }
 
-    if (session.namespace !== namespace) {
+    const sessionOrgId = typeof session.orgId === 'string' && session.orgId.trim()
+        ? session.orgId.trim()
+        : null
+    if (!sessionOrgId) {
         return c.json({ error: 'Session access denied' }, 403)
     }
 
+    const requestedOrgId = c.get('orgId') as string | undefined
+    if (requestedOrgId) {
+        if (requestedOrgId !== sessionOrgId) {
+            return c.json({ error: 'Session access denied' }, 403)
+        }
+    } else {
+        const role = c.get('role') as string | undefined
+        const orgs = (c.get('orgs') as Array<{ id: string }> | undefined) ?? []
+        if (role !== 'operator' && !orgs.some((org) => org.id === sessionOrgId)) {
+            return c.json({ error: 'Session access denied' }, 403)
+        }
+    }
+
     const email = c.get('email') as string | undefined
-    if (!email || namespace !== 'default') {
+    if (!email) {
         return null
     }
 
@@ -76,7 +91,11 @@ export function createDownloadCliRoutes(
         if (!parsedToken || !safeCompareStrings(parsedToken.baseToken, configuration.cliApiToken)) {
             return c.json({ error: 'Invalid token' }, 401)
         }
-        c.set('namespace', parsedToken.namespace)
+        const orgId = c.req.header('x-org-id')?.trim()
+        if (!orgId) {
+            return c.json({ error: 'Missing x-org-id header' }, 401)
+        }
+        c.set('orgId', orgId)
         return await next()
     })
 
@@ -117,10 +136,10 @@ export function createDownloadCliRoutes(
         // Broadcast SSE event so frontend knows there's a new file
         const sseManager = getSseManager()
         if (sseManager) {
-            const namespace = c.get('namespace')
+            const orgId = c.get('orgId')
             sseManager.broadcast({
                 type: 'file-ready',
-                namespace,
+                namespace: orgId,
                 sessionId,
                 fileInfo: { id: meta.id, filename: meta.filename, size: meta.size, mimeType: meta.mimeType },
             })

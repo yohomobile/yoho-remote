@@ -2,18 +2,45 @@ import type { ApiClient } from '@/api/client'
 import type { BrainChildCallbackEvent } from '@/chat/brainChildCallback'
 import { BrainChildCallbackActions } from '@/components/BrainChildActions'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
+import {
+    getSessionOrchestrationLabels,
+    getSessionOrchestrationPresentation,
+} from '@/lib/sessionOrchestration'
 
 export function BrainChildCallbackCard(props: {
     api: ApiClient
     event: BrainChildCallbackEvent
 }) {
     const { event } = props
+    const source =
+        event.childSource ??
+        event.parentSource ??
+        event.envelope?.childSource ??
+        event.envelope?.parentSource ??
+        null
+    const presentation = getSessionOrchestrationPresentation(source)
+    const labels = getSessionOrchestrationLabels(source)
+    const isSkyTone = presentation?.accentTone === 'sky'
+    const containerClass = isSkyTone
+        ? 'border-sky-500/20 bg-gradient-to-b from-sky-500/8 to-[var(--app-secondary-bg)]'
+        : 'border-amber-500/20 bg-gradient-to-b from-amber-500/8 to-[var(--app-secondary-bg)]'
+    const badgeClass = isSkyTone
+        ? 'bg-sky-500/12 text-sky-700'
+        : 'bg-amber-500/12 text-amber-700'
+    const callbackLabel = presentation?.callbackLabel ?? '子任务回传'
+    const fallbackTitle = labels
+        ? `未命名${labels.childSessionLabel}`
+        : '未命名子任务'
 
     return (
-        <div className="mx-auto w-full max-w-[92%] rounded-2xl border border-amber-500/20 bg-gradient-to-b from-amber-500/8 to-[var(--app-secondary-bg)] p-3 shadow-sm">
+        <div
+            className={`mx-auto w-full max-w-[92%] rounded-2xl border p-3 shadow-sm ${containerClass}`}
+        >
             <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center rounded-full bg-amber-500/12 px-2.5 py-1 text-[11px] font-medium text-amber-700">
-                    子任务回传
+                <span
+                    className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ${badgeClass}`}
+                >
+                    {callbackLabel}
                 </span>
                 {event.sessionId ? (
                     <span className="font-mono text-[11px] text-[var(--app-hint)]">
@@ -23,7 +50,7 @@ export function BrainChildCallbackCard(props: {
             </div>
 
             <div className="mt-2 text-sm font-semibold text-[var(--app-fg)]">
-                {event.title ?? '未命名子任务'}
+                {event.title ?? fallbackTitle}
             </div>
 
             {event.sessionId ? (
@@ -51,7 +78,10 @@ export function BrainChildCallbackCard(props: {
                     </summary>
                     <div className="mt-1 flex flex-col gap-1 text-xs text-[var(--app-hint)]">
                         {event.details.map((detail, index) => (
-                            <div key={`${detail}:${index}`} className="whitespace-pre-wrap">
+                            <div
+                                key={`${detail}:${index}`}
+                                className="whitespace-pre-wrap"
+                            >
                                 {detail}
                             </div>
                         ))}

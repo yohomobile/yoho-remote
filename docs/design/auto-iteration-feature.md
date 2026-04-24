@@ -14,7 +14,7 @@
 
 ### 1.2 目标
 
-1. **设置控制**：提供 Telegram Bot + Web UI 两种方式控制自动迭代开关
+1. **设置控制**：通过 Web UI 控制自动迭代开关，并在统一通知入口处理确认
 2. **跨项目支持**：AI 可以监控和迭代多个项目
 3. **按操作类型区分策略**：不同操作有不同的自动执行策略
 4. **安全与审计**：完整的执行日志、回滚能力、通知机制
@@ -63,9 +63,6 @@ server/src/
 │   └── index.ts                # 修改：新增自动迭代相关表
 ├── web/routes/
 │   └── settings.ts             # 修改：新增自动迭代设置 API
-├── telegram/
-│   ├── bot.ts                  # 修改：新增命令处理
-│   └── autoIterCommands.ts     # 新增：自动迭代 Telegram 命令
 └── webapp/src/
     └── pages/
         └── AutoIterationSettings.tsx  # 新增：设置页面
@@ -76,12 +73,10 @@ server/src/
 ```
                                  用户设置
                                     │
-                    ┌───────────────┴───────────────┐
-                    ▼                               ▼
-             Telegram Bot                      Web UI
-            /auto_iter on                   设置页面开关
-                    │                               │
-                    └───────────────┬───────────────┘
+                                    ▼
+                                  Web UI
+                               设置页面开关
+                                    │
                                     ▼
                          auto_iteration_config 表
                                     │
@@ -107,7 +102,7 @@ server/src/
 │     - always_manual: 不自动执行，仅记录建议                      │
 │  4. ExecutionEngine 执行操作                                     │
 │  5. AuditLogger 记录日志                                         │
-│  6. 广播结果 & Telegram 通知                                     │
+│  6. 广播结果 & Web 通知                                          │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -617,7 +612,7 @@ export class ApprovalFlow {
 
     constructor(
         private store: Store,
-        private telegramBot?: TelegramBot,
+        private notifier?: AutoIterationNotifier,
         private config?: AutoIterationConfig
     ) {}
 
@@ -729,13 +724,13 @@ export class ApprovalFlow {
             message: string
         }
     ): Promise<void> {
-        if (!this.telegramBot) return
+        if (!this.notifier) return
 
         // 构建消息
         const message = this.formatNotificationMessage(request, log, options)
 
-        // 发送到 Telegram
-        await this.telegramBot.sendAutoIterationNotification(message, log.id, options.type)
+        // 发送到统一通知入口
+        await this.notifier.sendAutoIterationNotification(message, log.id, options.type)
     }
 
     private formatNotificationMessage(
@@ -773,14 +768,14 @@ export class AutoIterationService {
         private syncEngine: SyncEngine,
         private store: Store,
         private advisorService: AdvisorService,
-        private telegramBot?: TelegramBot
+        private notifier?: AutoIterationNotifier
     ) {
         // 初始化配置
         const config = this.loadConfig()
 
         this.policyEngine = new PolicyEngine(config)
         this.executionEngine = new ExecutionEngine(syncEngine, store)
-        this.approvalFlow = new ApprovalFlow(store, telegramBot, config)
+        this.approvalFlow = new ApprovalFlow(store, notifier, config)
         this.auditLogger = new AuditLogger(store)
 
         // 订阅 Advisor 的 ActionRequest 输出
@@ -884,9 +879,9 @@ export class AutoIterationService {
         if (config.notificationLevel === 'none') return
         if (config.notificationLevel === 'errors_only' && status === 'completed') return
 
-        // Telegram 通知
-        if (this.telegramBot) {
-            await this.telegramBot.sendAutoIterationResult(log, status, message)
+        // 统一通知入口
+        if (this.notifier) {
+            await this.notifier.sendAutoIterationResult(log, status, message)
         }
 
         // 广播事件
@@ -1067,97 +1062,18 @@ app.post('/settings/auto-iteration/logs/:id/rollback', async (c) => {
 })
 ```
 
-### 6.2 Telegram 命令
+### 6.2 Web 端快捷操作
 
 ```typescript
-// server/src/telegram/autoIterCommands.ts
+// webapp/src/pages/AutoIterationSettings.tsx
 
-/**
- * 自动迭代 Telegram 命令
- */
-
-// /auto_iter - 显示状态
-bot.command('auto_iter', async (ctx) => {
-    const config = autoIterationService.getConfig()
-    const status = config.enabled ? '✅ 已启用' : '❌ 已禁用'
-
-    await ctx.reply(`
-🤖 **自动迭代状态**
-
-${status}
-
-**项目白名单**: ${config.allowedProjects.length || '全部项目'}
-**通知级别**: ${config.notificationLevel}
-**日志保留**: ${config.keepLogsDays} 天
-
-使用 /auto_iter_on 启用
-使用 /auto_iter_off 禁用
-使用 /auto_iter_logs 查看日志
-使用 /auto_iter_policy 查看策略
-    `, { parse_mode: 'Markdown' })
-})
-
-// /auto_iter_on - 启用
-bot.command('auto_iter_on', async (ctx) => {
-    await autoIterationService.updateConfig({ enabled: true })
-    await ctx.reply('✅ 自动迭代已启用')
-})
-
-// /auto_iter_off - 禁用
-bot.command('auto_iter_off', async (ctx) => {
-    await autoIterationService.updateConfig({ enabled: false })
-    await ctx.reply('❌ 自动迭代已禁用')
-})
-
-// /auto_iter_logs - 查看日志
-bot.command('auto_iter_logs', async (ctx) => {
-    const logs = autoIterationService.getLogs({ limit: 10 })
-
-    if (logs.length === 0) {
-        await ctx.reply('📋 暂无执行日志')
-        return
-    }
-
-    const lines = logs.map(log => {
-        const status = getStatusEmoji(log.executionStatus)
-        const time = new Date(log.createdAt).toLocaleString()
-        return `${status} [${log.actionType}] ${log.reason || 'N/A'} - ${time}`
-    })
-
-    await ctx.reply(`📋 **最近执行日志**\n\n${lines.join('\n')}`, { parse_mode: 'Markdown' })
-})
-
-// /auto_iter_policy - 查看策略
-bot.command('auto_iter_policy', async (ctx) => {
-    const config = autoIterationService.getConfig()
-
-    const lines = Object.entries(PolicyEngine.DEFAULT_POLICY).map(([action, defaultPolicy]) => {
-        const custom = config.policy[action as ActionType]
-        const policy = custom || defaultPolicy
-        const icon = getPolicyIcon(policy)
-        return `${icon} ${action}: ${policy}${custom ? ' (自定义)' : ''}`
-    })
-
-    await ctx.reply(`📋 **执行策略**\n\n${lines.join('\n')}`, { parse_mode: 'Markdown' })
-})
-
-// 审批回调
-bot.on('callback_query', async (ctx) => {
-    const data = ctx.callbackQuery.data
-    if (!data) return
-
-    if (data.startsWith('ai_approve:')) {
-        const logId = data.replace('ai_approve:', '')
-        const success = autoIterationService.handleApproval(logId, true, ctx.from?.id?.toString())
-        await ctx.answerCbQuery(success ? '✅ 已批准' : '❌ 操作无效')
-    }
-
-    if (data.startsWith('ai_reject:')) {
-        const logId = data.replace('ai_reject:', '')
-        const success = autoIterationService.handleApproval(logId, false, ctx.from?.id?.toString())
-        await ctx.answerCbQuery(success ? '❌ 已拒绝' : '❌ 操作无效')
-    }
-})
+const actions = {
+    enable: () => api.put('/settings/auto-iteration', { enabled: true }),
+    disable: () => api.put('/settings/auto-iteration', { enabled: false }),
+    approve: (logId: string) => api.post(`/settings/auto-iteration/logs/${logId}/approve`),
+    reject: (logId: string) => api.post(`/settings/auto-iteration/logs/${logId}/reject`),
+    rollback: (logId: string) => api.post(`/settings/auto-iteration/logs/${logId}/rollback`)
+}
 ```
 
 ---
@@ -1311,8 +1227,8 @@ export function AutoIterationSettings() {
 8. **Web API**
    - 修改 `settings.ts`
 
-9. **Telegram 命令**
-   - 新增 `autoIterCommands.ts`
+9. **Web 快捷操作**
+   - 设置页开关、审批、拒绝、回滚
 
 ### Phase 4: UI 与测试（预计 2-3 天）
 
@@ -1345,7 +1261,7 @@ export function AutoIterationSettings() {
 
 - 完整的执行日志
 - 支持操作回滚
-- Telegram 实时通知
+- Web 实时通知
 
 ### 9.4 隔离
 

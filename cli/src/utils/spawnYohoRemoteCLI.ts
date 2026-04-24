@@ -10,7 +10,7 @@ import { spawn, SpawnOptions, type ChildProcess } from 'child_process';
 import { join, dirname, basename } from 'node:path';
 import { isBunCompiled, projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
-import { existsSync } from 'node:fs';
+import { existsSync, readFile } from 'node:fs';
 
 /**
  * Check if we're running as a standalone daemon/server executable (not the main CLI)
@@ -122,7 +122,82 @@ export function getYohoRemoteCliCommand(args: string[]): YohoRemoteCliCommand {
   };
 }
 
-export function spawnYohoRemoteCLI(args: string[], options: SpawnOptions = {}): ChildProcess {
+export interface YohoRemoteCliSpawnExtras {
+  /**
+   * When set on Linux under systemd (daemon.service with User= set and the
+   * per-user systemd manager reachable), wrap the spawn in
+   * `systemd-run --user --scope --unit=<name>`. This puts the session in its
+   * own transient scope cgroup, escaping `yoho-remote-daemon.service`'s
+   * control-group. Without it, `systemctl restart yoho-remote-daemon`
+   * SIGKILLs every session via KillMode=control-group — regardless of
+   * child_process detached / setsid, because cgroup != process group.
+   *
+   * No-op when user-systemd is not reachable; spawn falls back to the plain
+   * path and the caller gets the same behaviour as before.
+   */
+  systemdUnitName?: string;
+}
+
+/**
+ * Probe whether the per-user systemd manager is actually reachable.
+ *
+ * The directory `/run/user/$UID/systemd` can exist as a bind-mount relic even
+ * when `user@$UID.service` has exited, so we require the `private` socket to
+ * also be present. This is the same file `systemd-run --user` connects to.
+ */
+const USER_SYSTEMD_AVAILABLE: boolean = (() => {
+  if (process.platform !== 'linux') return false;
+  const uid = process.getuid?.();
+  if (typeof uid !== 'number') return false;
+  try {
+    return existsSync(`/run/user/${uid}/systemd/private`);
+  } catch {
+    return false;
+  }
+})();
+
+function buildSystemdRunCommand(
+  baseCommand: string,
+  baseArgs: string[],
+  unitName: string
+): YohoRemoteCliCommand {
+  // --user: talk to the per-user systemd manager (daemon runs as a user)
+  // --scope: systemd-run exec()s into the target — child.pid IS the session pid
+  // --collect: auto-remove the scope unit after exit (incl. failed state)
+  // --quiet: suppress "Running scope as unit" on stderr
+  const systemdArgs = [
+    '--user',
+    '--scope',
+    '--collect',
+    '--quiet',
+    `--unit=${unitName}`,
+    '--',
+    baseCommand,
+    ...baseArgs
+  ];
+  return { command: 'systemd-run', args: systemdArgs };
+}
+
+function ensureUserBusEnv(options: SpawnOptions): SpawnOptions {
+  const uid = process.getuid?.() ?? 0;
+  const xdgRuntime = process.env.XDG_RUNTIME_DIR ?? `/run/user/${uid}`;
+  const dbusAddr = process.env.DBUS_SESSION_BUS_ADDRESS ?? `unix:path=${xdgRuntime}/bus`;
+  const baseEnv = (options.env ?? process.env) as NodeJS.ProcessEnv;
+  return {
+    ...options,
+    env: {
+      ...baseEnv,
+      XDG_RUNTIME_DIR: xdgRuntime,
+      DBUS_SESSION_BUS_ADDRESS: dbusAddr
+    }
+  };
+}
+
+export function spawnYohoRemoteCLI(
+  args: string[],
+  options: SpawnOptions = {},
+  extras: YohoRemoteCliSpawnExtras = {}
+): ChildProcess {
 
   let directory: string | URL | undefined;
   if ('cwd' in options) {
@@ -132,18 +207,77 @@ export function spawnYohoRemoteCLI(args: string[], options: SpawnOptions = {}): 
   }
   const fullCommand = `cli ${args.join(' ')}`;
   logger.debug(`[SPAWN CLI] Spawning: ${fullCommand} in ${directory}`);
-  
-  const { command: spawnCommand, args: spawnArgs } = getYohoRemoteCliCommand(args);
+
+  const base = getYohoRemoteCliCommand(args);
 
   // Sanity check that the entrypoint path exists
   if (!isBunCompiled()) {
-    const entrypoint = spawnArgs.find((arg) => arg.endsWith('index.ts'));
+    const entrypoint = base.args.find((arg) => arg.endsWith('index.ts'));
     if (entrypoint && !existsSync(entrypoint)) {
       const errorMessage = `Entrypoint ${entrypoint} does not exist`;
       logger.debug(`[SPAWN CLI] ${errorMessage}`);
       throw new Error(errorMessage);
     }
   }
-  
-  return spawn(spawnCommand, spawnArgs, options);
+
+  if (extras.systemdUnitName && USER_SYSTEMD_AVAILABLE) {
+    const wrapped = buildSystemdRunCommand(base.command, base.args, extras.systemdUnitName);
+    const wrappedOptions = ensureUserBusEnv(options);
+    logger.debug(`[SPAWN CLI] Wrapping in systemd-run --user --scope: unit=${extras.systemdUnitName}`);
+    const child = spawn(wrapped.command, wrapped.args, wrappedOptions);
+    attachSystemdScopeDiagnostics(child, extras.systemdUnitName);
+    return child;
+  }
+
+  if (extras.systemdUnitName && !USER_SYSTEMD_AVAILABLE) {
+    // Falling back means the session will live in the daemon's cgroup and die
+    // on `systemctl restart yoho-remote-daemon`. Log loudly so the operator
+    // notices and fixes the environment (e.g. `loginctl enable-linger`).
+    logger.debug(
+      `[SPAWN CLI] WARNING: systemdUnitName=${extras.systemdUnitName} requested but user systemd is not reachable; `
+        + `session will run in the parent's cgroup and will NOT survive daemon restart. `
+        + `Run \`sudo loginctl enable-linger $(whoami)\` to fix.`
+    );
+  }
+
+  return spawn(base.command, base.args, options);
+}
+
+/**
+ * Attach best-effort diagnostics to a child process wrapped in `systemd-run
+ * --user --scope`. None of these are blocking: they only log.
+ *
+ *   1. If systemd-run exits non-zero within the first 500ms, the target likely
+ *      never execed into its own scope — surface the exit code.
+ *   2. If the target's /proc/<pid>/cgroup does not contain our scope unit,
+ *      surface a warning — this indicates the session is still in the daemon's
+ *      cgroup and would be killed on daemon restart.
+ */
+function attachSystemdScopeDiagnostics(child: ChildProcess, unitName: string): void {
+  child.on('error', (error) => {
+    logger.debug(`[SPAWN CLI] systemd-run spawn error for unit=${unitName}:`, error);
+  });
+
+  const pid = child.pid;
+  if (typeof pid !== 'number' || pid <= 0) return;
+
+  // Give systemd-run ~300ms to exec into the target; then peek /proc.
+  setTimeout(() => {
+    readFile(`/proc/${pid}/cgroup`, 'utf-8', (err, data) => {
+      if (err) {
+        // Process may have exited legitimately already; silent unless debugging.
+        logger.debug(`[SPAWN CLI] Unable to read /proc/${pid}/cgroup for diagnostics: ${err.message}`);
+        return;
+      }
+      if (data.includes(`${unitName}.scope`)) {
+        logger.debug(`[SPAWN CLI] Verified cgroup membership: pid=${pid} unit=${unitName}.scope`);
+        return;
+      }
+      logger.debug(
+        `[SPAWN CLI] WARNING: pid=${pid} is NOT in expected scope ${unitName}.scope. `
+          + `Current cgroup: ${data.trim().split('\n').pop() ?? '(empty)'}. `
+          + `Session may die on daemon restart.`
+      );
+    });
+  }, 300).unref();
 }

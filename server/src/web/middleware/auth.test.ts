@@ -92,7 +92,7 @@ describe('createAuthMiddleware identity actor resolution', () => {
             actor,
         })
         expect(observations).toEqual([{
-            namespace: 'default',
+            namespace: 'org-a',
             orgId: 'org-a',
             channel: 'keycloak',
             externalId: 'keycloak-user-1',

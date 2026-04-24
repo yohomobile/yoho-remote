@@ -74,7 +74,8 @@ async function fetchServerUploadImage(imagePath: string): Promise<Buffer> {
 
     const response = await fetch(url, {
         headers: {
-            'Authorization': `Bearer ${configuration.cliApiToken}`
+            'Authorization': `Bearer ${configuration.cliApiToken}`,
+            'x-org-id': configuration.orgId,
         }
     })
 

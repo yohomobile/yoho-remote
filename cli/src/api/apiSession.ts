@@ -33,6 +33,7 @@ import {
     TerminalWritePayloadSchema
 } from '@/terminal/types'
 import { getBrainChildScopeParamsFromMetadata } from './brainChildScope'
+import { getRequiredOrgId } from '@/api/auth'
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object'
@@ -101,7 +102,7 @@ export class ApiSessionClient extends EventEmitter {
         super()
         this.token = token
         this.sessionId = session.id
-        this.orgId = session.orgId ?? null
+        this.orgId = session.orgId ?? getRequiredOrgId()
         this.metadata = session.metadata
         this.metadataVersion = session.metadataVersion
         this.agentState = session.agentState
@@ -119,6 +120,7 @@ export class ApiSessionClient extends EventEmitter {
         this.socket = io(`${configuration.serverUrl}/cli`, {
             auth: {
                 token: this.token,
+                orgId: this.orgId,
                 clientType: 'session-scoped' as const,
                 sessionId: this.sessionId
             },

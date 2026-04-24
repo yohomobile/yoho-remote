@@ -5,7 +5,7 @@ import type { SSEManager } from '../../sse/sseManager'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { IStore } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
-import { requireSessionWithShareCheck } from './guards'
+import { requireMachine, requireRequestedOrgId, requireSessionWithShareCheck } from './guards'
 
 function parseOptionalId(value: string | undefined): string | null {
     if (!value) {
@@ -39,11 +39,11 @@ export function createEventsRoutes(
         const sessionId = parseOptionalId(query.sessionId)
         const machineId = parseOptionalId(query.machineId)
         const subscriptionId = randomUUID()
-        const namespace = c.get('namespace')
         const email = c.get('email')
         // Read clientId and deviceType from query params (sent by frontend)
         const clientId = parseOptionalId(query.clientId) ?? undefined
         const deviceType = parseOptionalId(query.deviceType) ?? undefined
+        let orgId: string | null = null
 
         if (sessionId || machineId) {
             const engine = getSyncEngine()
@@ -55,23 +55,39 @@ export function createEventsRoutes(
                 if (sessionResult instanceof Response) {
                     return sessionResult
                 }
+                orgId = sessionResult.orgId ?? null
                 engine.noteResumeClientEvent(sessionId, 'sse-connect', { clientId, deviceType })
             }
             if (machineId) {
-                const machine = engine.getMachine(machineId)
-                if (!machine) {
-                    return c.json({ error: 'Machine not found' }, 404)
+                const requestedOrgId = requireRequestedOrgId(c)
+                if (requestedOrgId instanceof Response) {
+                    return requestedOrgId
                 }
-                if (machine.namespace !== namespace) {
+                const machine = requireMachine(c, engine, machineId)
+                if (machine instanceof Response) {
+                    return machine
+                }
+                if (machine.orgId !== requestedOrgId) {
                     return c.json({ error: 'Machine access denied' }, 403)
                 }
+                orgId = requestedOrgId
             }
+        } else {
+            const requestedOrgId = requireRequestedOrgId(c)
+            if (requestedOrgId instanceof Response) {
+                return requestedOrgId
+            }
+            orgId = requestedOrgId
+        }
+
+        if (!orgId) {
+            return c.json({ error: 'orgId is required' }, 400)
         }
 
         return streamSSE(c, async (stream) => {
             manager.subscribe({
                 id: subscriptionId,
-                namespace,
+                orgId,
                 all,
                 sessionId,
                 machineId,

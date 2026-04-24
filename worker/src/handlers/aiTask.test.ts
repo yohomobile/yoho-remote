@@ -323,4 +323,177 @@ describe('handleAiTask', () => {
         const errMsg = String(resultCalls[0]?.params[3])
         expect(errMsg).toContain('503')
     })
+
+    it('mainSessionId + recurring=true → find-or-create body includes orchestrator-child fields with callbackOnFailureOnly=true', async () => {
+        const poolObj = makePool()
+        const ctx = makeCtx(poolObj)
+        const { fetchFn, calls: fetchCalls } = makeFetchSequence([
+            { ok: true, body: { sessionId: 'sess-child' } },
+            { ok: true, body: {} },
+            { ok: true, body: { executing: false } },
+        ])
+
+        const restoreTimeout = patchSetTimeoutImmediate()
+        globalThis.fetch = fetchFn
+
+        try {
+            await handleAiTask(
+                makePayload({ mainSessionId: 'brain-main-1', recurring: true }),
+                ctx,
+            )
+        } finally {
+            restoreTimeout()
+        }
+
+        const findOrCreate = fetchCalls.find(c => c.url.includes('find-or-create'))
+        expect(findOrCreate).toBeDefined()
+        const body = findOrCreate!.body as Record<string, unknown>
+        expect(body.mainSessionId).toBe('brain-main-1')
+        expect(body.source).toBe('orchestrator-child')
+        // Recurring schedules suppress success callback; only failures fire it.
+        expect(body.callbackOnFailureOnly).toBe(true)
+    })
+
+    it('mainSessionId + recurring=false (oneshot) → callbackOnFailureOnly=false (always callback)', async () => {
+        const poolObj = makePool()
+        const ctx = makeCtx(poolObj)
+        const { fetchFn, calls: fetchCalls } = makeFetchSequence([
+            { ok: true, body: { sessionId: 'sess-oneshot' } },
+            { ok: true, body: {} },
+            { ok: true, body: { executing: false } },
+        ])
+
+        const restoreTimeout = patchSetTimeoutImmediate()
+        globalThis.fetch = fetchFn
+
+        try {
+            await handleAiTask(
+                makePayload({ mainSessionId: 'brain-main-2', recurring: false }),
+                ctx,
+            )
+        } finally {
+            restoreTimeout()
+        }
+
+        const findOrCreate = fetchCalls.find(c => c.url.includes('find-or-create'))
+        const body = findOrCreate!.body as Record<string, unknown>
+        expect(body.callbackOnFailureOnly).toBe(false)
+    })
+
+    it('no mainSessionId → find-or-create body has no orchestrator-child fields (legacy path)', async () => {
+        const poolObj = makePool()
+        const ctx = makeCtx(poolObj)
+        const { fetchFn, calls: fetchCalls } = makeFetchSequence([
+            { ok: true, body: { sessionId: 'sess-plain' } },
+            { ok: true, body: {} },
+            { ok: true, body: { executing: false } },
+        ])
+
+        const restoreTimeout = patchSetTimeoutImmediate()
+        globalThis.fetch = fetchFn
+
+        try {
+            await handleAiTask(makePayload(), ctx)
+        } finally {
+            restoreTimeout()
+        }
+
+        const findOrCreate = fetchCalls.find(c => c.url.includes('find-or-create'))
+        const body = findOrCreate!.body as Record<string, unknown>
+        expect(body.mainSessionId).toBeUndefined()
+        expect(body.source).toBeUndefined()
+        expect(body.callbackOnFailureOnly).toBeUndefined()
+    })
+
+    it('recurring + mainSessionId + send fails → trigger-callback fired for the failure', async () => {
+        const poolObj = makePool()
+        const ctx = makeCtx(poolObj)
+        const { fetchFn, calls: fetchCalls } = makeFetchSequence([
+            { ok: true, body: { sessionId: 'sess-fail' } },
+            { ok: false, status: 503, textBody: 'Service Unavailable' },
+            // trigger-callback response
+            { ok: true, body: { ok: true } },
+        ])
+
+        globalThis.fetch = fetchFn
+
+        await handleAiTask(
+            makePayload({ mainSessionId: 'brain-main-3', recurring: true }),
+            ctx,
+        )
+
+        const triggerCalls = fetchCalls.filter(c => c.url.includes('trigger-callback'))
+        expect(triggerCalls).toHaveLength(1)
+        expect((triggerCalls[0]!.body as Record<string, unknown>).sessionId).toBe('sess-fail')
+    })
+
+    it('recurring + mainSessionId + timeout → trigger-callback fired after stop', async () => {
+        const poolObj = makePool()
+        // Force immediate timeout.
+        const ctx = makeCtx(poolObj, { aiTaskTimeoutMs: -1 })
+        const { fetchFn, calls: fetchCalls } = makeFetchSequence([
+            { ok: true, body: { sessionId: 'sess-timeout' } },
+            { ok: true, body: {} },
+            // stop response
+            { ok: true, body: {} },
+            // trigger-callback response
+            { ok: true, body: { ok: true } },
+        ])
+
+        const restoreTimeout = patchSetTimeoutImmediate()
+        globalThis.fetch = fetchFn
+
+        try {
+            await handleAiTask(
+                makePayload({ mainSessionId: 'brain-main-4', recurring: true }),
+                ctx,
+            )
+        } finally {
+            restoreTimeout()
+        }
+
+        const triggerCalls = fetchCalls.filter(c => c.url.includes('trigger-callback'))
+        expect(triggerCalls).toHaveLength(1)
+        expect((triggerCalls[0]!.body as Record<string, unknown>).sessionId).toBe('sess-timeout')
+    })
+
+    it('oneshot (recurring=false) + mainSessionId + send fails → trigger-callback NOT fired (auto-callback still fires)', async () => {
+        const poolObj = makePool()
+        const ctx = makeCtx(poolObj)
+        const { fetchFn, calls: fetchCalls } = makeFetchSequence([
+            { ok: true, body: { sessionId: 'sess-oneshot-fail' } },
+            { ok: false, status: 503, textBody: 'Service Unavailable' },
+        ])
+
+        globalThis.fetch = fetchFn
+
+        await handleAiTask(
+            makePayload({ mainSessionId: 'brain-main-5', recurring: false }),
+            ctx,
+        )
+
+        // Oneshot callbackOnFailureOnly=false → auto-callback path already handles it;
+        // worker should NOT issue an explicit trigger-callback.
+        const triggerCalls = fetchCalls.filter(c => c.url.includes('trigger-callback'))
+        expect(triggerCalls).toHaveLength(0)
+    })
+
+    it('recurring + mainSessionId + find-or-create fails (no sessionId yet) → trigger-callback NOT fired', async () => {
+        const poolObj = makePool()
+        const ctx = makeCtx(poolObj)
+        const { fetchFn, calls: fetchCalls } = makeFetchSequence([
+            { ok: false, status: 502, textBody: 'Bad Gateway' },
+        ])
+
+        globalThis.fetch = fetchFn
+
+        await handleAiTask(
+            makePayload({ mainSessionId: 'brain-main-6', recurring: true }),
+            ctx,
+        )
+
+        // No sessionId ever existed, so there's nothing to callback against.
+        const triggerCalls = fetchCalls.filter(c => c.url.includes('trigger-callback'))
+        expect(triggerCalls).toHaveLength(0)
+    })
 })

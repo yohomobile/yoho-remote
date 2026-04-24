@@ -25,6 +25,8 @@ export type BrainChildCallbackEnvelope = {
     version: 1
     sessionId: string
     mainSessionId: string
+    parentSource?: string
+    childSource?: string
     title: string
     previousSummary?: string | null
     details: string[]
@@ -51,34 +53,36 @@ export type AgentEvent =
     | { type: 'ready' }
     | { type: 'turn-duration'; durationMs: number }
     | {
-        type: 'plan-mode'
-        reminderType?: string
-        isSubAgent?: boolean
-        planFilePath?: string
-        planExists?: boolean
-    }
+          type: 'plan-mode'
+          reminderType?: string
+          isSubAgent?: boolean
+          planFilePath?: string
+          planExists?: boolean
+      }
     | {
-        type: 'todo-reminder'
-        items: PlanTodoReminderItem[]
-        itemCount: number
-        pendingCount: number
-        inProgressCount: number
-        completedCount: number
-    }
+          type: 'todo-reminder'
+          items: PlanTodoReminderItem[]
+          itemCount: number
+          pendingCount: number
+          inProgressCount: number
+          completedCount: number
+      }
     | {
-        type: 'plan-file'
-        planFilePath?: string
-        planContent?: string
-    }
+          type: 'plan-file'
+          planFilePath?: string
+          planContent?: string
+      }
     | {
-        type: 'brain-child-callback'
-        sessionId?: string
-        title?: string
-        previousSummary?: string
-        details: string[]
-        report?: string
-        envelope?: BrainChildCallbackEnvelope
-    }
+          type: 'brain-child-callback'
+          sessionId?: string
+          title?: string
+          previousSummary?: string
+          parentSource?: string
+          childSource?: string
+          details: string[]
+          report?: string
+          envelope?: BrainChildCallbackEnvelope
+      }
     | ({ type: string } & Record<string, unknown>)
 
 export type ToolResultPermission = {
@@ -111,33 +115,37 @@ export type ToolResult = {
 
 export type NormalizedAgentContent =
     | {
-        type: 'text'
-        text: string
-        uuid: string
-        parentUUID: string | null
-    }
+          type: 'text'
+          text: string
+          uuid: string
+          parentUUID: string | null
+      }
     | {
-        type: 'reasoning'
-        text: string
-        uuid: string
-        parentUUID: string | null
-        isDelta?: boolean
-    }
+          type: 'reasoning'
+          text: string
+          uuid: string
+          parentUUID: string | null
+          isDelta?: boolean
+      }
     | ToolUse
     | ToolResult
     | { type: 'summary'; summary: string }
     | { type: 'sidechain'; uuid: string; prompt: string }
 
-export type NormalizedMessage = ({
-    role: 'user'
-    content: { type: 'text'; text: string }
-} | {
-    role: 'agent'
-    content: NormalizedAgentContent[]
-} | {
-    role: 'event'
-    content: AgentEvent
-}) & {
+export type NormalizedMessage = (
+    | {
+          role: 'user'
+          content: { type: 'text'; text: string }
+      }
+    | {
+          role: 'agent'
+          content: NormalizedAgentContent[]
+      }
+    | {
+          role: 'event'
+          content: AgentEvent
+      }
+) & {
     id: string
     seq?: number | null
     localId: string | null
@@ -240,4 +248,10 @@ export type ToolCallBlock = {
     meta?: unknown
 }
 
-export type ChatBlock = UserTextBlock | AgentTextBlock | AgentReasoningBlock | CliOutputBlock | ToolCallBlock | AgentEventBlock
+export type ChatBlock =
+    | UserTextBlock
+    | AgentTextBlock
+    | AgentReasoningBlock
+    | CliOutputBlock
+    | ToolCallBlock
+    | AgentEventBlock

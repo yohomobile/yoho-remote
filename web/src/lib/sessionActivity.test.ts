@@ -50,6 +50,15 @@ describe('sessionActivity', () => {
         }))).toBe(true)
     })
 
+    test('allows inactive queueing for orchestrator parent sessions', () => {
+        expect(canQueueMessagesWhenInactive(createSession({
+            metadata: {
+                path: '/tmp/orchestrator',
+                source: 'orchestrator',
+            },
+        }))).toBe(true)
+    })
+
     test('hides composer for brain-child sessions', () => {
         expect(shouldShowSessionComposer(createSession({
             metadata: {
@@ -64,6 +73,15 @@ describe('sessionActivity', () => {
             metadata: {
                 path: '/tmp/child',
                 source: 'brain-child',
+            },
+        }))).toBe(false)
+    })
+
+    test('hides composer for orchestrator-child sessions', () => {
+        expect(shouldShowSessionComposer(createSession({
+            metadata: {
+                path: '/tmp/orchestrator-child',
+                source: 'orchestrator-child',
             },
         }))).toBe(false)
     })
@@ -103,6 +121,15 @@ describe('sessionActivity', () => {
                 source: 'brain',
             },
         }), false)).toBe(false)
+    })
+
+    test('marks active orchestrator-child sessions without pending work as idle', () => {
+        expect(isIdleBrainChildSession(createSession({
+            metadata: {
+                path: '/tmp/orchestrator-child',
+                source: 'orchestrator-child',
+            },
+        }), false)).toBe(true)
     })
 
     test('treats lifecycleState=archived as archived even if the summary still says active', () => {

@@ -19,6 +19,7 @@ export const AI_TASK_SCHEDULES_DDL = `
         last_run_status       TEXT,
         consecutive_failures  INT NOT NULL DEFAULT 0
     );
+    COMMENT ON COLUMN ai_task_schedules.namespace IS 'Semantically stores orgId. Column name kept for historical reasons; renaming deferred to a dedicated migration PR.';
 `
 
 export const AI_TASK_RUNS_DDL = `
@@ -35,6 +36,7 @@ export const AI_TASK_RUNS_DDL = `
         error         TEXT,
         metadata      JSONB
     );
+    COMMENT ON COLUMN ai_task_runs.namespace IS 'Semantically stores orgId. Column name kept for historical reasons; renaming deferred to a dedicated migration PR.';
 `
 
 export const AI_TASK_INDEXES_DDL = `

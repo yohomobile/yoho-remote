@@ -5,6 +5,7 @@ import type { DecryptedMessage } from '@/types/api'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { extractBrainChildTailPreview, type BrainChildTailPreviewItem } from '@/lib/brainChildActions'
+import { getSessionOrchestrationLabels } from '@/lib/sessionOrchestration'
 
 type TailDialogState = {
     open: boolean
@@ -129,6 +130,7 @@ export function BrainChildPageActionBar(props: {
     api: ApiClient
     sessionId: string
     mainSessionId: string | null
+    childSource?: string | null
     canStop: boolean
     canResume: boolean
     onStop: () => Promise<void> | void
@@ -139,6 +141,9 @@ export function BrainChildPageActionBar(props: {
     const [stopPending, setStopPending] = useState(false)
     const [resumePending, setResumePending] = useState(false)
     const tailDialog = useTailDialog(props.api, props.sessionId, props.initialMessages)
+    const labels = getSessionOrchestrationLabels(props.childSource)
+    const parentSessionLabel = labels?.parentSessionLabel ?? '主编排 Session'
+    const childSessionLabel = labels?.childSessionLabel ?? '子任务'
 
     const handleStop = useCallback(async () => {
         setStopPending(true)
@@ -168,7 +173,7 @@ export function BrainChildPageActionBar(props: {
                 <div className="mx-auto flex w-full max-w-content flex-wrap items-center justify-between gap-3 px-3 py-2">
                     <div className="min-w-0 flex-1 text-sm text-[var(--app-hint)]">
                         <span className="font-medium text-[var(--app-fg)]">仅观察页</span>
-                        <span className="ml-2">子任务仍由主 Brain 编排，这里不开放手工发消息。</span>
+                        <span className="ml-2">当前{childSessionLabel}仍由{parentSessionLabel}编排，这里不开放手工发消息。</span>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                         <ActionButton
@@ -181,7 +186,7 @@ export function BrainChildPageActionBar(props: {
                                 })
                             }}
                         >
-                            返回主 Brain
+                            返回{parentSessionLabel}
                         </ActionButton>
                         <ActionButton onClick={tailDialog.open}>
                             查看最近片段

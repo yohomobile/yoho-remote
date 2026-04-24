@@ -12,6 +12,7 @@ import { backoff } from '@/utils/time'
 import { RpcHandlerManager } from './rpc/RpcHandlerManager'
 import { registerCommonHandlers, type SpawnSessionOptions, type SpawnSessionResult } from '../modules/common/registerCommonHandlers'
 import { getAllUsage, type UsageResponse } from '../daemon/usage'
+import { getRequiredOrgId } from '@/api/auth'
 
 interface ServerToDaemonEvents {
     update: (data: Update) => void
@@ -302,6 +303,7 @@ export class ApiMachineClient {
             transports: ['websocket'],
             auth: {
                 token: this.token,
+                orgId: this.machine.orgId ?? getRequiredOrgId(),
                 clientType: 'machine-scoped' as const,
                 machineId: this.machine.id
             },

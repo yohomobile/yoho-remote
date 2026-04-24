@@ -15,7 +15,7 @@ describe('brainSessionPreferences', () => {
             machineSelectionMode: 'manual',
             machineId: 'machine-1',
             childClaudeModels: ['opus'],
-            childCodexModels: ['openai/gpt-5.4-mini', 'gpt-5.3-codex'],
+            childCodexModels: ['openai/gpt-5.5', 'openai/gpt-5.4-mini'],
         })
 
         expect(preferences.machineSelection).toEqual({
@@ -24,8 +24,8 @@ describe('brainSessionPreferences', () => {
         })
         expect(preferences.childModels.claude.allowed).toEqual(['opus'])
         expect(preferences.childModels.claude.defaultModel).toBe('opus')
-        expect(preferences.childModels.codex.allowed).toEqual(['gpt-5.4-mini', 'gpt-5.3-codex'])
-        expect(preferences.childModels.codex.defaultModel).toBe('gpt-5.4-mini')
+        expect(preferences.childModels.codex.allowed).toEqual(['gpt-5.5', 'gpt-5.4-mini'])
+        expect(preferences.childModels.codex.defaultModel).toBe('gpt-5.5')
     })
 
     it('preserves explicit empty child model allowlists', () => {

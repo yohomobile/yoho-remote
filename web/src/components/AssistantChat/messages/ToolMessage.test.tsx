@@ -19,16 +19,22 @@ describe('ReadBatch card rendering', () => {
                 state: 'completed',
                 input: {
                     count: 5,
-                    files: ['README.md', 'web/src/app.ts', 'web/src/chat/reducer.ts', 'web/src/api/client.ts', 'web/src/types/api.ts']
+                    files: [
+                        'README.md',
+                        'web/src/app.ts',
+                        'web/src/chat/reducer.ts',
+                        'web/src/api/client.ts',
+                        'web/src/types/api.ts',
+                    ],
                 },
                 createdAt: 1,
                 startedAt: 1,
                 completedAt: 2,
                 description: null,
-                parentUUID: null
+                parentUUID: null,
             },
             children: [],
-            meta: undefined
+            meta: undefined,
         }
 
         const html = renderToStaticMarkup(
@@ -64,40 +70,48 @@ describe('ReadBatch card rendering', () => {
                 state: 'completed',
                 input: {
                     count: 1,
-                    files: ['~/.yoho-remote/logs/daemon.log']
+                    files: ['~/.yoho-remote/logs/daemon.log'],
                 },
                 createdAt: 1,
                 startedAt: 1,
                 completedAt: 2,
                 description: null,
-                parentUUID: null
+                parentUUID: null,
             },
-            children: [{
-                kind: 'tool-call',
-                id: 'search-tool',
-                localId: null,
-                createdAt: 1,
-                seq: null,
-                tool: {
+            children: [
+                {
+                    kind: 'tool-call',
                     id: 'search-tool',
-                    name: 'CodexBash',
-                    state: 'completed',
-                    input: {
-                        parsed_cmd: [
-                            { type: 'search', query: 'daemon log' },
-                            { type: 'list_files', path: '~/.yoho-remote/logs' },
-                            { type: 'read', name: '~/.yoho-remote/logs/daemon.log' }
-                        ]
-                    },
+                    localId: null,
                     createdAt: 1,
-                    startedAt: 1,
-                    completedAt: 2,
-                    description: null,
-                    parentUUID: null
+                    seq: null,
+                    tool: {
+                        id: 'search-tool',
+                        name: 'CodexBash',
+                        state: 'completed',
+                        input: {
+                            parsed_cmd: [
+                                { type: 'search', query: 'daemon log' },
+                                {
+                                    type: 'list_files',
+                                    path: '~/.yoho-remote/logs',
+                                },
+                                {
+                                    type: 'read',
+                                    name: '~/.yoho-remote/logs/daemon.log',
+                                },
+                            ],
+                        },
+                        createdAt: 1,
+                        startedAt: 1,
+                        completedAt: 2,
+                        description: null,
+                        parentUUID: null,
+                    },
+                    children: [],
                 },
-                children: []
-            }],
-            meta: undefined
+            ],
+            meta: undefined,
         }
 
         const html = renderToStaticMarkup(
@@ -132,47 +146,54 @@ describe('ReadBatch card rendering', () => {
                 state: 'completed',
                 input: {
                     count: 1,
-                    files: ['1,260p']
+                    files: ['1,260p'],
                 },
                 createdAt: 1,
                 startedAt: 1,
                 completedAt: 2,
                 description: null,
-                parentUUID: null
+                parentUUID: null,
             },
-            children: [{
-                kind: 'tool-call',
-                id: 'piped-read',
-                localId: null,
-                createdAt: 1,
-                seq: null,
-                tool: {
+            children: [
+                {
+                    kind: 'tool-call',
                     id: 'piped-read',
-                    name: 'CodexBash',
-                    state: 'completed',
-                    input: {
-                        command: '/usr/bin/zsh -lc "nl -ba deploy.sh | sed -n \'1,260p\'"',
-                        parsed_cmd: [{
-                            type: 'read',
-                            name: '1,260p'
-                        }]
-                    },
-                    result: {
-                        output: {
-                            command: '/usr/bin/zsh -lc "nl -ba deploy.sh | sed -n \'1,260p\'"',
-                            exit_code: 0,
-                            aggregated_output: '     1\t#!/bin/bash\n     2\tset -e'
-                        }
-                    },
+                    localId: null,
                     createdAt: 1,
-                    startedAt: 1,
-                    completedAt: 2,
-                    description: null,
-                    parentUUID: null
+                    seq: null,
+                    tool: {
+                        id: 'piped-read',
+                        name: 'CodexBash',
+                        state: 'completed',
+                        input: {
+                            command:
+                                '/usr/bin/zsh -lc "nl -ba deploy.sh | sed -n \'1,260p\'"',
+                            parsed_cmd: [
+                                {
+                                    type: 'read',
+                                    name: '1,260p',
+                                },
+                            ],
+                        },
+                        result: {
+                            output: {
+                                command:
+                                    '/usr/bin/zsh -lc "nl -ba deploy.sh | sed -n \'1,260p\'"',
+                                exit_code: 0,
+                                aggregated_output:
+                                    '     1\t#!/bin/bash\n     2\tset -e',
+                            },
+                        },
+                        createdAt: 1,
+                        startedAt: 1,
+                        completedAt: 2,
+                        description: null,
+                        parentUUID: null,
+                    },
+                    children: [],
                 },
-                children: []
-            }],
-            meta: undefined
+            ],
+            meta: undefined,
         }
 
         const cardHtml = renderToStaticMarkup(
@@ -185,13 +206,16 @@ describe('ReadBatch card rendering', () => {
                 block={block}
             />
         )
-        const html = renderToStaticMarkup(<ReadBatchView block={block} metadata={null} />)
+        const html = renderToStaticMarkup(
+            <ReadBatchView block={block} metadata={null} />
+        )
 
         expect(cardHtml).toContain('deploy.sh')
         expect(cardHtml).not.toContain('1,260p')
         expect(html).toContain('deploy.sh')
         expect(html).toContain('#!/bin/bash')
         expect(html).toContain('set -e')
+        expect(html).toContain('title="Copy"')
         expect(html).not.toContain('1,260p')
         expect(html).not.toContain('File content is not available')
     })
@@ -202,7 +226,7 @@ describe('ReadBatch card rendering', () => {
             title: '子任务完成',
             previousSummary: '之前摘要',
             details: ['消息数: 5'],
-            report: undefined
+            report: undefined,
         }
 
         const html = renderToStaticMarkup(
@@ -213,5 +237,22 @@ describe('ReadBatch card rendering', () => {
         expect(html).toContain('子任务完成')
         expect(html).toContain('之前摘要')
         expect(html).toContain('消息数: 5')
+    })
+
+    test('renders orchestrator callback cards with source-aware copy', () => {
+        const event: Extract<AgentEvent, { type: 'brain-child-callback' }> = {
+            type: 'brain-child-callback',
+            title: '编排子任务完成',
+            childSource: 'orchestrator-child',
+            details: ['消息数: 3'],
+            report: undefined,
+        }
+
+        const html = renderToStaticMarkup(
+            <BrainChildCallbackCard api={{} as never} event={event} />
+        )
+
+        expect(html).toContain('编排子任务回传')
+        expect(html).toContain('编排子任务完成')
     })
 })

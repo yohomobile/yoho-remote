@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import type { Project, Session, SessionViewer, ModelMode, ModelReasoningEffort } from '@/types/api'
-import { isTelegramApp, getTelegramWebApp } from '@/hooks/useTelegram'
+import type {
+    Project,
+    Session,
+    SessionViewer,
+    ModelMode,
+    ModelReasoningEffort,
+} from '@/types/api'
 import { getClientId } from '@/lib/client-identity'
 import { ViewersBadge } from './ViewersBadge'
 import { ShareDialog } from './ShareDialog'
@@ -10,6 +15,7 @@ import { useAppContext } from '@/lib/app-context'
 import { getMachineTitle, getMobileSessionAgentSummary } from '@/lib/machines'
 import { queryKeys } from '@/lib/query-keys'
 import { formatSessionModelLabel } from '@/lib/sessionModelLabel'
+import { getSessionOrchestrationPresentation } from '@/lib/sessionOrchestration'
 import { matchSessionToProject } from '@/lib/projectMatching'
 import { useMachines } from '@/hooks/queries/useMachines'
 import { isFlutterApp } from '@/hooks/useFlutterApp'
@@ -22,15 +28,16 @@ function getBrainSelfSummary(session: Session): string | null {
         return 'Self: off'
     }
     if (session.metadata.selfProfileResolved === true) {
-        const suffix = session.metadata.selfMemoryStatus === 'attached'
-            ? ' + memory'
-            : session.metadata.selfMemoryStatus === 'error'
-                ? ' · memory error'
-                : session.metadata.selfMemoryStatus === 'empty'
+        const suffix =
+            session.metadata.selfMemoryStatus === 'attached'
+                ? ' + memory'
+                : session.metadata.selfMemoryStatus === 'error'
+                  ? ' · memory error'
+                  : session.metadata.selfMemoryStatus === 'empty'
                     ? ' · memory empty'
                     : session.metadata.selfMemoryStatus === 'skipped'
-                        ? ' · memory skipped'
-                        : ''
+                      ? ' · memory skipped'
+                      : ''
         return `Self: ${session.metadata.selfProfileName ?? session.metadata.selfProfileId ?? 'configured'}${suffix}`
     }
     if (session.metadata.selfProfileId) {
@@ -50,7 +57,9 @@ function getSessionTitle(session: Session): string {
     }
     if (session.metadata?.path) {
         const parts = session.metadata.path.split('/').filter(Boolean)
-        return parts.length > 0 ? parts[parts.length - 1] : session.id.slice(0, 8)
+        return parts.length > 0
+            ? parts[parts.length - 1]
+            : session.id.slice(0, 8)
     }
     return session.id.slice(0, 8)
 }
@@ -96,7 +105,6 @@ function TrashIcon(props: { className?: string }) {
         </svg>
     )
 }
-
 
 function XIcon(props: { className?: string }) {
     return (
@@ -250,16 +258,21 @@ export function SessionHeader(props: {
     const { machines } = useMachines(api, true, currentOrgId)
     const title = useMemo(() => getSessionTitle(props.session), [props.session])
     const worktreeBranch = props.session.metadata?.worktree?.branch
-    const agentLabel = useMemo(() => getAgentLabel(props.session), [props.session])
+    const agentLabel = useMemo(
+        () => getAgentLabel(props.session),
+        [props.session]
+    )
     const runtimeAgent = props.session.metadata?.runtimeAgent?.trim() || null
     const runtimeModel = useMemo(
-        () => formatSessionModelLabel({
-            modelMode: props.modelMode,
-            modelReasoningEffort: props.modelReasoningEffort,
-            fastMode: props.session.fastMode,
-            runtimeModel: props.session.metadata?.runtimeModel,
-            runtimeModelReasoningEffort: props.session.metadata?.runtimeModelReasoningEffort
-        }),
+        () =>
+            formatSessionModelLabel({
+                modelMode: props.modelMode,
+                modelReasoningEffort: props.modelReasoningEffort,
+                fastMode: props.session.fastMode,
+                runtimeModel: props.session.metadata?.runtimeModel,
+                runtimeModelReasoningEffort:
+                    props.session.metadata?.runtimeModelReasoningEffort,
+            }),
         [props.session, props.modelMode, props.modelReasoningEffort]
     )
     const machineName = useMemo(() => {
@@ -284,14 +297,14 @@ export function SessionHeader(props: {
     // 获取用户偏好设置
     const { data: userPreferences } = useQuery({
         queryKey: queryKeys.userPreferences,
-        queryFn: async () => api.getUserPreferences()
+        queryFn: async () => api.getUserPreferences(),
     })
 
     // 获取 session 隐私模式
     const { data: privacyModeData } = useQuery({
         queryKey: ['session-privacy-mode', props.session.id],
         queryFn: async () => api.getSessionPrivacyMode(props.session.id),
-        enabled: isCreator && userPreferences?.shareAllSessions === true
+        enabled: isCreator && userPreferences?.shareAllSessions === true,
     })
     const privacyMode = privacyModeData?.privacyMode ?? false
 
@@ -301,64 +314,94 @@ export function SessionHeader(props: {
             return await api.setSessionPrivacyMode(props.session.id, enabled)
         },
         onSuccess: (result) => {
-            queryClient.setQueryData(['session-privacy-mode', props.session.id], {
-                privacyMode: result.privacyMode
-            })
+            queryClient.setQueryData(
+                ['session-privacy-mode', props.session.id],
+                {
+                    privacyMode: result.privacyMode,
+                }
+            )
             // 刷新 session 列表以更新显示
             queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
-        }
+        },
     })
 
     // 查询项目列表
     const { data: projectsData } = useQuery({
-        queryKey: ['projects', currentOrgId, props.session.metadata?.machineId ?? null],
-        queryFn: async () => api.getProjects(currentOrgId, props.session.metadata?.machineId ?? null),
-        enabled: Boolean(props.session.metadata?.machineId)
+        queryKey: [
+            'projects',
+            currentOrgId,
+            props.session.metadata?.machineId ?? null,
+        ],
+        queryFn: async () =>
+            api.getProjects(
+                currentOrgId,
+                props.session.metadata?.machineId ?? null
+            ),
+        enabled: Boolean(props.session.metadata?.machineId),
     })
-    const projects = Array.isArray(projectsData?.projects) ? projectsData.projects : []
-    const project = useMemo(() => matchSessionToProject(props.session, projects), [props.session, projects])
-
-    const agentMeta = useMemo(
-        () => {
-            const parts = [agentLabel]
-            if (runtimeModel) {
-                parts.push(runtimeModel)
-            }
-            if (runtimeAgent) {
-                parts.push(runtimeAgent)
-            }
-            if (machineName) {
-                parts.push(machineName)
-            }
-            if (project) {
-                parts.push(project.name)
-            }
-            if (worktreeBranch) {
-                parts.push(worktreeBranch)
-            }
-            return parts.join(' · ')
-        },
-        [agentLabel, runtimeAgent, runtimeModel, project, worktreeBranch, machineName]
+    const projects = Array.isArray(projectsData?.projects)
+        ? projectsData.projects
+        : []
+    const project = useMemo(
+        () => matchSessionToProject(props.session, projects),
+        [props.session, projects]
     )
+
+    const agentMeta = useMemo(() => {
+        const parts = [agentLabel]
+        if (runtimeModel) {
+            parts.push(runtimeModel)
+        }
+        if (runtimeAgent) {
+            parts.push(runtimeAgent)
+        }
+        if (machineName) {
+            parts.push(machineName)
+        }
+        if (project) {
+            parts.push(project.name)
+        }
+        if (worktreeBranch) {
+            parts.push(worktreeBranch)
+        }
+        return parts.join(' · ')
+    }, [
+        agentLabel,
+        runtimeAgent,
+        runtimeModel,
+        project,
+        worktreeBranch,
+        machineName,
+    ])
     const mobileAgentSummary = useMemo(
-        () => getMobileSessionAgentSummary({
-            agentLabel,
-            machineName,
-            projectName: project?.name
-        }),
+        () =>
+            getMobileSessionAgentSummary({
+                agentLabel,
+                machineName,
+                projectName: project?.name,
+            }),
         [agentLabel, machineName, project?.name]
     )
-    const brainSelfSummary = useMemo(() => getBrainSelfSummary(props.session), [props.session])
+    const brainSelfSummary = useMemo(
+        () => getBrainSelfSummary(props.session),
+        [props.session]
+    )
+    const orchestrationPresentation = useMemo(
+        () =>
+            getSessionOrchestrationPresentation(props.session.metadata?.source),
+        [props.session.metadata?.source]
+    )
+    const orchestrationBadgeClass =
+        orchestrationPresentation?.accentTone === 'sky'
+            ? 'border border-sky-500/20 bg-sky-500/10 text-sky-700'
+            : 'border border-amber-500/20 bg-amber-500/10 text-amber-700'
 
-    // Subscription state - supports both Telegram chatId and Web clientId
-    const tg = getTelegramWebApp()
-    const currentChatId = tg?.initDataUnsafe?.user?.id?.toString() ?? null
     const currentClientId = getClientId()
 
     // 过滤掉自己，只显示其他在线用户
     const otherViewers = useMemo(() => {
         if (!props.viewers) return []
-        return props.viewers.filter(v => v.clientId !== currentClientId)
+        return props.viewers.filter((v) => v.clientId !== currentClientId)
     }, [props.viewers, currentClientId])
 
     // 移动端更多菜单状态
@@ -372,10 +415,16 @@ export function SessionHeader(props: {
     // 点击外部关闭菜单
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
-            if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) {
+            if (
+                moreMenuRef.current &&
+                !moreMenuRef.current.contains(event.target as Node)
+            ) {
                 setShowMoreMenu(false)
             }
-            if (agentDetailsRef.current && !agentDetailsRef.current.contains(event.target as Node)) {
+            if (
+                agentDetailsRef.current &&
+                !agentDetailsRef.current.contains(event.target as Node)
+            ) {
                 setShowAgentDetails(false)
             }
         }
@@ -392,8 +441,7 @@ export function SessionHeader(props: {
         setShowAgentDetails(false)
     }, [props.session.id])
 
-    // In Telegram or Flutter, don't render header (native app provides its own)
-    if (isTelegramApp() || isFlutterApp()) {
+    if (isFlutterApp()) {
         return null
     }
 
@@ -409,28 +457,51 @@ export function SessionHeader(props: {
                     >
                         <BackIcon />
                     </button>
-                    <div className="min-w-0 flex-1 relative" ref={agentDetailsRef}>
+                    <div
+                        className="min-w-0 flex-1 relative"
+                        ref={agentDetailsRef}
+                    >
                         {/* 移动端：标题和agentMeta，两行挨着 */}
                         <div className="sm:hidden -space-y-1">
-                            <div className="truncate font-medium text-sm leading-none">
-                                {title}
-                            </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setShowAgentDetails(!showAgentDetails)}
-                                    className="text-[10px] text-[var(--app-hint)] truncate text-left leading-none"
-                                >
-                                    {mobileAgentSummary}
-                                </button>
-                                {brainSelfSummary && (
-                                    <div className="text-[10px] text-[var(--app-hint)] truncate leading-none">
-                                        {brainSelfSummary}
-                                    </div>
+                            <div className="flex min-w-0 items-center gap-1.5">
+                                <div className="truncate font-medium text-sm leading-none">
+                                    {title}
+                                </div>
+                                {orchestrationPresentation && (
+                                    <span
+                                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium leading-none ${orchestrationBadgeClass}`}
+                                    >
+                                        {orchestrationPresentation.badgeLabel}
+                                    </span>
                                 )}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    setShowAgentDetails(!showAgentDetails)
+                                }
+                                className="text-[10px] text-[var(--app-hint)] truncate text-left leading-none"
+                            >
+                                {mobileAgentSummary}
+                            </button>
+                            {brainSelfSummary && (
+                                <div className="text-[10px] text-[var(--app-hint)] truncate leading-none">
+                                    {brainSelfSummary}
+                                </div>
+                            )}
                         </div>
                         {/* PC端：标题 */}
-                        <div className="hidden sm:block max-w-[180px] truncate font-medium text-sm sm:max-w-none">
-                            {title}
+                        <div className="hidden sm:flex max-w-[180px] items-center gap-1.5 sm:max-w-none">
+                            <div className="truncate font-medium text-sm">
+                                {title}
+                            </div>
+                            {orchestrationPresentation && (
+                                <span
+                                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium leading-none ${orchestrationBadgeClass}`}
+                                >
+                                    {orchestrationPresentation.badgeLabel}
+                                </span>
+                            )}
                         </div>
                         {/* PC端：显示完整 agentMeta */}
                         <div className="hidden sm:block text-[10px] text-[var(--app-hint)] truncate">
@@ -445,10 +516,30 @@ export function SessionHeader(props: {
                         {showAgentDetails && (
                             <div className="sm:hidden absolute left-0 top-full z-30 mt-1 min-w-[200px] max-w-[280px] rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] py-2 px-3 shadow-lg">
                                 <div className="text-xs text-[var(--app-fg)] space-y-1">
-                                    <div className="text-[var(--app-hint)] truncate">{agentMeta}</div>
-                                    {brainSelfSummary && <div className="text-[var(--app-hint)] truncate">{brainSelfSummary}</div>}
-                                    {project && <div><span className="text-[var(--app-hint)]">Project:</span> {project.name}</div>}
-                                    {worktreeBranch && <div><span className="text-[var(--app-hint)]">Branch:</span> {worktreeBranch}</div>}
+                                    <div className="text-[var(--app-hint)] truncate">
+                                        {agentMeta}
+                                    </div>
+                                    {brainSelfSummary && (
+                                        <div className="text-[var(--app-hint)] truncate">
+                                            {brainSelfSummary}
+                                        </div>
+                                    )}
+                                    {project && (
+                                        <div>
+                                            <span className="text-[var(--app-hint)]">
+                                                Project:
+                                            </span>{' '}
+                                            {project.name}
+                                        </div>
+                                    )}
+                                    {worktreeBranch && (
+                                        <div>
+                                            <span className="text-[var(--app-hint)]">
+                                                Branch:
+                                            </span>{' '}
+                                            {worktreeBranch}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -460,38 +551,56 @@ export function SessionHeader(props: {
                     {/* PC端：在线用户（排除自己） */}
                     {otherViewers.length > 0 && (
                         <div className="hidden sm:block">
-                            <ViewersBadge viewers={otherViewers} compact buttonClassName="h-7 leading-none" />
+                            <ViewersBadge
+                                viewers={otherViewers}
+                                compact
+                                buttonClassName="h-7 leading-none"
+                            />
                         </div>
                     )}
                     {/* PC端：独立按钮 */}
                     <div className="hidden sm:flex items-center gap-1.5">
                         {/* Privacy Mode icon - 当全局开启 Share My Sessions 时显示 (仅图标) */}
-                        {isCreator && userPreferences?.shareAllSessions === true && (
-                            <button
-                                type="button"
-                                onClick={() => setPrivacyModeMutation.mutate(!privacyMode)}
-                                disabled={setPrivacyModeMutation.isPending}
-                                className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
-                                    privacyMode
-                                        ? 'bg-red-500/10 text-red-600 hover:bg-red-500/20'
-                                        : 'bg-green-500/10 text-green-600 hover:bg-green-500/20'
-                                } ${setPrivacyModeMutation.isPending ? 'opacity-50' : ''}`}
-                                title={privacyMode ? 'Private Mode' : 'Public Mode'}
-                            >
-                                {privacyMode ? <LockIcon /> : <UnlockIcon />}
-                            </button>
-                        )}
+                        {isCreator &&
+                            userPreferences?.shareAllSessions === true && (
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        setPrivacyModeMutation.mutate(
+                                            !privacyMode
+                                        )
+                                    }
+                                    disabled={setPrivacyModeMutation.isPending}
+                                    className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+                                        privacyMode
+                                            ? 'bg-red-500/10 text-red-600 hover:bg-red-500/20'
+                                            : 'bg-green-500/10 text-green-600 hover:bg-green-500/20'
+                                    } ${setPrivacyModeMutation.isPending ? 'opacity-50' : ''}`}
+                                    title={
+                                        privacyMode
+                                            ? 'Private Mode'
+                                            : 'Public Mode'
+                                    }
+                                >
+                                    {privacyMode ? (
+                                        <LockIcon />
+                                    ) : (
+                                        <UnlockIcon />
+                                    )}
+                                </button>
+                            )}
                         {/* Share button - 只有创建者可以分享 (未开启 Share My Sessions 时显示) */}
-                        {isCreator && userPreferences?.shareAllSessions !== true && (
-                            <button
-                                type="button"
-                                onClick={() => setShowShareDialog(true)}
-                                className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--app-subtle-bg)] text-[var(--app-hint)] transition-colors hover:bg-purple-500/10 hover:text-purple-600"
-                                title="Share session"
-                            >
-                                <ShareIcon />
-                            </button>
-                        )}
+                        {isCreator &&
+                            userPreferences?.shareAllSessions !== true && (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowShareDialog(true)}
+                                    className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--app-subtle-bg)] text-[var(--app-hint)] transition-colors hover:bg-purple-500/10 hover:text-purple-600"
+                                    title="Share session"
+                                >
+                                    <ShareIcon />
+                                </button>
+                            )}
                         {props.onRefreshAccount ? (
                             <button
                                 type="button"
@@ -536,7 +645,10 @@ export function SessionHeader(props: {
                                             Online ({otherViewers.length})
                                         </div>
                                         {otherViewers.map((viewer) => (
-                                            <div key={viewer.clientId} className="flex items-center gap-2 px-3 py-1.5">
+                                            <div
+                                                key={viewer.clientId}
+                                                className="flex items-center gap-2 px-3 py-1.5"
+                                            >
                                                 <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />
                                                 <span className="text-xs text-[var(--app-fg)] truncate">
                                                     {viewer.email.split('@')[0]}
@@ -547,35 +659,50 @@ export function SessionHeader(props: {
                                     </>
                                 )}
                                 {/* 分享会话 - 只有创建者可以分享 */}
-                                {isCreator && userPreferences?.shareAllSessions === true ? (
+                                {isCreator &&
+                                userPreferences?.shareAllSessions === true ? (
                                     <button
                                         type="button"
                                         onClick={() => {
                                             setShowMoreMenu(false)
-                                            setPrivacyModeMutation.mutate(!privacyMode)
+                                            setPrivacyModeMutation.mutate(
+                                                !privacyMode
+                                            )
                                         }}
-                                        disabled={setPrivacyModeMutation.isPending}
+                                        disabled={
+                                            setPrivacyModeMutation.isPending
+                                        }
                                         className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
                                             privacyMode
                                                 ? 'text-red-600 bg-red-500/10'
                                                 : 'text-green-600 bg-green-500/10'
                                         } ${setPrivacyModeMutation.isPending ? 'opacity-50' : ''}`}
                                     >
-                                        {privacyMode ? <LockIcon className="shrink-0" /> : <UnlockIcon className="shrink-0" />}
-                                        <span>{privacyMode ? 'Private Mode' : 'Public Mode'}</span>
+                                        {privacyMode ? (
+                                            <LockIcon className="shrink-0" />
+                                        ) : (
+                                            <UnlockIcon className="shrink-0" />
+                                        )}
+                                        <span>
+                                            {privacyMode
+                                                ? 'Private Mode'
+                                                : 'Public Mode'}
+                                        </span>
                                     </button>
-                                ) : isCreator && (
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setShowMoreMenu(false)
-                                            setShowShareDialog(true)
-                                        }}
-                                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]"
-                                    >
-                                        <ShareIcon className="shrink-0" />
-                                        <span>Share Session</span>
-                                    </button>
+                                ) : (
+                                    isCreator && (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setShowMoreMenu(false)
+                                                setShowShareDialog(true)
+                                            }}
+                                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]"
+                                        >
+                                            <ShareIcon className="shrink-0" />
+                                            <span>Share Session</span>
+                                        </button>
+                                    )
                                 )}
                                 {/* 刷新账号 */}
                                 {props.onRefreshAccount ? (
@@ -589,7 +716,9 @@ export function SessionHeader(props: {
                                         className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)] disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                         <RefreshAccountIcon className="shrink-0" />
-                                        <span className="whitespace-nowrap">Refresh Session</span>
+                                        <span className="whitespace-nowrap">
+                                            Refresh Session
+                                        </span>
                                     </button>
                                 ) : null}
 
@@ -605,7 +734,9 @@ export function SessionHeader(props: {
                                         className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-500 hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                         <TrashIcon className="shrink-0" />
-                                        <span className="whitespace-nowrap">Delete Session</span>
+                                        <span className="whitespace-nowrap">
+                                            Delete Session
+                                        </span>
                                     </button>
                                 ) : null}
                             </div>

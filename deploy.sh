@@ -209,6 +209,50 @@ echo "  Yoho Remote Deploy — $DEPLOY_INFO"
 echo "  Running on: $SELF_HOSTNAME"
 echo "========================================="
 
+# ==================== Self-detach ====================
+# 如果在 ncu 上部署 daemon，deploy.sh 自己和当前 claude session 都在
+# yoho-remote-daemon.service 的 cgroup 里。daemon 重启时 KillMode=control-group
+# 会把整个 cgroup 的进程 SIGKILL —— 包括 deploy.sh 本身。
+# 解决：在执行真正的工作前，把自己 re-exec 到一个独立的 transient systemd unit，
+# 脱离 daemon cgroup，让 daemon 重启不再波及我们。
+maybe_self_detach() {
+    [[ -n "${YR_DEPLOY_DETACHED:-}" ]] && return 0
+    is_ncu || return 0
+    [[ "$DEPLOY_DAEMON" == "true" ]] || return 0
+    should_deploy_daemon ncu || return 0
+
+    local orig_args=("$MODE")
+    [[ ${#DAEMON_FILTER[@]} -gt 0 ]] && orig_args+=("${DAEMON_FILTER[@]}")
+
+    local uid
+    uid=$(id -u)
+    local xdg="${XDG_RUNTIME_DIR:-/run/user/$uid}"
+
+    # 确保 user systemd 可用（需要 linger，不然 SSH 下线后就没了）
+    if [[ ! -d "$xdg/systemd" ]]; then
+        echo "  ⚠ user systemd 不可用 ($xdg/systemd 缺失)，尝试 enable-linger..."
+        echo "$NCU_SUDO_PASS" | sudo -S loginctl enable-linger "$SELF_USER" >/dev/null 2>&1 || true
+        sleep 1
+    fi
+    if [[ ! -d "$xdg/systemd" ]]; then
+        echo "  ✗ 无法启用 user systemd，请手动执行: sudo loginctl enable-linger $SELF_USER" >&2
+        echo "    或先 SSH 登录一次触发 user manager 启动。" >&2
+        exit 1
+    fi
+
+    echo ""
+    echo "  → Re-executing under isolated systemd unit (unit=yr-deploy-$$) to escape daemon cgroup"
+    # systemd-run does NOT inherit the caller's environment; pass vars explicitly via --setenv.
+    exec systemd-run --user --pipe --collect --wait \
+        --unit="yr-deploy-$$" \
+        --working-directory="$(pwd)" \
+        --setenv=YR_DEPLOY_DETACHED=1 \
+        --setenv=XDG_RUNTIME_DIR="$xdg" \
+        bash "$0" "${orig_args[@]}"
+}
+
+maybe_self_detach
+
 resolve_ncu_ssh
 echo "  NCU SSH: $NCU_SSH"
 
@@ -307,24 +351,7 @@ if [[ "$DEPLOY_DAEMON" == "true" ]]; then
         ok "ncu daemon unit reinstalled and restarted"
     fi
 
-    # 6a-3: If running on ncu, restart ncu daemon before server deploy (may kill session)
-    if is_ncu && should_deploy_daemon ncu; then
-        log "Restarting daemon on ncu (self) before server deploy — session may restart..."
-
-        RESTART_SCRIPT=$(mktemp /tmp/yr-restart-XXXXXX.sh)
-        cat > "$RESTART_SCRIPT" << RESTART_EOF
-#!/bin/bash
-exec > /tmp/yr-restart.log 2>&1
-echo "\$(date): Reinstalling managed ncu daemon unit..."
-DAEMON_SERVICE_USER="$SELF_USER" bash "$LOCAL_REINSTALL_DAEMON_SCRIPT" "$NCU_EXE_DIR/bun-linux-x64/yoho-remote"
-rm -f "\$0"
-RESTART_EOF
-        chmod +x "$RESTART_SCRIPT"
-
-        echo "$NCU_SUDO_PASS" | sudo -S systemctl reset-failed yr-daemon-restart.service 2>/dev/null || true
-        echo "$NCU_SUDO_PASS" | sudo -S systemd-run --unit=yr-daemon-restart bash "$RESTART_SCRIPT"
-        ok "Restart dispatched (log: /tmp/yr-restart.log)"
-    fi
+    # 6a-3: 本机 daemon 重启移到 Step 6c（server 部署之后），避免与 server 部署竞争
 fi
 
 # --- 6b: Deploy server to ncu ---
@@ -354,6 +381,19 @@ if [[ "$DEPLOY_SERVER" == "true" ]]; then
     ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl start yoho-remote-server.service"
     sleep 2
     ncu_exec "systemctl is-active --quiet yoho-remote-server.service && echo '  ✓ Server restarted' || echo '  ✗ Server failed to start'"
+fi
+
+# --- 6c: Restart ncu daemon on self (LAST step) ---
+# 此时脚本已在独立 transient systemd unit 里（见 maybe_self_detach），
+# daemon 重启的 cgroup SIGKILL 不会波及本脚本，可以同步调用。
+# 注意：当前 claude session 进程仍在 daemon cgroup 里，daemon 重启仍会杀它；
+# session 能否 auto-resume 取决于 daemon 侧的 session 持久化能力，不在 deploy.sh 职责范围。
+if is_ncu && [[ "$DEPLOY_DAEMON" == "true" ]] && should_deploy_daemon ncu; then
+    log "Restarting daemon on ncu (self, last step)..."
+    echo "$NCU_SUDO_PASS" | sudo -SE \
+        DAEMON_SERVICE_USER="$SELF_USER" \
+        bash "$LOCAL_REINSTALL_DAEMON_SCRIPT" "$NCU_EXE_DIR/bun-linux-x64/yoho-remote"
+    ok "ncu daemon reinstalled and restarted"
 fi
 
 echo ""

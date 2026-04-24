@@ -3,14 +3,25 @@ import { z } from 'zod'
 import {
     SessionActiveMonitorsSchema,
     type DecryptedMessage,
+    type Machine,
     type Session,
     type SyncEngine,
 } from '../../sync/syncEngine'
 import type { SSEManager } from '../../sse/sseManager'
 import type { IStore, UserRole, StoredSession } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
-import { getLocalTokenSourceEnabledForOrg, resolveTokenSourceForAgent } from '../tokenSources'
-import { requireMachine, requireSessionFromParam, requireSessionFromParamWithShareCheck, requireSyncEngine } from './guards'
+import {
+    getLocalTokenSourceEnabledForOrg,
+    pickDefaultTokenSourceForAgent,
+    resolveTokenSourceForAgent,
+} from '../tokenSources'
+import {
+    requireMachineInOrg,
+    requireRequestedOrgId,
+    requireSessionFromParam,
+    requireSessionFromParamWithShareCheck,
+    requireSyncEngine,
+} from './guards'
 import { buildInitPrompt, buildBrainInitPrompt } from '../prompts/initPrompt'
 import { getLicenseService } from '../../license/licenseService'
 import {
@@ -26,7 +37,6 @@ import {
 } from '../../brain/brainChildRuntimeSupport'
 import { SESSION_PERMISSION_MODE_VALUES, normalizeSessionPermissionMode } from '../../sessionPermissionMode'
 import {
-    getBrainChildMainSessionId,
     getUnsupportedSessionSourceError,
     isSupportedSessionSource,
 } from '../../sessionSourcePolicy'
@@ -37,8 +47,14 @@ import {
     resolveResumeTokenSourceSpawnOptions,
 } from '../../resumeSpawnMetadata'
 import { getSessionSourceFromMetadata } from '../../sessionSourcePolicy'
-import { appendSelfSystemPrompt, resolveBrainSelfSystemContext } from '../../brain/selfSystem'
+import { appendSelfSystemPrompt, resolveSessionSelfSystemContext } from '../../brain/selfSystem'
 import { buildSessionIdentityContextPatch } from '../identityContext'
+import {
+    getSessionOrchestrationParentSessionId,
+    isSessionOrchestrationChildForParentMetadata,
+    isSessionOrchestrationParentMetadata,
+    isSessionOrchestrationParentSource,
+} from '../../sessionOrchestrationPolicy'
 
 /**
  * License 检查：如果指定了 orgId，校验是否可创建会话
@@ -127,7 +143,7 @@ function toSessionSummary(session: Session): SessionSummary {
         name: session.metadata.name,
         path: session.metadata.path,
         machineId: session.metadata.machineId ?? undefined,
-        mainSessionId: getBrainChildMainSessionId(session.metadata),
+        mainSessionId: getSessionOrchestrationParentSessionId(session.metadata),
         source: session.metadata.source,
         summary: session.metadata.summary ? { text: session.metadata.summary.text } : undefined,
         flavor: session.metadata.flavor ?? null,
@@ -197,7 +213,7 @@ function storedSessionToSummary(stored: StoredSession, reconnecting = false): Se
         createdBy: stored.createdBy ?? undefined,
         metadata: meta ? {
             ...meta,
-            mainSessionId: getBrainChildMainSessionId(meta),
+            mainSessionId: getSessionOrchestrationParentSessionId(meta),
         } : null,
         todoProgress,
         pendingRequestsCount: 0,  // Offline sessions have no pending requests
@@ -212,7 +228,7 @@ function storedSessionToSummary(stored: StoredSession, reconnecting = false): Se
 
 const permissionModeValues = SESSION_PERMISSION_MODE_VALUES
 const createSessionPermissionModeValues = ['bypassPermissions', 'read-only', 'safe-yolo', 'yolo'] as const
-const modelModeValues = ['default', 'sonnet', 'opus', 'opus-4-7', 'glm-5.1', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2-codex', 'gpt-5.2', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini'] as const
+const modelModeValues = ['default', 'sonnet', 'opus', 'opus-4-7', 'glm-5.1', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2-codex', 'gpt-5.2', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini'] as const
 const reasoningEffortValues = ['low', 'medium', 'high', 'xhigh'] as const
 const claudeModelValues = ['sonnet', 'opus', 'opus-4-7'] as const
 
@@ -434,26 +450,152 @@ async function waitForSessionInactive(engine: SyncEngine, sessionId: string, tim
     })
 }
 
+async function maybeSwitchCodexSessionToDefaultTokenSource(args: {
+    c: { json: (data: any, status?: number) => Response }
+    engine: SyncEngine
+    store: IStore
+    sessionResult: { sessionId: string; session: Session }
+    model: string
+    reasoningEffort?: string
+}): Promise<Response | null> {
+    const { c, engine, store, sessionResult, model, reasoningEffort } = args
+    const session = sessionResult.session
+    if ((session.metadata?.flavor ?? 'claude') !== 'codex' || model !== 'gpt-5.5') {
+        return null
+    }
+    if (typeof session.metadata?.tokenSourceId === 'string' && session.metadata.tokenSourceId.trim().length > 0) {
+        return null
+    }
+
+    const storedSession = await store.getSession(sessionResult.sessionId)
+    const orgId = storedSession?.orgId ?? null
+    const licenseError = await checkSessionLicense(c, orgId)
+    if (licenseError) {
+        return licenseError
+    }
+    if (!orgId) {
+        return c.json({ error: 'Session orgId missing' }, 409)
+    }
+
+    const tokenSource = await pickDefaultTokenSourceForAgent(store, orgId, 'codex')
+    if (!tokenSource) {
+        return c.json({ error: 'Current session uses Local Codex config, and no Codex Token Source is configured for GPT-5.5' }, 409)
+    }
+
+    const machineId = session.metadata?.machineId?.trim()
+    if (!machineId) {
+        return c.json({ error: 'Session machine not found' }, 409)
+    }
+    const machine = (
+        orgId
+            ? (engine as SyncEngine & {
+                getMachineByOrg?: (machineId: string, orgId: string) => Machine | undefined
+            }).getMachineByOrg?.(machineId, orgId)
+            : undefined
+    ) ?? (
+        engine as SyncEngine & {
+            getMachineByNamespace?: (machineId: string, namespace: string) => Machine | undefined
+        }
+    ).getMachineByNamespace?.(machineId, orgId ?? '') ?? engine.getMachine(machineId)
+    if (!machine || !machine.active) {
+        return c.json({ error: 'Machine is offline' }, 409)
+    }
+
+    const spawnTarget = await resolveSpawnTarget(engine, machineId, session)
+    if (!spawnTarget.ok) {
+        return c.json({ error: spawnTarget.error }, 409)
+    }
+
+    const invalidResumeMetadataReason = getInvalidResumeMetadataReason(session.metadata)
+    if (invalidResumeMetadataReason) {
+        return c.json({ error: invalidResumeMetadataReason }, 409)
+    }
+
+    const resumeMetadata = extractResumeSpawnMetadata(session.metadata)
+    const { yolo: resumeYolo, ...resumeExtras } = extractResumeSpawnExtras(session.metadata)
+    const resumeSessionId = typeof session.metadata?.codexSessionId === 'string' && session.metadata.codexSessionId.trim()
+        ? session.metadata.codexSessionId.trim()
+        : undefined
+    const modeSettings = {
+        permissionMode: normalizeSessionPermissionMode({
+            flavor: session.metadata?.flavor,
+            permissionMode: session.permissionMode,
+            metadata: session.metadata,
+        }),
+        modelMode: model as Session['modelMode'],
+        modelReasoningEffort: reasoningEffort as Session['modelReasoningEffort'] | undefined,
+    }
+
+    console.log('[session model] rebind-to-token-source', {
+        sessionId: sessionResult.sessionId,
+        model,
+        tokenSourceId: tokenSource.id,
+        tokenSourceName: tokenSource.name,
+    })
+
+    await engine.terminateSessionProcess(sessionResult.sessionId)
+    const inactive = await waitForSessionInactive(engine, sessionResult.sessionId, 30_000)
+    if (!inactive) {
+        return c.json({ error: 'Timed out waiting for the previous Codex process to stop before switching Token Source' }, 409)
+    }
+
+    const spawnResult = await engine.spawnSession(
+        machineId,
+        spawnTarget.directory,
+        'codex',
+        resumeYolo,
+        {
+            sessionId: sessionResult.sessionId,
+            resumeSessionId,
+            tokenSourceId: tokenSource.id,
+            tokenSourceName: tokenSource.name,
+            tokenSourceType: 'codex',
+            tokenSourceBaseUrl: tokenSource.baseUrl,
+            tokenSourceApiKey: tokenSource.apiKey,
+            ...modeSettings,
+            ...resumeMetadata,
+            ...resumeExtras,
+        }
+    )
+    if (spawnResult.type !== 'success') {
+        return c.json({ error: spawnResult.message }, 409)
+    }
+
+    const online = await waitForSessionOnline(engine, sessionResult.sessionId, RESUME_TIMEOUT_MS)
+    if (!online) {
+        return c.json({ error: 'Timed out waiting for the reconfigured Codex session to come online' }, 409)
+    }
+
+    return c.json({ ok: true, reboundTokenSourceId: tokenSource.id })
+}
+
 async function sendInitPrompt(
     engine: SyncEngine,
     store: IStore,
     sessionId: string,
     role: UserRole,
     userName?: string | null,
+    userEmail?: string | null,
+    orgId?: string | null,
 ): Promise<void> {
     const session = engine.getSession(sessionId)
+    const storedSession = typeof store.getSession === 'function'
+        ? await store.getSession(sessionId)
+        : null
     const projectRoot = session?.metadata?.path?.trim() || null
     const source = getSessionSourceFromMetadata(session?.metadata)
     const brainPreferences = extractBrainSessionPreferencesFromMetadata((session?.metadata as Record<string, unknown> | null | undefined) ?? null)
     console.log(`[sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}, source=${source}`)
-    let prompt = source === 'brain'
+    let prompt = isSessionOrchestrationParentSource(source)
         ? await buildBrainInitPrompt(role, { projectRoot, userName, brainPreferences })
         : await buildInitPrompt(role, { projectRoot, userName })
 
-    if (source === 'brain' && session) {
-        const selfSystem = await resolveBrainSelfSystemContext({
+    if (session) {
+        const selfSystem = await resolveSessionSelfSystemContext({
             store,
-            namespace: session.namespace,
+            orgId: orgId ?? storedSession?.orgId ?? null,
+            userEmail: userEmail ?? storedSession?.createdBy ?? session.createdBy ?? null,
+            includeMemory: source === 'brain',
         })
         prompt = appendSelfSystemPrompt(prompt, selfSystem.prompt)
         if (typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
@@ -498,12 +640,14 @@ async function sendInitPromptAfterOnline(
     sessionId: string,
     role: UserRole,
     userName?: string | null,
+    userEmail?: string | null,
+    orgId?: string | null,
 ): Promise<void> {
     const isOnline = await waitForSessionOnline(engine, sessionId, 60_000)
     if (!isOnline) {
         return
     }
-    await sendInitPrompt(engine, store, sessionId, role, userName)
+    await sendInitPrompt(engine, store, sessionId, role, userName, userEmail, orgId)
 }
 
 export async function resolveSpawnTarget(
@@ -896,6 +1040,42 @@ export function createSessionsRoutes(
     store: IStore
 ): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
+    const getEngineSessionsByOrg = (engine: SyncEngine, orgId: string): Session[] => {
+        if (typeof engine.getSessionsByOrg === 'function') {
+            return engine.getSessionsByOrg(orgId)
+        }
+        return (engine as { getSessionsByNamespace?: (namespace: string) => Session[] })
+            .getSessionsByNamespace?.(orgId) ?? []
+    }
+    const getEngineMachineByOrg = (
+        engine: SyncEngine,
+        machineId: string,
+        orgId: string | null | undefined
+    ): Machine | undefined => {
+        if (orgId && typeof engine.getMachineByOrg === 'function') {
+            return engine.getMachineByOrg(machineId, orgId)
+        }
+        const legacyMachine = (engine as {
+            getMachineByNamespace?: (machineId: string, namespace: string) => Machine | undefined
+        }).getMachineByNamespace?.(machineId, orgId ?? '')
+        return legacyMachine ?? engine.getMachine(machineId)
+    }
+    const getEngineOnlineMachinesByOrg = (engine: SyncEngine, orgId: string): Machine[] => {
+        if (typeof engine.getOnlineMachinesByOrg === 'function') {
+            return engine.getOnlineMachinesByOrg(orgId)
+        }
+        return ((engine as {
+            getOnlineMachinesByNamespace?: (namespace: string) => Array<Machine | undefined>
+        }).getOnlineMachinesByNamespace?.(orgId) ?? []).filter(
+            (machine): machine is Machine => Boolean(machine)
+        )
+    }
+    const getStoredSessionsByOrg = async (orgId: string): Promise<StoredSession[]> => {
+        if (typeof store.getSessions === 'function') {
+            return await store.getSessions(orgId)
+        }
+        return await store.getSessionsByNamespace?.(orgId) ?? []
+    }
 
     app.post('/sessions', async (c) => {
         const engine = requireSyncEngine(c, getSyncEngine)
@@ -909,13 +1089,18 @@ export function createSessionsRoutes(
             return c.json({ error: 'Invalid body', details: parsed.error.issues }, 400)
         }
 
-        const machine = requireMachine(c, engine, parsed.data.machineId)
+        const requestedOrgId = requireRequestedOrgId(c)
+        if (requestedOrgId instanceof Response) {
+            return requestedOrgId
+        }
+        const orgId = requestedOrgId
+
+        const machine = requireMachineInOrg(c, engine, parsed.data.machineId, orgId)
         if (machine instanceof Response) {
             return machine
         }
 
-        // License check: if orgId is specified, validate license
-        const orgId = c.req.query('orgId')
+        // License check
         const licenseError = await checkSessionLicense(c, orgId)
         if (licenseError) return licenseError
 
@@ -935,9 +1120,6 @@ export function createSessionsRoutes(
 
         let resolvedTokenSource: Awaited<ReturnType<typeof resolveTokenSourceForAgent>> | null = null
         if (parsed.data.tokenSourceId) {
-            if (!orgId) {
-                return c.json({ error: 'orgId is required when using Token Source' }, 400)
-            }
             resolvedTokenSource = await resolveTokenSourceForAgent(
                 store,
                 orgId,
@@ -947,8 +1129,10 @@ export function createSessionsRoutes(
             if ('error' in resolvedTokenSource) {
                 return c.json({ error: resolvedTokenSource.error }, resolvedTokenSource.status as 400 | 404)
             }
-        } else if (orgId) {
-            const localEnabled = await getLocalTokenSourceEnabledForOrg(store, orgId)
+        } else {
+            const localEnabled = typeof store.getOrganization === 'function'
+                ? await getLocalTokenSourceEnabledForOrg(store, orgId)
+                : true
             if (!localEnabled) {
                 return c.json({ error: 'Local Token Source is disabled for this organization' }, 400)
             }
@@ -977,7 +1161,6 @@ export function createSessionsRoutes(
         )
 
         if (result.type === 'success') {
-            const namespace = c.get('namespace')
             const role = c.get('role')  // Role from Keycloak token
             const userName = c.get('name')
             // Wait for session to be online, then set createdBy and send init prompt
@@ -997,17 +1180,14 @@ export function createSessionsRoutes(
                 console.log(`[spawnSession] Sending init prompt to session ${result.sessionId}`)
                 // Set createdBy after session is confirmed online (exists in DB)
                 if (email) {
-                    await store.setSessionCreatedBy(result.sessionId, email, namespace)
+                    await store.setSessionCreatedBy(result.sessionId, email, orgId)
                 }
-                const orgId = c.req.query('orgId')
-                if (orgId) {
-                    await store.setSessionOrgId(result.sessionId, orgId, namespace)
-                }
+                await store.setSessionOrgId(result.sessionId, orgId)
                 const identityPatch = buildSessionIdentityContextPatch(c.get('identityActor'))
                 if (identityPatch && typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
                     await engine.patchSessionMetadata(result.sessionId, identityPatch)
                 }
-                await sendInitPrompt(engine, store, result.sessionId, role, userName)
+                await sendInitPrompt(engine, store, result.sessionId, role, userName, email, orgId)
             })()
         }
 
@@ -1027,12 +1207,26 @@ export function createSessionsRoutes(
             return c.json({ error: 'Invalid body', details: parsed.error.issues }, 400)
         }
 
-        const namespace = c.get('namespace')
         const email = c.get('email')
         const role = c.get('role')
         const userName = c.get('name')
-        const orgId = c.req.query('orgId')
-        const brainConfig = await store.getBrainConfig(namespace || 'default')
+        const requestedOrgId = requireRequestedOrgId(c)
+        if (requestedOrgId instanceof Response) {
+            return requestedOrgId
+        }
+        const orgId = requestedOrgId
+        const getBrainConfigByOrg = (store as IStore & {
+            getBrainConfigByOrg?: IStore['getBrainConfigByOrg']
+            getBrainConfig?: IStore['getBrainConfig']
+        }).getBrainConfigByOrg
+        const getLegacyBrainConfig = (store as IStore & {
+            getBrainConfig?: IStore['getBrainConfig']
+        }).getBrainConfig
+        const brainConfig = typeof getBrainConfigByOrg === 'function'
+            ? await getBrainConfigByOrg(orgId)
+            : typeof getLegacyBrainConfig === 'function'
+                ? await getLegacyBrainConfig(orgId)
+            : null
         const childModelDefaults = extractBrainChildModelDefaults(brainConfig?.extra)
         const requestedAgent = parsed.data.agent ?? brainConfig?.agent ?? 'claude'
         const modelMode = resolveRequestedModelMode({
@@ -1057,13 +1251,13 @@ export function createSessionsRoutes(
         const requestedMachineId = parsed.data.machineId?.trim()
         const candidateMachines = requestedMachineId
             ? (() => {
-                const selected = requireMachine(c, engine, requestedMachineId)
+                const selected = requireMachineInOrg(c, engine, requestedMachineId, orgId)
                 if (selected instanceof Response) {
                     return selected
                 }
                 return [selected]
             })()
-            : engine.getOnlineMachinesByNamespace(namespace, orgId ?? undefined)
+            : getEngineOnlineMachinesByOrg(engine, orgId)
         if (candidateMachines instanceof Response) {
             return candidateMachines
         }
@@ -1086,15 +1280,12 @@ export function createSessionsRoutes(
             brainTokenSourceIds[requestedAgent] = parsed.data.tokenSourceId
         }
 
-        const localEnabled = orgId
+        const localEnabled = typeof store.getOrganization === 'function'
             ? await getLocalTokenSourceEnabledForOrg(store, orgId)
             : true
         let resolvedTokenSource: Awaited<ReturnType<typeof resolveTokenSourceForAgent>> | null = null
         const ownTokenSourceId = brainTokenSourceIds[requestedAgent]
         if (ownTokenSourceId) {
-            if (!orgId) {
-                return c.json({ error: 'orgId is required when using Token Source' }, 400)
-            }
             resolvedTokenSource = await resolveTokenSourceForAgent(
                 store,
                 orgId,
@@ -1111,9 +1302,6 @@ export function createSessionsRoutes(
         const otherAgent: 'claude' | 'codex' = requestedAgent === 'claude' ? 'codex' : 'claude'
         const otherTokenSourceId = brainTokenSourceIds[otherAgent]
         if (otherTokenSourceId) {
-            if (!orgId) {
-                return c.json({ error: 'orgId is required when using Token Source' }, 400)
-            }
             const otherResolved = await resolveTokenSourceForAgent(
                 store,
                 orgId,
@@ -1210,16 +1398,14 @@ export function createSessionsRoutes(
                 if (!isOnline) return
                 await engine.waitForSocketInRoom(result.sessionId, 5000)
                 if (email) {
-                    await store.setSessionCreatedBy(result.sessionId, email, namespace)
+                    await store.setSessionCreatedBy(result.sessionId, email, orgId)
                 }
-                if (orgId) {
-                    await store.setSessionOrgId(result.sessionId, orgId, namespace)
-                }
+                await store.setSessionOrgId(result.sessionId, orgId)
                 const identityPatch = buildSessionIdentityContextPatch(c.get('identityActor'))
                 if (identityPatch && typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
                     await engine.patchSessionMetadata(result.sessionId, identityPatch)
                 }
-                await sendInitPrompt(engine, store, result.sessionId, role, userName)
+                await sendInitPrompt(engine, store, result.sessionId, role, userName, email, orgId)
             })()
         }
 
@@ -1234,29 +1420,22 @@ export function createSessionsRoutes(
 
         const getPendingCount = (s: Session) => s.agentState?.requests ? Object.keys(s.agentState.requests).length : 0
 
-        const namespace = c.get('namespace')
         const email = c.get('email')
         const sseManager = getSseManager()
-
-        // Keycloak users (namespace='default') see only their own sessions (created_by matches their email)
-        // CLI users (with custom namespace) see only sessions in their namespace
-        const isKeycloakUser = namespace === 'default'
+        const requestedOrgId = requireRequestedOrgId(c)
+        if (requestedOrgId instanceof Response) {
+            return requestedOrgId
+        }
+        const orgId = requestedOrgId
 
         // Get sessions from database
-        let storedSessions: StoredSession[]
-        if (isKeycloakUser) {
-            const orgId = c.req.query('orgId') || null
-            storedSessions = await store.getSessions(orgId)
-        } else {
-            // CLI users see only their namespace
-            storedSessions = await store.getSessionsByNamespace(namespace)
-        }
+        let storedSessions: StoredSession[] = await getStoredSessionsByOrg(orgId)
 
         // Filter by created_by for Keycloak users
         // 用于标记 session 来自哪个用户（如果来自开启了 shareAllSessions 的其他用户）
         const sessionOwnerMap = new Map<string, string>()
 
-        if (isKeycloakUser && email) {
+        if (email) {
             // Keycloak用户看到：
             // 1) 自己创建的 session
             // 2) 被共享给自己的 session
@@ -1308,9 +1487,7 @@ export function createSessionsRoutes(
         }
 
         // Get sessions from memory (SyncEngine) - these have live data
-        const memorySessions = isKeycloakUser
-            ? engine.getSessions()
-            : engine.getSessionsByNamespace(namespace)
+        const memorySessions = getEngineSessionsByOrg(engine, orgId)
         const memorySessionMap = new Map(memorySessions.map(s => [s.id, s]))
 
         // Determine if a session is truly active:
@@ -1387,7 +1564,7 @@ export function createSessionsRoutes(
 
                 // Add viewers info
                 if (sseManager) {
-                    const viewers = sseManager.getSessionViewers(namespace, stored.id)
+                    const viewers = sseManager.getSessionViewers(orgId, stored.id)
                     if (viewers.length > 0) {
                         summary.viewers = viewers.map(v => ({
                             email: v.email,
@@ -1550,7 +1727,7 @@ export function createSessionsRoutes(
             return c.json({ error: 'Session machine not found' }, 409)
         }
 
-        const machine = engine.getMachineByNamespace(machineId, c.get('namespace'))
+        const machine = getEngineMachineByOrg(engine, machineId, session.orgId)
         if (!machine || !machine.active) {
             return c.json({ error: 'Machine is offline' }, 409)
         }
@@ -1591,9 +1768,11 @@ export function createSessionsRoutes(
         // Pre-activate session in DB and memory so heartbeats are accepted
         // and subsequent resume requests are rejected as already-active
         // (archived sessions have active=false which blocks heartbeats)
-        const namespace = c.get('namespace')
         const now = Date.now()
-        await store.setSessionActive(sessionId, true, now, namespace)
+        if (!storedForResume?.orgId) {
+            return c.json({ error: 'Session orgId missing' }, 409)
+        }
+        await store.setSessionActive(sessionId, true, now, storedForResume.orgId)
         session.active = true
         session.activeAt = now
         // Reset thinking state so resumed session starts clean
@@ -1625,8 +1804,11 @@ export function createSessionsRoutes(
                 // Set createdBy after session is confirmed online (exists in DB)
                 const email = c.get('email')
                 if (email) {
-                    const namespace = c.get('namespace')
-                    void store.setSessionCreatedBy(sessionId, email, namespace)
+                    void store.setSessionCreatedBy(
+                        sessionId,
+                        email,
+                        storedForResume.orgId
+                    )
                 }
                 engine.markSessionResumeReady(sessionId, 'manual-resume')
                 return c.json({ type: 'resumed', sessionId })
@@ -1641,7 +1823,12 @@ export function createSessionsRoutes(
         session.active = false
         session.thinking = false
         session.resumingUntil = undefined
-        await store.setSessionActive(sessionId, false, Date.now(), namespace)
+        await store.setSessionActive(
+            sessionId,
+            false,
+            Date.now(),
+            storedForResume.orgId
+        )
 
         // Fallback: spawn a new session with only the native resume ID
         const fallbackResult = await engine.spawnSession(
@@ -1664,34 +1851,33 @@ export function createSessionsRoutes(
         }
 
         // Set createdBy and orgId after session is confirmed online (exists in DB)
+        const originalStored = await store.getSession(sessionId)
         const email = c.get('email')
-        if (email) {
-            void store.setSessionCreatedBy(newSessionId, email, namespace)
+        if (email && originalStored?.orgId) {
+            void store.setSessionCreatedBy(newSessionId, email, originalStored.orgId)
         }
         // Inherit org from original session
-        const originalStored = await store.getSession(sessionId)
         if (originalStored?.orgId) {
-            void store.setSessionOrgId(newSessionId, originalStored.orgId, namespace)
+            void store.setSessionOrgId(newSessionId, originalStored.orgId)
         }
 
         const resumedSource = getSessionSourceFromMetadata(session.metadata)
-        if (resumedSource === 'brain' && newSessionId !== sessionId) {
-            const childSessions = engine.getSessionsByNamespace(namespace).filter((candidate) => {
-                const metadata = candidate.metadata as { source?: unknown; mainSessionId?: unknown } | null | undefined
-                return getSessionSourceFromMetadata(metadata) === 'brain-child' && metadata?.mainSessionId === sessionId
+        if (isSessionOrchestrationParentMetadata(session.metadata) && newSessionId !== sessionId) {
+            const childSessions = getEngineSessionsByOrg(engine, storedForResume.orgId).filter((candidate) => {
+                return isSessionOrchestrationChildForParentMetadata(candidate.metadata, session.metadata, sessionId)
             })
 
             for (const child of childSessions) {
                 const patchResult = await engine.patchSessionMetadata(child.id, { mainSessionId: newSessionId })
                 if (!patchResult.ok) {
-                    console.warn(`[resume] Failed to rebind brain-child ${child.id} to resumed brain session ${newSessionId}: ${patchResult.error}`)
+                    console.warn(`[resume] Failed to rebind child ${child.id} to resumed parent session ${newSessionId}: ${patchResult.error}`)
                 }
             }
         }
 
         const role = c.get('role')  // Role from Keycloak token
         const userName = c.get('name')
-        await sendInitPrompt(engine, store, newSessionId, role, userName)
+        await sendInitPrompt(engine, store, newSessionId, role, userName, c.get('email'), originalStored?.orgId ?? null)
 
         if (!resumeSessionId) {
             const page = await engine.getMessagesPage(sessionId, { limit: RESUME_CONTEXT_MAX_LINES * 2, beforeSeq: null })
@@ -1740,7 +1926,7 @@ export function createSessionsRoutes(
             return c.json({ error: 'Session machine not found' }, 409)
         }
 
-        const machine = engine.getMachineByNamespace(machineId, c.get('namespace'))
+        const machine = getEngineMachineByOrg(engine, machineId, session.orgId)
         if (!machine || !machine.active) {
             return c.json({ error: 'Machine is offline' }, 409)
         }
@@ -1786,9 +1972,11 @@ export function createSessionsRoutes(
         }
 
         // Pre-activate session in DB (same pattern as resume) so heartbeats are accepted
-        const namespace = c.get('namespace')
         const now = Date.now()
-        await store.setSessionActive(sessionId, true, now, namespace)
+        if (!storedForRefresh?.orgId) {
+            return c.json({ error: 'Session orgId missing' }, 409)
+        }
+        await store.setSessionActive(sessionId, true, now, storedForRefresh.orgId)
         session.active = true
         session.activeAt = now
         session.thinking = false
@@ -1811,7 +1999,7 @@ export function createSessionsRoutes(
 
         if (spawnResult.type !== 'success') {
             // Revert pre-activation on failure
-            await store.setSessionActive(sessionId, false, Date.now(), namespace)
+            await store.setSessionActive(sessionId, false, Date.now(), storedForRefresh.orgId)
             session.active = false
             return c.json({ error: spawnResult.message }, 409)
         }
@@ -1819,7 +2007,7 @@ export function createSessionsRoutes(
         const online = await waitForSessionOnline(engine, sessionId, RESUME_TIMEOUT_MS)
         if (!online) {
             // Revert pre-activation since process didn't come online
-            await store.setSessionActive(sessionId, false, Date.now(), namespace)
+            await store.setSessionActive(sessionId, false, Date.now(), storedForRefresh.orgId)
             return c.json({ error: 'Session failed to come online after refresh' }, 409)
         }
 
@@ -1831,7 +2019,7 @@ export function createSessionsRoutes(
         // Set createdBy after session is confirmed online
         const email = c.get('email')
         if (email) {
-            void store.setSessionCreatedBy(sessionId, email, namespace)
+            void store.setSessionCreatedBy(sessionId, email, storedForRefresh.orgId)
         }
 
         // Only send init prompt and context if we couldn't use Claude --resume,
@@ -1858,7 +2046,7 @@ export function createSessionsRoutes(
         if (!resumeSessionId || !resumeVerified) {
             const role = c.get('role')
             const userName = c.get('name')
-            await sendInitPrompt(engine, store, sessionId, role, userName)
+            await sendInitPrompt(engine, store, sessionId, role, userName, email, storedForRefresh?.orgId ?? null)
 
             const page = await engine.getMessagesPage(sessionId, { limit: RESUME_CONTEXT_MAX_LINES * 2, beforeSeq: null })
             const contextMessage = buildResumeContextMessage(session, page.messages)
@@ -1938,7 +2126,7 @@ export function createSessionsRoutes(
         }
 
         const claudeModels = new Set(['default', 'sonnet', 'opus', 'opus-4-7'])
-        const codexModels = new Set(['gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini', 'gpt-5.2'])
+        const codexModels = new Set(['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2-codex', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini', 'gpt-5.2'])
         const grokModels = new Set(['grok-4-1-fast-reasoning', 'grok-4-1-fast-non-reasoning', 'grok-code-fast-1', 'grok-4-fast-reasoning', 'grok-4-fast-non-reasoning', 'grok-4-0709', 'grok-3-mini', 'grok-3'])
         const reasoningLevels = new Set(['low', 'medium', 'high', 'xhigh'])
 
@@ -1957,6 +2145,18 @@ export function createSessionsRoutes(
         }
         if (parsed.data.reasoningEffort && !reasoningLevels.has(parsed.data.reasoningEffort)) {
             return c.json({ error: 'Invalid reasoning level' }, 400)
+        }
+
+        const rebound = await maybeSwitchCodexSessionToDefaultTokenSource({
+            c,
+            engine,
+            store,
+            sessionResult,
+            model: parsed.data.model,
+            reasoningEffort: parsed.data.reasoningEffort,
+        })
+        if (rebound) {
+            return rebound
         }
 
         try {
@@ -2047,8 +2247,11 @@ export function createSessionsRoutes(
             return c.json({ users: [] })
         }
 
-        const namespace = c.get('namespace')
-        const users = sseManager.getOnlineUsers(namespace)
+        const orgId = requireRequestedOrgId(c)
+        if (orgId instanceof Response) {
+            return orgId
+        }
+        const users = sseManager.getOnlineUsers(orgId)
         return c.json({ users })
     })
 
@@ -2072,12 +2275,15 @@ export function createSessionsRoutes(
 
         const email = c.get('email') ?? 'anonymous'
         const clientId = c.get('clientId') ?? 'unknown'
-        const namespace = c.get('namespace')
+        const orgId = sessionResult.session.orgId
+        if (!orgId) {
+            return c.json({ error: 'Session orgId missing' }, 409)
+        }
 
         // 广播 typing 事件给同一 session 的其他用户
         engine.emit({
             type: 'typing-changed',
-            namespace,
+            orgId,
             sessionId: sessionResult.sessionId,
             typing: {
                 email,
@@ -2095,31 +2301,31 @@ export function createSessionsRoutes(
     /**
      * 订阅 session 通知
      * POST /sessions/:id/subscribe
-     * Body: { chatId?: string, clientId?: string }
-     * 至少需要提供 chatId 或 clientId 其中之一
+     * Body: { clientId: string }
      */
     app.post('/sessions/:id/subscribe', async (c) => {
         const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
         const body = await c.req.json().catch(() => null)
 
         if (!body) {
             return c.json({ error: 'Invalid body' }, 400)
         }
 
-        const chatId = typeof body.chatId === 'string' ? body.chatId : null
         const clientId = typeof body.clientId === 'string' ? body.clientId : null
 
-        if (!chatId && !clientId) {
-            return c.json({ error: 'Either chatId or clientId is required' }, 400)
+        if (!clientId) {
+            return c.json({ error: 'clientId is required' }, 400)
         }
 
-        let subscription
-        if (chatId) {
-            subscription = await store.subscribeToSessionNotifications(sessionId, chatId, namespace)
-        } else if (clientId) {
-            subscription = await store.subscribeToSessionNotificationsByClientId(sessionId, clientId, namespace)
+        const storedSession = await store.getSession(sessionId)
+        if (!storedSession) {
+            return c.json({ error: 'Session not found' }, 404)
         }
+        if (!storedSession.orgId) {
+            return c.json({ error: 'Session orgId missing' }, 409)
+        }
+
+        const subscription = await store.subscribeToSessionNotificationsByClientId(sessionId, clientId, storedSession.orgId)
 
         if (!subscription) {
             return c.json({ error: 'Failed to subscribe' }, 500)
@@ -2131,37 +2337,23 @@ export function createSessionsRoutes(
     /**
      * 取消订阅 session 通知
      * DELETE /sessions/:id/subscribe
-     * Body: { chatId?: string, clientId?: string }
+     * Body: { clientId: string }
      */
     app.delete('/sessions/:id/subscribe', async (c) => {
         const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
         const body = await c.req.json().catch(() => null)
 
         if (!body) {
             return c.json({ error: 'Invalid body' }, 400)
         }
 
-        const chatId = typeof body.chatId === 'string' ? body.chatId : null
         const clientId = typeof body.clientId === 'string' ? body.clientId : null
 
-        if (!chatId && !clientId) {
-            return c.json({ error: 'Either chatId or clientId is required' }, 400)
+        if (!clientId) {
+            return c.json({ error: 'clientId is required' }, 400)
         }
 
-        let success = false
-        if (chatId) {
-            // First try to remove from subscriptions table
-            success = await store.unsubscribeFromSessionNotifications(sessionId, chatId)
-            // Also check if this chatId is the creator and clear it
-            const creatorChatId = await store.getSessionCreatorChatId(sessionId)
-            if (creatorChatId === chatId) {
-                const cleared = await store.clearSessionCreatorChatId(sessionId, namespace)
-                success = success || cleared
-            }
-        } else if (clientId) {
-            success = await store.unsubscribeFromSessionNotificationsByClientId(sessionId, clientId)
-        }
+        const success = await store.unsubscribeFromSessionNotificationsByClientId(sessionId, clientId)
 
         return c.json({ ok: success })
     })
@@ -2172,62 +2364,24 @@ export function createSessionsRoutes(
      */
     app.get('/sessions/:id/subscribers', async (c) => {
         const sessionId = c.req.param('id')
-        const chatIdSubscribers = await store.getSessionNotificationSubscribers(sessionId)
         const clientIdSubscribers = await store.getSessionNotificationSubscriberClientIds(sessionId)
-        const creatorChatId = await store.getSessionCreatorChatId(sessionId)
-        const recipients = await store.getSessionNotificationRecipients(sessionId)
 
         return c.json({
             sessionId,
-            creatorChatId,
-            subscribers: chatIdSubscribers,          // Telegram chatId 订阅者
-            clientIdSubscribers: clientIdSubscribers, // clientId 订阅者
-            totalRecipients: recipients.length + clientIdSubscribers.length
+            clientIdSubscribers,
+            totalRecipients: clientIdSubscribers.length
         })
     })
 
     /**
-     * 设置 session 的创建者 chatId
-     * POST /sessions/:id/creator
-     * Body: { chatId: string }
-     */
-    app.post('/sessions/:id/creator', async (c) => {
-        const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
-        const body = await c.req.json().catch(() => null)
-
-        if (!body || typeof body.chatId !== 'string') {
-            return c.json({ error: 'Invalid body, expected { chatId: string }' }, 400)
-        }
-
-        const success = await store.setSessionCreatorChatId(sessionId, body.chatId, namespace)
-        return c.json({ ok: success })
-    })
-
-    /**
-     * 移除指定订阅者（owner 或任何人都可以操作）
+     * 移除指定订阅者
      * DELETE /sessions/:id/subscribers/:subscriberId
-     * subscriberId 可以是 chatId 或 clientId
-     * Query: type=chatId|clientId （可选，默认为 chatId）
+     * subscriberId 为 clientId
      */
     app.delete('/sessions/:id/subscribers/:subscriberId', async (c) => {
         const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
         const subscriberId = c.req.param('subscriberId')
-        const type = c.req.query('type') || 'chatId'
-
-        let success = false
-        if (type === 'clientId') {
-            success = await store.unsubscribeFromSessionNotificationsByClientId(sessionId, subscriberId)
-        } else {
-            // chatId - 同时检查是否是 creator
-            success = await store.unsubscribeFromSessionNotifications(sessionId, subscriberId)
-            const creatorChatId = await store.getSessionCreatorChatId(sessionId)
-            if (creatorChatId === subscriberId) {
-                const cleared = await store.clearSessionCreatorChatId(sessionId, namespace)
-                success = success || cleared
-            }
-        }
+        const success = await store.unsubscribeFromSessionNotificationsByClientId(sessionId, subscriberId)
 
         return c.json({ ok: success })
     })
@@ -2235,33 +2389,19 @@ export function createSessionsRoutes(
     /**
      * 清除所有订阅者（owner 操作）
      * DELETE /sessions/:id/subscribers
-     * 清除所有订阅者，包括 creator
      */
     app.delete('/sessions/:id/subscribers', async (c) => {
         const sessionId = c.req.param('id')
-        const namespace = c.get('namespace')
 
-        // 清除所有 chatId 订阅者
-        const chatIdSubscribers = await store.getSessionNotificationSubscribers(sessionId)
-        for (const chatId of chatIdSubscribers) {
-            await store.unsubscribeFromSessionNotifications(sessionId, chatId)
-        }
-
-        // 清除所有 clientId 订阅者
         const clientIdSubscribers = await store.getSessionNotificationSubscriberClientIds(sessionId)
         for (const clientId of clientIdSubscribers) {
             await store.unsubscribeFromSessionNotificationsByClientId(sessionId, clientId)
         }
 
-        // 清除 creator
-        await store.clearSessionCreatorChatId(sessionId, namespace)
-
         return c.json({
             ok: true,
             removed: {
-                chatIds: chatIdSubscribers.length,
-                clientIds: clientIdSubscribers.length,
-                creator: true
+                clientIds: clientIdSubscribers.length
             }
         })
     })
@@ -2418,7 +2558,6 @@ export function createSessionsRoutes(
     app.put('/sessions/:id/privacy-mode', async (c) => {
         const sessionId = c.req.param('id')
         const email = c.get('email')
-        const namespace = c.get('namespace')
 
         if (!email) {
             return c.json({ error: 'Email required' }, 400)
@@ -2439,8 +2578,11 @@ export function createSessionsRoutes(
         if (storedSession.createdBy !== email) {
             return c.json({ error: 'Only session owner can set privacy mode' }, 403)
         }
+        if (!storedSession.orgId) {
+            return c.json({ error: 'Session orgId missing' }, 409)
+        }
 
-        const success = await store.setSessionPrivacyMode(sessionId, body.privacyMode, namespace)
+        const success = await store.setSessionPrivacyMode(sessionId, body.privacyMode, storedSession.orgId)
         if (!success) {
             return c.json({ error: 'Failed to set privacy mode' }, 500)
         }

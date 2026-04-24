@@ -4,7 +4,7 @@ Short guide for AI agents in this repo. Prefer progressive loading: start with t
 
 ## Repo layout
 - `cli/` - Yoho Remote CLI, daemon, Codex/MCP tooling
-- `server/` - Telegram bot + HTTP API + Socket.IO + SSE
+- `server/` - HTTP API + Socket.IO + SSE
 - `web/` - React Mini App / PWA
 
 ## Reference docs
@@ -28,5 +28,5 @@ Short guide for AI agents in this repo. Prefer progressive loading: start with t
 
 ## Key source dirs
 - `cli/src/api/`, `cli/src/claude/`, `cli/src/commands/`, `cli/src/codex/`
-- `server/src/web/`, `server/src/socket/`, `server/src/telegram/`, `server/src/sync/`
+- `server/src/web/`, `server/src/socket/`, `server/src/im/`, `server/src/sync/`
 - `web/src/components/`, `web/src/api/`, `web/src/hooks/`

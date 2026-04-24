@@ -21,7 +21,8 @@ describe('createDownloadApiRoutes', () => {
                 return {
                     id: 'session-1',
                     namespace: 'default',
-                    createdBy: 'owner@example.com'
+                    createdBy: 'owner@example.com',
+                    orgId: 'org-a',
                 }
             },
             isSessionSharedWith: async (sessionId: string, email: string) => {
@@ -45,7 +46,7 @@ describe('createDownloadApiRoutes', () => {
                 meta: {
                     id: 'file-1',
                     sessionId: 'session-1',
-                    orgId: null,
+                    orgId: 'org-a',
                     filename: 'report.txt',
                     mimeType: 'text/plain',
                     size: 4,
@@ -59,6 +60,8 @@ describe('createDownloadApiRoutes', () => {
         app.use('*', async (c, next) => {
             c.set('namespace', 'default')
             c.set('email', 'viewer@example.com')
+            c.set('role', 'developer')
+            c.set('orgs', [{ id: 'org-a', name: 'Org A', role: 'member' }])
             await next()
         })
         app.route('/api', createDownloadApiRoutes(fakeStore as any))
@@ -83,7 +86,7 @@ describe('createDownloadCliRoutes', () => {
         await createConfiguration()
     })
 
-    it('denies CLI uploads when the session belongs to another namespace', async () => {
+    it('denies CLI uploads when the session belongs to another org', async () => {
         let addDownloadFileCalls = 0
 
         const fakeStore = {
@@ -93,7 +96,7 @@ describe('createDownloadCliRoutes', () => {
                     id: 'session-1',
                     namespace: 'default',
                     createdBy: 'owner@example.com',
-                    orgId: null
+                    orgId: 'org-a'
                 }
             },
             addDownloadFile: async () => {
@@ -108,8 +111,9 @@ describe('createDownloadCliRoutes', () => {
         const response = await app.request('/cli/files', {
             method: 'POST',
             headers: {
-                authorization: `Bearer ${configuration.cliApiToken}:other-namespace`,
-                'content-type': 'application/json'
+                authorization: `Bearer ${configuration.cliApiToken}`,
+                'content-type': 'application/json',
+                'x-org-id': 'org-b',
             },
             body: JSON.stringify({
                 sessionId: 'session-1',
@@ -121,5 +125,44 @@ describe('createDownloadCliRoutes', () => {
 
         expect(response.status).toBe(403)
         expect(addDownloadFileCalls).toBe(0)
+    })
+
+    it('allows Web users in the session org to list downloads for their own session', async () => {
+        let listCalls = 0
+        const fakeStore = {
+            getSession: async () => ({
+                id: 'session-1',
+                namespace: 'default',
+                createdBy: 'owner@example.com',
+                orgId: 'org-a',
+            }),
+            listDownloadFiles: async () => {
+                listCalls += 1
+                return [{
+                    id: 'file-1',
+                    sessionId: 'session-1',
+                    orgId: 'org-a',
+                    filename: 'report.txt',
+                    mimeType: 'text/plain',
+                    size: 4,
+                    createdAt: 1,
+                }]
+            },
+        }
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            c.set('email', 'owner@example.com')
+            c.set('role', 'developer')
+            c.set('orgs', [{ id: 'org-a', name: 'Org A', role: 'member' }])
+            await next()
+        })
+        app.route('/api', createDownloadApiRoutes(fakeStore as any))
+
+        const response = await app.request('/api/sessions/session-1/downloads')
+
+        expect(response.status).toBe(200)
+        expect(listCalls).toBe(1)
     })
 })

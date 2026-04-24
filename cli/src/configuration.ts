@@ -14,6 +14,7 @@ import { getCliArgs } from '@/utils/cliArgs'
 class Configuration {
     public readonly serverUrl: string
     private _cliApiToken: string
+    private _orgId: string
     public readonly isDaemonProcess: boolean
 
     // Directories and paths (from persistence)
@@ -31,6 +32,7 @@ class Configuration {
         // Server configuration
         this.serverUrl = process.env.YOHO_REMOTE_URL || 'http://localhost:3006'
         this._cliApiToken = process.env.CLI_API_TOKEN || ''
+        this._orgId = process.env.YOHO_ORG_ID || ''
 
         // Check if we're running as daemon based on process args
         const args = getCliArgs()
@@ -68,8 +70,16 @@ class Configuration {
         return this._cliApiToken
     }
 
+    get orgId(): string {
+        return this._orgId
+    }
+
     _setCliApiToken(token: string): void {
         this._cliApiToken = token
+    }
+
+    _setOrgId(orgId: string): void {
+        this._orgId = orgId
     }
 }
 

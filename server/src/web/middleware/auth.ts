@@ -78,20 +78,25 @@ export function createAuthMiddleware(store: IStore): MiddlewareHandler<WebAppEnv
             if (typeof store.resolveActorByIdentityObservation === 'function') {
                 try {
                     const requestedOrgId = c.req.query('orgId') || null
-                    const identityOrgId = requestedOrgId && orgsWithRoles.some((org) => org.id === requestedOrgId)
+                    const identityOrgId = requestedOrgId && (
+                        user.role === 'operator'
+                        || orgsWithRoles.some((org) => org.id === requestedOrgId)
+                    )
                         ? requestedOrgId
                         : null
-                    const actor = await store.resolveActorByIdentityObservation({
-                        namespace: 'default',
-                        orgId: identityOrgId,
-                        channel: 'keycloak',
-                        externalId: user.sub,
-                        canonicalEmail: user.email,
-                        displayName: user.name ?? user.email,
-                        accountType: 'human',
-                        assurance: 'high',
-                    })
-                    c.set('identityActor', actor)
+                    if (identityOrgId) {
+                        const actor = await store.resolveActorByIdentityObservation({
+                            namespace: identityOrgId,
+                            orgId: identityOrgId,
+                            channel: 'keycloak',
+                            externalId: user.sub,
+                            canonicalEmail: user.email,
+                            displayName: user.name ?? user.email,
+                            accountType: 'human',
+                            assurance: 'high',
+                        })
+                        c.set('identityActor', actor)
+                    }
                 } catch (error) {
                     console.warn('[Auth] Identity graph resolution failed:', error)
                 }

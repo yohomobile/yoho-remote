@@ -80,7 +80,6 @@ async function migrateApiTokens(): Promise<MigrationResult> {
 
         // 迁移各类 token
         if (settings.cliApiToken) tokens.cliApiToken = settings.cliApiToken
-        if (settings.telegramBotToken) tokens.telegramBotToken = settings.telegramBotToken
         if (settings.appId) tokens.feishuAppId = settings.appId
         if (settings.appSecret) tokens.feishuAppSecret = settings.appSecret
         if (settings.geminiApiKey) tokens.geminiApiKey = settings.geminiApiKey

@@ -18,15 +18,15 @@ function createMessage(seq: number): SyncEvent['message'] {
     }
 }
 
-describe('SSEManager namespace filtering', () => {
-    it('routes events to matching namespace', () => {
+describe('SSEManager org filtering', () => {
+    it('routes events to matching org', () => {
         const manager = new SSEManager(0)
         const receivedAlpha: SyncEvent[] = []
         const receivedBeta: SyncEvent[] = []
 
         manager.subscribe({
             id: 'alpha',
-            namespace: 'alpha',
+            orgId: 'alpha',
             all: true,
             send: (event) => {
                 receivedAlpha.push(event)
@@ -36,7 +36,7 @@ describe('SSEManager namespace filtering', () => {
 
         manager.subscribe({
             id: 'beta',
-            namespace: 'beta',
+            orgId: 'beta',
             all: true,
             send: (event) => {
                 receivedBeta.push(event)
@@ -48,19 +48,19 @@ describe('SSEManager namespace filtering', () => {
         receivedAlpha.length = 0
         receivedBeta.length = 0
 
-        manager.broadcast({ type: 'session-updated', sessionId: 's1', namespace: 'alpha' })
+        manager.broadcast({ type: 'session-updated', sessionId: 's1', orgId: 'alpha' })
 
         expect(receivedAlpha).toHaveLength(1)
         expect(receivedBeta).toHaveLength(0)
     })
 
-    it('broadcasts connection-changed to all namespaces', () => {
+    it('broadcasts connection-changed to all orgs', () => {
         const manager = new SSEManager(0)
         const received: Array<{ id: string; event: SyncEvent }> = []
 
         manager.subscribe({
             id: 'alpha',
-            namespace: 'alpha',
+            orgId: 'alpha',
             all: true,
             send: (event) => {
                 received.push({ id: 'alpha', event })
@@ -70,7 +70,7 @@ describe('SSEManager namespace filtering', () => {
 
         manager.subscribe({
             id: 'beta',
-            namespace: 'beta',
+            orgId: 'beta',
             all: true,
             send: (event) => {
                 received.push({ id: 'beta', event })
@@ -94,7 +94,7 @@ describe('SSEManager namespace filtering', () => {
 
         manager.subscribe({
             id: 'all',
-            namespace: 'alpha',
+            orgId: 'alpha',
             all: true,
             clientId: 'all-client',
             send: (event) => {
@@ -105,7 +105,7 @@ describe('SSEManager namespace filtering', () => {
 
         manager.subscribe({
             id: 'detail',
-            namespace: 'alpha',
+            orgId: 'alpha',
             sessionId: 's1',
             clientId: 'detail-client',
             send: (event) => {
@@ -119,7 +119,7 @@ describe('SSEManager namespace filtering', () => {
 
         manager.broadcast({
             type: 'session-updated',
-            namespace: 'alpha',
+            orgId: 'alpha',
             sessionId: 's1',
             data: {
                 activeMonitors: [{ id: 'mon-1', command: 'tail -f app.log' }]
@@ -138,7 +138,7 @@ describe('SSEManager namespace filtering', () => {
 
         manager.subscribe({
             id: 'all',
-            namespace: 'alpha',
+            orgId: 'alpha',
             all: true,
             send: (event) => {
                 if (event.type === 'message-received') {
@@ -150,7 +150,7 @@ describe('SSEManager namespace filtering', () => {
 
         manager.subscribe({
             id: 'detail',
-            namespace: 'alpha',
+            orgId: 'alpha',
             all: true,
             sessionId: 's1',
             send: (event) => {
@@ -166,13 +166,13 @@ describe('SSEManager namespace filtering', () => {
 
         manager.broadcast({
             type: 'message-received',
-            namespace: 'alpha',
+            orgId: 'alpha',
             sessionId: 's1',
             message: createMessage(1)
         })
         manager.broadcast({
             type: 'message-received',
-            namespace: 'alpha',
+            orgId: 'alpha',
             sessionId: 's2',
             message: createMessage(2)
         })
@@ -188,7 +188,7 @@ describe('SSEManager namespace filtering', () => {
 
         manager.subscribe({
             id: 'all',
-            namespace: 'alpha',
+            orgId: 'alpha',
             all: true,
             send: (event) => {
                 if (event.type === 'messages-cleared') {
@@ -200,7 +200,7 @@ describe('SSEManager namespace filtering', () => {
 
         manager.subscribe({
             id: 'detail',
-            namespace: 'alpha',
+            orgId: 'alpha',
             sessionId: 's1',
             send: (event) => {
                 if (event.type === 'messages-cleared') {
@@ -215,12 +215,12 @@ describe('SSEManager namespace filtering', () => {
 
         manager.broadcast({
             type: 'messages-cleared',
-            namespace: 'alpha',
+            orgId: 'alpha',
             sessionId: 's1'
         })
         manager.broadcast({
             type: 'messages-cleared',
-            namespace: 'alpha',
+            orgId: 'alpha',
             sessionId: 's2'
         })
 

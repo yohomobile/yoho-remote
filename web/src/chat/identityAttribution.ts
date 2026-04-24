@@ -7,11 +7,10 @@ const CHANNEL_LABELS: Record<IdentityChannel, string> = {
     feishu: 'Feishu',
     wecom: 'WeCom',
     'custom-im': 'IM',
-    telegram: 'Telegram',
     cli: 'CLI',
 }
 
-const IDENTITY_CHANNELS: ReadonlySet<string> = new Set(['keycloak', 'feishu', 'wecom', 'custom-im', 'telegram', 'cli'])
+const IDENTITY_CHANNELS: ReadonlySet<string> = new Set(['keycloak', 'feishu', 'wecom', 'custom-im', 'cli'])
 const IDENTITY_RESOLUTIONS: ReadonlySet<string> = new Set(['auto_verified', 'admin_verified', 'pending', 'rejected', 'detached', 'unresolved', 'shared'])
 const IDENTITY_ACCOUNT_TYPES: ReadonlySet<string> = new Set(['human', 'shared', 'service', 'bot', 'unknown'])
 

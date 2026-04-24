@@ -17,7 +17,6 @@ export interface Settings {
     daemonAutoStartWhenRunningYohoRemote?: boolean
     cliApiToken?: string
     // Server configuration (persisted from environment variables)
-    telegramBotToken?: string
     webappPort?: number
     webappUrl?: string
     corsOrigins?: string[]
@@ -79,7 +78,7 @@ function normalizeCliApiToken(rawToken: string, source: CliApiTokenSource): { to
     }
 
     console.warn(
-        `[WARN] CLI_API_TOKEN from ${source} includes namespace suffix "${parsed.namespace}". ` +
+        `[WARN] CLI_API_TOKEN from ${source} includes a deprecated ":" suffix. ` +
         'Server expects the base token only; stripping the suffix.'
     )
     return { token: parsed.baseToken, didStrip: true }

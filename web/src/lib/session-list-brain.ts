@@ -1,5 +1,10 @@
 import type { SessionSummary } from '@/types/api'
 import { isArchivedSession, isSessionReconnecting, isSessionVisibleInActiveList } from '@/lib/sessionActivity'
+import {
+    getSessionOrchestrationChildSourceForParentSource,
+    isSessionOrchestrationChildSource,
+    isSessionOrchestrationParentSource,
+} from '@/lib/sessionOrchestration'
 
 export type BrainGroupStatusSummary = {
     active: boolean
@@ -36,11 +41,11 @@ export type SessionListVisibleRow = {
 type SessionListSortMode = 'activity' | 'createdAtDesc'
 
 function isBrainSession(session: SessionSummary): boolean {
-    return session.metadata?.source === 'brain'
+    return isSessionOrchestrationParentSource(session.metadata?.source)
 }
 
 function isBrainChildSession(session: SessionSummary): boolean {
-    return session.metadata?.source === 'brain-child'
+    return isSessionOrchestrationChildSource(session.metadata?.source)
 }
 
 function getSessionTimestamp(session: SessionSummary): number {
@@ -154,7 +159,11 @@ export function buildSessionListEntries(
     visibleSessions.forEach(session => {
         if (!isBrainChildSession(session)) return
         const parentId = session.metadata?.mainSessionId
-        if (!parentId || !visibleBrainParents.has(parentId)) return
+        if (!parentId) return
+        const parent = visibleBrainParents.get(parentId)
+        if (!parent) return
+        const expectedChildSource = getSessionOrchestrationChildSourceForParentSource(parent.metadata?.source)
+        if (!expectedChildSource || session.metadata?.source !== expectedChildSource) return
         const bucket = childrenByParent.get(parentId)
         if (bucket) {
             bucket.push(session)
@@ -167,7 +176,9 @@ export function buildSessionListEntries(
     visibleSessions.forEach(session => {
         if (isBrainChildSession(session)) {
             const parentId = session.metadata?.mainSessionId
-            if (parentId && visibleBrainParents.has(parentId)) {
+            const parent = parentId ? visibleBrainParents.get(parentId) : undefined
+            const expectedChildSource = getSessionOrchestrationChildSourceForParentSource(parent?.metadata?.source)
+            if (parent && expectedChildSource && session.metadata?.source === expectedChildSource) {
                 return
             }
         }

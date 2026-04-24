@@ -24,6 +24,7 @@ export default defineConfig({
       { text: 'How it Works', link: '/guide/how-it-works' },
       { text: '外部接入', link: '/guide/external-api' },
       { text: 'Why Yoho Remote', link: '/guide/why-yoho-remote' },
+      { text: 'Release Notes', link: '/guide/release-notes' },
       { text: 'FAQ', link: '/guide/faq' }
     ],
 

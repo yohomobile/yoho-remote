@@ -31,7 +31,10 @@ export async function resolveFileReferences(text: string, workingDirectory: stri
         try {
             const url = `${configuration.serverUrl}/cli/${serverPath}`
             const response = await fetch(url, {
-                headers: { 'Authorization': `Bearer ${configuration.cliApiToken}` },
+                headers: {
+                    'Authorization': `Bearer ${configuration.cliApiToken}`,
+                    'x-org-id': configuration.orgId,
+                },
             })
             if (!response.ok) {
                 logger.debug(`[fileMessage] Failed to fetch ${serverPath}: ${response.status}`)

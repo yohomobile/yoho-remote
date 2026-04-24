@@ -26,7 +26,7 @@ import { buildFeishuMessage, buildFeishuMessageForEdit } from './feishu/formatte
 import { extractActions, actionsToExtras } from './feishu/actionExtractor'
 import { lookupKeycloakUserByEmail, type KeycloakUserInfo } from './keycloakLookup'
 import { getLicenseService } from '../license/licenseService'
-import { appendSelfSystemPrompt, resolveBrainSelfSystemContext } from '../brain/selfSystem'
+import { appendSelfSystemPrompt, resolveSessionSelfSystemContext } from '../brain/selfSystem'
 import { evaluateRecallConsumption } from '../agent/memoryResultGate'
 import { mergeMessageMeta, toWebActorMeta } from '../web/identityContext'
 
@@ -217,6 +217,111 @@ export class BrainBridge implements IMBridgeCallbacks {
 
     private get logPrefix(): string {
         return `[BrainBridge:${this.adapter.platform}]`
+    }
+
+    private async getBrainConfigForOrg(orgId: string | null) {
+        const getBrainConfigByOrg = (this.store as IStore & {
+            getBrainConfigByOrg?: IStore['getBrainConfigByOrg']
+        }).getBrainConfigByOrg
+        if (orgId && typeof getBrainConfigByOrg === 'function') {
+            return await getBrainConfigByOrg(orgId)
+        }
+        return null
+    }
+
+    private normalizeOptionalString(value: string | null | undefined): string | null {
+        return typeof value === 'string' && value.trim().length > 0
+            ? value.trim()
+            : null
+    }
+
+    private getInitialUserEmail(
+        initialActor?: ResolvedActorContext | null,
+        initialMessage?: IMMessage,
+    ): string | null {
+        return this.normalizeOptionalString(initialActor?.email ?? initialMessage?.senderEmail ?? null)
+    }
+
+    private async resolveSenderEmailFromAdapter(message?: IMMessage): Promise<string | null> {
+        if (!message?.senderId) {
+            return null
+        }
+        try {
+            const sender = await this.adapter.resolveSenderInfo(message.senderId)
+            return this.normalizeOptionalString(sender.email)
+        } catch (error) {
+            console.warn(`${this.logPrefix} failed to resolve sender email from adapter for ${message.senderId.slice(0, 8)}:`, error)
+            return null
+        }
+    }
+
+    private async resolveSenderEmailFromIdentity(message?: IMMessage): Promise<string | null> {
+        if (!message?.senderId) {
+            return null
+        }
+        const lookup = (this.store as IStore & {
+            findResolvedActorByChannelExternalId?: IStore['findResolvedActorByChannelExternalId']
+        }).findResolvedActorByChannelExternalId
+        if (typeof lookup !== 'function') {
+            return null
+        }
+        try {
+            const actor = await lookup.call(this.store, this.resolveIdentityChannel(), message.senderId)
+            return this.normalizeOptionalString(actor?.email ?? null)
+        } catch (error) {
+            console.warn(`${this.logPrefix} failed to resolve sender email from identity for ${message.senderId.slice(0, 8)}:`, error)
+            return null
+        }
+    }
+
+    private async resolvePreferredSenderEmail(message?: IMMessage): Promise<{ email: string | null; reason: string }> {
+        const senderEmail = this.normalizeOptionalString(message?.senderEmail)
+        if (senderEmail) {
+            return { email: senderEmail, reason: 'message_email' }
+        }
+        if (!message) {
+            return { email: null, reason: 'missing_message' }
+        }
+
+        const adapterEmail = await this.resolveSenderEmailFromAdapter(message)
+        if (adapterEmail) {
+            return { email: adapterEmail, reason: 'adapter_email' }
+        }
+
+        const identityEmail = await this.resolveSenderEmailFromIdentity(message)
+        if (identityEmail) {
+            return { email: identityEmail, reason: 'identity_email' }
+        }
+
+        return { email: null, reason: 'missing_sender_email' }
+    }
+
+    private async resolveRequiredOrgId(message?: IMMessage): Promise<{ orgId: string | null; reason: string }> {
+        const sender = await this.resolvePreferredSenderEmail(message)
+        if (!sender.email) {
+            return { orgId: null, reason: sender.reason }
+        }
+
+        const getOrganizationsForUser = (this.store as IStore & {
+            getOrganizationsForUser?: IStore['getOrganizationsForUser']
+        }).getOrganizationsForUser
+        if (typeof getOrganizationsForUser !== 'function') {
+            return { orgId: null, reason: 'org_lookup_unavailable' }
+        }
+
+        try {
+            const organizations = await getOrganizationsForUser.call(this.store, sender.email)
+            if (organizations.length === 1 && organizations[0]?.id) {
+                return { orgId: organizations[0].id, reason: 'resolved' }
+            }
+            if (organizations.length === 0) {
+                return { orgId: null, reason: 'no_membership' }
+            }
+            return { orgId: null, reason: 'ambiguous_membership' }
+        } catch (error) {
+            console.warn(`${this.logPrefix} failed to resolve org from sender email ${sender.email}:`, error)
+            return { orgId: null, reason: 'org_lookup_failed' }
+        }
     }
 
     constructor(config: BrainBridgeConfig) {
@@ -818,37 +923,38 @@ export class BrainBridge implements IMBridgeCallbacks {
 
     private async createBrainSession(chatId: string, chatType: string, chatName?: string, firstMessage?: IMMessage): Promise<string | null> {
         try {
-            const namespace = 'default'
             const senderName = firstMessage?.senderName
-            // Load Brain config first to know which agent we need
-            const brainConfig = await this.store.getBrainConfig(namespace)
-            const agent = brainConfig?.agent ?? 'claude'
-            const childModelDefaults = extractBrainChildModelDefaults(brainConfig?.extra)
-
-            const machines = this.syncEngine.getOnlineMachinesByNamespace(namespace)
-            if (machines.length === 0) {
-                console.error(`${this.logPrefix} No online machines available`)
+            const orgResolution = await this.resolveRequiredOrgId(firstMessage)
+            if (!orgResolution.orgId) {
+                console.error(`${this.logPrefix} Cannot create Brain session without a unique org (${orgResolution.reason})`)
                 return null
             }
+            const preferredOrgId = orgResolution.orgId
 
-            // Filter by supportedAgents (DB-configured) — primary filter
-            const compatibleMachines = machines.filter(m =>
-                !m.supportedAgents || m.supportedAgents.includes(agent)
-            )
-            if (compatibleMachines.length === 0) {
-                console.error(`${this.logPrefix} No online machines support agent "${agent}"`)
+            const machines = this.syncEngine.getOnlineMachinesByNamespace(preferredOrgId)
+            if (machines.length === 0) {
+                console.error(`${this.logPrefix} No online machines available${preferredOrgId ? ` for org ${preferredOrgId}` : ''}`)
                 return null
             }
 
             const orderedMachines = [
-                ...compatibleMachines.filter(m => m.id === BrainBridge.NCU_MACHINE_ID),
-                ...compatibleMachines.filter(m => m.id !== BrainBridge.NCU_MACHINE_ID),
+                ...machines.filter(m => m.id === BrainBridge.NCU_MACHINE_ID),
+                ...machines.filter(m => m.id !== BrainBridge.NCU_MACHINE_ID),
             ]
 
             // Try each compatible machine in order; skip on license failure or AGENT_NOT_AVAILABLE
             let spawnResult: Awaited<ReturnType<typeof this.syncEngine.spawnSession>> | null = null
             let selectedMachine: typeof orderedMachines[0] | null = null
+            const attemptedAgents = new Set<string>()
             for (const m of orderedMachines) {
+                const brainConfig = await this.getBrainConfigForOrg(preferredOrgId ?? m.orgId ?? null)
+                const agent = brainConfig?.agent ?? 'claude'
+                attemptedAgents.add(agent)
+                const childModelDefaults = extractBrainChildModelDefaults(brainConfig?.extra)
+                if (m.supportedAgents && !m.supportedAgents.includes(agent)) {
+                    console.warn(`${this.logPrefix} Agent "${agent}" not supported on ${m.id.slice(0, 8)}, skipping`)
+                    continue
+                }
                 if (m.orgId) {
                     try {
                         const licenseService = getLicenseService()
@@ -896,7 +1002,8 @@ export class BrainBridge implements IMBridgeCallbacks {
             }
 
             if (!spawnResult || spawnResult.type !== 'success' || !selectedMachine) {
-                console.error(`${this.logPrefix} No machine could spawn agent "${agent}"`)
+                const agentSummary = Array.from(attemptedAgents).join(', ') || 'unknown'
+                console.error(`${this.logPrefix} No machine could spawn a Brain session for configured agent(s): ${agentSummary}`)
                 return null
             }
             if (selectedMachine.id !== BrainBridge.NCU_MACHINE_ID) {
@@ -907,8 +1014,9 @@ export class BrainBridge implements IMBridgeCallbacks {
             console.log(`${this.logPrefix} Created Brain session ${sessionId.slice(0, 8)} for chat ${chatId.slice(0, 12)}`)
 
             // Inherit orgId from machine so vault MCP gets correct org isolation
-            if (selectedMachine.orgId) {
-                await this.store.setSessionOrgId(sessionId, selectedMachine.orgId, namespace)
+            const resolvedOrgId = selectedMachine.orgId ?? preferredOrgId
+            if (resolvedOrgId) {
+                await this.store.setSessionOrgId(sessionId, resolvedOrgId)
             }
 
             // Save mapping
@@ -916,7 +1024,7 @@ export class BrainBridge implements IMBridgeCallbacks {
                 feishuChatId: chatId,
                 feishuChatType: chatType,
                 sessionId,
-                namespace,
+                namespace: resolvedOrgId,
                 feishuChatName: chatName,
             })
 
@@ -927,8 +1035,9 @@ export class BrainBridge implements IMBridgeCallbacks {
             this.lastSeenSeq.set(chatId, 0)
             this.lastDeliveredSeq.set(chatId, 0)
             const initialActor = firstMessage
-                ? await this.resolveActorForMessage(firstMessage, selectedMachine.orgId ?? null)
+                ? await this.resolveActorForMessage(firstMessage, resolvedOrgId ?? null)
                 : null
+            const initialUserEmail = this.getInitialUserEmail(initialActor, firstMessage)
 
             // Create initReady promise
             const initStartMs = Date.now()
@@ -950,7 +1059,7 @@ export class BrainBridge implements IMBridgeCallbacks {
             this.initReady.set(chatId, initPromise)
 
             // Send initPrompt (fire-and-forget)
-            this.initializeSession(sessionId, chatId, chatType, chatName, senderName, initialActor).catch(err => {
+            this.initializeSession(sessionId, chatId, chatType, chatName, senderName, initialActor, initialUserEmail).catch(err => {
                 console.error(`${this.logPrefix} initializeSession failed for ${sessionId.slice(0, 8)}:`, err)
                 const resolver = this.initReadyResolvers.get(chatId)
                 if (resolver) {
@@ -966,7 +1075,15 @@ export class BrainBridge implements IMBridgeCallbacks {
         }
     }
 
-    private async initializeSession(sessionId: string, chatId: string, chatType: string, chatName?: string, senderName?: string, initialActor?: ResolvedActorContext | null): Promise<void> {
+    private async initializeSession(
+        sessionId: string,
+        chatId: string,
+        chatType: string,
+        chatName?: string,
+        senderName?: string,
+        initialActor?: ResolvedActorContext | null,
+        initialUserEmail?: string | null,
+    ): Promise<void> {
         try {
             const isOnline = await this.waitForSessionOnline(sessionId, 60_000)
             if (!isOnline) {
@@ -986,13 +1103,24 @@ export class BrainBridge implements IMBridgeCallbacks {
 
             // Build init prompt (delegated to adapter)
             const session = this.syncEngine.getSession(sessionId)
+            const resolvedInitialUserEmail = this.normalizeOptionalString(initialUserEmail ?? initialActor?.email ?? null)
+            const sessionOrgId = await this.getSessionOrgId(sessionId)
+            if (session && resolvedInitialUserEmail && sessionOrgId) {
+                const setSessionCreatedBy = (this.store as IStore & {
+                    setSessionCreatedBy?: IStore['setSessionCreatedBy']
+                }).setSessionCreatedBy
+                if (typeof setSessionCreatedBy === 'function') {
+                    await setSessionCreatedBy(sessionId, resolvedInitialUserEmail, sessionOrgId).catch(() => {})
+                }
+            }
             const brainPreferences = extractBrainSessionPreferencesFromMetadata(
                 (session?.metadata as Record<string, unknown> | null | undefined) ?? null
             )
             const selfSystem = session
-                ? await resolveBrainSelfSystemContext({
+                ? await resolveSessionSelfSystemContext({
                     store: this.store,
-                    namespace: session.namespace,
+                    orgId: sessionOrgId,
+                    userEmail: resolvedInitialUserEmail,
                     yohoMemoryUrl: this.YOHO_MEMORY_URL,
                 })
                 : null
@@ -1018,7 +1146,6 @@ export class BrainBridge implements IMBridgeCallbacks {
     private resolveIdentityChannel(): IdentityChannel {
         if (this.adapter.platform === 'feishu') return 'feishu'
         if (this.adapter.platform === 'wecom') return 'wecom'
-        if (this.adapter.platform === 'telegram') return 'telegram'
         return 'custom-im'
     }
 
@@ -1037,12 +1164,12 @@ export class BrainBridge implements IMBridgeCallbacks {
         const resolver = (this.store as {
             resolveActorByIdentityObservation?: IStore['resolveActorByIdentityObservation']
         }).resolveActorByIdentityObservation
-        if (typeof resolver !== 'function') {
+        if (typeof resolver !== 'function' || !orgId) {
             return null
         }
         try {
             return await resolver.call(this.store, {
-                namespace: 'default',
+                namespace: orgId,
                 orgId,
                 channel: this.resolveIdentityChannel(),
                 externalId: message.senderId,
@@ -1196,9 +1323,12 @@ export class BrainBridge implements IMBridgeCallbacks {
 
     private async resumeBrainSession(oldSessionId: string, underlyingSessionId: string): Promise<boolean> {
         try {
-            const namespace = 'default'
-            // Load Brain config to know which agent we need
-            const brainConfig = await this.store.getBrainConfig(namespace)
+            const sessionOrgId = await this.getSessionOrgId(oldSessionId)
+            if (!sessionOrgId) {
+                console.error(`${this.logPrefix} Cannot resume Brain session ${oldSessionId.slice(0, 8)}: session has no orgId`)
+                return false
+            }
+            const brainConfig = await this.getBrainConfigForOrg(sessionOrgId)
             const agent = brainConfig?.agent ?? 'claude'
             const childModelDefaults = extractBrainChildModelDefaults(brainConfig?.extra)
             const existingSession = this.syncEngine.getSession(oldSessionId)
@@ -1206,7 +1336,7 @@ export class BrainBridge implements IMBridgeCallbacks {
                 (existingSession?.metadata as Record<string, unknown> | null | undefined) ?? null
             )
 
-            const machines = this.syncEngine.getOnlineMachinesByNamespace(namespace)
+            const machines = this.syncEngine.getOnlineMachinesByNamespace(sessionOrgId)
             if (machines.length === 0) return false
 
             // Filter by supportedAgents (DB-configured) — primary filter
@@ -1269,7 +1399,7 @@ export class BrainBridge implements IMBridgeCallbacks {
                 if (r.type === 'success') {
                     // Backfill orgId for sessions created before the fix
                     if (m.orgId) {
-                        await this.store.setSessionOrgId(oldSessionId, m.orgId, namespace).catch(() => {})
+                        await this.store.setSessionOrgId(oldSessionId, m.orgId).catch(() => {})
                     }
                     const online = await this.waitForSessionOnline(oldSessionId, 30_000)
                     return online

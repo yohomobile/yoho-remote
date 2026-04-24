@@ -12,7 +12,8 @@ const CLAUDE_MODES: { value: ClaudeModelMode; label: string; description: string
 ]
 
 const CODEX_MODELS: { value: string; label: string }[] = [
-    { value: 'openai/gpt-5.4', label: 'GPT-5.4 (Latest)' },
+    { value: 'openai/gpt-5.5', label: 'GPT-5.5 (Latest)' },
+    { value: 'openai/gpt-5.4', label: 'GPT-5.4' },
     { value: 'openai/gpt-5.4-mini', label: 'GPT-5.4 Mini' },
     { value: 'openai/gpt-5.3-codex', label: 'GPT-5.3 Codex' },
     { value: 'openai/gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark (Ultra-fast)' },
@@ -31,7 +32,7 @@ const CODEX_REASONING_EFFORTS = [
 
 const DEFAULT_CLAUDE_MODEL: ClaudeModelMode = 'sonnet'
 const DEFAULT_CLAUDE_SETTINGS_TYPE: ClaudeSettingsType = 'default'
-const DEFAULT_CODEX_MODEL = CODEX_MODELS[0].value
+const DEFAULT_CODEX_MODEL = 'openai/gpt-5.4'
 const DEFAULT_CODEX_REASONING_EFFORT: CodexReasoningEffort = 'medium'
 
 function normalizeSupportedAgents(supportedAgents: readonly string[] | null | undefined): AgentType[] | null {

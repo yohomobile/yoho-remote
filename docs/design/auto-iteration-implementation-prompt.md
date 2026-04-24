@@ -22,7 +22,7 @@ Yoho Remote 是一个 AI 开发助手远程控制系统，包含：
 实现一个自动迭代功能，让 AI Advisor 可以在用户授权后自动执行代码操作。
 
 **核心需求**：
-1. **设置开关**：Telegram Bot + Web UI 双入口控制
+1. **设置开关**：通过 Web UI 控制自动迭代开关，并在统一通知入口处理确认
 2. **跨项目**：支持监控和迭代多个项目
 3. **按操作分策略**：不同操作类型有不同的自动执行策略
 4. **安全审计**：完整日志、回滚能力、通知机制
@@ -40,7 +40,6 @@ Yoho Remote 是一个 AI 开发助手远程控制系统，包含：
 - `server/src/agent/advisorService.ts` - Advisor 核心服务
 - `server/src/agent/advisorPrompt.ts` - Advisor 提示词
 - `server/src/web/routes/settings.ts` - 设置 API
-- `server/src/telegram/bot.ts` - Telegram Bot
 
 **新增文件**：
 ```
@@ -53,8 +52,6 @@ server/src/agent/autoIteration/
 ├── approvalFlow.ts     # 审批流程
 ├── auditLogger.ts      # 审计日志
 └── service.ts          # AutoIterationService 核心
-
-server/src/telegram/autoIterCommands.ts  # Telegram 命令
 
 webapp/src/pages/AutoIterationSettings.tsx  # 设置页面
 ```
@@ -260,19 +257,15 @@ export const DEFAULT_POLICY: Record<ActionType, ExecutionPolicy> = {
 // POST /settings/auto-iteration/logs/:id/rollback - 回滚
 ```
 
-### Telegram 命令
+### Web 端快捷操作
 
 ```
-/auto_iter       - 显示状态
-/auto_iter_on    - 启用
-/auto_iter_off   - 禁用
-/auto_iter_logs  - 查看日志
-/auto_iter_policy - 查看策略
+PUT  /settings/auto-iteration                 - 更新开关/策略
+GET  /settings/auto-iteration/logs            - 查看日志
+POST /settings/auto-iteration/logs/:id/approve - 批准
+POST /settings/auto-iteration/logs/:id/reject  - 拒绝
+POST /settings/auto-iteration/logs/:id/rollback - 回滚
 ```
-
-审批按钮回调：
-- `ai_approve:<logId>` - 批准
-- `ai_reject:<logId>` - 拒绝
 
 ### 实现顺序
 
@@ -289,8 +282,7 @@ export const DEFAULT_POLICY: Record<ActionType, ExecutionPolicy> = {
 9. **advisorPrompt.ts 修改** - 扩展提示词
 10. **advisorService.ts 修改** - 解析 action_request
 11. **settings.ts 修改** - Web API
-12. **autoIterCommands.ts** - Telegram 命令
-13. **Web UI** - 设置页面
+12. **Web UI** - 设置页面与快捷操作
 
 ### 代码风格
 
@@ -305,7 +297,7 @@ export const DEFAULT_POLICY: Record<ActionType, ExecutionPolicy> = {
 实现完成后验证：
 1. 数据库表正确创建
 2. 配置 CRUD 正常工作
-3. Telegram 命令响应正确
+3. 审批/拒绝接口响应正确
 4. Web API 返回正确数据
 5. 策略匹配逻辑正确
 6. 审批流程（自动/通知/确认）正常

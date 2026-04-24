@@ -19,7 +19,7 @@
 | 角色 | 实际是什么 | yoho-remote 当前接入状态 | 独立文档/证据 |
 | --- | --- | --- | --- |
 | **K1** | Brain 里的「稳定 AI 人格」。=（ai_profile + self-memory recall）注入 Brain session 的 `appendSystemPrompt`。底下 runtime 仍是 Claude Code / Codex。 | ✅ 已接入。`server/src/brain/selfSystem.ts` + `server/src/im/BrainBridge.ts`。 | `memories/projects/vijnapti-ai/k1-self-memory-normalization-checklist.md`、`memories/projects/yoho-memory/k1-skill-orchestration.md` |
-| **M4** | **OpenClaw** 在 macmini 上的实例。独立 agent gateway/CLI：cron、skills、active memory、memory dreaming、Feishu/Telegram 自带通道、`https://m4.yohomobile.dev` 对外暴露。 | ❌ 未接入。现在是 yoho-remote 的「姊妹系统」，各管各的 Feishu bot。 | `memories/engineering/openclaw/*`、`/home/guang/softwares/openclaw/docs/`、`~/.yoho-remote/brain-workspace/reports/openclaw-hermes-mechanisms.md` |
+| **M4** | **OpenClaw** 在 macmini 上的实例。独立 agent gateway/CLI：cron、skills、active memory、memory dreaming、自带 IM 通道、`https://m4.yohomobile.dev` 对外暴露。 | ❌ 未接入。现在是 yoho-remote 的「姊妹系统」，各管各的 Feishu bot。 | `memories/engineering/openclaw/*`、`/home/guang/softwares/openclaw/docs/`、`~/.yoho-remote/brain-workspace/reports/openclaw-hermes-mechanisms.md` |
 | **H4** | **HermesAgent**（NousResearch/hermes-agent）。独立 Python agent：memory_manager、procedural skills（`skill_manage`）、background review、cron。 | ❌ 未接入。本地只有快照 `~/.yoho-remote/brain-workspace/tmp/hermes-agent-review`。 | 同上报告第 3 章 |
 
 > **重要澄清**（来自 `openclaw-hermes-mechanisms.md` 第 5 节）：OpenClaw 的「候选 skill / 候选 prompt / 候选策略自动晋升」**证据不足**。已证实的是 `memory-dreaming` 的 **recall candidates → long-term memory** 晋升。Hermes 的学习闭环 = `background review → memory / skill 写回`。这两点会直接影响我们设计 M4/H4 Adapter 的 event 流——**不要把不存在的机制硬做成接口**。
@@ -33,7 +33,7 @@
 - **persona 注入点**：仅在 initPrompt + 可选的 per-turn context。
 
 ### M4（OpenClaw）
-- **擅长**：定时任务（cron delay/every/ISO）、workspace 级 plugins、active memory（结构化 memory index）、memory dreaming（候选 memory 晋升）、独立 Feishu/Telegram 通道。
+- **擅长**：定时任务（cron delay/every/ISO）、workspace 级 plugins、active memory（结构化 memory index）、memory dreaming（候选 memory 晋升）、独立 IM 通道。
 - **不做**：yoho-remote 的统一 session 管理（它的 session 是 OpenClaw 自己的 `sessionKey`，不兼容 `SyncEngine.sessionId`）、K1 的 persona（它有自己的 system prompt layering）。
 - **Adapter 形态**：HTTP/WS 客户端，调 m4 gateway；runtimeSession = OpenClaw 的 `runId`（见 `agent-events.d.ts`）。
 - **使用场景**：用户说「让 M4 跑这个 skill」、「把这件事加到 m4 的 cron」。
@@ -171,6 +171,6 @@ type RoutingDecision =
 | K1 / M4 / H2 的关系 | K1 是 hosted bundle(channel+hosted runtime+persona);M4 / H2 是外部 peer,走 capability 接口(见 08 章、09 章) | 把 K1 和 M4 / H2 并列成"三个 runtime";把 M4 / H2 塞进 `RuntimeAdapter` 枚举 | M4 / H2 不跑 remote session,属不同层;并列会诱导把它们当 hosted runtime 接入 |
 | RuntimeAdapter 事件流 | 统一 `RuntimeEvent`,**仅 hosted runtime** 内部负责映射;所有 outbound 经 PolicyGate(见 10 章) | 直接暴露 SyncEngine / agent-events.d.ts / hermes stdout;把 M4 / H2 的事件塞进 `RuntimeEvent` | bridge 层会被 3 套 schema 污染;M4 / H2 根本不跑 RuntimeAdapter |
 | runtime 切换 | 显式命令或群规则,**仅限 hosted runtime** 之间(当前只有 brain-local,故实际不切换) | 按上下文"智能"猜;以"切到 M4"作为切换目标 | 用户无法理解风格变化;M4 是 external peer,没有 hosted slot 可切 |
-| M4 / H2 的 IM 通道 | **保留不动** —— M4 / H2 自家的 IM bot / 调度器 / session 归它们自己,remote **不**接管、**不**代跑、**不**开 session(见 09.1.1) | 由 yoho-remote 关掉 M4 / H2 的 Feishu/Telegram 通道统一接管;或在 remote 为它们开"代跑 session" | 代跑即等于把外部 peer 伪装成 hosted runtime,违反 09 章硬约束 |
+| M4 / H2 的 IM 通道 | **保留不动** —— M4 / H2 自家的 IM bot / 调度器 / session 归它们自己,remote **不**接管、**不**代跑、**不**开 session(见 09.1.1) | 由 yoho-remote 关掉 M4 / H2 的自有 IM 通道统一接管;或在 remote 为它们开"代跑 session" | 代跑即等于把外部 peer 伪装成 hosted runtime,违反 09 章硬约束 |
 | Hermes 接入节奏 | feature flag + 默认关闭 + 先单租户灰度 | 开箱默认启用 | 成熟度证据不足（见 3.1） |
 | H4 的 skill 自演化 | 记一张白名单说「已证实 = 写回 memory/skill；未证实 = 候选 prompt/strategy 池」 | 按 PLAN 描述去设计接口 | 避免接口为未落地的机制预留过多扩展点 |

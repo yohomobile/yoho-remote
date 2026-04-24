@@ -23,7 +23,7 @@ type SessionAlivePayload = {
     thinking?: boolean
     mode?: 'local' | 'remote'
     permissionMode?: SessionPermissionMode
-    modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'gpt-5.3-codex' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
+    modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'gpt-5.5' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     fastMode?: boolean
 }
@@ -105,7 +105,7 @@ export type CliHandlersDeps = {
 const sessionOwnerSocketId = new Map<string, string>()
 const machineOwnerSocketId = new Map<string, string>()
 
-type AccessErrorReason = 'namespace-missing' | 'access-denied' | 'not-found'
+type AccessErrorReason = 'org-id-missing' | 'access-denied' | 'not-found'
 type AccessResult<T> =
     | { ok: true; value: T }
     | { ok: false; reason: AccessErrorReason }
@@ -299,7 +299,11 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
         onWebappEvent,
         onLicenseBlock,
     } = deps
-    const namespace = typeof socket.data.namespace === 'string' ? socket.data.namespace : null
+    const orgId = typeof socket.data.orgId === 'string'
+        ? socket.data.orgId
+        : typeof (socket.data as { namespace?: unknown }).namespace === 'string'
+            ? (socket.data as { namespace: string }).namespace
+            : null
 
     // Cache: machineId → orgId（用于 session-alive license fallback，避免每次心跳查 DB）
     const machineOrgIdCache = new Map<string, { orgId: string | null; fetchedAt: number }>()
@@ -318,10 +322,12 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
     }
 
     const resolveSessionAccess = async (sessionId: string): Promise<AccessResult<StoredSession>> => {
-        if (!namespace) {
-            return { ok: false, reason: 'namespace-missing' }
+        if (!orgId) {
+            return { ok: false, reason: 'org-id-missing' }
         }
-        const session = await store.getSessionByNamespace(sessionId, namespace)
+        const session = typeof store.getSessionByOrg === 'function'
+            ? await store.getSessionByOrg(sessionId, orgId)
+            : await store.getSessionByNamespace?.(sessionId, orgId) ?? null
         if (session) {
             return { ok: true, value: session }
         }
@@ -332,10 +338,12 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
     }
 
     const resolveMachineAccess = async (machineId: string): Promise<AccessResult<StoredMachine>> => {
-        if (!namespace) {
-            return { ok: false, reason: 'namespace-missing' }
+        if (!orgId) {
+            return { ok: false, reason: 'org-id-missing' }
         }
-        const machine = await store.getMachineByNamespace(machineId, namespace)
+        const machine = typeof store.getMachineByOrg === 'function'
+            ? await store.getMachineByOrg(machineId, orgId)
+            : await store.getMachineByNamespace?.(machineId, orgId) ?? null
         if (machine) {
             return { ok: true, value: machine }
         }
@@ -461,7 +469,7 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
 
             const todos = extractTodoWriteTodosFromMessageContent(content)
             if (todos) {
-                const updated = await store.setSessionTodos(sid, todos, msg.createdAt, session.namespace)
+                const updated = await store.setSessionTodos(sid, todos, msg.createdAt, session.orgId ?? orgId!)
                 if (updated) {
                     onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
                 }
@@ -529,7 +537,7 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
             const normalizedMetadata = normalizeSessionMetadataInvariants(metadata)
             const protectedReplace = applyArchiveProtectionOnReplace(sessionAccess.value.metadata, normalizedMetadata)
 
-            const result = await store.updateSessionMetadata(sid, protectedReplace.metadata, expectedVersion, sessionAccess.value.namespace)
+            const result = await store.updateSessionMetadata(sid, protectedReplace.metadata, expectedVersion, sessionAccess.value.orgId ?? orgId!)
             if (result.result === 'success') {
                 cb({ result: 'success', version: result.version, metadata: result.value })
             } else if (result.result === 'version-mismatch') {
@@ -587,7 +595,7 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
                 return
             }
 
-            const result = await store.updateSessionAgentState(sid, agentState, expectedVersion, sessionAccess.value.namespace)
+            const result = await store.updateSessionAgentState(sid, agentState, expectedVersion, sessionAccess.value.orgId ?? orgId!)
             if (result.result === 'success') {
                 cb({ result: 'success', version: result.version, agentState: result.value })
             } else if (result.result === 'version-mismatch') {
@@ -771,7 +779,7 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
                 return
             }
 
-            const result = await store.updateMachineMetadata(id, metadata, expectedVersion, machineAccess.value.namespace)
+            const result = await store.updateMachineMetadata(id, metadata, expectedVersion, machineAccess.value.orgId ?? orgId!)
             if (result.result === 'success') {
                 cb({ result: 'success', version: result.version, metadata: result.value })
             } else if (result.result === 'version-mismatch') {
@@ -818,7 +826,7 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
                 return
             }
 
-            const result = await store.updateMachineDaemonState(id, daemonState, expectedVersion, machineAccess.value.namespace)
+            const result = await store.updateMachineDaemonState(id, daemonState, expectedVersion, machineAccess.value.orgId ?? orgId!)
             if (result.result === 'success') {
                 cb({ result: 'success', version: result.version, daemonState: result.value })
             } else if (result.result === 'version-mismatch') {

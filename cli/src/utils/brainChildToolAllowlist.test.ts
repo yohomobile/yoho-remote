@@ -62,5 +62,8 @@ describe('brainChildToolAllowlist', () => {
         expect(tools).toContain('mcp__yoho-vault__skill_doctor')
         expect(tools).toContain('mcp__yoho-vault__get_credential')
         expect(tools).not.toContain('mcp__yoho_remote__session_send')
+        expect(tools).not.toContain('Agent')
+        expect(tools).not.toContain('Task')
+        expect(tools).not.toContain('ExitPlanMode')
     })
 })

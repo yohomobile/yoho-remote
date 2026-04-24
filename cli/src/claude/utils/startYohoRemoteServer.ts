@@ -18,6 +18,11 @@ import packageJson from "../../../package.json";
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { getBrainSessionPreferencesFromMetadata, type BrainSessionPreferences } from '@/utils/brainSessionPreferences'
+import {
+    getSessionOrchestrationChildSourceForParentSource,
+    isSessionOrchestrationChildSource,
+    isSessionOrchestrationParentSource,
+} from '@/utils/sessionOrchestration'
 
 interface StartYohoRemoteServerOptions {
     sessionSource?: string
@@ -121,7 +126,13 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
             sessionId: yohoRemoteSessionId,
         });
 
-        logger.debug('[yrMCP] Project + Session tools registered');
+        const { registerScheduleTools } = await import('./scheduleTools');
+        registerScheduleTools(mcp, toolNames, {
+            apiClient,
+            sessionId: yohoRemoteSessionId,
+        });
+
+        logger.debug('[yrMCP] Project + Session + Schedule tools registered');
     }
 
     // Register environment_info tool (local info, no API call needed)
@@ -219,8 +230,10 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
         toolNames.push('push_download')
     }
 
-    // Register Brain tools when source is 'brain'
-    if (resolvedSessionSource === 'brain' && apiClient && resolvedMachineId && yohoRemoteSessionId) {
+    const orchestrationChildSource = getSessionOrchestrationChildSourceForParentSource(resolvedSessionSource)
+
+    // Register orchestration tools for top-level orchestration parent sessions.
+    if (isSessionOrchestrationParentSource(resolvedSessionSource) && apiClient && resolvedMachineId && yohoRemoteSessionId && orchestrationChildSource) {
         const { registerBrainTools } = await import('./brainTools');
         registerBrainTools(mcp, toolNames, {
             apiClient,
@@ -228,17 +241,19 @@ export async function startYohoRemoteServer(client: ApiSessionClient, options?: 
             brainSessionId: yohoRemoteSessionId,
             sessionCaller: resolvedSessionCaller ?? null,
             brainPreferences,
+            orchestrationParentSource: resolvedSessionSource,
+            orchestrationChildSource,
         });
-        logger.debug('[yrMCP] Brain tools registered');
+        logger.debug('[yrMCP] Orchestration tools registered');
     }
 
-    if (resolvedSessionSource === 'brain-child') {
+    if (isSessionOrchestrationChildSource(resolvedSessionSource)) {
         const { registerAskUserQuestionTool, registerChatMessagesTool } = await import('./interactionTools');
         registerAskUserQuestionTool(mcp, toolNames);
         if (apiClient) {
             registerChatMessagesTool(mcp, toolNames, { apiClient });
         }
-        logger.debug('[yrMCP] Brain-child safe interaction tools registered');
+        logger.debug('[yrMCP] Orchestration child safe interaction tools registered');
     }
 
     const transport = new StreamableHTTPServerTransport({

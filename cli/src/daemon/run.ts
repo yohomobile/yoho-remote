@@ -20,6 +20,7 @@ import { resolveClaudeModelArg } from '@/utils/claudeModelArg';
 
 import { cleanupDaemonState, getInstalledCliMtimeMs, isDaemonRunningCurrentlyInstalledVersion, stopDaemon } from './controlClient';
 import { startDaemonControlServer } from './controlServer';
+import { createDaemonCodexHomeDir } from './codexHome';
 import { EXTERNAL_TRACKED_SESSION_LABEL, getTrackedSessionStartedBy, recoverTrackedSessionsFromServer } from './recoverTrackedSessions';
 import { serializeDaemonTempDirsForEnv } from './tempDirs';
 import { normalizeSessionProcessIdentity, isTrackedSessionProcessCurrent } from './trackedSessionIdentity';
@@ -535,11 +536,11 @@ export async function startDaemon(): Promise<void> {
         if (options.token) {
           if (options.agent === 'codex') {
             addLog('env', `Setting up Codex authentication`, 'running');
-            // Create a temporary directory for Codex
-            const codexHomeDir = await fs.mkdtemp(join(os.tmpdir(), 'yr-codex-'));
+            // Codex 0.120+ refuses helper-binary bootstrap when CODEX_HOME is under /tmp.
+            const codexHomeDir = await createDaemonCodexHomeDir('yr-codex-');
             tempDirs.push(codexHomeDir);
 
-            // Write the token to the temporary directory
+            // Write the token to the session-scoped Codex home directory
             await fs.writeFile(join(codexHomeDir, 'auth.json'), options.token);
 
             // Set the environment variable for Codex
@@ -573,22 +574,12 @@ export async function startDaemon(): Promise<void> {
 
         if (options.tokenSourceType === 'codex' && agent === 'codex' && options.tokenSourceBaseUrl && options.tokenSourceApiKey) {
           addLog('env', `Applying Token Source for Codex: ${options.tokenSourceName ?? options.tokenSourceId ?? 'unnamed'}`, 'running');
-          const codexProviderHomeDir = await fs.mkdtemp(join(os.tmpdir(), 'yr-codex-provider-'));
+          const codexProviderHomeDir = await createDaemonCodexHomeDir('yr-codex-provider-');
           tempDirs.push(codexProviderHomeDir);
           const codexHomeDir = codexProviderHomeDir;
-          const defaultCodexHome = process.env.CODEX_HOME || join(os.homedir(), '.codex');
-          const existingConfigPath = join(defaultCodexHome, 'config.toml');
-          let configContent = '';
-          if (existsSync(existingConfigPath)) {
-            try {
-              configContent = await fs.readFile(existingConfigPath, 'utf8');
-            } catch (error) {
-              logger.debug('[DAEMON RUN] Failed to read existing Codex config.toml for Token Source:', error);
-            }
-          }
           const normalizedBaseUrl = options.tokenSourceBaseUrl.replace(/\/+$/, '');
           const providerId = 'yoho_remote_token_source';
-          const providerBlock = `${configContent.trimEnd() ? `${configContent.trimEnd()}\n\n` : ''}model_provider = "${providerId}"\n[model_providers.${providerId}]\nname = ${toTomlString(options.tokenSourceName ?? 'Yoho Remote Token Source')}\nbase_url = ${toTomlString(normalizedBaseUrl)}\nwire_api = "responses"\nenv_key = "YOHO_REMOTE_TOKEN_SOURCE_API_KEY"\nenv_key_instructions = "Managed by Yoho Remote Token Source"\n`;
+          const providerBlock = `model_provider = "${providerId}"\n[model_providers.${providerId}]\nname = ${toTomlString(options.tokenSourceName ?? 'Yoho Remote Token Source')}\nbase_url = ${toTomlString(normalizedBaseUrl)}\nwire_api = "responses"\nenv_key = "YOHO_REMOTE_TOKEN_SOURCE_API_KEY"\nenv_key_instructions = "Managed by Yoho Remote Token Source"\n`;
           await fs.writeFile(join(codexHomeDir, 'config.toml'), providerBlock);
           extraEnv = {
             ...extraEnv,
@@ -802,6 +793,16 @@ export async function startDaemon(): Promise<void> {
         const safeSpawnCwd = os.homedir();
         childEnv['YR_SPAWN_DIRECTORY'] = spawnDirectory;
 
+        // systemd-run --user --scope wraps the session in its own transient cgroup
+        // so `systemctl restart yoho-remote-daemon` does NOT SIGKILL us via
+        // KillMode=control-group. Plain `detached: true` is not enough —
+        // cgroup membership is inherited from the spawner and ignores setsid.
+        // When user-systemd is unreachable (no /run/user/$UID/systemd), this
+        // is a no-op and we fall back to the plain spawn.
+        const sessionUnitName = options.sessionId
+          ? `yr-session-${options.sessionId.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now()}`
+          : undefined;
+
         cliProcess = spawnYohoRemoteCLI(args, {
           cwd: safeSpawnCwd,
           detached: true,
@@ -810,6 +811,8 @@ export async function startDaemon(): Promise<void> {
           // worth coupling child lifetime to the daemon process.
           stdio: ['ignore', 'ignore', 'ignore'],
           env: childEnv
+        }, {
+          systemdUnitName: sessionUnitName
         });
 
         cliProcess.stderr?.on('data', (data) => {

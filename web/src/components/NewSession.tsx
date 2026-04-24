@@ -19,6 +19,7 @@ import { useAppContext } from '@/lib/app-context'
 import { queryKeys } from '@/lib/query-keys'
 import { getMachineStatusLabel, getMachineTitle, sortMachinesForStableDisplay } from '@/lib/machines'
 import { LOCAL_TOKEN_SOURCE, LOCAL_TOKEN_SOURCE_ID } from '@/lib/tokenSources'
+import { pickDefaultTokenSourceId } from '@/components/newBrainSessionState'
 
 /** 上次创建 session 时的偏好设置，存储在 localStorage */
 interface SpawnPrefs {
@@ -119,6 +120,9 @@ export function NewSession(props: {
     isLoading?: boolean
     onSuccess: (sessionId: string) => void
     onCancel: () => void
+    source?: string
+    introTitle?: string
+    introDescription?: string
 }) {
     const { userEmail, currentOrgId } = useAppContext()
     const { haptic } = usePlatform()
@@ -210,7 +214,7 @@ export function NewSession(props: {
             return
         }
         const restored = compatibleTokenSources.find((tokenSource) => tokenSource.id === savedPrefs.tokenSourceId)
-        setTokenSourceId(restored?.id ?? compatibleTokenSources[0]?.id ?? '')
+        setTokenSourceId(restored?.id ?? pickDefaultTokenSourceId(compatibleTokenSources))
     }, [compatibleTokenSources, savedPrefs.tokenSourceId, tokenSourceId])
 
     // Reset project path when machine changes (different machine may have different projects)
@@ -265,6 +269,7 @@ export function NewSession(props: {
                 claudeModel: agent === 'claude' ? claudeModel : undefined,
                 codexModel: agent === 'codex' ? codexModel : undefined,
                 modelReasoningEffort: agent === 'codex' ? codexReasoningEffort : undefined,
+                source: props.source,
                 orgId: currentOrgId,
             })
 
@@ -316,6 +321,21 @@ export function NewSession(props: {
 
     return (
         <div className="flex flex-col divide-y divide-[var(--app-divider)]">
+            {props.introTitle || props.introDescription ? (
+                <div className="flex flex-col gap-1.5 px-3 py-3">
+                    {props.introTitle ? (
+                        <div className="text-sm font-semibold text-[var(--app-fg)]">
+                            {props.introTitle}
+                        </div>
+                    ) : null}
+                    {props.introDescription ? (
+                        <div className="text-xs leading-relaxed text-[var(--app-hint)]">
+                            {props.introDescription}
+                        </div>
+                    ) : null}
+                </div>
+            ) : null}
+
             {/* Machine Selector */}
             <div className="flex flex-col gap-1.5 px-3 py-3">
                 <label className="text-xs font-medium text-[var(--app-hint)]">

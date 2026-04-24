@@ -7,3 +7,10 @@ export function getAuthToken(): string {
     return configuration.cliApiToken
 }
 
+export function getRequiredOrgId(): string {
+    const orgId = configuration.orgId.trim()
+    if (!orgId) {
+        throw new Error('YOHO_ORG_ID is required')
+    }
+    return orgId
+}

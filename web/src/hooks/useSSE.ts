@@ -23,10 +23,15 @@ type SSESubscription = {
     all?: boolean
     sessionId?: string
     machineId?: string
+    orgId?: string | null
 }
 
 type SessionCacheInvalidator = {
     invalidateQueries: (filters: { queryKey: readonly unknown[] }) => Promise<unknown>
+}
+
+export function buildSseSubscriptionKey(subscription: SSESubscription): string {
+    return `${subscription.all ? '1' : '0'}|${subscription.sessionId ?? ''}|${subscription.machineId ?? ''}|${subscription.orgId ?? ''}`
 }
 
 function buildEventsUrl(baseUrl: string, token: string, subscription: SSESubscription): string {
@@ -43,6 +48,9 @@ function buildEventsUrl(baseUrl: string, token: string, subscription: SSESubscri
     }
     if (subscription.machineId) {
         params.set('machineId', subscription.machineId)
+    }
+    if (subscription.orgId) {
+        params.set('orgId', subscription.orgId)
     }
 
     const path = `/api/events?${params.toString()}`
@@ -96,8 +104,8 @@ export function useSSE(options: {
 
     const subscription = options.subscription ?? {}
     const subscriptionKey = useMemo(() => {
-        return `${subscription.all ? '1' : '0'}|${subscription.sessionId ?? ''}|${subscription.machineId ?? ''}`
-    }, [subscription.all, subscription.sessionId, subscription.machineId])
+        return buildSseSubscriptionKey(subscription)
+    }, [subscription.all, subscription.sessionId, subscription.machineId, subscription.orgId])
 
     useEffect(() => {
         if (!options.enabled) {

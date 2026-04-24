@@ -1,15 +1,8 @@
 import { useSyncExternalStore } from 'react'
-import { getTelegramWebApp } from './useTelegram'
 
 type ColorScheme = 'light' | 'dark'
 
 function getColorScheme(): ColorScheme {
-    const tg = getTelegramWebApp()
-    if (tg?.colorScheme) {
-        return tg.colorScheme === 'dark' ? 'dark' : 'light'
-    }
-
-    // Fallback to system preference for browser environment
     if (typeof window !== 'undefined' && window.matchMedia) {
         return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
     }
@@ -76,11 +69,7 @@ export function initializeTheme(): void {
     // Set up listeners only once (after SDK may have loaded)
     if (!listenersInitialized) {
         listenersInitialized = true
-        const tg = getTelegramWebApp()
-        if (tg?.onEvent) {
-            // Telegram theme changes
-            tg.onEvent('themeChanged', updateScheme)
-        } else if (typeof window !== 'undefined' && window.matchMedia) {
+        if (typeof window !== 'undefined' && window.matchMedia) {
             // Browser system preference changes
             const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
             mediaQuery.addEventListener('change', updateScheme)

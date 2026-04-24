@@ -5,10 +5,10 @@ import { CloseIcon, ShareIcon, PlusCircleIcon } from '@/components/icons'
 
 export function InstallPrompt() {
     const { canInstall, canInstallIOS, promptInstall, dismissInstall, isStandalone } = usePWAInstall()
-    const { isTelegram, haptic } = usePlatform()
+    const { haptic } = usePlatform()
     const [showIOSGuide, setShowIOSGuide] = useState(false)
 
-    if (isTelegram || isStandalone) {
+    if (isStandalone) {
         return null
     }
 

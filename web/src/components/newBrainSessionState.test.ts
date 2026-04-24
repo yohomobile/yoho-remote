@@ -24,6 +24,7 @@ describe('newBrainSessionState', () => {
 
     test('falls back to full child model defaults only when config is absent', () => {
         expect(normalizeChildClaudeModels(undefined)).toEqual(['sonnet', 'opus', 'opus-4-7'])
+        expect(normalizeChildCodexModels(undefined)).toContain('openai/gpt-5.5')
         expect(normalizeChildCodexModels(undefined)).toContain('openai/gpt-5.4')
     })
 

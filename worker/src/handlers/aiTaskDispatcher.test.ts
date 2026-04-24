@@ -17,6 +17,7 @@ function makeScheduleRow(opts: {
     namespace?: string
     agent?: string
     mode?: string | null
+    createdBySessionId?: string | null
 }): Record<string, unknown> {
     return {
         id: opts.id,
@@ -32,7 +33,7 @@ function makeScheduleRow(opts: {
         recurring: opts.recurring ?? true,
         enabled: true,
         created_at: MONDAY_905_MS - 1000,
-        created_by_session_id: null,
+        created_by_session_id: opts.createdBySessionId ?? null,
         last_fire_at: null,
         next_fire_at: opts.nextFireAt ?? null,
         last_run_status: null,
@@ -237,6 +238,23 @@ describe('handleAiTaskDispatcher', () => {
         expect(disableCall.params).toContain(scheduleId)
     })
 
+    it('forces one-shot delay schedules to disable even if recurring=true', async () => {
+        const scheduleId = 'sched-delay-recurring'
+        const pastFireAt = MONDAY_905_MS - 1_000
+        const row = makeScheduleRow({ id: scheduleId, cron: '+1m', recurring: true, nextFireAt: pastFireAt })
+        const harness = makeTestHarness([row], MONDAY_905_MS)
+
+        try {
+            await handleAiTaskDispatcher(null, harness.ctx)
+        } finally {
+            harness.restore()
+        }
+
+        expect(harness.getInsertRunCalls()).toHaveLength(1)
+        expect(harness.getDisableScheduleCalls()).toHaveLength(1)
+        expect(harness.getUpdateNextFireAtCalls()).toHaveLength(0)
+    })
+
     it('passes correct payload fields to boss.send', async () => {
         const scheduleId = 'sched-payload-check'
         const row = makeScheduleRow({
@@ -263,6 +281,43 @@ describe('handleAiTaskDispatcher', () => {
         expect(bossPayload.machineId).toBe('machine-x')
         expect(typeof bossPayload.runId).toBe('string')
         expect(bossPayload.prompt).toBe('test prompt')
+    })
+
+    it('forwards createdBySessionId as mainSessionId and recurring flag in boss payload', async () => {
+        const scheduleId = 'sched-orchestrator-child'
+        const row = makeScheduleRow({
+            id: scheduleId,
+            cron: '* * * * *',
+            recurring: true,
+            createdBySessionId: 'brain-main-42',
+        })
+        const harness = makeTestHarness([row], MONDAY_905_MS)
+
+        try {
+            await handleAiTaskDispatcher(null, harness.ctx)
+        } finally {
+            harness.restore()
+        }
+
+        expect(harness.bossCalls).toHaveLength(1)
+        const payload = harness.bossCalls[0]?.payload as Record<string, unknown>
+        expect(payload.mainSessionId).toBe('brain-main-42')
+        expect(payload.recurring).toBe(true)
+    })
+
+    it('schedule without createdBySessionId → payload.mainSessionId is null (legacy path)', async () => {
+        const row = makeScheduleRow({ id: 'sched-legacy', cron: '* * * * *', recurring: false })
+        const harness = makeTestHarness([row], MONDAY_905_MS)
+
+        try {
+            await handleAiTaskDispatcher(null, harness.ctx)
+        } finally {
+            harness.restore()
+        }
+
+        const payload = harness.bossCalls[0]?.payload as Record<string, unknown>
+        expect(payload.mainSessionId).toBeNull()
+        expect(payload.recurring).toBe(false)
     })
 
     it('deduped boss.send result marks run as deduped and does not advance schedule', async () => {

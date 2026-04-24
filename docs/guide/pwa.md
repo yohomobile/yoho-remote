@@ -85,7 +85,6 @@ Yoho Remote uses intelligent caching:
 
 ::: warning Work in Progress
 Push notifications are planned for a future release. Currently, notifications work through:
-- Telegram bot (recommended)
 - Keeping the app open in background
 :::
 
@@ -174,14 +173,3 @@ You can install Yoho Remote on multiple devices:
 - Must use Safari for installation
 - No background sync on iOS
 - Limited offline capabilities
-
-## Telegram Mini App Alternative
-
-If PWA doesn't suit your needs, consider the Telegram Mini App:
-
-- Works inside Telegram
-- No separate installation
-- Same features as PWA
-- Integrated notifications
-
-See [Installation Guide](/guide/installation#telegram-setup) for Telegram setup.

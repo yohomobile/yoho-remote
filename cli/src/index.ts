@@ -366,7 +366,7 @@ import { getCliArgs } from './utils/cliArgs'
   } else if (subcommand === 'notify') {
     // Handle notification command
     console.error(chalk.red('The `hapi notify` command is not available in direct-connect mode.'))
-    console.error(chalk.gray('Use Telegram notifications from yoho-remote server instead.'))
+    console.error(chalk.gray('Use web push notifications from yoho-remote server instead.'))
     process.exit(1)
     return;
   } else if (subcommand === 'daemon') {
@@ -537,7 +537,7 @@ ${chalk.bold('To clean up runaway processes:')} Use ${chalk.cyan('hapi doctor cl
 ${chalk.bold('hapi')} - Yoho Remote
 
 ${chalk.bold('Usage:')}
-  hapi [options]         Start Claude with Telegram control (direct-connect)
+  hapi [options]         Start Claude with Yoho Remote control (direct-connect)
   hapi auth              Manage authentication
   hapi codex             Start Codex mode
   hapi gemini            Start Gemini ACP mode

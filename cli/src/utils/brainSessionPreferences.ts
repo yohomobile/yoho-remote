@@ -4,6 +4,7 @@ import type { Metadata } from '@/api/types'
 
 export const BRAIN_CLAUDE_CHILD_MODELS = ['sonnet', 'opus', 'opus-4-7'] as const
 export const BRAIN_CODEX_CHILD_MODELS = [
+    'gpt-5.5',
     'gpt-5.4',
     'gpt-5.4-mini',
     'gpt-5.3-codex',

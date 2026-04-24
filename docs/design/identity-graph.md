@@ -6,7 +6,7 @@
 
 - Web/PWA 通过 Keycloak 登录，服务端在 `server/src/web/middleware/auth.ts` 里只把 `userId=sub`、`email`、`name`、`role` 放到请求上下文。
 - Session 归属仍以 `sessions.created_by=email` 为主，`server/src/web/routes/sessions.ts` 和 `server/src/web/routes/guards.ts` 也按 email 做共享和访问控制。
-- Telegram 只有 `users(platform, platform_user_id, namespace)` 这种轻量绑定，适合通知，不适合做“同一人”解析。
+- 轻量 IM 绑定只适合通知，不适合做“同一人”解析。
 - Feishu BrainBridge 已经存在：`server/src/im/BrainBridge.ts` + `server/src/im/feishu/FeishuAdapter.ts` 会拿到 `open_id`、姓名、企业邮箱，并且把 chat 到 session 的映射存在 `feishu_chat_sessions`，但“飞书用户 <-> Keycloak 用户”的关系目前只是临时查 Keycloak，再写一份文本到 yoho-memory，不是 PostgreSQL 里的权威绑定。
 - `server/src/im/types.ts` 已经把 IM 侧抽象成平台无关适配器，这给接入自定义 IM / 企业微信提供了很好的扩展点。
 
@@ -126,7 +126,7 @@ CREATE TABLE person_identities (
     id TEXT PRIMARY KEY,
     namespace TEXT NOT NULL,
     org_id TEXT,
-    channel TEXT NOT NULL,                       -- keycloak | feishu | wecom | custom-im | telegram | cli
+    channel TEXT NOT NULL,                       -- keycloak | feishu | wecom | custom-im | cli
     provider_tenant_id TEXT,
     external_id TEXT NOT NULL,                  -- sub / open_id / userid / chat principal id
     secondary_id TEXT,                          -- union_id / employee_id / email hash 等
@@ -315,7 +315,7 @@ Phase 1 的最小审计信息直接落在：
 type IdentityObservation = {
     namespace: string
     orgId?: string | null
-    channel: 'keycloak' | 'feishu' | 'wecom' | 'custom-im' | 'telegram' | 'cli'
+    channel: 'keycloak' | 'feishu' | 'wecom' | 'custom-im' | 'cli'
     providerTenantId?: string | null
     externalId: string
     secondaryId?: string | null

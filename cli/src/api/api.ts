@@ -16,7 +16,7 @@ import type {
 } from '@/api/types'
 import { AgentStateSchema, CliMessagesResponseSchema, CreateMachineResponseSchema, CreateSessionResponseSchema, DaemonStateSchema, MachineMetadataSchema, MetadataSchema } from '@/api/types'
 import { configuration } from '@/configuration'
-import { getAuthToken } from '@/api/auth'
+import { getAuthToken, getRequiredOrgId } from '@/api/auth'
 import { ApiMachineClient } from './apiMachine'
 import { ApiSessionClient } from './apiSession'
 import { buildBrainChildScopeQuery } from './brainChildScope'
@@ -49,7 +49,17 @@ export class ApiClient {
         return new ApiClient(getAuthToken())
     }
 
-    private constructor(private readonly token: string) { }
+    private _orgId: string | null = null
+
+    private get orgId(): string {
+        if (this._orgId === null) {
+            this._orgId = getRequiredOrgId()
+            axios.defaults.headers.common['x-org-id'] = this._orgId
+        }
+        return this._orgId
+    }
+
+    private constructor(private readonly token: string) {}
 
     async getSession(sessionId: string, opts?: { mainSessionId?: string }): Promise<Session> {
         const query = buildBrainChildScopeQuery(opts)
@@ -147,6 +157,7 @@ export class ApiClient {
             updatedAt: raw.updatedAt,
             active: raw.active,
             activeAt: raw.activeAt,
+            orgId: raw.orgId ?? null,
             metadata,
             metadataVersion: raw.metadataVersion,
             agentState,
@@ -201,6 +212,7 @@ export class ApiClient {
             updatedAt: raw.updatedAt,
             active: raw.active,
             activeAt: raw.activeAt,
+            orgId: (raw as { orgId?: string | null }).orgId ?? this.orgId,
             metadata,
             metadataVersion: raw.metadataVersion,
             daemonState,
@@ -813,6 +825,85 @@ export class ApiClient {
             }
         )
         return response.data.machines
+    }
+
+    async scheduleTask(sessionId: string, opts: {
+        cronOrDelay: string
+        prompt: string
+        directory: string
+        recurring: boolean
+        label?: string
+        agent: 'claude' | 'codex'
+        mode?: string
+    }): Promise<{
+        scheduleId: string
+        nextFireAt: string | null
+        status: 'registered'
+    }> {
+        const params = new URLSearchParams({ sessionId })
+        const response = await axios.post(
+            `${configuration.serverUrl}/cli/worker/schedules?${params}`,
+            opts,
+            {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 15_000
+            }
+        )
+        return response.data
+    }
+
+    async listSchedules(sessionId: string, opts: {
+        includeDisabled?: boolean
+    } = {}): Promise<{
+        schedules: Array<{
+            scheduleId: string
+            machineId: string | null
+            label: string | null
+            cron: string
+            prompt: string | null
+            recurring: boolean
+            directory: string
+            agent: string
+            mode: string | null
+            enabled: boolean
+            createdAt: string | null
+            nextFireAt: string | null
+            lastRunAt: string | null
+            lastRunStatus: string | null
+        }>
+    }> {
+        const params = new URLSearchParams({ sessionId })
+        if (opts.includeDisabled !== undefined) params.set('includeDisabled', String(opts.includeDisabled))
+        const response = await axios.get(
+            `${configuration.serverUrl}/cli/worker/schedules?${params}`,
+            {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 15_000
+            }
+        )
+        return response.data
+    }
+
+    async cancelSchedule(sessionId: string, scheduleId: string): Promise<{ ok: true }> {
+        const params = new URLSearchParams({ sessionId })
+        const response = await axios.post(
+            `${configuration.serverUrl}/cli/worker/schedules/${encodeURIComponent(scheduleId)}/cancel?${params}`,
+            {},
+            {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 15_000
+            }
+        )
+        return response.data
     }
 
     async pushDownloadFile(sessionId: string, opts: {

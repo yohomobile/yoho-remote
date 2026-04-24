@@ -5,14 +5,12 @@
  * - Web app + HTTP API
  * - Socket.IO for CLI connections
  * - SSE updates for the web UI
- * - Optional Telegram bot for notifications and Mini App entrypoint
  */
 
 import { createConfiguration, type ConfigSource } from './configuration'
 import { PostgresStore } from './store/postgres'
 import type { IStore } from './store/interface'
 import { SyncEngine, type SyncEvent } from './sync/syncEngine'
-import { YohoRemoteBot } from './telegram/bot'
 import { BrainBridge } from './im/BrainBridge'
 import { FeishuAdapter } from './im/feishu/FeishuAdapter'
 import { startWebServer } from './web/server'
@@ -44,7 +42,6 @@ function formatSource(source: ConfigSource | 'generated'): string {
 }
 
 let syncEngine: SyncEngine | null = null
-let bot: YohoRemoteBot | null = null
 let brainBridge: BrainBridge | null = null
 let webServer: BunServer<WebSocketData> | null = null
 let sseManager: SSEManager | null = null
@@ -76,13 +73,6 @@ async function main() {
     // Display other configuration sources
     console.log(`[Server] WEBAPP_PORT: ${config.webappPort} (${formatSource(config.sources.webappPort)})`)
     console.log(`[Server] WEBAPP_URL: ${config.miniAppUrl} (${formatSource(config.sources.webappUrl)})`)
-
-    if (!config.telegramEnabled) {
-        console.log('[Server] Telegram: disabled (no TELEGRAM_BOT_TOKEN)')
-    } else {
-        const tokenSource = formatSource(config.sources.telegramBotToken)
-        console.log(`[Server] Telegram: enabled (${tokenSource})`)
-    }
 
     if (!config.feishuAppId || !config.feishuAppSecret) {
         console.log('[Server] Feishu STT: disabled (missing FEISHU_APP_ID/FEISHU_APP_SECRET)')
@@ -179,7 +169,12 @@ async function main() {
 
     const socketServer = createSocketServer({
         store,
-        getSession: (sessionId) => syncEngine?.getSession(sessionId) ?? store.getSession(sessionId),
+        getSession: async (sessionId) => {
+            const session = syncEngine?.getSession(sessionId) ?? await store.getSession(sessionId)
+            return session
+                ? { active: session.active, orgId: session.orgId ?? null }
+                : null
+        },
         onWebappEvent: (event: SyncEvent) => syncEngine?.handleRealtimeEvent(event),
         onSessionAlive: (payload) => syncEngine?.handleSessionAlive(payload),
         onSessionEnd: (payload) => syncEngine?.handleSessionEnd(payload),
@@ -209,16 +204,6 @@ async function main() {
         summarizeTurnQueue ?? undefined
     )
 
-    // Initialize Telegram bot (optional)
-    if (config.telegramEnabled && config.telegramBotToken) {
-        bot = new YohoRemoteBot({
-            syncEngine,
-            botToken: config.telegramBotToken,
-            miniAppUrl: config.miniAppUrl,
-            store
-        })
-    }
-
     // Initialize IM Brain Bridge (optional - Feishu adapter)
     const feishuBotAppId = process.env.FEISHU_BOT_APP_ID || null
     const feishuBotAppSecret = process.env.FEISHU_BOT_APP_SECRET || null
@@ -246,11 +231,6 @@ async function main() {
         socketEngine: socketServer.engine
     })
 
-    // Start the bot if configured
-    if (bot) {
-        await bot.start()
-    }
-
     // Start IM Brain Bridge if configured
     if (brainBridge) {
         await brainBridge.start()
@@ -265,7 +245,6 @@ async function main() {
         shuttingDown = true
         console.log('\nShutting down...')
         await brainBridge?.stop()
-        await bot?.stop()
         syncEngine?.stop()
         sseManager?.stop()
         if (socketServer?.io) {

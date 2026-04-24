@@ -1,7 +1,7 @@
 export type PermissionMode = 'default' | 'bypassPermissions' | 'read-only' | 'safe-yolo' | 'yolo'
 export type SpawnAgentType = 'claude' | 'codex'
 export type ClaudeModelMode = 'default' | 'sonnet' | 'opus' | 'opus-4-7'
-export type CodexModelMode = 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.2' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini'
+export type CodexModelMode = 'gpt-5.5' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.2' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini'
 export type GrokModelMode = 'grok-4-1-fast-reasoning' | 'grok-4-1-fast-non-reasoning' | 'grok-code-fast-1' | 'grok-4-fast-reasoning' | 'grok-4-fast-non-reasoning' | 'grok-4-0709' | 'grok-3-mini' | 'grok-3'
 export type ModelMode = ClaudeModelMode | 'glm-5.1' | CodexModelMode | GrokModelMode
 export type ModelReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
@@ -162,12 +162,15 @@ export type OnlineUser = {
 
 export type UserRole = 'developer' | 'operator'
 
-export type AIProfileRole = 'developer' | 'architect' | 'reviewer' | 'pm' | 'tester' | 'devops'
+export type AIProfileRoleLegacy = 'developer' | 'architect' | 'reviewer' | 'pm' | 'tester' | 'devops'
+export type AIProfileRoleMbti = 'INTP' | 'INTJ' | 'ENTP' | 'ISTJ' | 'ISTP' | 'ENFP' | 'INFJ'
+export type AIProfileRole = AIProfileRoleLegacy | AIProfileRoleMbti
 export type AIProfileStatus = 'idle' | 'working' | 'resting'
 
 export type AIProfile = {
     id: string
     namespace: string
+    orgId: string | null
     name: string
     role: AIProfileRole
     specialties: string[]
@@ -257,6 +260,7 @@ export type BrainAgent = 'claude' | 'codex'
 
 export type BrainConfig = {
     namespace: string
+    orgId: string | null
     agent: BrainAgent
     claudeModelMode: string
     codexModel: string
@@ -267,6 +271,24 @@ export type BrainConfig = {
 
 export type BrainConfigResponse = BrainConfig
 export type UpdateBrainConfigResponse = { ok: true; config: BrainConfig }
+
+export type UserSelfSystemConfig = {
+    orgId: string
+    userEmail: string
+    enabled: boolean
+    defaultProfileId: string | null
+    memoryProvider: 'yoho-memory' | 'none'
+    updatedAt: number
+    updatedBy: string | null
+}
+
+export type UserSelfSystemConfigResponse = UserSelfSystemConfig
+export type UpdateUserSelfSystemConfigInput = {
+    enabled: boolean
+    defaultProfileId?: string | null
+    memoryProvider: 'yoho-memory' | 'none'
+}
+export type UpdateUserSelfSystemConfigResponse = { ok: true; config: UserSelfSystemConfig }
 
 export type RolePrompt = {
     role: UserRole
@@ -532,18 +554,19 @@ export type SessionDownloadFile = {
 }
 
 export type SyncEvent =
-    | { type: 'session-added'; sessionId: string; data?: unknown; namespace?: string }
-    | { type: 'session-updated'; sessionId: string; data?: unknown; namespace?: string }
-    | { type: 'session-removed'; sessionId: string; namespace?: string }
-    | { type: 'message-received'; sessionId: string; message: DecryptedMessage; namespace?: string }
-    | { type: 'messages-cleared'; sessionId: string; namespace?: string }
-    | { type: 'machine-updated'; machineId: string; data?: unknown; namespace?: string }
-    | { type: 'connection-changed'; data?: { status: string }; namespace?: string }
-    | { type: 'online-users-changed'; users: OnlineUser[]; namespace?: string }
-    | { type: 'typing-changed'; sessionId: string; typing: TypingUser; namespace?: string }
-    | { type: 'file-ready'; sessionId: string; fileInfo: DownloadFileInfo; namespace?: string }
+    | { type: 'session-added'; sessionId: string; data?: unknown; orgId?: string | null; namespace?: string }
+    | { type: 'session-updated'; sessionId: string; data?: unknown; orgId?: string | null; namespace?: string }
+    | { type: 'session-removed'; sessionId: string; orgId?: string | null; namespace?: string }
+    | { type: 'message-received'; sessionId: string; message: DecryptedMessage; orgId?: string | null; namespace?: string }
+    | { type: 'messages-cleared'; sessionId: string; orgId?: string | null; namespace?: string }
+    | { type: 'machine-updated'; machineId: string; data?: unknown; orgId?: string | null; namespace?: string }
+    | { type: 'connection-changed'; data?: { status: string }; orgId?: string | null; namespace?: string }
+    | { type: 'online-users-changed'; users: OnlineUser[]; orgId?: string | null; namespace?: string }
+    | { type: 'typing-changed'; sessionId: string; typing: TypingUser; orgId?: string | null; namespace?: string }
+    | { type: 'file-ready'; sessionId: string; fileInfo: DownloadFileInfo; orgId?: string | null; namespace?: string }
     | {
         type: 'identity-candidate-updated'
+        orgId?: string | null
         namespace?: string
         data: {
             orgId: string | null
@@ -556,7 +579,7 @@ export type SyncEvent =
 
 export type OnlineUsersResponse = { users: OnlineUser[] }
 
-export type IdentityChannel = 'keycloak' | 'feishu' | 'wecom' | 'custom-im' | 'telegram' | 'cli'
+export type IdentityChannel = 'keycloak' | 'feishu' | 'wecom' | 'custom-im' | 'cli'
 export type IdentityAccountType = 'human' | 'shared' | 'service' | 'bot' | 'unknown'
 export type IdentityAssurance = 'high' | 'medium' | 'low'
 export type IdentityStatus = 'active' | 'disabled' | 'departed' | 'conflict'

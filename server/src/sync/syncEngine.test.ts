@@ -5,6 +5,7 @@ function createSession(id: string, metadata: Record<string, unknown>): Session {
     return {
         id,
         namespace: 'default',
+        orgId: null,
         seq: 0,
         createdAt: 0,
         updatedAt: 0,
@@ -98,7 +99,11 @@ function createAgentEventMessage() {
     }
 }
 
-function createUserTextMessage(seq: number, text: string, sentFrom: string = 'webapp') {
+function createUserTextMessage(
+    seq: number,
+    text: string,
+    sentFrom: string = 'webapp'
+) {
     return {
         id: `m-${seq}`,
         seq,
@@ -117,13 +122,16 @@ function createUserTextMessage(seq: number, text: string, sentFrom: string = 'we
     }
 }
 
-function createMonitorToolCallMessage(seq: number, opts: {
-    id?: string
-    description?: string
-    command?: string
-    persistent?: boolean
-    timeoutMs?: number | null
-} = {}) {
+function createMonitorToolCallMessage(
+    seq: number,
+    opts: {
+        id?: string
+        description?: string
+        command?: string
+        persistent?: boolean
+        timeoutMs?: number | null
+    } = {}
+) {
     return {
         id: `m-${seq}`,
         seq,
@@ -136,25 +144,35 @@ function createMonitorToolCallMessage(seq: number, opts: {
                 data: {
                     type: 'assistant',
                     message: {
-                        content: [{
-                            type: 'tool_use',
-                            id: opts.id ?? 'monitor-tool',
-                            name: 'Monitor',
-                            input: {
-                                description: opts.description ?? 'watch logs',
-                                command: opts.command ?? 'tail -f app.log',
-                                persistent: opts.persistent === true,
-                                ...(opts.timeoutMs !== undefined && opts.timeoutMs !== null ? { timeout_ms: opts.timeoutMs } : {})
-                            }
-                        }]
-                    }
-                }
-            }
-        }
+                        content: [
+                            {
+                                type: 'tool_use',
+                                id: opts.id ?? 'monitor-tool',
+                                name: 'Monitor',
+                                input: {
+                                    description:
+                                        opts.description ?? 'watch logs',
+                                    command: opts.command ?? 'tail -f app.log',
+                                    persistent: opts.persistent === true,
+                                    ...(opts.timeoutMs !== undefined &&
+                                    opts.timeoutMs !== null
+                                        ? { timeout_ms: opts.timeoutMs }
+                                        : {}),
+                                },
+                            },
+                        ],
+                    },
+                },
+            },
+        },
     }
 }
 
-function createMonitorTaskStartedMessage(seq: number, toolUseId: string, taskId: string = 'task-1') {
+function createMonitorTaskStartedMessage(
+    seq: number,
+    toolUseId: string,
+    taskId: string = 'task-1'
+) {
     return {
         id: `m-${seq}`,
         seq,
@@ -169,13 +187,17 @@ function createMonitorTaskStartedMessage(seq: number, toolUseId: string, taskId:
                     subtype: 'task_started',
                     tool_use_id: toolUseId,
                     task_id: taskId,
-                }
-            }
-        }
+                },
+            },
+        },
     }
 }
 
-function createMonitorTaskNotificationMessage(seq: number, toolUseId: string, status: string = 'completed') {
+function createMonitorTaskNotificationMessage(
+    seq: number,
+    toolUseId: string,
+    status: string = 'completed'
+) {
     return {
         id: `m-${seq}`,
         seq,
@@ -191,16 +213,20 @@ function createMonitorTaskNotificationMessage(seq: number, toolUseId: string, st
                     tool_use_id: toolUseId,
                     task_id: 'task-1',
                     status,
-                }
-            }
-        }
+                },
+            },
+        },
     }
 }
 
-function createMonitorToolResultMessage(seq: number, toolUseId: string, opts: {
-    isError?: boolean
-    permissions?: { result?: string; decision?: string }
-} = {}) {
+function createMonitorToolResultMessage(
+    seq: number,
+    toolUseId: string,
+    opts: {
+        isError?: boolean
+        permissions?: { result?: string; decision?: string }
+    } = {}
+) {
     return {
         id: `m-${seq}`,
         seq,
@@ -213,17 +239,21 @@ function createMonitorToolResultMessage(seq: number, toolUseId: string, opts: {
                 data: {
                     type: 'user',
                     message: {
-                        content: [{
-                            type: 'tool_result',
-                            tool_use_id: toolUseId,
-                            content: 'monitor started',
-                            is_error: opts.isError === true,
-                            ...(opts.permissions ? { permissions: opts.permissions } : {}),
-                        }]
-                    }
-                }
-            }
-        }
+                        content: [
+                            {
+                                type: 'tool_result',
+                                tool_use_id: toolUseId,
+                                content: 'monitor started',
+                                is_error: opts.isError === true,
+                                ...(opts.permissions
+                                    ? { permissions: opts.permissions }
+                                    : {}),
+                            },
+                        ],
+                    },
+                },
+            },
+        },
     }
 }
 
@@ -246,11 +276,27 @@ describe('SyncEngine', () => {
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
-            setSessionActive: async (id: string, active: boolean, activeAt: number, namespace: string, terminationReason?: string | null) => {
-                setSessionActiveCalls.push({ id, active, activeAt, namespace, terminationReason })
+            setSessionActive: async (
+                id: string,
+                active: boolean,
+                activeAt: number,
+                namespace: string,
+                terminationReason?: string | null
+            ) => {
+                setSessionActiveCalls.push({
+                    id,
+                    active,
+                    activeAt,
+                    namespace,
+                    terminationReason,
+                })
                 return true
             },
-            patchSessionMetadata: async (id: string, patch: Record<string, unknown>, namespace: string) => {
+            patchSessionMetadata: async (
+                id: string,
+                patch: Record<string, unknown>,
+                namespace: string
+            ) => {
                 patchSessionMetadataCalls.push({ id, patch, namespace })
                 return true
             },
@@ -267,12 +313,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const mainSession = createSession('brain-main', {
             source: 'brain',
@@ -287,17 +338,27 @@ describe('SyncEngine', () => {
             path: '/tmp/brain-child',
         })
         childSession.active = false
-
         ;(engine as any).sessions.set(mainSession.id, mainSession)
         ;(engine as any).sessions.set(childSession.id, childSession)
 
         const sessionRpcCalls: Array<{ sessionId: string; method: string }> = []
-        const machineRpcCalls: Array<{ machineId: string; method: string; payload: unknown }> = []
-        ;(engine as any).sessionRpc = async (sessionId: string, method: string) => {
+        const machineRpcCalls: Array<{
+            machineId: string
+            method: string
+            payload: unknown
+        }> = []
+        ;(engine as any).sessionRpc = async (
+            sessionId: string,
+            method: string
+        ) => {
             sessionRpcCalls.push({ sessionId, method })
             throw new Error('session rpc unavailable')
         }
-        ;(engine as any).machineRpc = async (machineId: string, method: string, payload: unknown) => {
+        ;(engine as any).machineRpc = async (
+            machineId: string,
+            method: string,
+            payload: unknown
+        ) => {
             machineRpcCalls.push({ machineId, method, payload })
             return { message: 'Session stopped' }
         }
@@ -315,17 +376,56 @@ describe('SyncEngine', () => {
             { sessionId: 'brain-main', method: 'killSession' },
         ])
         expect(machineRpcCalls).toEqual([
-            { machineId: 'machine-1', method: 'stop-session', payload: { sessionId: 'brain-child' } },
-            { machineId: 'machine-1', method: 'stop-session', payload: { sessionId: 'brain-main' } },
+            {
+                machineId: 'machine-1',
+                method: 'stop-session',
+                payload: { sessionId: 'brain-child' },
+            },
+            {
+                machineId: 'machine-1',
+                method: 'stop-session',
+                payload: { sessionId: 'brain-main' },
+            },
         ])
         expect(setSessionActiveCalls).toHaveLength(2)
-        expect(setSessionActiveCalls.map(call => call.id)).toEqual(['brain-child', 'brain-main'])
-        expect(setSessionActiveCalls.every(call => call.active === false && call.namespace === 'default' && call.terminationReason === null)).toBe(true)
+        expect(setSessionActiveCalls.map((call) => call.id)).toEqual([
+            'brain-child',
+            'brain-main',
+        ])
+        expect(
+            setSessionActiveCalls.every(
+                (call) =>
+                    call.active === false &&
+                    call.namespace === 'default' &&
+                    call.terminationReason === null
+            )
+        ).toBe(true)
         expect(patchSessionMetadataCalls).toHaveLength(2)
-        expect(patchSessionMetadataCalls.map(call => call.id)).toEqual(['brain-child', 'brain-main'])
-        expect(patchSessionMetadataCalls.every(call => call.patch.archivedBy === 'brain')).toBe(true)
-        expect((engine.getSession('brain-main')?.metadata as Record<string, unknown>)?.lifecycleState).toBe('archived')
-        expect((engine.getSession('brain-child')?.metadata as Record<string, unknown>)?.archiveReason).toBe('Brain closed session')
+        expect(patchSessionMetadataCalls.map((call) => call.id)).toEqual([
+            'brain-child',
+            'brain-main',
+        ])
+        expect(
+            patchSessionMetadataCalls.every(
+                (call) => call.patch.archivedBy === 'brain'
+            )
+        ).toBe(true)
+        expect(
+            (
+                engine.getSession('brain-main')?.metadata as Record<
+                    string,
+                    unknown
+                >
+            )?.lifecycleState
+        ).toBe('archived')
+        expect(
+            (
+                engine.getSession('brain-child')?.metadata as Record<
+                    string,
+                    unknown
+                >
+            )?.archiveReason
+        ).toBe('Brain closed session')
         expect(engine.getSession('brain-main')?.active).toBe(false)
         expect(engine.getSession('brain-child')?.active).toBe(false)
     })
@@ -348,14 +448,22 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const mainSession = createSession('main-session', {
+            source: 'brain',
+            summary: { text: 'Main', updatedAt: 0 },
+        })
         const childSession = createSession('child-session', {
             source: 'brain-child',
             mainSessionId: 'main-session',
@@ -364,7 +472,10 @@ describe('SyncEngine', () => {
 
         ;(engine as any).sessions.set(mainSession.id, mainSession)
         ;(engine as any).sessions.set(childSession.id, childSession)
-        ;(engine as any).sendMessage = async (sessionId: string, payload: { text: string }) => {
+        ;(engine as any).sendMessage = async (
+            sessionId: string,
+            payload: { text: string }
+        ) => {
             sent.push({ sessionId, payload })
         }
 
@@ -385,9 +496,15 @@ describe('SyncEngine', () => {
     })
 
     test('prefers result text over assistant narration in brain callback and attaches a structured envelope', async () => {
-        const sent: Array<{ sessionId: string; payload: { text: string; meta?: Record<string, unknown> } }> = []
+        const sent: Array<{
+            sessionId: string
+            payload: { text: string; meta?: Record<string, unknown> }
+        }> = []
         const childMessages = [
-            createAgentAssistantMessage(1, '现在时间正确了。让我汇总关键数据并生成执行报告：'),
+            createAgentAssistantMessage(
+                1,
+                '现在时间正确了。让我汇总关键数据并生成执行报告：'
+            ),
             createAgentResultMessage(2, '## 查询结果汇总\n总订单数：254'),
         ]
 
@@ -405,14 +522,22 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const mainSession = createSession('main-session', {
+            source: 'brain',
+            summary: { text: 'Main', updatedAt: 0 },
+        })
         const childSession = createSession('child-session', {
             source: 'brain-child',
             mainSessionId: 'main-session',
@@ -422,7 +547,10 @@ describe('SyncEngine', () => {
         ;(engine as any).sessions.set(mainSession.id, mainSession)
         ;(engine as any).sessions.set(childSession.id, childSession)
         ;(engine as any).sessionMessages.set(childSession.id, childMessages)
-        ;(engine as any).sendMessage = async (sessionId: string, payload: { text: string; meta?: Record<string, unknown> }) => {
+        ;(engine as any).sendMessage = async (
+            sessionId: string,
+            payload: { text: string; meta?: Record<string, unknown> }
+        ) => {
             sent.push({ sessionId, payload })
             return { status: 'delivered' }
         }
@@ -431,13 +559,17 @@ describe('SyncEngine', () => {
 
         expect(sent).toHaveLength(1)
         expect(sent[0]?.payload.text).toContain('总订单数：254')
-        expect(sent[0]?.payload.text).not.toContain('让我汇总关键数据并生成执行报告')
+        expect(sent[0]?.payload.text).not.toContain(
+            '让我汇总关键数据并生成执行报告'
+        )
         expect(sent[0]?.payload.meta).toMatchObject({
             brainChildCallback: {
                 type: 'brain-child-callback',
                 version: 1,
                 sessionId: 'child-session',
                 mainSessionId: 'main-session',
+                parentSource: 'brain',
+                childSource: 'brain-child',
                 title: 'Child',
                 result: {
                     text: '## 查询结果汇总\n总订单数：254',
@@ -451,11 +583,13 @@ describe('SyncEngine', () => {
         })
     })
 
-    test('forwards full brain-child result back to the main brain session without truncation', async () => {
-        const sent: Array<{ sessionId: string; payload: { text: string } }> = []
-        const fullResult = `开始\n${'A'.repeat(4_500)}\n结束标记`
+    test('forwards orchestrator-child results back to the matching orchestrator parent session', async () => {
+        const sent: Array<{
+            sessionId: string
+            payload: { text: string; meta?: Record<string, unknown> }
+        }> = []
         const childMessages = [
-            createAgentResultMessage(1, fullResult),
+            createAgentResultMessage(1, 'orchestrator child result'),
         ]
 
         const store = {
@@ -472,14 +606,94 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const mainSession = createSession('main-session', {
+            source: 'orchestrator',
+            summary: { text: 'Main', updatedAt: 0 },
+        })
+        const childSession = createSession('child-session', {
+            source: 'orchestrator-child',
+            mainSessionId: 'main-session',
+            summary: { text: 'Child', updatedAt: 0 },
+        })
+
+        ;(engine as any).sessions.set(mainSession.id, mainSession)
+        ;(engine as any).sessions.set(childSession.id, childSession)
+        ;(engine as any).sessionMessages.set(childSession.id, childMessages)
+        ;(engine as any).sendMessage = async (
+            sessionId: string,
+            payload: { text: string; meta?: Record<string, unknown> }
+        ) => {
+            sent.push({ sessionId, payload })
+            return { status: 'delivered' }
+        }
+
+        await (engine as any).sendBrainCallbackIfNeeded(childSession)
+
+        expect(sent).toHaveLength(1)
+        expect(sent[0]?.sessionId).toBe(mainSession.id)
+        expect(sent[0]?.payload.text).toContain('orchestrator child result')
+        expect(sent[0]?.payload.meta).toMatchObject({
+            brainChildCallback: {
+                sessionId: 'child-session',
+                mainSessionId: 'main-session',
+                parentSource: 'orchestrator',
+                childSource: 'orchestrator-child',
+                result: {
+                    text: 'orchestrator child result',
+                    source: 'result',
+                    seq: 1,
+                },
+            },
+        })
+    })
+
+    test('forwards full brain-child result back to the main brain session without truncation', async () => {
+        const sent: Array<{ sessionId: string; payload: { text: string } }> = []
+        const fullResult = `开始\n${'A'.repeat(4_500)}\n结束标记`
+        const childMessages = [createAgentResultMessage(1, fullResult)]
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getMessages: async () => childMessages,
+            getMessageCount: async () => childMessages.length,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
+        engine.stop()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        const mainSession = createSession('main-session', {
+            source: 'brain',
+            summary: { text: 'Main', updatedAt: 0 },
+        })
         const childSession = createSession('child-session', {
             source: 'brain-child',
             mainSessionId: 'main-session',
@@ -489,7 +703,10 @@ describe('SyncEngine', () => {
         ;(engine as any).sessions.set(mainSession.id, mainSession)
         ;(engine as any).sessions.set(childSession.id, childSession)
         ;(engine as any).sessionMessages.set(childSession.id, childMessages)
-        ;(engine as any).sendMessage = async (sessionId: string, payload: { text: string }) => {
+        ;(engine as any).sendMessage = async (
+            sessionId: string,
+            payload: { text: string }
+        ) => {
             sent.push({ sessionId, payload })
         }
 
@@ -522,14 +739,22 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const mainSession = createSession('main-session', {
+            source: 'brain',
+            summary: { text: 'Main', updatedAt: 0 },
+        })
         const childSession = createSession('child-session', {
             source: 'brain-child',
             mainSessionId: 'main-session',
@@ -538,7 +763,10 @@ describe('SyncEngine', () => {
 
         ;(engine as any).sessions.set(mainSession.id, mainSession)
         ;(engine as any).sessions.set(childSession.id, childSession)
-        ;(engine as any).sendMessage = async (sessionId: string, payload: { text: string }) => {
+        ;(engine as any).sendMessage = async (
+            sessionId: string,
+            payload: { text: string }
+        ) => {
             sent.push({ sessionId, payload })
         }
 
@@ -559,12 +787,20 @@ describe('SyncEngine', () => {
             getSessions: async () => [],
             getMachines: async () => [],
             getMessages: async () => childMessages,
-            getMessagesAfter: async (_sessionId: string, afterSeq: number, _limit?: number) => {
+            getMessagesAfter: async (
+                _sessionId: string,
+                afterSeq: number,
+                _limit?: number
+            ) => {
                 if (afterSeq !== 0) return []
                 return childMessages
             },
             patchSessionMetadata: async () => true,
-            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+            addMessage: async (
+                sessionId: string,
+                content: unknown,
+                localId?: string
+            ) => {
                 added.push({ sessionId, content })
                 return {
                     id: 'stored-message',
@@ -584,12 +820,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const childSession = createSession('child-session', {
             source: 'brain-child',
@@ -598,18 +839,27 @@ describe('SyncEngine', () => {
 
         ;(engine as any).sessions.set(childSession.id, childSession)
 
-        await engine.sendMessage(childSession.id, { text: '请继续处理这个任务', sentFrom: 'brain' })
+        await engine.sendMessage(childSession.id, {
+            text: '请继续处理这个任务',
+            sentFrom: 'brain',
+        })
 
         expect(engine.isBrainChildInitDone(childSession.id)).toBe(true)
         expect(added).toHaveLength(1)
         expect(added[0]?.sessionId).toBe(childSession.id)
         expect((added[0]?.content as any)?.meta?.sentFrom).toBe('brain')
-        expect((engine as any).brainChildPendingMessages.get(childSession.id)).toBeUndefined()
+        expect(
+            (engine as any).brainChildPendingMessages.get(childSession.id)
+        ).toBeUndefined()
     })
 
     test('keeps user follow-ups and child callback together while the main brain is still thinking', async () => {
         let seq = 0
-        const added: Array<{ sessionId: string; content: unknown; localId?: string | undefined }> = []
+        const added: Array<{
+            sessionId: string
+            content: unknown
+            localId?: string | undefined
+        }> = []
         const childMessages = [
             createAgentResultMessage(1, '子任务 burst 最终结果'),
         ]
@@ -619,7 +869,11 @@ describe('SyncEngine', () => {
             getMachines: async () => [],
             getMessages: async () => childMessages,
             getMessageCount: async () => childMessages.length,
-            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+            addMessage: async (
+                sessionId: string,
+                content: unknown,
+                localId?: string
+            ) => {
                 seq += 1
                 added.push({ sessionId, content, localId })
                 return {
@@ -640,14 +894,22 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const mainSession = createSession('main-session', {
+            source: 'brain',
+            summary: { text: 'Main', updatedAt: 0 },
+        })
         mainSession.thinking = true
         const childSession = createSession('child-session', {
             source: 'brain-child',
@@ -661,29 +923,53 @@ describe('SyncEngine', () => {
         ;(engine as any).waitForSessionMessagesToSettle = async () => {}
 
         await Promise.all([
-            engine.sendMessage(mainSession.id, { text: '用户追问 1', sentFrom: 'webapp' }),
+            engine.sendMessage(mainSession.id, {
+                text: '用户追问 1',
+                sentFrom: 'webapp',
+            }),
             (engine as any).sendBrainCallbackIfNeeded(childSession),
-            engine.sendMessage(mainSession.id, { text: '用户追问 2', sentFrom: 'webapp' }),
+            engine.sendMessage(mainSession.id, {
+                text: '用户追问 2',
+                sentFrom: 'webapp',
+            }),
         ])
 
-        const mainMessages = added.filter(item => item.sessionId === mainSession.id)
-        const sentFroms = mainMessages.map(item => (item.content as any)?.meta?.sentFrom)
+        const mainMessages = added.filter(
+            (item) => item.sessionId === mainSession.id
+        )
+        const sentFroms = mainMessages.map(
+            (item) => (item.content as any)?.meta?.sentFrom
+        )
 
         expect(mainMessages).toHaveLength(3)
-        expect(sentFroms.filter(value => value === 'webapp')).toHaveLength(2)
-        expect(sentFroms.filter(value => value === 'brain-callback')).toHaveLength(1)
-        expect(mainMessages.every(item => Boolean((item.content as any)?.meta?.brainSessionQueue))).toBe(true)
+        expect(sentFroms.filter((value) => value === 'webapp')).toHaveLength(2)
+        expect(
+            sentFroms.filter((value) => value === 'brain-callback')
+        ).toHaveLength(1)
+        expect(
+            mainMessages.every((item) =>
+                Boolean((item.content as any)?.meta?.brainSessionQueue)
+            )
+        ).toBe(true)
         expect(mainSession.thinking).toBe(true)
     })
 
     test('resets brain wake queue depth when the next consume round starts', async () => {
         let seq = 0
-        const added: Array<{ sessionId: string; content: unknown; localId?: string | undefined }> = []
+        const added: Array<{
+            sessionId: string
+            content: unknown
+            localId?: string | undefined
+        }> = []
 
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
-            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+            addMessage: async (
+                sessionId: string,
+                content: unknown,
+                localId?: string
+            ) => {
                 seq += 1
                 added.push({ sessionId, content, localId })
                 return {
@@ -707,19 +993,35 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        const mainSession = createSession('brain-main', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const mainSession = createSession('brain-main', {
+            source: 'brain',
+            summary: { text: 'Main', updatedAt: 0 },
+        })
         mainSession.thinking = true
         ;(engine as any).sessions.set(mainSession.id, mainSession)
 
-        const first = await engine.sendMessage(mainSession.id, { text: '用户追问 1', sentFrom: 'webapp', localId: 'u-1' })
-        const second = await engine.sendMessage(mainSession.id, { text: '用户追问 2', sentFrom: 'telegram-bot', localId: 'u-2' })
+        const first = await engine.sendMessage(mainSession.id, {
+            text: '用户追问 1',
+            sentFrom: 'webapp',
+            localId: 'u-1',
+        })
+        const second = await engine.sendMessage(mainSession.id, {
+            text: '用户追问 2',
+            sentFrom: 'feishu',
+            localId: 'u-2',
+        })
 
         expect(first).toEqual({
             status: 'queued',
@@ -731,29 +1033,47 @@ describe('SyncEngine', () => {
             queue: 'brain-session-inbox',
             queueDepth: 2,
         })
-        expect((added[0]?.content as any)?.meta?.brainSessionQueue).toMatchObject({
+        expect(
+            (added[0]?.content as any)?.meta?.brainSessionQueue
+        ).toMatchObject({
             source: 'user',
             delivery: 'queued',
             wakeQueueDepth: 1,
             localId: 'u-1',
         })
-        expect((added[1]?.content as any)?.meta?.brainSessionQueue).toMatchObject({
+        expect(
+            (added[1]?.content as any)?.meta?.brainSessionQueue
+        ).toMatchObject({
             source: 'channel',
             delivery: 'queued',
             wakeQueueDepth: 2,
             localId: 'u-2',
         })
 
-        await engine.handleSessionAlive({ sid: mainSession.id, time: Date.now(), thinking: false })
-        await engine.handleSessionAlive({ sid: mainSession.id, time: Date.now() + 1, thinking: true })
+        await engine.handleSessionAlive({
+            sid: mainSession.id,
+            time: Date.now(),
+            thinking: false,
+        })
+        await engine.handleSessionAlive({
+            sid: mainSession.id,
+            time: Date.now() + 1,
+            thinking: true,
+        })
 
-        const third = await engine.sendMessage(mainSession.id, { text: '下一轮消息', sentFrom: 'brain-callback', localId: 'cb-1' })
+        const third = await engine.sendMessage(mainSession.id, {
+            text: '下一轮消息',
+            sentFrom: 'brain-callback',
+            localId: 'cb-1',
+        })
         expect(third).toEqual({
             status: 'queued',
             queue: 'brain-session-inbox',
             queueDepth: 1,
         })
-        expect((added[2]?.content as any)?.meta?.brainSessionQueue).toMatchObject({
+        expect(
+            (added[2]?.content as any)?.meta?.brainSessionQueue
+        ).toMatchObject({
             source: 'brain-callback',
             delivery: 'queued',
             wakeQueueDepth: 1,
@@ -763,10 +1083,12 @@ describe('SyncEngine', () => {
 
     test('does not send duplicate brain callbacks when the same child completion is replayed', async () => {
         let seq = 0
-        const added: Array<{ sessionId: string; content: unknown; localId?: string | undefined }> = []
-        const childMessages = [
-            createAgentResultMessage(1, '同一轮子任务结果'),
-        ]
+        const added: Array<{
+            sessionId: string
+            content: unknown
+            localId?: string | undefined
+        }> = []
+        const childMessages = [createAgentResultMessage(1, '同一轮子任务结果')]
         let messageCount = childMessages.length
 
         const store = {
@@ -774,7 +1096,11 @@ describe('SyncEngine', () => {
             getMachines: async () => [],
             getMessages: async () => childMessages,
             getMessageCount: async () => messageCount,
-            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+            addMessage: async (
+                sessionId: string,
+                content: unknown,
+                localId?: string
+            ) => {
                 seq += 1
                 added.push({ sessionId, content, localId })
                 return {
@@ -795,14 +1121,22 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const mainSession = createSession('main-session', {
+            source: 'brain',
+            summary: { text: 'Main', updatedAt: 0 },
+        })
         const childSession = createSession('child-session', {
             source: 'brain-child',
             mainSessionId: 'main-session',
@@ -818,28 +1152,43 @@ describe('SyncEngine', () => {
         messageCount = 99
         await (engine as any).sendBrainCallbackIfNeeded(childSession)
 
-        const callbackMessages = added.filter(item =>
-            item.sessionId === mainSession.id
-            && (item.content as any)?.meta?.sentFrom === 'brain-callback'
+        const callbackMessages = added.filter(
+            (item) =>
+                item.sessionId === mainSession.id &&
+                (item.content as any)?.meta?.sentFrom === 'brain-callback'
         )
 
         expect(callbackMessages).toHaveLength(1)
-        expect(callbackMessages[0]?.localId).toBe('brain-callback:main-session:child-session:1')
-        expect((callbackMessages[0]?.content as any)?.meta?.brainChildCallback?.result?.text).toBe('同一轮子任务结果')
+        expect(callbackMessages[0]?.localId).toBe(
+            'brain-callback:main-session:child-session:1'
+        )
+        expect(
+            (callbackMessages[0]?.content as any)?.meta?.brainChildCallback
+                ?.result?.text
+        ).toBe('同一轮子任务结果')
     })
 
     test('does not collide callback localId across different children targeting the same brain session', async () => {
         let seq = 0
-        const added: Array<{ sessionId: string; content: unknown; localId?: string | undefined }> = []
+        const added: Array<{
+            sessionId: string
+            content: unknown
+            localId?: string | undefined
+        }> = []
         const childOneMessages = [createAgentResultMessage(1, 'child-1 result')]
         const childTwoMessages = [createAgentResultMessage(1, 'child-2 result')]
 
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
-            getMessages: async (sessionId: string) => sessionId === 'child-1' ? childOneMessages : childTwoMessages,
+            getMessages: async (sessionId: string) =>
+                sessionId === 'child-1' ? childOneMessages : childTwoMessages,
             getMessageCount: async () => 1,
-            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+            addMessage: async (
+                sessionId: string,
+                content: unknown,
+                localId?: string
+            ) => {
                 seq += 1
                 added.push({ sessionId, content, localId })
                 return {
@@ -860,14 +1209,22 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const mainSession = createSession('main-session', {
+            source: 'brain',
+            summary: { text: 'Main', updatedAt: 0 },
+        })
         const childOne = createSession('child-1', {
             source: 'brain-child',
             mainSessionId: 'main-session',
@@ -889,21 +1246,28 @@ describe('SyncEngine', () => {
         await (engine as any).sendBrainCallbackIfNeeded(childOne)
         await (engine as any).sendBrainCallbackIfNeeded(childTwo)
 
-        const callbackMessages = added.filter(item =>
-            item.sessionId === mainSession.id
-            && (item.content as any)?.meta?.sentFrom === 'brain-callback'
+        const callbackMessages = added.filter(
+            (item) =>
+                item.sessionId === mainSession.id &&
+                (item.content as any)?.meta?.sentFrom === 'brain-callback'
         )
 
         expect(callbackMessages).toHaveLength(2)
-        expect(callbackMessages.map(item => item.localId)).toEqual([
+        expect(callbackMessages.map((item) => item.localId)).toEqual([
             'brain-callback:main-session:child-1:1',
             'brain-callback:main-session:child-2:1',
         ])
     })
 
     test('retries brain callback for an inactive main session and delivers once it comes back online', async () => {
-        const childMessages = [createAgentResultMessage(1, '离线主 session 恢复后的结果')]
-        const sent: Array<{ sessionId: string; localId?: string; meta?: unknown }> = []
+        const childMessages = [
+            createAgentResultMessage(1, '离线主 session 恢复后的结果'),
+        ]
+        const sent: Array<{
+            sessionId: string
+            localId?: string
+            meta?: unknown
+        }> = []
 
         const store = {
             getSessions: async () => [],
@@ -919,14 +1283,22 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const mainSession = createSession('main-session', {
+            source: 'brain',
+            summary: { text: 'Main', updatedAt: 0 },
+        })
         mainSession.active = false
         const childSession = createSession('child-session', {
             source: 'brain-child',
@@ -939,8 +1311,18 @@ describe('SyncEngine', () => {
         ;(engine as any).sessionMessages.set(childSession.id, childMessages)
         ;(engine as any).waitForSessionMessagesToSettle = async () => {}
         ;(engine as any).brainCallbackRetryDelaysMs = [1, 1, 1]
-        ;(engine as any).sendMessage = async (sessionId: string, message: any) => {
-            sent.push({ sessionId, localId: message.localId, meta: message.meta })
+        // engine.stop() above only killed the inactivity timer; retries need
+        // the stopped flag cleared so waitForBrainCallbackRetry doesn't bail.
+        ;(engine as any).stopped = false
+        ;(engine as any).sendMessage = async (
+            sessionId: string,
+            message: any
+        ) => {
+            sent.push({
+                sessionId,
+                localId: message.localId,
+                meta: message.meta,
+            })
             return { status: 'sent' }
         }
 
@@ -951,13 +1333,21 @@ describe('SyncEngine', () => {
             mainSession.active = true
         }, 2)
 
-        await new Promise(resolve => setTimeout(resolve, 15))
+        await new Promise((resolve) => setTimeout(resolve, 15))
 
         expect(sent).toHaveLength(1)
         expect(sent[0]?.sessionId).toBe(mainSession.id)
-        expect(sent[0]?.localId).toBe('brain-callback:main-session:child-session:1')
-        expect((sent[0]?.meta as any)?.brainChildCallback?.result?.text).toBe('离线主 session 恢复后的结果')
-        expect((engine as any).brainChildPendingRetryCallbackKeyBySessionId.get(childSession.id)).toBeUndefined()
+        expect(sent[0]?.localId).toBe(
+            'brain-callback:main-session:child-session:1'
+        )
+        expect((sent[0]?.meta as any)?.brainChildCallback?.result?.text).toBe(
+            '离线主 session 恢复后的结果'
+        )
+        expect(
+            (engine as any).brainChildPendingRetryCallbackKeyBySessionId.get(
+                childSession.id
+            )
+        ).toBeUndefined()
     })
 
     test('does not recursively re-enter callback sending while the main session stays inactive during retry backoff', async () => {
@@ -973,18 +1363,32 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const mainSession = createSession('main-session', {
+            source: 'brain',
+            summary: { text: 'Main', updatedAt: 0 },
+        })
         mainSession.active = false
         ;(engine as any).sessions.set(mainSession.id, mainSession)
         ;(engine as any).brainCallbackRetryDelaysMs = [1, 1, 1]
-        ;(engine as any).brainChildPendingRetryCallbackKeyBySessionId.set('child-session', 'main-session:child-session:1')
+        // engine.stop() above only killed the inactivity timer; retries need
+        // the stopped flag cleared so retryBrainCallback doesn't bail.
+        ;(engine as any).stopped = false
+        ;(engine as any).brainChildPendingRetryCallbackKeyBySessionId.set(
+            'child-session',
+            'main-session:child-session:1'
+        )
 
         let sendAttempts = 0
         ;(engine as any).sendBrainCallbackIfNeeded = async () => {
@@ -995,11 +1399,15 @@ describe('SyncEngine', () => {
             'child-session',
             'main-session',
             'main-session:child-session:1',
-            'brain session unavailable',
+            'brain session unavailable'
         )
 
         expect(sendAttempts).toBe(0)
-        expect((engine as any).brainChildPendingRetryCallbackKeyBySessionId.get('child-session')).toBeUndefined()
+        expect(
+            (engine as any).brainChildPendingRetryCallbackKeyBySessionId.get(
+                'child-session'
+            )
+        ).toBeUndefined()
     })
 
     test('persists a pending callback marker when the main brain session is offline', async () => {
@@ -1011,7 +1419,10 @@ describe('SyncEngine', () => {
             getMachines: async () => [],
             getMessages: async () => childMessages,
             getMessageCount: async () => childMessages.length,
-            patchSessionMetadata: async (_sessionId: string, patch: Record<string, unknown>) => {
+            patchSessionMetadata: async (
+                _sessionId: string,
+                patch: Record<string, unknown>
+            ) => {
                 patchCalls.push(patch)
                 return true
             },
@@ -1024,14 +1435,22 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        const mainSession = createSession('brain-main', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const mainSession = createSession('brain-main', {
+            source: 'brain',
+            summary: { text: 'Main', updatedAt: 0 },
+        })
         mainSession.active = false
         const childSession = createSession('child-session', {
             source: 'brain-child',
@@ -1052,9 +1471,15 @@ describe('SyncEngine', () => {
     })
 
     test('reconciles persisted pending brain callbacks when the parent brain session comes back online', async () => {
-        const childMessages = [createAgentResultMessage(1, '重启后待补发的结果')]
+        const childMessages = [
+            createAgentResultMessage(1, '重启后待补发的结果'),
+        ]
         const patchCalls: Array<Record<string, unknown>> = []
-        const sent: Array<{ sessionId: string; localId?: string; meta?: unknown }> = []
+        const sent: Array<{
+            sessionId: string
+            localId?: string
+            meta?: unknown
+        }> = []
 
         const store = {
             getSessions: async () => [],
@@ -1062,7 +1487,10 @@ describe('SyncEngine', () => {
             getSession: async () => ({ active: true }),
             getMessages: async () => childMessages,
             getMessageCount: async () => childMessages.length,
-            patchSessionMetadata: async (_sessionId: string, patch: Record<string, unknown>) => {
+            patchSessionMetadata: async (
+                _sessionId: string,
+                patch: Record<string, unknown>
+            ) => {
                 patchCalls.push(patch)
                 return true
             },
@@ -1077,14 +1505,22 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        const mainSession = createSession('brain-main', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const mainSession = createSession('brain-main', {
+            source: 'brain',
+            summary: { text: 'Main', updatedAt: 0 },
+        })
         mainSession.active = false
         const childSession = createSession('child-session', {
             source: 'brain-child',
@@ -1097,18 +1533,33 @@ describe('SyncEngine', () => {
         ;(engine as any).sessions.set(childSession.id, childSession)
         ;(engine as any).sessionMessages.set(childSession.id, childMessages)
         ;(engine as any).waitForSessionMessagesToSettle = async () => {}
-        ;(engine as any).sendMessage = async (sessionId: string, message: any) => {
-            sent.push({ sessionId, localId: message.localId, meta: message.meta })
+        ;(engine as any).sendMessage = async (
+            sessionId: string,
+            message: any
+        ) => {
+            sent.push({
+                sessionId,
+                localId: message.localId,
+                meta: message.meta,
+            })
             return { status: 'sent' }
         }
 
-        await engine.handleSessionAlive({ sid: mainSession.id, time: Date.now(), thinking: false })
-        await new Promise(resolve => setTimeout(resolve, 10))
+        await engine.handleSessionAlive({
+            sid: mainSession.id,
+            time: Date.now(),
+            thinking: false,
+        })
+        await new Promise((resolve) => setTimeout(resolve, 10))
 
         expect(sent).toHaveLength(1)
         expect(sent[0]?.sessionId).toBe(mainSession.id)
-        expect(sent[0]?.localId).toBe('brain-callback:brain-main:child-session:1')
-        expect((sent[0]?.meta as any)?.brainChildCallback?.result?.text).toBe('重启后待补发的结果')
+        expect(sent[0]?.localId).toBe(
+            'brain-callback:brain-main:child-session:1'
+        )
+        expect((sent[0]?.meta as any)?.brainChildCallback?.result?.text).toBe(
+            '重启后待补发的结果'
+        )
         expect(patchCalls).toContainEqual({ brainCallbackPending: false })
         expect((childSession.metadata as any).brainCallbackPending).toBe(false)
     })
@@ -1116,16 +1567,21 @@ describe('SyncEngine', () => {
     test('still forwards a later child completion after deduplicating the previous callback replay', async () => {
         let seq = 0
         const added: Array<{ sessionId: string; content: unknown }> = []
-        let childMessages: Array<ReturnType<typeof createAgentResultMessage> | ReturnType<typeof createUserTextMessage>> = [
-            createAgentResultMessage(1, '第一次结果'),
-        ]
+        let childMessages: Array<
+            | ReturnType<typeof createAgentResultMessage>
+            | ReturnType<typeof createUserTextMessage>
+        > = [createAgentResultMessage(1, '第一次结果')]
 
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
             getMessages: async () => childMessages,
             getMessageCount: async () => childMessages.length,
-            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+            addMessage: async (
+                sessionId: string,
+                content: unknown,
+                localId?: string
+            ) => {
                 seq += 1
                 added.push({ sessionId, content })
                 return {
@@ -1146,14 +1602,22 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const mainSession = createSession('main-session', {
+            source: 'brain',
+            summary: { text: 'Main', updatedAt: 0 },
+        })
         const childSession = createSession('child-session', {
             source: 'brain-child',
             mainSessionId: 'main-session',
@@ -1177,11 +1641,15 @@ describe('SyncEngine', () => {
 
         await (engine as any).sendBrainCallbackIfNeeded(childSession)
 
-        const callbackMessages = added.filter(item =>
-            item.sessionId === mainSession.id
-            && (item.content as any)?.meta?.sentFrom === 'brain-callback'
+        const callbackMessages = added.filter(
+            (item) =>
+                item.sessionId === mainSession.id &&
+                (item.content as any)?.meta?.sentFrom === 'brain-callback'
         )
-        const callbackResults = callbackMessages.map(item => (item.content as any)?.meta?.brainChildCallback?.result?.text)
+        const callbackResults = callbackMessages.map(
+            (item) =>
+                (item.content as any)?.meta?.brainChildCallback?.result?.text
+        )
 
         expect(callbackResults).toEqual(['第一次结果', '第二次结果'])
     })
@@ -1200,7 +1668,11 @@ describe('SyncEngine', () => {
             getMachines: async () => [],
             getMessages: async () => childMessages,
             getMessageCount: async () => childMessages.length,
-            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+            addMessage: async (
+                sessionId: string,
+                content: unknown,
+                localId?: string
+            ) => {
                 seq += 1
                 added.push({ sessionId, content })
                 return {
@@ -1221,14 +1693,22 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        const mainSession = createSession('main-session', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const mainSession = createSession('main-session', {
+            source: 'brain',
+            summary: { text: 'Main', updatedAt: 0 },
+        })
         const childSession = createSession('child-session', {
             source: 'brain-child',
             mainSessionId: 'main-session',
@@ -1242,12 +1722,15 @@ describe('SyncEngine', () => {
 
         await (engine as any).sendBrainCallbackIfNeeded(childSession)
 
-        const callbackMessage = added.find(item =>
-            item.sessionId === mainSession.id
-            && (item.content as any)?.meta?.sentFrom === 'brain-callback'
+        const callbackMessage = added.find(
+            (item) =>
+                item.sessionId === mainSession.id &&
+                (item.content as any)?.meta?.sentFrom === 'brain-callback'
         )
 
-        expect((callbackMessage?.content as any)?.meta?.brainChildCallback?.result).toMatchObject({
+        expect(
+            (callbackMessage?.content as any)?.meta?.brainChildCallback?.result
+        ).toMatchObject({
             text: '真正应该回灌的最终结果',
             source: 'result',
             seq: 2,
@@ -1256,12 +1739,20 @@ describe('SyncEngine', () => {
 
     test('keeps brain wake queue idempotent when the same localId is retried', async () => {
         let seq = 0
-        const added: Array<{ sessionId: string; content: unknown; localId?: string | undefined }> = []
+        const added: Array<{
+            sessionId: string
+            content: unknown
+            localId?: string | undefined
+        }> = []
 
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
-            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+            addMessage: async (
+                sessionId: string,
+                content: unknown,
+                localId?: string
+            ) => {
                 seq += 1
                 added.push({ sessionId, content, localId })
                 return {
@@ -1282,14 +1773,22 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        const mainSession = createSession('brain-main', { source: 'brain', summary: { text: 'Main', updatedAt: 0 } })
+        const mainSession = createSession('brain-main', {
+            source: 'brain',
+            summary: { text: 'Main', updatedAt: 0 },
+        })
         mainSession.thinking = true
         ;(engine as any).sessions.set(mainSession.id, mainSession)
 
@@ -1315,7 +1814,9 @@ describe('SyncEngine', () => {
             queueDepth: 1,
         })
         expect(added).toHaveLength(1)
-        expect((added[0]?.content as any)?.meta?.brainSessionQueue).toMatchObject({
+        expect(
+            (added[0]?.content as any)?.meta?.brainSessionQueue
+        ).toMatchObject({
             delivery: 'queued',
             wakeQueueDepth: 1,
             localId: 'dup-1',
@@ -1336,12 +1837,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const childSession = createSession('child-session', {
             source: 'brain-child',
@@ -1370,7 +1876,9 @@ describe('SyncEngine', () => {
             queue: 'brain-child-init',
             queueDepth: 1,
         })
-        expect((engine as any).brainChildPendingMessages.get(childSession.id)).toEqual([
+        expect(
+            (engine as any).brainChildPendingMessages.get(childSession.id)
+        ).toEqual([
             {
                 text: '请继续处理',
                 localId: 'brain-msg-1',
@@ -1384,8 +1892,16 @@ describe('SyncEngine', () => {
         // no longer contains the original #InitPrompt- (scrolled out), but the
         // earliest messages do. A brain send must NOT be trapped in the init
         // buffer — it should deliver normally.
-        const patchCalls: Array<{ id: string; patch: Record<string, unknown>; namespace: string }> = []
-        const deliveredAdds: Array<{ sessionId: string; content: unknown; localId: string | undefined }> = []
+        const patchCalls: Array<{
+            id: string
+            patch: Record<string, unknown>
+            namespace: string
+        }> = []
+        const deliveredAdds: Array<{
+            sessionId: string
+            content: unknown
+            localId: string | undefined
+        }> = []
         let addedSeq = 500
         const store = {
             getSessions: async () => [],
@@ -1393,20 +1909,65 @@ describe('SyncEngine', () => {
             getMessages: async () => [
                 // Simulate a tail-only view that has no InitPrompt anywhere —
                 // this is what the old recovery path would see on a long-lived child.
-                { id: 'm-recent', sessionId: 'child-session', seq: 500, createdAt: 0, localId: null, content: { role: 'user', content: { type: 'text', text: '最新业务消息' } } },
+                {
+                    id: 'm-recent',
+                    sessionId: 'child-session',
+                    seq: 500,
+                    createdAt: 0,
+                    localId: null,
+                    content: {
+                        role: 'user',
+                        content: { type: 'text', text: '最新业务消息' },
+                    },
+                },
             ],
-            getMessagesAfter: async (_sessionId: string, afterSeq: number, _limit?: number) => {
+            getMessagesAfter: async (
+                _sessionId: string,
+                afterSeq: number,
+                _limit?: number
+            ) => {
                 if (afterSeq !== 0) return []
                 return [
-                    { id: 'm-1', sessionId: 'child-session', seq: 1, createdAt: 0, localId: null, content: { role: 'user', content: { type: 'text', text: '#InitPrompt-v1\nhello' } } },
-                    { id: 'm-2', sessionId: 'child-session', seq: 2, createdAt: 0, localId: null, content: { role: 'agent', content: { type: 'message' } } },
+                    {
+                        id: 'm-1',
+                        sessionId: 'child-session',
+                        seq: 1,
+                        createdAt: 0,
+                        localId: null,
+                        content: {
+                            role: 'user',
+                            content: {
+                                type: 'text',
+                                text: '#InitPrompt-v1\nhello',
+                            },
+                        },
+                    },
+                    {
+                        id: 'm-2',
+                        sessionId: 'child-session',
+                        seq: 2,
+                        createdAt: 0,
+                        localId: null,
+                        content: {
+                            role: 'agent',
+                            content: { type: 'message' },
+                        },
+                    },
                 ]
             },
-            patchSessionMetadata: async (id: string, patch: Record<string, unknown>, namespace: string) => {
+            patchSessionMetadata: async (
+                id: string,
+                patch: Record<string, unknown>,
+                namespace: string
+            ) => {
                 patchCalls.push({ id, patch, namespace })
                 return true
             },
-            addMessage: async (sessionId: string, content: unknown, localId?: string) => {
+            addMessage: async (
+                sessionId: string,
+                content: unknown,
+                localId?: string
+            ) => {
                 deliveredAdds.push({ sessionId, content, localId })
                 addedSeq += 1
                 return {
@@ -1429,12 +1990,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const childSession = createSession('child-session', {
             source: 'brain-child',
@@ -1452,12 +2018,16 @@ describe('SyncEngine', () => {
         })
 
         // Init flag should now be set, both in memory and persisted to metadata
-        expect((engine as any).brainChildInitCompleted.has(childSession.id)).toBe(true)
+        expect(
+            (engine as any).brainChildInitCompleted.has(childSession.id)
+        ).toBe(true)
         expect(patchCalls).toHaveLength(1)
         expect(patchCalls[0]?.patch).toEqual({ brainChildInitCompleted: true })
 
         // The message must NOT be stuck in the init buffer
-        expect((engine as any).brainChildPendingMessages.get(childSession.id)).toBeUndefined()
+        expect(
+            (engine as any).brainChildPendingMessages.get(childSession.id)
+        ).toBeUndefined()
         expect(outcome).not.toMatchObject({ queue: 'brain-child-init' })
     })
 
@@ -1495,7 +2065,8 @@ describe('SyncEngine', () => {
 
         const store = {
             getSessions: async () => [storedChild],
-            getSession: async (id: string) => (id === storedChild.id ? storedChild : null),
+            getSession: async (id: string) =>
+                id === storedChild.id ? storedChild : null,
             getMachines: async () => [],
             getMessages: async () => [],
             getMessagesAfter: async () => [],
@@ -1505,7 +2076,11 @@ describe('SyncEngine', () => {
             setSessionActive: async () => true,
             getSessionNotificationRecipients: async () => [],
             getSessionNotificationRecipientClientIds: async () => [],
-            addMessage: async (sessionId: string, content: unknown, localId?: string) => ({
+            addMessage: async (
+                sessionId: string,
+                content: unknown,
+                localId?: string
+            ) => ({
                 id: 'stored-1',
                 sessionId,
                 seq: 1,
@@ -1522,18 +2097,25 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         // Drive the reload-all path the way server startup does
         await (engine as any).refreshSession(storedChild.id, { silent: true })
 
         // The persisted flag must have repopulated the in-memory Set
-        expect((engine as any).brainChildInitCompleted.has(storedChild.id)).toBe(true)
+        expect(
+            (engine as any).brainChildInitCompleted.has(storedChild.id)
+        ).toBe(true)
 
         // Now a brain send must NOT enter the init-buffer branch
         const outcome = await engine.sendMessage(storedChild.id, {
@@ -1542,16 +2124,28 @@ describe('SyncEngine', () => {
             localId: 'post-restart-1',
         })
         expect(outcome).not.toMatchObject({ queue: 'brain-child-init' })
-        expect((engine as any).brainChildPendingMessages.get(storedChild.id)).toBeUndefined()
+        expect(
+            (engine as any).brainChildPendingMessages.get(storedChild.id)
+        ).toBeUndefined()
     })
 
     test('marks disconnected sessions inactive in memory and allows heartbeat reactivation', async () => {
-        const setSessionActiveCalls: Array<{ id: string; active: boolean; activeAt: number; namespace: string }> = []
+        const setSessionActiveCalls: Array<{
+            id: string
+            active: boolean
+            activeAt: number
+            namespace: string
+        }> = []
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
             getSession: async () => ({ active: true }),
-            setSessionActive: async (id: string, active: boolean, activeAt: number, namespace: string) => {
+            setSessionActive: async (
+                id: string,
+                active: boolean,
+                activeAt: number,
+                namespace: string
+            ) => {
                 setSessionActiveCalls.push({ id, active, activeAt, namespace })
             },
             setSessionThinking: async () => {},
@@ -1565,12 +2159,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const session = createSession('session-1', {
             machineId: 'machine-1',
@@ -1581,7 +2180,6 @@ describe('SyncEngine', () => {
         session.active = true
         session.activeAt = Date.now() - 5_000
         session.thinking = true
-
         ;(engine as any).sessions.set(session.id, session)
 
         engine.handleSessionDisconnect({ sid: session.id, time: Date.now() })
@@ -1590,7 +2188,11 @@ describe('SyncEngine', () => {
         expect(session.thinking).toBe(false)
         expect(setSessionActiveCalls).toHaveLength(0)
 
-        await engine.handleSessionAlive({ sid: session.id, time: Date.now(), thinking: false })
+        await engine.handleSessionAlive({
+            sid: session.id,
+            time: Date.now(),
+            thinking: false,
+        })
 
         expect(session.active).toBe(true)
         expect(setSessionActiveCalls).toHaveLength(1)
@@ -1603,7 +2205,9 @@ describe('SyncEngine', () => {
     })
 
     test('startup hydrate preserves sessions and machines that already reconnected during reload', async () => {
-        const staleMachine = createMachine('machine-stale', { host: 'stale-host' })
+        const staleMachine = createMachine('machine-stale', {
+            host: 'stale-host',
+        })
         staleMachine.active = true
         staleMachine.activeAt = 1_000
 
@@ -1645,12 +2249,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         store.getSessions = async () => [staleSession, liveSession]
         store.getSession = async (id: string) => {
@@ -1665,10 +2274,14 @@ describe('SyncEngine', () => {
             return null
         }
 
-        const liveMachineInMemory = createMachine(liveMachine.id, { host: 'live-host' })
+        const liveMachineInMemory = createMachine(liveMachine.id, {
+            host: 'live-host',
+        })
         liveMachineInMemory.active = true
         liveMachineInMemory.activeAt = 5_000
-        const staleMachineInMemory = createMachine(staleMachine.id, { host: 'stale-host' })
+        const staleMachineInMemory = createMachine(staleMachine.id, {
+            host: 'stale-host',
+        })
         staleMachineInMemory.active = true
         staleMachineInMemory.activeAt = staleMachine.activeAt
 
@@ -1688,7 +2301,6 @@ describe('SyncEngine', () => {
         })
         staleSessionInMemory.active = true
         staleSessionInMemory.activeAt = staleSession.activeAt
-
         ;(engine as any).machines.set(staleMachine.id, staleMachineInMemory)
         ;(engine as any).machines.set(liveMachine.id, liveMachineInMemory)
         ;(engine as any).sessions.set(staleSession.id, staleSessionInMemory)
@@ -1696,7 +2308,9 @@ describe('SyncEngine', () => {
 
         await (engine as any).reloadAllAsync()
 
-        expect((engine as any).machines.get(staleMachine.id)?.active).toBe(false)
+        expect((engine as any).machines.get(staleMachine.id)?.active).toBe(
+            false
+        )
         expect((engine as any).machines.get(liveMachine.id)?.active).toBe(true)
         expect(engine.getSession(staleSession.id)?.active).toBe(false)
         expect(engine.getSession(liveSession.id)?.active).toBe(true)
@@ -1715,14 +2329,33 @@ describe('SyncEngine', () => {
         storedSession.thinkingAt = 1_700_000_000_050
         storedSession.terminationReason = 'license-expired'
 
-        const setSessionActiveCalls: Array<{ id: string; active: boolean; activeAt: number; namespace: string; terminationReason?: string | null }> = []
-        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> = []
+        const setSessionActiveCalls: Array<{
+            id: string
+            active: boolean
+            activeAt: number
+            namespace: string
+            terminationReason?: string | null
+        }> = []
+        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> =
+            []
         const store = {
             getSessions: async () => [storedSession],
             getSession: async () => storedSession,
             getMachines: async () => [],
-            setSessionActive: async (id: string, active: boolean, activeAt: number, namespace: string, terminationReason?: string | null) => {
-                setSessionActiveCalls.push({ id, active, activeAt, namespace, terminationReason })
+            setSessionActive: async (
+                id: string,
+                active: boolean,
+                activeAt: number,
+                namespace: string,
+                terminationReason?: string | null
+            ) => {
+                setSessionActiveCalls.push({
+                    id,
+                    active,
+                    activeAt,
+                    namespace,
+                    terminationReason,
+                })
                 return true
             },
             setSessionThinking: async () => {},
@@ -1738,12 +2371,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
         ;(engine as any).serverStartedAt = Date.now() - 60_000
 
         const unsubscribe = engine.subscribe((event) => {
@@ -1757,17 +2395,25 @@ describe('SyncEngine', () => {
             time: Date.now(),
             thinking: false,
         })
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         expect(setSessionActiveCalls).toHaveLength(1)
-        const reactivatedActiveAt = engine.getSession(storedSession.id)?.activeAt
+        const reactivatedActiveAt = engine.getSession(
+            storedSession.id
+        )?.activeAt
         expect(reactivatedActiveAt).toBeDefined()
         expect(setSessionActiveCalls[0]?.id).toBe(storedSession.id)
         expect(setSessionActiveCalls[0]?.active).toBe(true)
-        expect(setSessionActiveCalls[0]?.activeAt).toBe(reactivatedActiveAt as number)
-        expect(setSessionActiveCalls[0]?.namespace).toBe(storedSession.namespace)
+        expect(setSessionActiveCalls[0]?.activeAt).toBe(
+            reactivatedActiveAt as number
+        )
+        expect(setSessionActiveCalls[0]?.namespace).toBe(
+            storedSession.namespace
+        )
         expect(setSessionActiveCalls[0]?.terminationReason).toBeNull()
-        expect(engine.getSession(storedSession.id)?.terminationReason).toBeUndefined()
+        expect(
+            engine.getSession(storedSession.id)?.terminationReason
+        ).toBeUndefined()
         expect(sessionUpdatedEvents).toHaveLength(1)
         expect(sessionUpdatedEvents[0]?.sessionId).toBe(storedSession.id)
         expect(sessionUpdatedEvents[0]?.data?.wasThinking).toBe(false)
@@ -1785,7 +2431,8 @@ describe('SyncEngine', () => {
         storedSession.thinking = false
         storedSession.terminationReason = 'license-expired'
 
-        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> = []
+        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> =
+            []
         const store = {
             getSessions: async () => [storedSession],
             getSession: async () => storedSession,
@@ -1799,12 +2446,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const unsubscribe = engine.subscribe((event) => {
             if (event.type === 'session-updated') {
@@ -1833,7 +2485,8 @@ describe('SyncEngine', () => {
         storedSession.thinking = true
         storedSession.thinkingAt = 1_700_000_000_050
 
-        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> = []
+        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> =
+            []
         const store = {
             getSessions: async () => [storedSession],
             getSession: async () => storedSession,
@@ -1852,12 +2505,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
         ;(engine as any).serverStartedAt = Date.now() - 60_000
 
         const unsubscribe = engine.subscribe((event) => {
@@ -1876,9 +2534,15 @@ describe('SyncEngine', () => {
             time: Date.now() + 1_000,
             thinking: false,
         })
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        expect(sessionUpdatedEvents.some(event => event.data?.wasThinking === true && event.data?.thinking === false)).toBe(true)
+        expect(
+            sessionUpdatedEvents.some(
+                (event) =>
+                    event.data?.wasThinking === true &&
+                    event.data?.thinking === false
+            )
+        ).toBe(true)
 
         unsubscribe()
     })
@@ -1896,8 +2560,13 @@ describe('SyncEngine', () => {
         storedSession.thinking = true
         storedSession.thinkingAt = 1_700_000_000_050
 
-        const setSessionThinkingCalls: Array<{ id: string; thinking: boolean; namespace: string }> = []
-        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> = []
+        const setSessionThinkingCalls: Array<{
+            id: string
+            thinking: boolean
+            namespace: string
+        }> = []
+        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> =
+            []
         const store = {
             getSessions: async () => [storedSession],
             getSession: async () => storedSession,
@@ -1913,7 +2582,11 @@ describe('SyncEngine', () => {
                     localId: null,
                 }
             },
-            setSessionThinking: async (id: string, thinking: boolean, namespace: string) => {
+            setSessionThinking: async (
+                id: string,
+                thinking: boolean,
+                namespace: string
+            ) => {
                 setSessionThinkingCalls.push({ id, thinking, namespace })
                 storedSession.thinking = thinking
             },
@@ -1930,12 +2603,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
         ;(engine as any).serverStartedAt = Date.now() - 60_000
 
         const unsubscribe = engine.subscribe((event) => {
@@ -1944,13 +2622,15 @@ describe('SyncEngine', () => {
             }
         })
 
-        await engine.sendMessage(storedSession.id, { text: 'retry after restart' })
+        await engine.sendMessage(storedSession.id, {
+            text: 'retry after restart',
+        })
         await engine.handleSessionAlive({
             sid: storedSession.id,
             time: Date.now(),
             thinking: false,
         })
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         expect(setSessionThinkingCalls).toContainEqual({
             id: storedSession.id,
@@ -1958,7 +2638,11 @@ describe('SyncEngine', () => {
             namespace: storedSession.namespace,
         })
         expect(engine.getSession(storedSession.id)?.thinking).toBe(false)
-        expect(sessionUpdatedEvents.some(event => event.data?.wasThinking === true)).toBe(false)
+        expect(
+            sessionUpdatedEvents.some(
+                (event) => event.data?.wasThinking === true
+            )
+        ).toBe(false)
 
         unsubscribe()
     })
@@ -1978,7 +2662,10 @@ describe('SyncEngine', () => {
             getSession: async () => storedSession,
             getMachines: async () => [],
             setSessionActive: async () => true,
-            setSessionModelConfig: async (_sessionId: string, config: Record<string, unknown>) => {
+            setSessionModelConfig: async (
+                _sessionId: string,
+                config: Record<string, unknown>
+            ) => {
                 setSessionModelConfigCalls.push(config)
             },
             getSessionNotificationRecipientClientIds: async () => [],
@@ -1991,24 +2678,31 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         await engine.handleSessionAlive({
             sid: storedSession.id,
             time: Date.now(),
             thinking: false,
         })
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         expect(engine.getSession(storedSession.id)?.permissionMode).toBe('yolo')
-        expect(setSessionModelConfigCalls).toContainEqual(expect.objectContaining({
-            permissionMode: 'yolo',
-        }))
+        expect(setSessionModelConfigCalls).toContainEqual(
+            expect.objectContaining({
+                permissionMode: 'yolo',
+            })
+        )
     })
 
     test('accepts Codex default permissionMode from heartbeat without treating it as dirty', async () => {
@@ -2025,7 +2719,10 @@ describe('SyncEngine', () => {
             getSession: async () => storedSession,
             getMachines: async () => [],
             setSessionActive: async () => true,
-            setSessionModelConfig: async (_sessionId: string, config: Record<string, unknown>) => {
+            setSessionModelConfig: async (
+                _sessionId: string,
+                config: Record<string, unknown>
+            ) => {
                 setSessionModelConfigCalls.push(config)
             },
             getSessionNotificationRecipientClientIds: async () => [],
@@ -2038,12 +2735,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         await engine.handleSessionAlive({
             sid: storedSession.id,
@@ -2051,12 +2753,16 @@ describe('SyncEngine', () => {
             thinking: false,
             permissionMode: 'default',
         })
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        expect(engine.getSession(storedSession.id)?.permissionMode).toBe('default')
-        expect(setSessionModelConfigCalls).toContainEqual(expect.objectContaining({
-            permissionMode: 'default',
-        }))
+        expect(engine.getSession(storedSession.id)?.permissionMode).toBe(
+            'default'
+        )
+        expect(setSessionModelConfigCalls).toContainEqual(
+            expect.objectContaining({
+                permissionMode: 'default',
+            })
+        )
     })
 
     test('sendMessage neutralizes startup stale thinking before old session-end arrives', async () => {
@@ -2072,7 +2778,8 @@ describe('SyncEngine', () => {
         storedSession.thinking = true
         storedSession.thinkingAt = 1_700_000_000_050
 
-        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> = []
+        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> =
+            []
         const store = {
             getSessions: async () => [storedSession],
             getSession: async () => storedSession,
@@ -2100,12 +2807,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
         ;(engine as any).serverStartedAt = Date.now() - 60_000
 
         const unsubscribe = engine.subscribe((event) => {
@@ -2114,12 +2826,14 @@ describe('SyncEngine', () => {
             }
         })
 
-        await engine.sendMessage(storedSession.id, { text: 'retry after restart' })
+        await engine.sendMessage(storedSession.id, {
+            text: 'retry after restart',
+        })
         await engine.handleSessionEnd({
             sid: storedSession.id,
             time: Date.now(),
         })
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         expect(sessionUpdatedEvents).toHaveLength(1)
         expect(sessionUpdatedEvents[0]?.sessionId).toBe(storedSession.id)
@@ -2139,8 +2853,15 @@ describe('SyncEngine', () => {
         storedSession.thinking = false
         storedSession.terminationReason = 'license-expired'
 
-        const setSessionActiveCalls: Array<{ id: string; active: boolean; activeAt: number; namespace: string; terminationReason?: string | null }> = []
-        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> = []
+        const setSessionActiveCalls: Array<{
+            id: string
+            active: boolean
+            activeAt: number
+            namespace: string
+            terminationReason?: string | null
+        }> = []
+        const sessionUpdatedEvents: Array<{ sessionId?: string; data?: any }> =
+            []
         const store = {
             getSessions: async () => [storedSession],
             getSession: async () => storedSession,
@@ -2157,8 +2878,20 @@ describe('SyncEngine', () => {
                 }
             },
             setSessionThinking: async () => {},
-            setSessionActive: async (id: string, active: boolean, activeAt: number, namespace: string, terminationReason?: string | null) => {
-                setSessionActiveCalls.push({ id, active, activeAt, namespace, terminationReason })
+            setSessionActive: async (
+                id: string,
+                active: boolean,
+                activeAt: number,
+                namespace: string,
+                terminationReason?: string | null
+            ) => {
+                setSessionActiveCalls.push({
+                    id,
+                    active,
+                    activeAt,
+                    namespace,
+                    terminationReason,
+                })
                 storedSession.active = active
                 storedSession.activeAt = activeAt
                 storedSession.terminationReason = terminationReason ?? undefined
@@ -2173,12 +2906,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const unsubscribe = engine.subscribe((event) => {
             if (event.type === 'session-updated') {
@@ -2186,13 +2924,21 @@ describe('SyncEngine', () => {
             }
         })
 
-        await engine.sendMessage(storedSession.id, { text: 'retry after restart' })
+        await engine.sendMessage(storedSession.id, {
+            text: 'retry after restart',
+        })
         await (engine as any).refreshSession(storedSession.id)
 
         expect(setSessionActiveCalls).toHaveLength(1)
         expect(setSessionActiveCalls[0]?.terminationReason).toBeNull()
-        expect(engine.getSession(storedSession.id)?.terminationReason).toBeUndefined()
-        expect(sessionUpdatedEvents.some(event => event.data?.terminationReason !== undefined)).toBe(false)
+        expect(
+            engine.getSession(storedSession.id)?.terminationReason
+        ).toBeUndefined()
+        expect(
+            sessionUpdatedEvents.some(
+                (event) => event.data?.terminationReason !== undefined
+            )
+        ).toBe(false)
 
         unsubscribe()
     })
@@ -2222,12 +2968,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const session = createSession('session-1', {
             machineId: 'machine-1',
@@ -2270,7 +3021,12 @@ describe('SyncEngine', () => {
 
     test('backfills todos by paginating from the start of history', async () => {
         const pageCalls: Array<{ afterSeq: number; limit: number }> = []
-        const setSessionTodosCalls: Array<{ id: string; todos: unknown; todosUpdatedAt: number; namespace: string }> = []
+        const setSessionTodosCalls: Array<{
+            id: string
+            todos: unknown
+            todosUpdatedAt: number
+            namespace: string
+        }> = []
 
         const storedSession: any = createSession('session-1', {
             path: '/tmp/project',
@@ -2305,21 +3061,25 @@ describe('SyncEngine', () => {
                                 content: [
                                     {
                                         content: 'Finish the patch',
-                                        status: 'pending'
-                                    }
-                                ]
-                            }
-                        }
-                    }
-                }
-            }
+                                        status: 'pending',
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                },
+            },
         ]
 
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
             getSession: async () => storedSession,
-            getMessagesAfter: async (sessionId: string, afterSeq: number, limit: number) => {
+            getMessagesAfter: async (
+                sessionId: string,
+                afterSeq: number,
+                limit: number
+            ) => {
                 pageCalls.push({ afterSeq, limit })
                 expect(sessionId).toBe('session-1')
                 if (afterSeq === 0) {
@@ -2330,12 +3090,22 @@ describe('SyncEngine', () => {
                 }
                 return []
             },
-            setSessionTodos: async (id: string, todos: unknown, todosUpdatedAt: number, namespace: string) => {
-                setSessionTodosCalls.push({ id, todos, todosUpdatedAt, namespace })
+            setSessionTodos: async (
+                id: string,
+                todos: unknown,
+                todosUpdatedAt: number,
+                namespace: string
+            ) => {
+                setSessionTodosCalls.push({
+                    id,
+                    todos,
+                    todosUpdatedAt,
+                    namespace,
+                })
                 storedSession.todos = todos as Session['todos']
                 storedSession.todosUpdatedAt = todosUpdatedAt
                 return true
-            }
+            },
         } as any
 
         const io = {
@@ -2345,12 +3115,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const session = await engine.getOrRefreshSession('session-1')
 
@@ -2359,12 +3134,12 @@ describe('SyncEngine', () => {
                 id: 'claude-plan-1',
                 content: 'Finish the patch',
                 status: 'pending',
-                priority: 'medium'
-            }
+                priority: 'medium',
+            },
         ])
         expect(pageCalls).toEqual([
             { afterSeq: 0, limit: 200 },
-            { afterSeq: 200, limit: 200 }
+            { afterSeq: 200, limit: 200 },
         ])
         expect(setSessionTodosCalls).toHaveLength(1)
         expect(setSessionTodosCalls[0]?.todosUpdatedAt).toBe(1_700_000_000_200)
@@ -2372,7 +3147,12 @@ describe('SyncEngine', () => {
 
     test('does not restart todo backfill retries for unchanged history after giving up', async () => {
         const pageCalls: Array<{ afterSeq: number; limit: number }> = []
-        const setSessionTodosCalls: Array<{ id: string; todos: unknown; todosUpdatedAt: number; namespace: string }> = []
+        const setSessionTodosCalls: Array<{
+            id: string
+            todos: unknown
+            todosUpdatedAt: number
+            namespace: string
+        }> = []
 
         const storedSession: any = createSession('session-1', {
             path: '/tmp/project',
@@ -2381,45 +3161,64 @@ describe('SyncEngine', () => {
         storedSession.todos = null
         storedSession.seq = 5
 
-        const todoPage = [{
-            id: 'msg-6',
-            sessionId: 'session-1',
-            seq: 6,
-            createdAt: 1_700_000_000_006,
-            localId: null,
-            content: {
-                role: 'agent',
+        const todoPage = [
+            {
+                id: 'msg-6',
+                sessionId: 'session-1',
+                seq: 6,
+                createdAt: 1_700_000_000_006,
+                localId: null,
                 content: {
-                    type: 'output',
-                    data: {
-                        type: 'attachment',
-                        attachment: {
-                            type: 'todo_reminder',
-                            itemCount: 1,
-                            content: [{
-                                content: 'Retry only after new history arrives',
-                                status: 'pending'
-                            }]
-                        }
-                    }
-                }
-            }
-        }]
+                    role: 'agent',
+                    content: {
+                        type: 'output',
+                        data: {
+                            type: 'attachment',
+                            attachment: {
+                                type: 'todo_reminder',
+                                itemCount: 1,
+                                content: [
+                                    {
+                                        content:
+                                            'Retry only after new history arrives',
+                                        status: 'pending',
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                },
+            },
+        ]
 
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
             getSession: async () => storedSession,
-            getMessagesAfter: async (_sessionId: string, afterSeq: number, limit: number) => {
+            getMessagesAfter: async (
+                _sessionId: string,
+                afterSeq: number,
+                limit: number
+            ) => {
                 pageCalls.push({ afterSeq, limit })
-                return afterSeq === 0 ? todoPage as any : []
+                return afterSeq === 0 ? (todoPage as any) : []
             },
-            setSessionTodos: async (id: string, todos: unknown, todosUpdatedAt: number, namespace: string) => {
-                setSessionTodosCalls.push({ id, todos, todosUpdatedAt, namespace })
+            setSessionTodos: async (
+                id: string,
+                todos: unknown,
+                todosUpdatedAt: number,
+                namespace: string
+            ) => {
+                setSessionTodosCalls.push({
+                    id,
+                    todos,
+                    todosUpdatedAt,
+                    namespace,
+                })
                 storedSession.todos = todos
                 storedSession.todosUpdatedAt = todosUpdatedAt
                 return true
-            }
+            },
         } as any
 
         const io = {
@@ -2429,13 +3228,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
-
+        await new Promise((resolve) => setTimeout(resolve, 0))
         ;(engine as any).todoBackfillStateBySessionId.set('session-1', {
             attempts: 3,
             timer: null,
@@ -2456,14 +3259,18 @@ describe('SyncEngine', () => {
                 id: 'claude-plan-1',
                 content: 'Retry only after new history arrives',
                 status: 'pending',
-                priority: 'medium'
-            }
+                priority: 'medium',
+            },
         ])
         expect(setSessionTodosCalls).toHaveLength(1)
     })
 
     test('refreshSession prefers stored inactive state on tie and heals active archived metadata', async () => {
-        const updateMetadataCalls: Array<{ id: string; metadata: Record<string, unknown>; expectedVersion: number }> = []
+        const updateMetadataCalls: Array<{
+            id: string
+            metadata: Record<string, unknown>
+            expectedVersion: number
+        }> = []
         const storedSession: any = createSession('session-1', {
             path: '/tmp/project',
             host: 'ncu',
@@ -2485,11 +3292,19 @@ describe('SyncEngine', () => {
             getSessions: async () => [],
             getMachines: async () => [],
             getSession: async () => storedSession,
-            updateSessionMetadata: async (id: string, metadata: Record<string, unknown>, expectedVersion: number) => {
+            updateSessionMetadata: async (
+                id: string,
+                metadata: Record<string, unknown>,
+                expectedVersion: number
+            ) => {
                 updateMetadataCalls.push({ id, metadata, expectedVersion })
                 storedSession.metadata = metadata
                 storedSession.metadataVersion = expectedVersion + 1
-                return { result: 'success', version: expectedVersion + 1, value: metadata }
+                return {
+                    result: 'success',
+                    version: expectedVersion + 1,
+                    value: metadata,
+                }
             },
         } as any
 
@@ -2500,12 +3315,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const staleMemorySession = createSession('session-1', {
             path: '/tmp/project',
@@ -2535,8 +3355,12 @@ describe('SyncEngine', () => {
         const healed = await engine.getOrRefreshSession('session-1')
 
         expect(healed?.active).toBe(true)
-        expect((healed?.metadata as Record<string, unknown>).lifecycleState).toBe('active')
-        expect((healed?.metadata as Record<string, unknown>).archivedBy).toBeUndefined()
+        expect(
+            (healed?.metadata as Record<string, unknown>).lifecycleState
+        ).toBe('active')
+        expect(
+            (healed?.metadata as Record<string, unknown>).archivedBy
+        ).toBeUndefined()
         expect(updateMetadataCalls).toHaveLength(1)
         expect(updateMetadataCalls[0]).toEqual({
             id: 'session-1',
@@ -2553,55 +3377,76 @@ describe('SyncEngine', () => {
     })
 
     test('broadcasts session:clear-messages updates to the CLI room', async () => {
-        const cliEmits: Array<{ room: string; event: string; payload: unknown }> = []
+        const cliEmits: Array<{
+            room: string
+            event: string
+            payload: unknown
+        }> = []
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
             clearMessages: async (_sessionId: string, _keepCount: number) => ({
                 deleted: 3,
-                remaining: 2
-            })
+                remaining: 2,
+            }),
         } as any
 
         const io = {
             of: (namespace: string) => ({
                 to: (room: string) => ({
                     emit: (event: string, payload: unknown) => {
-                        cliEmits.push({ room: `${namespace}:${room}`, event, payload })
-                    }
+                        cliEmits.push({
+                            room: `${namespace}:${room}`,
+                            event,
+                            payload,
+                        })
+                    },
                 }),
                 emit() {},
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-        await expect(engine.clearSessionMessages('session-1', 10)).resolves.toEqual({
+        await expect(
+            engine.clearSessionMessages('session-1', 10)
+        ).resolves.toEqual({
             deleted: 3,
-            remaining: 2
+            remaining: 2,
         })
 
         expect(cliEmits).toHaveLength(1)
         expect(cliEmits[0]?.room).toBe('/cli:session:session-1')
         expect(cliEmits[0]?.event).toBe('update')
-        expect(cliEmits[0]?.payload).toEqual(expect.objectContaining({
-            body: expect.objectContaining({
-                t: 'session:clear-messages',
-                sid: 'session-1',
-                keepCount: 10,
-                deleted: 3,
-                remaining: 2
+        expect(cliEmits[0]?.payload).toEqual(
+            expect.objectContaining({
+                body: expect.objectContaining({
+                    t: 'session:clear-messages',
+                    sid: 'session-1',
+                    keepCount: 10,
+                    deleted: 3,
+                    remaining: 2,
+                }),
             })
-        }))
+        )
     })
 
     test('clearSessionMessages clears pending brain callback retry state and cancels stale retry loops', async () => {
-        const patchCalls: Array<{ sessionId: string; patch: Record<string, unknown>; namespace: string }> = []
+        const patchCalls: Array<{
+            sessionId: string
+            patch: Record<string, unknown>
+            namespace: string
+        }> = []
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
@@ -2609,7 +3454,11 @@ describe('SyncEngine', () => {
                 deleted: 4,
                 remaining: 1,
             }),
-            patchSessionMetadata: async (sessionId: string, patch: Record<string, unknown>, namespace: string) => {
+            patchSessionMetadata: async (
+                sessionId: string,
+                patch: Record<string, unknown>,
+                namespace: string
+            ) => {
                 patchCalls.push({ sessionId, patch, namespace })
                 return true
             },
@@ -2622,12 +3471,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const mainSession = createSession('brain-main', {
             source: 'brain',
@@ -2641,9 +3495,18 @@ describe('SyncEngine', () => {
 
         ;(engine as any).sessions.set(mainSession.id, mainSession)
         ;(engine as any).sessions.set(childSession.id, childSession)
-        ;(engine as any).brainChildLastDeliveredCallbackKeyBySessionId.set(childSession.id, 'brain-main:child-session:0')
-        ;(engine as any).brainChildInFlightCallbackKeyBySessionId.set(childSession.id, 'brain-main:child-session:0')
-        ;(engine as any).brainChildPendingRetryCallbackKeyBySessionId.set(childSession.id, 'brain-main:child-session:1')
+        ;(engine as any).brainChildLastDeliveredCallbackKeyBySessionId.set(
+            childSession.id,
+            'brain-main:child-session:0'
+        )
+        ;(engine as any).brainChildInFlightCallbackKeyBySessionId.set(
+            childSession.id,
+            'brain-main:child-session:0'
+        )
+        ;(engine as any).brainChildPendingRetryCallbackKeyBySessionId.set(
+            childSession.id,
+            'brain-main:child-session:1'
+        )
         ;(engine as any).brainCallbackRetryDelaysMs = [25]
 
         let resendAttempts = 0
@@ -2655,16 +3518,28 @@ describe('SyncEngine', () => {
             childSession.id,
             mainSession.id,
             'brain-main:child-session:1',
-            'brain session unavailable',
+            'brain session unavailable'
         )
 
         await engine.clearSessionMessages(childSession.id, 10)
         await retryPromise
 
         expect(resendAttempts).toBe(0)
-        expect((engine as any).brainChildLastDeliveredCallbackKeyBySessionId.get(childSession.id)).toBeUndefined()
-        expect((engine as any).brainChildInFlightCallbackKeyBySessionId.get(childSession.id)).toBeUndefined()
-        expect((engine as any).brainChildPendingRetryCallbackKeyBySessionId.get(childSession.id)).toBeUndefined()
+        expect(
+            (engine as any).brainChildLastDeliveredCallbackKeyBySessionId.get(
+                childSession.id
+            )
+        ).toBeUndefined()
+        expect(
+            (engine as any).brainChildInFlightCallbackKeyBySessionId.get(
+                childSession.id
+            )
+        ).toBeUndefined()
+        expect(
+            (engine as any).brainChildPendingRetryCallbackKeyBySessionId.get(
+                childSession.id
+            )
+        ).toBeUndefined()
         expect(patchCalls).toEqual([
             {
                 sessionId: childSession.id,
@@ -2687,12 +3562,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const machine = createMachine('machine-1', {
             host: 'guang-instance',
@@ -2703,18 +3583,30 @@ describe('SyncEngine', () => {
         machine.activeAt = Date.now() - 5_000
         ;(engine as any).machines.set(machine.id, machine)
 
-        const autoResumeCalls: Array<{ machineId: string; namespace: string }> = []
-        ;(engine as any).autoResumeSessions = async (machineId: string, namespace: string) => {
+        const autoResumeCalls: Array<{ machineId: string; namespace: string }> =
+            []
+        ;(engine as any).autoResumeSessions = async (
+            machineId: string,
+            namespace: string
+        ) => {
             autoResumeCalls.push({ machineId, namespace })
         }
 
-        engine.handleMachineDisconnect({ machineId: machine.id, time: Date.now() })
+        engine.handleMachineDisconnect({
+            machineId: machine.id,
+            time: Date.now(),
+        })
         expect(machine.active).toBe(false)
 
-        await engine.handleMachineAlive({ machineId: machine.id, time: Date.now() })
+        await engine.handleMachineAlive({
+            machineId: machine.id,
+            time: Date.now(),
+        })
 
         expect(machine.active).toBe(true)
-        expect(autoResumeCalls).toEqual([{ machineId: machine.id, namespace: machine.namespace }])
+        expect(autoResumeCalls).toEqual([
+            { machineId: machine.id, namespace: machine.namespace },
+        ])
     })
 
     test('tracks monitor lifecycle from realtime messages', async () => {
@@ -2722,7 +3614,10 @@ describe('SyncEngine', () => {
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
-            setSessionActiveMonitors: async (_id: string, activeMonitors: unknown) => {
+            setSessionActiveMonitors: async (
+                _id: string,
+                activeMonitors: unknown
+            ) => {
                 persisted.push(activeMonitors)
                 return true
             },
@@ -2735,12 +3630,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const session = createSession('session-monitor', {
             host: 'ncu',
@@ -2751,7 +3651,11 @@ describe('SyncEngine', () => {
         await engine.handleRealtimeEvent({
             type: 'message-received',
             sessionId: session.id,
-            message: createMonitorToolCallMessage(1, { id: 'mon-1', description: 'watch logs', timeoutMs: 30_000 }),
+            message: createMonitorToolCallMessage(1, {
+                id: 'mon-1',
+                description: 'watch logs',
+                timeoutMs: 30_000,
+            }),
         })
 
         expect(engine.getSession(session.id)?.activeMonitors).toEqual([])
@@ -2762,21 +3666,27 @@ describe('SyncEngine', () => {
             message: createMonitorTaskStartedMessage(2, 'mon-1', 'task-1'),
         })
 
-        expect(engine.getSession(session.id)?.activeMonitors).toEqual([{
-            id: 'mon-1',
-            description: 'watch logs',
-            command: 'tail -f app.log',
-            persistent: false,
-            timeoutMs: 30_000,
-            startedAt: 1002,
-            taskId: 'task-1',
-            state: 'running',
-        }])
+        expect(engine.getSession(session.id)?.activeMonitors).toEqual([
+            {
+                id: 'mon-1',
+                description: 'watch logs',
+                command: 'tail -f app.log',
+                persistent: false,
+                timeoutMs: 30_000,
+                startedAt: 1002,
+                taskId: 'task-1',
+                state: 'running',
+            },
+        ])
 
         await engine.handleRealtimeEvent({
             type: 'message-received',
             sessionId: session.id,
-            message: createMonitorTaskNotificationMessage(3, 'mon-1', 'completed'),
+            message: createMonitorTaskNotificationMessage(
+                3,
+                'mon-1',
+                'completed'
+            ),
         })
 
         expect(engine.getSession(session.id)?.activeMonitors).toEqual([])
@@ -2798,12 +3708,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const session = createSession('session-monitor', {
             host: 'ncu',
@@ -2839,12 +3754,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const session = createSession('session-monitor', {
             host: 'ncu',
@@ -2855,7 +3775,11 @@ describe('SyncEngine', () => {
         await engine.handleRealtimeEvent({
             type: 'message-received',
             sessionId: session.id,
-            message: createMonitorTaskStartedMessage(1, 'not-a-monitor', 'task-ghost'),
+            message: createMonitorTaskStartedMessage(
+                1,
+                'not-a-monitor',
+                'task-ghost'
+            ),
         })
 
         expect(engine.getSession(session.id)?.activeMonitors).toEqual([])
@@ -2875,42 +3799,51 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const session = createSession('session-monitor', {
             host: 'ncu',
             path: '/tmp/project',
         })
-        session.activeMonitors = [{
-            id: 'mon-3',
-            description: 'watch logs',
-            command: 'tail -f app.log',
-            persistent: false,
-            timeoutMs: null,
-            startedAt: 1001,
-            taskId: 'task-1',
-            state: 'running',
-        }]
+        session.activeMonitors = [
+            {
+                id: 'mon-3',
+                description: 'watch logs',
+                command: 'tail -f app.log',
+                persistent: false,
+                timeoutMs: null,
+                startedAt: 1001,
+                taskId: 'task-1',
+                state: 'running',
+            },
+        ]
         ;(engine as any).sessions.set(session.id, session)
 
         engine.handleSessionDisconnect({ sid: session.id, time: Date.now() })
 
-        await new Promise(resolve => setTimeout(resolve, 0))
-        expect(engine.getSession(session.id)?.activeMonitors).toEqual([{
-            id: 'mon-3',
-            description: 'watch logs',
-            command: 'tail -f app.log',
-            persistent: false,
-            timeoutMs: null,
-            startedAt: 1001,
-            taskId: 'task-1',
-            state: 'unknown',
-        }])
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        expect(engine.getSession(session.id)?.activeMonitors).toEqual([
+            {
+                id: 'mon-3',
+                description: 'watch logs',
+                command: 'tail -f app.log',
+                persistent: false,
+                timeoutMs: null,
+                startedAt: 1001,
+                taskId: 'task-1',
+                state: 'unknown',
+            },
+        ])
     })
 
     test('drops pending monitor metadata when tool result is denied', async () => {
@@ -2927,12 +3860,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const session = createSession('session-monitor', {
             host: 'ncu',
@@ -2949,13 +3887,17 @@ describe('SyncEngine', () => {
             type: 'message-received',
             sessionId: session.id,
             message: createMonitorToolResultMessage(2, 'mon-denied', {
-                permissions: { result: 'denied', decision: 'denied' }
+                permissions: { result: 'denied', decision: 'denied' },
             }),
         })
         await engine.handleRealtimeEvent({
             type: 'message-received',
             sessionId: session.id,
-            message: createMonitorTaskStartedMessage(3, 'mon-denied', 'task-denied'),
+            message: createMonitorTaskStartedMessage(
+                3,
+                'mon-denied',
+                'task-denied'
+            ),
         })
 
         expect(engine.getSession(session.id)?.activeMonitors).toEqual([])
@@ -2968,7 +3910,10 @@ describe('SyncEngine', () => {
             getMachines: async () => [],
             getMessages: async () => [],
             getMessageCount: async () => 0,
-            deleteSession: async (id: string) => { deletedIds.push(id); return true },
+            deleteSession: async (id: string) => {
+                deletedIds.push(id)
+                return true
+            },
             setSessionActive: async () => {},
         } as any
 
@@ -2979,12 +3924,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const TWENTY_FIVE_HOURS_MS = 25 * 60 * 60 * 1000
         const orphan = createSession('orphan-child', {
@@ -3008,7 +3958,10 @@ describe('SyncEngine', () => {
             getMachines: async () => [],
             getMessages: async () => [],
             getMessageCount: async () => 0,
-            deleteSession: async (id: string) => { deletedIds.push(id); return true },
+            deleteSession: async (id: string) => {
+                deletedIds.push(id)
+                return true
+            },
             setSessionActive: async () => {},
         } as any
 
@@ -3019,12 +3972,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const TWENTY_FIVE_HOURS_MS = 25 * 60 * 60 * 1000
         const brain = createSession('brain-parent', { source: 'brain' })
@@ -3052,7 +4010,10 @@ describe('SyncEngine', () => {
             getMachines: async () => [],
             getMessages: async () => [],
             getMessageCount: async () => 0,
-            deleteSession: async (id: string) => { deletedIds.push(id); return true },
+            deleteSession: async (id: string) => {
+                deletedIds.push(id)
+                return true
+            },
             setSessionActive: async () => {},
         } as any
 
@@ -3063,12 +4024,17 @@ describe('SyncEngine', () => {
             }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const ONE_HOUR_MS = 60 * 60 * 1000
         const recent = createSession('recent-orphan', {
@@ -3086,12 +4052,18 @@ describe('SyncEngine', () => {
     })
 
     test('patchSessionMetadata archive-guard strips unarchive fields for user-archived sessions', async () => {
-        const patchCalls: Array<{ id: string; patch: Record<string, unknown> }> = []
+        const patchCalls: Array<{
+            id: string
+            patch: Record<string, unknown>
+        }> = []
 
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
-            patchSessionMetadata: async (id: string, patch: Record<string, unknown>) => {
+            patchSessionMetadata: async (
+                id: string,
+                patch: Record<string, unknown>
+            ) => {
                 patchCalls.push({ id, patch })
                 return true
             },
@@ -3102,12 +4074,17 @@ describe('SyncEngine', () => {
             of: () => ({ to: () => ({ emit() {} }), emit() {} }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const archived = createSession('archived-child', {
             source: 'brain-child',
@@ -3147,12 +4124,17 @@ describe('SyncEngine', () => {
             of: () => ({ to: () => ({ emit() {} }), emit() {} }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const archived = createSession('archived-child-2', {
             source: 'brain-child',
@@ -3178,7 +4160,10 @@ describe('SyncEngine', () => {
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
-            patchSessionMetadata: async (_id: string, patch: Record<string, unknown>) => {
+            patchSessionMetadata: async (
+                _id: string,
+                patch: Record<string, unknown>
+            ) => {
                 patchCalls.push({ patch })
                 return true
             },
@@ -3188,12 +4173,17 @@ describe('SyncEngine', () => {
             of: () => ({ to: () => ({ emit() {} }), emit() {} }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const cliArchived = createSession('cli-archived', {
             source: 'brain-child',
@@ -3212,18 +4202,33 @@ describe('SyncEngine', () => {
 
         expect(result).toEqual({ ok: true })
         expect(patchCalls).toHaveLength(1)
-        expect(patchCalls[0].patch).toEqual({ lifecycleState: 'running', hostPid: 42 })
+        expect(patchCalls[0].patch).toEqual({
+            lifecycleState: 'running',
+            hostPid: 42,
+        })
     })
 
     test('unarchiveSession clears archive stamps and bumps metadata version', async () => {
-        const updateCalls: Array<{ id: string; metadata: unknown; expectedVersion: number }> = []
+        const updateCalls: Array<{
+            id: string
+            metadata: unknown
+            expectedVersion: number
+        }> = []
 
         const store = {
             getSessions: async () => [],
             getMachines: async () => [],
-            updateSessionMetadata: async (id: string, metadata: unknown, expectedVersion: number) => {
+            updateSessionMetadata: async (
+                id: string,
+                metadata: unknown,
+                expectedVersion: number
+            ) => {
                 updateCalls.push({ id, metadata, expectedVersion })
-                return { result: 'success', version: expectedVersion + 1, value: metadata }
+                return {
+                    result: 'success',
+                    version: expectedVersion + 1,
+                    value: metadata,
+                }
             },
         } as any
 
@@ -3231,12 +4236,17 @@ describe('SyncEngine', () => {
             of: () => ({ to: () => ({ emit() {} }), emit() {} }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const archived = createSession('archived-child-3', {
             source: 'brain-child',
@@ -3248,7 +4258,9 @@ describe('SyncEngine', () => {
         })
         ;(engine as any).sessions.set(archived.id, archived)
 
-        const result = await engine.unarchiveSession(archived.id, { actor: 'resume' })
+        const result = await engine.unarchiveSession(archived.id, {
+            actor: 'resume',
+        })
 
         expect(result).toEqual({ ok: true })
         expect(updateCalls).toHaveLength(1)
@@ -3259,7 +4271,10 @@ describe('SyncEngine', () => {
         expect(persisted.lifecycleState).toBe('active')
         expect(persisted.archivedBy).toBeUndefined()
         expect(persisted.archiveReason).toBeUndefined()
-        const after = engine.getSession(archived.id)?.metadata as Record<string, unknown>
+        const after = engine.getSession(archived.id)?.metadata as Record<
+            string,
+            unknown
+        >
         expect(after.lifecycleState).toBe('active')
         expect(after.archivedBy).toBeUndefined()
         expect(engine.getSession(archived.id)?.metadataVersion).toBe(2)
@@ -3282,12 +4297,17 @@ describe('SyncEngine', () => {
             of: () => ({ to: () => ({ emit() {} }), emit() {} }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const archived = createSession('archived-child-4', {
             source: 'brain-child',
@@ -3304,7 +4324,10 @@ describe('SyncEngine', () => {
 
         const result = await engine.unarchiveSession(archived.id)
 
-        expect(result).toEqual({ ok: false, error: 'Metadata version mismatch during unarchive' })
+        expect(result).toEqual({
+            ok: false,
+            error: 'Metadata version mismatch during unarchive',
+        })
         expect(storeCalls).toBe(1)
         expect(refreshCalls).toBe(1)
     })
@@ -3324,12 +4347,17 @@ describe('SyncEngine', () => {
             of: () => ({ to: () => ({ emit() {} }), emit() {} }),
         } as any
 
-        const engine = new SyncEngine(store, io, {} as any, {
-            broadcast() {},
-            broadcastToGroup() {},
-        } as any)
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
         engine.stop()
-        await new Promise(resolve => setTimeout(resolve, 0))
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
         const running = createSession('running-session', {
             source: 'brain-child',

@@ -5,6 +5,12 @@ import type { StoredSession } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
 import { buildResumeContextMessage, createSessionsRoutes } from './sessions'
 
+const TEST_ORGS = [{
+    id: 'org-a',
+    name: 'Org A',
+    role: 'owner' as const,
+}]
+
 function createStoredSession(overrides: Partial<StoredSession>): StoredSession {
     return {
         id: 'session-default',
@@ -14,7 +20,7 @@ function createStoredSession(overrides: Partial<StoredSession>): StoredSession {
         createdAt: 1_700_000_000_000,
         updatedAt: 1_700_000_000_100,
         createdBy: null,
-        orgId: null,
+        orgId: 'org-a',
         metadata: {
             path: '/tmp/default',
         },
@@ -63,12 +69,65 @@ function withRouteDiagnostics<T extends Record<string, unknown>>(engine: T): T &
 }
 
 describe('createSessionsRoutes', () => {
+    it('rejects creating a session when the selected machine belongs to another org', async () => {
+        let spawnCalled = false
+        const fakeEngine = {
+            getMachine: () => ({
+                id: 'machine-1',
+                namespace: 'default',
+                active: true,
+                activeAt: 1_700_000_000_000,
+                updatedAt: 1_700_000_000_100,
+                orgId: 'org-b',
+                metadata: {
+                    host: 'test-host',
+                    platform: 'linux',
+                    yohoRemoteCliVersion: 'v1.0.0',
+                },
+                metadataVersion: 1,
+                daemonState: { status: 'running' },
+                daemonStateVersion: 1,
+                supportedAgents: null,
+            }),
+            spawnSession: async () => {
+                spawnCalled = true
+                return { type: 'success', sessionId: 'session-new' }
+            },
+        }
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            c.set('role', 'developer')
+            c.set('orgs', [
+                { id: 'org-a', name: 'Org A', role: 'owner' as const },
+                { id: 'org-b', name: 'Org B', role: 'owner' as const },
+            ])
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, {} as any))
+
+        const response = await app.request('/api/sessions?orgId=org-a', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                directory: '/tmp/project',
+                agent: 'claude',
+            }),
+        })
+
+        expect(response.status).toBe(403)
+        expect(spawnCalled).toBe(false)
+    })
+
     it('archives sessions by default and still requests runtime shutdown for inactive sessions', async () => {
         const archiveCalls: Array<{ sessionId: string; options: Record<string, unknown> }> = []
         let hardDeleteCalls = 0
         const session = {
             id: 'session-archive',
             namespace: 'ns-test',
+            orgId: 'org-a',
             active: false,
             activeAt: 1_700_000_000_000,
             updatedAt: 1_700_000_000_100,
@@ -113,7 +172,7 @@ describe('createSessionsRoutes', () => {
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
             c.set('role', 'developer')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
@@ -168,12 +227,12 @@ describe('createSessionsRoutes', () => {
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
             c.set('role', 'developer')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
 
-        const response = await app.request('/api/sessions')
+        const response = await app.request('/api/sessions?orgId=org-a')
         expect(response.status).toBe(200)
 
         const payload = await response.json() as { sessions: Array<{ id: string; createdAt: number; lastMessageAt: number | null }> }
@@ -236,12 +295,12 @@ describe('createSessionsRoutes', () => {
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
             c.set('role', 'developer')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
 
-        const response = await app.request('/api/sessions')
+        const response = await app.request('/api/sessions?orgId=org-a')
         expect(response.status).toBe(200)
 
         const payload = await response.json() as { sessions: Array<{ id: string; pendingRequestsCount: number }> }
@@ -276,12 +335,12 @@ describe('createSessionsRoutes', () => {
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
             c.set('role', 'developer')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
 
-        const response = await app.request('/api/sessions')
+        const response = await app.request('/api/sessions?orgId=org-a')
         expect(response.status).toBe(200)
 
         const payload = await response.json() as {
@@ -323,12 +382,12 @@ describe('createSessionsRoutes', () => {
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
             c.set('role', 'developer')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
 
-        const response = await app.request('/api/sessions')
+        const response = await app.request('/api/sessions?orgId=org-a')
         expect(response.status).toBe(200)
 
         const payload = await response.json() as {
@@ -389,12 +448,12 @@ describe('createSessionsRoutes', () => {
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
             c.set('role', 'developer')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
 
-        const response = await app.request('/api/sessions')
+        const response = await app.request('/api/sessions?orgId=org-a')
         expect(response.status).toBe(200)
 
         const payload = await response.json() as {
@@ -441,12 +500,12 @@ describe('createSessionsRoutes', () => {
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
             c.set('role', 'developer')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
 
-        const response = await app.request('/api/sessions')
+        const response = await app.request('/api/sessions?orgId=org-a')
         expect(response.status).toBe(200)
 
         const payload = await response.json() as {
@@ -654,6 +713,7 @@ describe('createSessionsRoutes', () => {
         const session = {
             id: 'brain-session',
             namespace: 'default',
+            orgId: 'org-a',
             seq: 0,
             createdAt: 0,
             updatedAt: 0,
@@ -688,7 +748,7 @@ describe('createSessionsRoutes', () => {
         const fakeEngine = withRouteDiagnostics({
             getSession: (id: string) => id === session.id ? session : null,
             getOrRefreshSession: async (id: string) => id === session.id ? session : null,
-            getMachineByNamespace: () => ({ id: 'machine-1', active: true, metadata: {}, namespace: 'default' }),
+            getMachineByNamespace: () => ({ id: 'machine-1', active: true, metadata: {}, namespace: 'default', orgId: 'org-a' }),
             checkPathsExist: async () => ({ '/tmp/brain': true }),
             spawnSession: async (_machineId: string, _directory: string, _agent: string, _yolo: boolean | undefined, options?: Record<string, unknown>) => {
                 spawnCalls.push(options)
@@ -719,7 +779,7 @@ describe('createSessionsRoutes', () => {
             c.set('role', 'developer')
             c.set('email', 'dev@example.com')
             c.set('name', 'Dev')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
@@ -742,6 +802,7 @@ describe('createSessionsRoutes', () => {
         const session = {
             id: 'brain-child-invalid',
             namespace: 'default',
+            orgId: 'org-a',
             seq: 0,
             createdAt: 0,
             updatedAt: 0,
@@ -773,7 +834,7 @@ describe('createSessionsRoutes', () => {
         const fakeEngine = withRouteDiagnostics({
             getSession: (id: string) => id === session.id ? session : null,
             getOrRefreshSession: async (id: string) => id === session.id ? session : null,
-            getMachineByNamespace: () => ({ id: 'machine-1', active: true, metadata: {}, namespace: 'default' }),
+            getMachineByNamespace: () => ({ id: 'machine-1', active: true, metadata: {}, namespace: 'default', orgId: 'org-a' }),
             checkPathsExist: async () => ({ '/tmp/brain-child': true }),
             spawnSession: async () => {
                 spawnCalled = true
@@ -797,7 +858,7 @@ describe('createSessionsRoutes', () => {
             c.set('role', 'developer')
             c.set('email', 'dev@example.com')
             c.set('name', 'Dev')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
@@ -823,13 +884,14 @@ describe('createSessionsRoutes', () => {
         const fakeEngine = {
             getSession: (id: string) => id === 'brain-session-new' ? createdSession : null,
             getMachine: (id: string) => id === 'machine-1'
-                ? { id: 'machine-1', active: true, metadata: { homeDir: '/home/dev' }, namespace: 'default' }
+                ? { id: 'machine-1', active: true, metadata: { homeDir: '/home/dev' }, namespace: 'default', orgId: 'org-a' }
                 : null,
             spawnSession: async (machineId: string, directory: string, agent: string, yolo: boolean | undefined, options?: Record<string, unknown>) => {
                 spawnCalls.push({ machineId, directory, agent, yolo, options })
                 createdSession = {
                     id: 'brain-session-new',
                     namespace: 'default',
+                    orgId: 'org-a',
                     active: true,
                     metadata: {
                         path: directory,
@@ -862,12 +924,12 @@ describe('createSessionsRoutes', () => {
             c.set('role', 'developer')
             c.set('email', 'dev@example.com')
             c.set('name', 'Dev')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
 
-        const response = await app.request('/api/brain/sessions', {
+        const response = await app.request('/api/brain/sessions?orgId=org-a', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
@@ -913,6 +975,7 @@ describe('createSessionsRoutes', () => {
                     active: true,
                     metadata: { homeDir: '/home/dev' },
                     namespace: 'default',
+                    orgId: 'org-a',
                     supportedAgents: ['claude', 'codex'],
                 }
                 : null,
@@ -921,6 +984,7 @@ describe('createSessionsRoutes', () => {
                 createdSession = {
                     id: 'brain-session-sanitized',
                     namespace: 'default',
+                    orgId: 'org-a',
                     active: true,
                     metadata: {
                         path: directory,
@@ -977,7 +1041,7 @@ describe('createSessionsRoutes', () => {
             c.set('role', 'developer')
             c.set('email', 'dev@example.com')
             c.set('name', 'Dev')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
@@ -1019,6 +1083,7 @@ describe('createSessionsRoutes', () => {
                     active: true,
                     metadata: { homeDir: '/home/dev' },
                     namespace: 'default',
+                    orgId: 'org-a',
                     supportedAgents: ['claude'],
                 }
                 : null,
@@ -1027,6 +1092,7 @@ describe('createSessionsRoutes', () => {
                 createdSession = {
                     id: 'brain-session-cross-machine',
                     namespace: 'default',
+                    orgId: 'org-a',
                     active: true,
                     metadata: {
                         path: directory,
@@ -1060,12 +1126,12 @@ describe('createSessionsRoutes', () => {
             c.set('role', 'developer')
             c.set('email', 'dev@example.com')
             c.set('name', 'Dev')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
 
-        const response = await app.request('/api/brain/sessions', {
+        const response = await app.request('/api/brain/sessions?orgId=org-a', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
@@ -1097,13 +1163,14 @@ describe('createSessionsRoutes', () => {
         const fakeEngine = {
             getSession: (id: string) => id === 'brain-session-new' ? createdSession : null,
             getMachine: (id: string) => id === 'machine-1'
-                ? { id: 'machine-1', active: true, metadata: { homeDir: '/home/dev' }, namespace: 'default', supportedAgents: ['codex'] }
+                ? { id: 'machine-1', active: true, metadata: { homeDir: '/home/dev' }, namespace: 'default', orgId: 'org-a', supportedAgents: ['codex'] }
                 : null,
             spawnSession: async (_machineId: string, directory: string, _agent: string, _yolo: boolean | undefined, options?: Record<string, unknown>) => {
                 spawnCalls.push(options)
                 createdSession = {
                     id: 'brain-session-new',
                     namespace: 'default',
+                    orgId: 'org-a',
                     active: true,
                     metadata: {
                         path: directory,
@@ -1137,12 +1204,12 @@ describe('createSessionsRoutes', () => {
             c.set('role', 'developer')
             c.set('email', 'dev@example.com')
             c.set('name', 'Dev')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
 
-        const response = await app.request('/api/brain/sessions', {
+        const response = await app.request('/api/brain/sessions?orgId=org-a', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
@@ -1173,7 +1240,7 @@ describe('createSessionsRoutes', () => {
         let spawnCalled = false
         const fakeEngine = {
             getMachine: (id: string) => id === 'machine-1'
-                ? { id: 'machine-1', active: true, metadata: {}, namespace: 'default' }
+                ? { id: 'machine-1', active: true, metadata: {}, namespace: 'default', orgId: 'org-a' }
                 : null,
             spawnSession: async () => {
                 spawnCalled = true
@@ -1202,7 +1269,7 @@ describe('createSessionsRoutes', () => {
             c.set('role', 'developer')
             c.set('email', 'dev@example.com')
             c.set('name', 'Dev')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
@@ -1227,12 +1294,13 @@ describe('createSessionsRoutes', () => {
         let spawnCalled = false
         const activeSession = {
             id: 'session-new',
+            orgId: 'org-a',
             active: true,
             metadata: { path: '/tmp/project' },
         }
         const fakeEngine = {
             getMachine: (id: string) => id === 'machine-1'
-                ? { id: 'machine-1', active: true, metadata: {}, namespace: 'default' }
+                ? { id: 'machine-1', active: true, metadata: {}, namespace: 'default', orgId: 'org-a' }
                 : null,
             getSession: () => activeSession,
             spawnSession: async () => {
@@ -1264,7 +1332,7 @@ describe('createSessionsRoutes', () => {
             c.set('role', 'developer')
             c.set('email', 'dev@example.com')
             c.set('name', 'Dev')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
@@ -1291,12 +1359,13 @@ describe('createSessionsRoutes', () => {
         const activeSession = {
             id: 'session-new',
             namespace: 'default',
+            orgId: 'org-a',
             active: true,
             metadata: { path: '/tmp/project' },
         }
         const fakeEngine = {
             getMachine: (id: string) => id === 'machine-1'
-                ? { id: 'machine-1', active: true, metadata: {}, namespace: 'default' }
+                ? { id: 'machine-1', active: true, metadata: {}, namespace: 'default', orgId: 'org-a' }
                 : null,
             getSession: () => activeSession,
             spawnSession: async () => ({ type: 'success', sessionId: 'session-new' }),
@@ -1329,7 +1398,7 @@ describe('createSessionsRoutes', () => {
             c.set('role', 'developer')
             c.set('email', 'dev@example.com')
             c.set('name', 'Dev')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             c.set('identityActor', {
                 identityId: 'identity-1',
                 personId: 'person-1',
@@ -1384,6 +1453,7 @@ describe('createSessionsRoutes', () => {
         const session = {
             id: 'brain-child-old',
             namespace: 'default',
+            orgId: 'org-a',
             seq: 0,
             createdAt: 0,
             updatedAt: 0,
@@ -1429,7 +1499,7 @@ describe('createSessionsRoutes', () => {
                 return null
             },
             getOrRefreshSession: async (id: string) => id === session.id ? session : null,
-            getMachineByNamespace: () => ({ id: 'machine-1', active: true, metadata: {}, namespace: 'default' }),
+            getMachineByNamespace: () => ({ id: 'machine-1', active: true, metadata: {}, namespace: 'default', orgId: 'org-a' }),
             checkPathsExist: async () => ({ '/tmp/brain-child': true }),
             spawnSession: async (_machineId: string, _directory: string, _agent: string, _yolo: boolean | undefined, options?: Record<string, unknown>) => {
                 spawnCalls.push(options)
@@ -1463,7 +1533,7 @@ describe('createSessionsRoutes', () => {
             c.set('role', 'developer')
             c.set('email', 'dev@example.com')
             c.set('name', 'Dev')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
@@ -1497,6 +1567,7 @@ describe('createSessionsRoutes', () => {
         const session = {
             id: 'brain-main-old',
             namespace: 'default',
+            orgId: 'org-a',
             seq: 0,
             createdAt: 0,
             updatedAt: 0,
@@ -1534,6 +1605,7 @@ describe('createSessionsRoutes', () => {
         const childSession = {
             id: 'brain-child-1',
             namespace: 'default',
+            orgId: 'org-a',
             metadata: {
                 path: '/tmp/brain-child',
                 source: 'BRAIN-CHILD',
@@ -1551,7 +1623,7 @@ describe('createSessionsRoutes', () => {
                 return null
             },
             getOrRefreshSession: async (id: string) => id === session.id ? session : null,
-            getMachineByNamespace: () => ({ id: 'machine-1', active: true, metadata: {}, namespace: 'default' }),
+            getMachineByNamespace: () => ({ id: 'machine-1', active: true, metadata: {}, namespace: 'default', orgId: 'org-a' }),
             getSessionsByNamespace: () => [session, childSession],
             checkPathsExist: async () => ({ '/tmp/brain-main': true }),
             spawnSession: async () => {
@@ -1577,7 +1649,7 @@ describe('createSessionsRoutes', () => {
                 namespace: session.namespace,
                 metadata: id === createdSession.id ? createdSession.metadata : session.metadata,
                 active: false,
-                orgId: 'org-1',
+                orgId: 'org-a',
             }),
             setSessionActive: async () => true,
             setSessionCreatedBy: async () => true,
@@ -1590,7 +1662,7 @@ describe('createSessionsRoutes', () => {
             c.set('role', 'developer')
             c.set('email', 'dev@example.com')
             c.set('name', 'Dev')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
@@ -1645,12 +1717,13 @@ describe('createSessionsRoutes', () => {
             const fakeEngine = {
                 getSession: (id: string) => id === 'brain-session-self' ? createdSession : null,
                 getMachine: (id: string) => id === 'machine-1'
-                    ? { id: 'machine-1', active: true, metadata: { homeDir: '/home/dev' }, namespace: 'default' }
+                    ? { id: 'machine-1', active: true, metadata: { homeDir: '/home/dev' }, namespace: 'default', orgId: 'org-a' }
                     : null,
                 spawnSession: async (machineId: string, directory: string, _agent: string, _yolo: boolean | undefined, options?: Record<string, unknown>) => {
                     createdSession = {
                         id: 'brain-session-self',
                         namespace: 'default',
+                        orgId: 'org-a',
                         active: true,
                         metadata: {
                             path: directory,
@@ -1675,7 +1748,7 @@ describe('createSessionsRoutes', () => {
             }
 
             const fakeStore = {
-                getBrainConfig: async () => ({
+                getBrainConfigByOrg: async () => ({
                     agent: 'claude',
                     claudeModelMode: 'sonnet',
                     codexModel: 'gpt-5.4',
@@ -1690,6 +1763,7 @@ describe('createSessionsRoutes', () => {
                 getAIProfile: async () => ({
                     id: 'profile-1',
                     namespace: 'default',
+                    orgId: 'org-a',
                     name: 'K1',
                     role: 'architect',
                     specialties: ['TypeScript'],
@@ -1717,12 +1791,12 @@ describe('createSessionsRoutes', () => {
                 c.set('role', 'developer')
                 c.set('email', 'dev@example.com')
                 c.set('name', 'Dev')
-                c.set('orgs', [])
+                c.set('orgs', TEST_ORGS)
                 await next()
             })
             app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
 
-            const response = await app.request('/api/brain/sessions', {
+            const response = await app.request('/api/brain/sessions?orgId=org-a', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({

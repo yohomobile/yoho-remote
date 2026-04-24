@@ -5,9 +5,9 @@
 | 术语 | 定义 |
 | --- | --- |
 | **K1** | Brain 里的稳定 AI 人格。通过 `selfSystem` 注入 `appendSystemPrompt`，本质是「pers­ona + long-term self-memory」，不是独立的 runtime。目前通过 Feishu bot 对外暴露。 |
-| **M4** | macmini 上运行的 **OpenClaw** 实例。是一个独立的 agent gateway/CLI（作业、插件、active memory、memory dreaming），通过 `https://m4.yohomobile.dev` 暴露，有自己的 Feishu/Telegram 通道。 |
+| **M4** | macmini 上运行的 **OpenClaw** 实例。是一个独立的 agent gateway/CLI（作业、插件、active memory、memory dreaming），通过 `https://m4.yohomobile.dev` 暴露，有自己的 Feishu / 自有 IM 通道。 |
 | **H4** | **HermesAgent**（`NousResearch/hermes-agent`）。独立 Python agent，有自己的 memory_manager、procedural skills、background review、cron。本地快照：`~/.yoho-remote/brain-workspace/tmp/hermes-agent-review`。 |
-| **IM Channel** | 一条 IM 通道的接入层：Feishu / DingTalk / WeCom / Slack / Telegram。由 `IMAdapter` 抽象。 |
+| **IM Channel** | 一条 IM 通道的接入层：Feishu / DingTalk / WeCom / Slack。由 `IMAdapter` 抽象。 |
 | **Agent Runtime** | 真正执行任务、产生回复的后端：Brain-local（spawn Claude Code / Codex）、M4（OpenClaw gateway）、H4（Hermes HTTP/CLI）。由 `RuntimeAdapter` 抽象（本文档提出）。 |
 | **Identity Bridge** | 把 `(platform, senderId, email, ...)` 桥接到稳定 `personSlug` 的解析层。写入 yoho-memory `team/members/` 与候选区。 |
 | **Routing** | 一条 chat + 一条 message → 指派给哪个 runtime 的策略层。 |
@@ -111,7 +111,7 @@ server/src/brain/                   # 保留，继续是 Brain-local runtime 的
 | 拆分原因 | 说明 |
 | --- | --- |
 | `bridge/` vs `channels/` 分离 | 平台适配器只做 I/O，不持有 chat state；多平台共享 `MessageBridge`。 |
-| `identity/` 独立 | 身份解析是横切关注点，未来 Web / Telegram / 开放 API 都要用。 |
+| `identity/` 独立 | 身份解析是横切关注点，未来 Web / 开放 API 都要用。 |
 | `session/` 独立 | `feishuChatSessions` 改名为通用 `im_chat_sessions`，schema 加 `platform` 列。 |
 | `routing/` 独立 | 路由策略可配置、可测试，避免嵌在 BrainBridge 的 `if/else` 里膨胀。 |
 | `runtimes/` 统一 | K1/M4/H4 对 bridge 层看起来同构，新增 runtime = 新增一个目录。 |

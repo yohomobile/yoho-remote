@@ -45,7 +45,7 @@ describe('createIdentityRoutes', () => {
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ candidates: [candidate] })
         expect(calls).toEqual([{
-            namespace: 'default',
+            namespace: 'org-1',
             orgId: 'org-1',
             status: 'open',
             limit: 50,
@@ -64,7 +64,7 @@ describe('createIdentityRoutes', () => {
         expect(await response.json()).toEqual({ error: 'Insufficient permissions' })
     })
 
-    it('allows default namespace operators to decide candidates and broadcasts a candidate update', async () => {
+    it('allows operators to decide candidates within an org and broadcasts a candidate update', async () => {
         const events: unknown[] = []
         const decisions: Array<Record<string, unknown>> = []
         const app = createApp({
@@ -83,7 +83,7 @@ describe('createIdentityRoutes', () => {
             events,
         })
 
-        const response = await app.request('/api/identity/candidates/cand-1/decision', {
+        const response = await app.request('/api/identity/candidates/cand-1/decision?orgId=org-1', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
@@ -114,9 +114,9 @@ describe('createIdentityRoutes', () => {
         }])
         expect(events).toEqual([{
             type: 'identity-candidate-updated',
-            namespace: 'default',
+            namespace: 'org-1',
             data: {
-                orgId: null,
+                orgId: 'org-1',
                 candidateId: 'cand-1',
                 identityId: 'ident-1',
                 status: 'confirmed',
@@ -146,7 +146,7 @@ describe('createIdentityRoutes', () => {
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ audits: [audit] })
         expect(calls).toEqual([{
-            namespace: 'default',
+            namespace: 'org-1',
             orgId: 'org-1',
             personId: 'person-source',
             identityId: null,
@@ -154,7 +154,7 @@ describe('createIdentityRoutes', () => {
         }])
     })
 
-    it('allows operators to merge and unmerge persons in the default namespace', async () => {
+    it('allows operators to merge and unmerge persons within an org', async () => {
         const calls: Array<Record<string, unknown>> = []
         const app = createApp({
             mergePersons: async (data: Record<string, unknown>) => {
@@ -178,7 +178,7 @@ describe('createIdentityRoutes', () => {
             email: 'operator@example.com',
         })
 
-        const mergeResponse = await app.request('/api/identity/persons/person-source/merge', {
+        const mergeResponse = await app.request('/api/identity/persons/person-source/merge?orgId=org-1', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
@@ -186,7 +186,7 @@ describe('createIdentityRoutes', () => {
                 reason: 'duplicate person',
             }),
         })
-        const unmergeResponse = await app.request('/api/identity/persons/person-source/unmerge', {
+        const unmergeResponse = await app.request('/api/identity/persons/person-source/unmerge?orgId=org-1', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
@@ -216,8 +216,8 @@ describe('createIdentityRoutes', () => {
             {
                 op: 'merge',
                 data: {
-                    namespace: 'default',
-                    orgId: null,
+                    namespace: 'org-1',
+                    orgId: 'org-1',
                     sourcePersonId: 'person-source',
                     targetPersonId: 'person-target',
                     reason: 'duplicate person',
@@ -227,8 +227,8 @@ describe('createIdentityRoutes', () => {
             {
                 op: 'unmerge',
                 data: {
-                    namespace: 'default',
-                    orgId: null,
+                    namespace: 'org-1',
+                    orgId: 'org-1',
                     personId: 'person-source',
                     reason: 'rollback duplicate merge',
                     decidedBy: 'operator@example.com',
@@ -273,7 +273,7 @@ describe('createIdentityRoutes', () => {
             },
         })
         expect(calls).toEqual([{
-            namespace: 'default',
+            namespace: 'org-1',
             orgId: 'org-1',
             linkId: 'link-1',
             reason: 'wrong Feishu account binding',

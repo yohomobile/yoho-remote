@@ -1,5 +1,4 @@
 import { useMemo } from 'react'
-import { getTelegramWebApp, isTelegramApp } from './useTelegram'
 
 export type HapticStyle = 'light' | 'medium' | 'heavy' | 'rigid' | 'soft'
 export type HapticNotification = 'error' | 'success' | 'warning'
@@ -14,11 +13,9 @@ export type PlatformHaptic = {
 }
 
 export type Platform = {
-    /** Whether running in Telegram Mini App */
-    isTelegram: boolean
     /** Whether using a touch device (coarse pointer) */
     isTouch: boolean
-    /** Haptic feedback (falls back to Vibration API on browser) */
+    /** Haptic feedback (Vibration API when available) */
     haptic: PlatformHaptic
 }
 
@@ -39,43 +36,25 @@ function vibrate(pattern: number | number[]) {
     navigator.vibrate?.(pattern)
 }
 
-// Lazy haptic - checks for Telegram SDK on each call
 const haptic: PlatformHaptic = {
     impact: (style: HapticStyle) => {
-        const tg = getTelegramWebApp()
-        if (tg?.HapticFeedback) {
-            tg.HapticFeedback.impactOccurred(style)
-        } else {
-            vibrate(vibrationPatterns[style])
-        }
+        vibrate(vibrationPatterns[style])
     },
     notification: (type: HapticNotification) => {
-        const tg = getTelegramWebApp()
-        if (tg?.HapticFeedback) {
-            tg.HapticFeedback.notificationOccurred(type)
-        } else {
-            vibrate(vibrationPatterns[type])
-        }
+        vibrate(vibrationPatterns[type])
     },
     selection: () => {
-        const tg = getTelegramWebApp()
-        if (tg?.HapticFeedback) {
-            tg.HapticFeedback.selectionChanged()
-        } else {
-            vibrate(vibrationPatterns.selection)
-        }
+        vibrate(vibrationPatterns.selection)
     }
 }
 
 export function usePlatform(): Platform {
-    const isTelegram = useMemo(() => isTelegramApp(), [])
     const isTouch = useMemo(
         () => typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches,
         []
     )
 
     return {
-        isTelegram,
         isTouch,
         haptic
     }
@@ -85,7 +64,6 @@ export function usePlatform(): Platform {
 export function getPlatform(): Platform {
     const isTouch = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
     return {
-        isTelegram: isTelegramApp(),
         isTouch,
         haptic
     }

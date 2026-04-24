@@ -140,7 +140,7 @@ export type StoredOrgLicense = {
 }
 
 // Identity Graph 相关类型
-export type IdentityChannel = 'keycloak' | 'feishu' | 'wecom' | 'custom-im' | 'telegram' | 'cli'
+export type IdentityChannel = 'keycloak' | 'feishu' | 'wecom' | 'custom-im' | 'cli'
 export type PersonType = 'human' | 'shared' | 'service' | 'bot'
 export type PersonStatus = 'active' | 'suspended' | 'departed' | 'merged'
 export type IdentityAccountType = 'human' | 'shared' | 'service' | 'bot' | 'unknown'
@@ -365,13 +365,16 @@ export type StoredSessionAutoIterConfig = {
 }
 
 // AI Profile 相关类型
-export type AIProfileRole = 'developer' | 'architect' | 'reviewer' | 'pm' | 'tester' | 'devops'
+export type AIProfileRoleLegacy = 'developer' | 'architect' | 'reviewer' | 'pm' | 'tester' | 'devops'
+export type AIProfileRoleMbti = 'INTP' | 'INTJ' | 'ENTP' | 'ISTJ' | 'ISTP' | 'ENFP' | 'INFJ'
+export type AIProfileRole = AIProfileRoleLegacy | AIProfileRoleMbti
 export type AIProfileStatus = 'idle' | 'working' | 'resting'
 export type AIProfileMemoryType = 'context' | 'preference' | 'knowledge' | 'experience'
 
 export type StoredAIProfile = {
     id: string
     namespace: string
+    orgId: string | null
     name: string
     role: AIProfileRole
     specialties: string[]
@@ -670,6 +673,7 @@ export type BrainAgent = 'claude' | 'codex'
 
 export type StoredBrainConfig = {
     namespace: string
+    orgId: string | null
     /** Agent 类型：claude (Claude Code) 或 codex (OpenAI Codex) */
     agent: BrainAgent
     /** Claude 模型模式 (agent=claude 时生效) */
@@ -678,6 +682,16 @@ export type StoredBrainConfig = {
     codexModel: string
     /** 额外 JSON 配置（预留扩展） */
     extra: Record<string, unknown>
+    updatedAt: number
+    updatedBy: string | null
+}
+
+export type StoredUserSelfSystemConfig = {
+    orgId: string
+    userEmail: string
+    enabled: boolean
+    defaultProfileId: string | null
+    memoryProvider: 'yoho-memory' | 'none'
     updatedAt: number
     updatedBy: string | null
 }

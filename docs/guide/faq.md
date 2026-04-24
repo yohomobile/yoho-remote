@@ -40,17 +40,15 @@ For internet access, set up a tunnel (Cloudflare Tunnel, Tailscale, or ngrok).
 The `CLI_API_TOKEN` is a shared secret that authenticates:
 - CLI connections to the server
 - Web app logins
-- Telegram account binding
-
 It's auto-generated on first server start and saved to `~/.yoho-remote/settings.json`.
 
 ### Do you support multiple accounts?
 
 Yes. We support lightweight multi-account access via namespaces for shared team servers. See [Namespace (Advanced)](/guide/namespace).
 
-### Can I use Yoho Remote without Telegram?
+### Can I use Yoho Remote only from the web app?
 
-Yes. Telegram is optional. You can use the web app directly in any browser or install it as a PWA.
+Yes. Open the web app directly in any browser or install it as a PWA.
 
 ## Usage
 

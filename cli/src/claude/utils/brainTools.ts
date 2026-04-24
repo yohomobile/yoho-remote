@@ -20,6 +20,7 @@ import {
     type BrainChildAgent,
     type BrainSessionPreferences,
 } from '@/utils/brainSessionPreferences'
+import { getSessionOrchestrationChildSourceForParentSource } from '@/utils/sessionOrchestration'
 
 /** Context window budget by model mode (matches web/src/chat/modelConfig.ts) */
 function getContextBudget(modelMode?: string): number {
@@ -42,6 +43,8 @@ interface BrainToolsOptions {
     brainSessionId: string
     sessionCaller?: string | null
     brainPreferences?: BrainSessionPreferences | null
+    orchestrationParentSource?: string | null
+    orchestrationChildSource?: string | null
 }
 
 export function buildBrainCreateDescription(modelSelectionGuide: string): string {
@@ -71,6 +74,10 @@ export function registerBrainTools(
     const initialToolCount = toolNames.length
     const { apiClient: api, machineId, brainSessionId, sessionCaller } = options
     const brainPreferences = options.brainPreferences ?? null
+    const orchestrationParentSource = options.orchestrationParentSource?.trim() || 'brain'
+    const orchestrationChildSource = options.orchestrationChildSource?.trim()
+        || getSessionOrchestrationChildSourceForParentSource(orchestrationParentSource)
+        || 'brain-child'
     const allowedChildAgents = getAllowedBrainChildAgents(brainPreferences)
     const defaultChildAgent: BrainChildAgent = allowedChildAgents.includes('claude')
         ? 'claude'
@@ -315,7 +322,7 @@ export function registerBrainTools(
                     agent: opts.agent,
                     modelMode: opts.modelMode,
                     codexModel: opts.codexModel,
-                    source: 'brain-child',
+                    source: orchestrationChildSource,
                     mainSessionId: brainSessionId,
                     caller: sessionCaller ?? undefined,
                     brainPreferences: brainPreferences ?? undefined,
@@ -417,13 +424,13 @@ export function registerBrainTools(
             mainSessionId: brainSessionId,
             directory: args.directory,
             flavor: args.agent,
-            source: 'brain-child',
+            source: orchestrationChildSource,
         })
 
         const ranked = search.results
             .map((result) => {
                 const metadata = result.metadata
-                if (!metadata || metadata.source !== 'brain-child') return null
+                if (!metadata || metadata.source !== orchestrationChildSource) return null
                 if (metadata.mainSessionId !== brainSessionId) return null
                 if (metadata.path !== args.directory) return null
                 if (!metadata.machineId || !args.candidateMachineIds.has(metadata.machineId)) return null
@@ -566,7 +573,7 @@ export function registerBrainTools(
             // Step 2: Find reusable child session on the selected machine
             const candidates = data.sessions.filter((s) => {
                 if (!s.metadata) return false
-                if (s.metadata.source !== 'brain-child') return false
+                if (s.metadata.source !== orchestrationChildSource) return false
                 if (s.metadata.mainSessionId !== brainSessionId) return false
                 if (s.metadata.path !== args.directory) return false
                 if (!s.metadata.machineId || !candidateMachineIds.has(s.metadata.machineId)) return false
@@ -740,12 +747,12 @@ export function registerBrainTools(
             }
 
             const metadataPatch: Record<string, unknown> = {}
-            if (session?.metadata?.source === 'brain-child') {
+            if (session?.metadata?.source === orchestrationChildSource) {
                 if (!session.metadata?.mainSessionId) {
                     return {
                         content: [{
                             type: 'text' as const,
-                            text: `Invariant violation: brain-child session ${args.sessionId} 缺少 mainSessionId，已拒绝发送。请先修复该 session 的元数据再重试。`,
+                            text: `Invariant violation: ${orchestrationChildSource} session ${args.sessionId} 缺少 mainSessionId，已拒绝发送。请先修复该 session 的元数据再重试。`,
                         }],
                         isError: true,
                     }
@@ -762,7 +769,7 @@ export function registerBrainTools(
                 logger.debug(`[brain] Repaired missing brain metadata for child session ${args.sessionId}`)
             }
 
-            const delivery = await api.sendMessageToSession(args.sessionId, args.message, 'brain', childSessionScope)
+            const delivery = await api.sendMessageToSession(args.sessionId, args.message, orchestrationParentSource, childSessionScope)
 
             if (delivery.status === 'delivered') {
                 logger.debug(`[brain] Message delivered to session ${args.sessionId}, returning immediately (async callback mode)`)
@@ -1188,7 +1195,7 @@ export function registerBrainTools(
     // ===== 12. session_set_config / session_set_model_mode =====
     const setConfigSchema: z.ZodTypeAny = z.object({
         sessionId: z.string().describe('目标 session ID'),
-        model: z.string().optional().describe('要切换到的模型。Claude 常见值：sonnet / opus / opus-4-7 / glm-5.1；Codex 常见值：gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex / gpt-5.3-codex-spark / gpt-5.2 / gpt-5.2-codex / gpt-5.1-codex-max / gpt-5.1-codex-mini。'),
+        model: z.string().optional().describe('要切换到的模型。Claude 常见值：sonnet / opus / opus-4-7 / glm-5.1；Codex 常见值：gpt-5.5 / gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex / gpt-5.3-codex-spark / gpt-5.2 / gpt-5.2-codex / gpt-5.1-codex-max / gpt-5.1-codex-mini。'),
         reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh']).optional().describe('推理强度。当前主要适用于 Codex；Claude 运行时不支持单独调整 reasoningEffort。'),
         permissionMode: z.enum(['default', 'bypassPermissions', 'read-only', 'safe-yolo', 'yolo']).optional().describe('权限模式。Claude 仅支持 bypassPermissions；Codex 支持 default / read-only / safe-yolo / yolo。'),
         fastMode: z.boolean().optional().describe('Claude Fast Mode 开关。当前仅适用于 Claude。'),

@@ -1,12 +1,12 @@
 export type ArchiveFilter = 'active' | 'archive'
-export type OwnerFilter = 'mine' | 'brain' | 'others'
+export type OwnerFilter = 'mine' | 'brain' | 'orchestrator' | 'others'
 
 export type SessionListSearch = {
     archive?: ArchiveFilter
     owner?: OwnerFilter
 }
 
-export type NewSessionKind = 'brain'
+export type NewSessionKind = 'brain' | 'orchestrator'
 
 export type NewSessionSearch = SessionListSearch & {
     kind?: NewSessionKind
@@ -15,6 +15,7 @@ export type NewSessionSearch = SessionListSearch & {
 export type OwnerFilterAvailability = {
     viewOthersSessions?: boolean
     hasBrainSessions: boolean
+    hasOrchestratorSessions: boolean
 }
 
 export const DEFAULT_SESSION_LIST_SEARCH: Readonly<{
@@ -27,7 +28,7 @@ export const DEFAULT_SESSION_LIST_SEARCH: Readonly<{
 
 export function validateSessionListSearch(search: Record<string, unknown>): SessionListSearch {
     const archive = search.archive === 'archive' ? 'archive' : undefined
-    const owner = typeof search.owner === 'string' && ['mine', 'brain', 'others'].includes(search.owner)
+    const owner = typeof search.owner === 'string' && ['mine', 'brain', 'orchestrator', 'others'].includes(search.owner)
         ? search.owner as OwnerFilter
         : undefined
 
@@ -39,7 +40,9 @@ export function validateSessionListSearch(search: Record<string, unknown>): Sess
 
 export function validateNewSessionSearch(search: Record<string, unknown>): NewSessionSearch {
     const base = validateSessionListSearch(search)
-    const kind = search.kind === 'brain' ? 'brain' : undefined
+    const kind = search.kind === 'brain' || search.kind === 'orchestrator'
+        ? search.kind as NewSessionKind
+        : undefined
 
     return {
         ...base,
@@ -52,6 +55,9 @@ export function normalizeOwnerFilter(owner: OwnerFilter, availability: OwnerFilt
         return DEFAULT_SESSION_LIST_SEARCH.owner
     }
     if (owner === 'brain' && !availability.hasBrainSessions) {
+        return DEFAULT_SESSION_LIST_SEARCH.owner
+    }
+    if (owner === 'orchestrator' && !availability.hasOrchestratorSessions) {
         return DEFAULT_SESSION_LIST_SEARCH.owner
     }
     return owner

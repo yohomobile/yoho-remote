@@ -16,6 +16,7 @@ type SpawnInput = {
     claudeModel?: 'sonnet' | 'opus' | 'opus-4-7'
     codexModel?: string
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
+    source?: string
     orgId?: string | null
 }
 
@@ -44,6 +45,7 @@ export function useSpawnSession(api: ApiClient | null): {
                 input.claudeModel,
                 input.codexModel,
                 input.modelReasoningEffort,
+                input.source,
                 input.orgId
             )
         },

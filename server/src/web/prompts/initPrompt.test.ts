@@ -16,7 +16,7 @@ describe('buildInitPrompt', () => {
         expect(prompt).not.toContain('部署线上环境前，必须确认代码已合入 `main`')
         expect(prompt).toContain('mcp__yoho_remote__environment_info')
         expect(prompt).toContain('不要通过 `claude mcp list`')
-        expect(prompt).toContain('mcp__skill__list')
+        expect(prompt).toContain('mcp__yoho-vault__skill_list')
         expect(prompt).toContain('skill_search')
         expect(prompt).toContain('方法/能力类 skill')
         expect(prompt).toContain('activationMode=manual')
@@ -25,6 +25,8 @@ describe('buildInitPrompt', () => {
         expect(prompt).toContain('skill_doctor')
         expect(prompt).toContain('allowActive=true')
         expect(prompt).toContain('skill_discover')
+        expect(prompt).toContain('functions.yoho_remote__environment_info')
+        expect(prompt.trimEnd().endsWith('请调用一次 `functions.yoho_remote__environment_info`，然后直接回复“收到！”。')).toBe(true)
     })
 
     it('renders machine-local project guidance without worktree instructions', async () => {
@@ -51,7 +53,7 @@ describe('buildInitPrompt', () => {
         expect(prompt).not.toContain('部署 dev 必须先合入 dev-release')
         expect(prompt).not.toContain('部署线上必须先合入 main')
         expect(prompt).toContain('不要通过 `claude mcp list`')
-        expect(prompt).toContain('mcp__skill__list')
+        expect(prompt).toContain('mcp__yoho-vault__skill_list')
         expect(prompt).toContain('skill_search')
         expect(prompt).toContain('activationMode=manual')
         expect(prompt).toContain('candidate / draft / archived / disabled')

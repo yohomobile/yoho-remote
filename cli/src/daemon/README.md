@@ -83,14 +83,14 @@ The daemon supports spawning sessions with different AI agents:
 | Agent | Command | Token Environment |
 |-------|---------|-------------------|
 | `claude` (default) | `hapi claude` | `CLAUDE_CODE_OAUTH_TOKEN` |
-| `codex` | `hapi codex` | `CODEX_HOME` (temp directory with `auth.json`) |
+| `codex` | `hapi codex` | `CODEX_HOME` (session-scoped directory under `YOHO_REMOTE_HOME/tmp`) |
 | `gemini` | `hapi gemini` | - |
 
 ### Token Authentication
 
 When spawning a session with a token:
 - **Claude**: Sets `CLAUDE_CODE_OAUTH_TOKEN` environment variable
-- **Codex**: Creates temp directory at `os.tmpdir()/yr-codex-*`, writes token to `auth.json`, sets `CODEX_HOME`
+- **Codex**: Creates a session-scoped directory at `YOHO_REMOTE_HOME/tmp/yr-codex-*`, writes token to `auth.json`, sets `CODEX_HOME`
 
 ## 3. Session Management
 
@@ -446,7 +446,7 @@ socket.emit('machine-update-metadata', {
 
 ## 5. Mini App RPC Calls (via yoho-remote-server)
 
-The Telegram Mini App calls REST endpoints on `yoho-remote-server` (for example `POST /api/machines/:id/spawn`).
+The web app calls REST endpoints on `yoho-remote-server` (for example `POST /api/machines/:id/spawn`).
 `yoho-remote-server` then relays those requests to the daemon via Socket.IO `rpc-request` on the `/cli` namespace.
 
 RPC method naming (machine-scoped) uses a `${machineId}:` prefix, for example:

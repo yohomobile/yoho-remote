@@ -44,6 +44,7 @@ import type {
     ResolvedActorContext,
     IdentityCandidateSummary,
     StoredBrainConfig,
+    StoredUserSelfSystemConfig,
     BrainAgent,
     LicenseStatus,
     OrgRole,
@@ -67,6 +68,7 @@ import type {
     AutoIterApprovalMethod,
     AutoIterNotificationLevel,
     SpawnAgentType,
+    IdentityChannel,
     ControlPlaneActorType,
     ApprovalRequestStatus,
     ApprovalDecisionResult,
@@ -77,34 +79,37 @@ export type { StoredSessionShare } from './types'
 
 export interface IStore {
     // === Session 操作 ===
-    getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, namespace: string): Promise<StoredSession>
-    updateSessionMetadata(id: string, metadata: unknown, expectedVersion: number, namespace: string): Promise<VersionedUpdateResult<unknown | null>>
-    updateSessionAgentState(id: string, agentState: unknown, expectedVersion: number, namespace: string): Promise<VersionedUpdateResult<unknown | null>>
-    setSessionTodos(id: string, todos: unknown, todosUpdatedAt: number, namespace: string): Promise<boolean>
-    setSessionAdvisorTaskId(id: string, advisorTaskId: string, namespace: string): Promise<boolean>
-    setSessionAdvisorMode(id: string, advisorMode: boolean, namespace: string): Promise<boolean>
-    setSessionAdvisorPromptInjected(id: string, namespace: string): Promise<boolean>
+    getOrCreateSession(tag: string, metadata: unknown, agentState: unknown, orgId: string): Promise<StoredSession>
+    updateSessionMetadata(id: string, metadata: unknown, expectedVersion: number, orgId: string): Promise<VersionedUpdateResult<unknown | null>>
+    updateSessionAgentState(id: string, agentState: unknown, expectedVersion: number, orgId: string): Promise<VersionedUpdateResult<unknown | null>>
+    setSessionTodos(id: string, todos: unknown, todosUpdatedAt: number, orgId: string): Promise<boolean>
+    setSessionAdvisorTaskId(id: string, advisorTaskId: string, orgId: string): Promise<boolean>
+    setSessionAdvisorMode(id: string, advisorMode: boolean, orgId: string): Promise<boolean>
+    setSessionAdvisorPromptInjected(id: string, orgId: string): Promise<boolean>
     shouldInjectAdvisorPrompt(id: string): Promise<boolean>
     isRolePromptSent(id: string): Promise<boolean>
-    setSessionRolePromptSent(id: string, namespace: string): Promise<boolean>
-    setSessionCreatedBy(id: string, email: string, namespace: string): Promise<boolean>
-    setSessionOrgId(id: string, orgId: string, namespace: string): Promise<boolean>
-    setSessionActive(id: string, active: boolean, activeAt: number, namespace: string, terminationReason?: string | null): Promise<boolean>
-    setSessionThinking(id: string, thinking: boolean, namespace: string): Promise<void>
+    setSessionRolePromptSent(id: string, orgId: string): Promise<boolean>
+    setSessionCreatedBy(id: string, email: string, orgId: string): Promise<boolean>
+    setSessionOrgId(id: string, orgId: string): Promise<boolean>
+    setSessionActive(id: string, active: boolean, activeAt: number, orgId: string, terminationReason?: string | null): Promise<boolean>
+    setSessionThinking(id: string, thinking: boolean, orgId: string): Promise<void>
     getTurnBoundary(sessionId: string): Promise<{ turnStartSeq: number; turnEndSeq: number } | null>
     setSessionModelConfig(id: string, config: {
         permissionMode?: string
         modelMode?: string
         modelReasoningEffort?: string
         fastMode?: boolean
-    }, namespace: string): Promise<boolean>
-    setSessionActiveMonitors(id: string, activeMonitors: unknown, namespace: string): Promise<boolean>
+    }, orgId: string): Promise<boolean>
+    setSessionActiveMonitors(id: string, activeMonitors: unknown, orgId: string): Promise<boolean>
     getSession(id: string): Promise<StoredSession | null>
-    getSessionByNamespace(id: string, namespace: string): Promise<StoredSession | null>
+    getSessionByOrg(id: string, orgId: string): Promise<StoredSession | null>
+    getSessionByNamespace?(id: string, namespace: string): Promise<StoredSession | null>
     getSessions(orgId?: string | null): Promise<StoredSession[]>
-    getSessionsByNamespace(namespace: string): Promise<StoredSession[]>
+    getSessionsByOrg(orgId: string): Promise<StoredSession[]>
+    getSessionsByNamespace?(namespace: string): Promise<StoredSession[]>
     searchSessionHistory(input: {
-        namespace: string
+        orgId?: string
+        namespace?: string
         query: string
         limit: number
         includeOffline?: boolean
@@ -115,18 +120,20 @@ export interface IStore {
     }): Promise<StoredSessionSearchResult[]>
     getActiveSessionCount(orgId: string): Promise<number>
     deleteSession(id: string): Promise<boolean>
-    patchSessionMetadata(id: string, patch: Record<string, unknown>, namespace: string): Promise<boolean>
+    patchSessionMetadata(id: string, patch: Record<string, unknown>, orgId: string): Promise<boolean>
 
     // === Machine 操作 ===
-    getOrCreateMachine(id: string, metadata: unknown, daemonState: unknown, namespace: string): Promise<StoredMachine>
-    updateMachineMetadata(id: string, metadata: unknown, expectedVersion: number, namespace: string): Promise<VersionedUpdateResult<unknown | null>>
-    updateMachineDaemonState(id: string, daemonState: unknown, expectedVersion: number, namespace: string): Promise<VersionedUpdateResult<unknown | null>>
+    getOrCreateMachine(id: string, metadata: unknown, daemonState: unknown, orgId: string): Promise<StoredMachine>
+    updateMachineMetadata(id: string, metadata: unknown, expectedVersion: number, orgId: string): Promise<VersionedUpdateResult<unknown | null>>
+    updateMachineDaemonState(id: string, daemonState: unknown, expectedVersion: number, orgId: string): Promise<VersionedUpdateResult<unknown | null>>
     getMachine(id: string): Promise<StoredMachine | null>
-    getMachineByNamespace(id: string, namespace: string): Promise<StoredMachine | null>
+    getMachineByOrg(id: string, orgId: string): Promise<StoredMachine | null>
+    getMachineByNamespace?(id: string, namespace: string): Promise<StoredMachine | null>
     getMachines(orgId?: string | null): Promise<StoredMachine[]>
-    getMachinesByNamespace(namespace: string, orgId?: string | null): Promise<StoredMachine[]>
-    setMachineOrgId(id: string, orgId: string, namespace: string): Promise<boolean>
-    setMachineSupportedAgents(id: string, supportedAgents: SpawnAgentType[] | null, namespace: string): Promise<boolean>
+    getMachinesByOrg(orgId: string): Promise<StoredMachine[]>
+    getMachinesByNamespace?(namespace: string, orgId?: string | null): Promise<StoredMachine[]>
+    setMachineOrgId(id: string, orgId: string): Promise<boolean>
+    setMachineSupportedAgents(id: string, supportedAgents: SpawnAgentType[] | null, orgId: string): Promise<boolean>
 
     // === Message 操作 ===
     addMessage(sessionId: string, content: unknown, localId?: string): Promise<StoredMessage>
@@ -335,10 +342,13 @@ export interface IStore {
 
     // === AI Profile 操作 ===
     getAIProfiles(namespace: string): Promise<StoredAIProfile[]>
+    getAIProfilesByOrg(orgId: string): Promise<StoredAIProfile[]>
     getAIProfile(id: string): Promise<StoredAIProfile | null>
     getAIProfileByName(namespace: string, name: string): Promise<StoredAIProfile | null>
+    getAIProfileByOrgAndRole(orgId: string, role: AIProfileRole): Promise<StoredAIProfile | null>
     createAIProfile(data: {
         namespace: string
+        orgId?: string | null
         name: string
         role: AIProfileRole
         specialties?: string[]
@@ -480,6 +490,7 @@ export interface IStore {
 
     // === Brain Config ===
     getBrainConfig(namespace: string): Promise<StoredBrainConfig | null>
+    getBrainConfigByOrg(orgId: string): Promise<StoredBrainConfig | null>
     setBrainConfig(namespace: string, config: {
         agent: BrainAgent
         claudeModelMode?: string
@@ -487,6 +498,27 @@ export interface IStore {
         extra?: Record<string, unknown>
         updatedBy?: string | null
     }): Promise<StoredBrainConfig>
+    setBrainConfigByOrg(orgId: string, config: {
+        agent: BrainAgent
+        claudeModelMode?: string
+        codexModel?: string
+        extra?: Record<string, unknown>
+        updatedBy?: string | null
+    }): Promise<StoredBrainConfig>
+
+    getUserSelfSystemConfig(orgId: string, userEmail: string): Promise<StoredUserSelfSystemConfig | null>
+    setUserSelfSystemConfig(input: {
+        orgId: string
+        userEmail: string
+        enabled: boolean
+        defaultProfileId?: string | null
+        memoryProvider: 'yoho-memory' | 'none'
+        updatedBy?: string | null
+    }): Promise<StoredUserSelfSystemConfig>
+    clearSelfSystemProfileReferences(orgId: string, profileId: string, updatedBy?: string | null): Promise<{
+        clearedUserConfigs: number
+        clearedOrgConfig: boolean
+    }>
 
     // === Org License 操作 ===
     getOrgLicense(orgId: string): Promise<StoredOrgLicense | null>
@@ -550,6 +582,7 @@ export interface IStore {
     upsertPersonIdentity(observation: IdentityObservation): Promise<StoredPersonIdentity>
     getPersonIdentity(id: string): Promise<StoredPersonIdentity | null>
     getActiveIdentityLink(identityId: string): Promise<StoredPersonIdentityLink | null>
+    findResolvedActorByChannelExternalId(channel: IdentityChannel, externalId: string): Promise<ResolvedActorContext | null>
     createPersonIdentityLink(data: {
         personId: string
         identityId: string

@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { appendSelfSystemPrompt, extractSelfSystemConfig, resolveBrainSelfSystemContext } from './selfSystem'
+import {
+    appendSelfSystemPrompt,
+    extractSelfSystemConfig,
+    matchesProfileScope,
+    resolveSessionSelfSystemContext,
+} from './selfSystem'
+import type { StoredAIProfile } from '../store'
 
 const originalFetch = globalThis.fetch
 
@@ -46,11 +52,12 @@ describe('selfSystem', () => {
             })
         }) as unknown as typeof fetch
 
-        const context = await resolveBrainSelfSystemContext({
-            namespace: 'default',
+        const context = await resolveSessionSelfSystemContext({
+            orgId: 'org-1',
             store: {
-                getBrainConfig: async () => ({
-                    namespace: 'default',
+                getBrainConfigByOrg: async () => ({
+                    namespace: 'org:org-1',
+                    orgId: 'org-1',
                     agent: 'claude',
                     claudeModelMode: 'opus',
                     codexModel: 'gpt-5.4',
@@ -66,7 +73,8 @@ describe('selfSystem', () => {
                 }),
                 getAIProfile: async () => ({
                     id: 'profile-1',
-                    namespace: 'default',
+                    orgId: 'org-1',
+                    namespace: 'org:org-1',
                     name: 'K1',
                     role: 'architect',
                     specialties: ['TypeScript', 'Systems'],
@@ -125,11 +133,12 @@ describe('selfSystem', () => {
             })
         }) as unknown as typeof fetch
 
-        const context = await resolveBrainSelfSystemContext({
-            namespace: 'default',
+        const context = await resolveSessionSelfSystemContext({
+            orgId: 'org-1',
             store: {
-                getBrainConfig: async () => ({
-                    namespace: 'default',
+                getBrainConfigByOrg: async () => ({
+                    namespace: 'org:org-1',
+                    orgId: 'org-1',
                     agent: 'claude',
                     claudeModelMode: 'opus',
                     codexModel: 'gpt-5.4',
@@ -145,7 +154,8 @@ describe('selfSystem', () => {
                 }),
                 getAIProfile: async () => ({
                     id: 'profile-1',
-                    namespace: 'default',
+                    orgId: 'org-1',
+                    namespace: 'org:org-1',
                     name: 'K1',
                     role: 'architect',
                     specialties: [],
@@ -172,11 +182,12 @@ describe('selfSystem', () => {
     })
 
     it('returns metadata-only context when profile is missing or mismatched', async () => {
-        const context = await resolveBrainSelfSystemContext({
-            namespace: 'default',
+        const context = await resolveSessionSelfSystemContext({
+            orgId: 'org-1',
             store: {
-                getBrainConfig: async () => ({
-                    namespace: 'default',
+                getBrainConfigByOrg: async () => ({
+                    namespace: 'org:org-1',
+                    orgId: 'org-1',
                     agent: 'claude',
                     claudeModelMode: 'opus',
                     codexModel: 'gpt-5.4',
@@ -192,7 +203,8 @@ describe('selfSystem', () => {
                 }),
                 getAIProfile: async () => ({
                     id: 'missing-profile',
-                    namespace: 'other',
+                    orgId: 'org-2',
+                    namespace: 'org:org-2',
                     name: 'Other',
                 }),
             } as any,
@@ -215,11 +227,12 @@ describe('selfSystem', () => {
             throw new Error('timeout')
         }) as unknown as typeof fetch
 
-        const context = await resolveBrainSelfSystemContext({
-            namespace: 'default',
+        const context = await resolveSessionSelfSystemContext({
+            orgId: 'org-1',
             store: {
-                getBrainConfig: async () => ({
-                    namespace: 'default',
+                getBrainConfigByOrg: async () => ({
+                    namespace: 'org:org-1',
+                    orgId: 'org-1',
                     agent: 'claude',
                     claudeModelMode: 'opus',
                     codexModel: 'gpt-5.4',
@@ -235,7 +248,8 @@ describe('selfSystem', () => {
                 }),
                 getAIProfile: async () => ({
                     id: 'profile-1',
-                    namespace: 'default',
+                    orgId: 'org-1',
+                    namespace: 'org:org-1',
                     name: 'K1',
                     role: 'architect',
                     specialties: [],
@@ -277,11 +291,12 @@ describe('selfSystem', () => {
             })
         }) as unknown as typeof fetch
 
-        const context = await resolveBrainSelfSystemContext({
-            namespace: 'default',
+        const context = await resolveSessionSelfSystemContext({
+            orgId: 'org-1',
             store: {
-                getBrainConfig: async () => ({
-                    namespace: 'default',
+                getBrainConfigByOrg: async () => ({
+                    namespace: 'org:org-1',
+                    orgId: 'org-1',
                     agent: 'claude',
                     claudeModelMode: 'opus',
                     codexModel: 'gpt-5.4',
@@ -297,7 +312,8 @@ describe('selfSystem', () => {
                 }),
                 getAIProfile: async () => ({
                     id: 'profile-1',
-                    namespace: 'default',
+                    orgId: 'org-1',
+                    namespace: 'org:org-1',
                     name: 'K1',
                     role: 'architect',
                     specialties: [],
@@ -321,5 +337,185 @@ describe('selfSystem', () => {
         expect(context.metadataPatch.selfMemoryStatus).toBe('empty')
         expect(context.metadataPatch.selfMemoryAttached).toBe(false)
         expect(context.prompt).not.toContain('长期自我记忆（yoho-memory）')
+    })
+
+    it('prefers user self-system config over org default and skips memory for regular sessions', async () => {
+        const requests: string[] = []
+        globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+            requests.push(String(input))
+            return new Response('', { status: 500 })
+        }) as unknown as typeof fetch
+
+        const context = await resolveSessionSelfSystemContext({
+            orgId: 'org-1',
+            userEmail: 'dev@example.com',
+            includeMemory: false,
+            store: {
+                getUserSelfSystemConfig: async () => ({
+                    orgId: 'org-1',
+                    userEmail: 'dev@example.com',
+                    enabled: true,
+                    defaultProfileId: 'profile-user',
+                    memoryProvider: 'yoho-memory',
+                    updatedAt: 1,
+                    updatedBy: null,
+                }),
+                getBrainConfigByOrg: async () => ({
+                    namespace: 'org:org-1',
+                    orgId: 'org-1',
+                    agent: 'claude',
+                    claudeModelMode: 'opus',
+                    codexModel: 'gpt-5.4',
+                    extra: {
+                        selfSystem: {
+                            enabled: true,
+                            defaultProfileId: 'profile-org',
+                            memoryProvider: 'yoho-memory',
+                        },
+                    },
+                    updatedAt: 1,
+                    updatedBy: null,
+                }),
+                getAIProfile: async (id: string) => ({
+                    id,
+                    orgId: 'org-1',
+                    namespace: 'org:org-1',
+                    name: id === 'profile-user' ? 'User Style' : 'Other Style',
+                    role: 'developer',
+                    specialties: [],
+                    personality: null,
+                    greetingTemplate: null,
+                    preferredProjects: [],
+                    workStyle: null,
+                    avatarEmoji: '🤖',
+                    status: 'idle',
+                    stats: {
+                        tasksCompleted: 0,
+                        activeMinutes: 0,
+                        lastActiveAt: null,
+                    },
+                    createdAt: 1,
+                    updatedAt: 1,
+                }),
+            } as any,
+        })
+
+        expect(requests).toEqual([])
+        expect(context.metadataPatch.selfProfileId).toBe('profile-user')
+        expect(context.metadataPatch.selfProfileName).toBe('User Style')
+        expect(context.metadataPatch.selfMemoryStatus).toBe('skipped')
+        expect(context.prompt).toContain('名称：User Style')
+        expect(context.prompt).not.toContain('长期自我记忆（yoho-memory）')
+    })
+
+    it('returns disabled context when org config is missing', async () => {
+        let getAIProfileCalled = false
+        const context = await resolveSessionSelfSystemContext({
+            orgId: 'org-1',
+            store: {
+                getUserSelfSystemConfig: async () => null,
+                getBrainConfigByOrg: async () => null,
+                getAIProfile: async () => {
+                    getAIProfileCalled = true
+                    return null
+                },
+            } as any,
+        })
+
+        expect(getAIProfileCalled).toBe(false)
+        expect(context.prompt).toBeNull()
+        expect(context.metadataPatch.selfSystemEnabled).toBe(false)
+        expect(context.metadataPatch.selfProfileId).toBeNull()
+        expect(context.metadataPatch.selfMemoryStatus).toBe('disabled')
+    })
+
+    it('returns disabled context when orgId is missing and never checks legacy namespace config', async () => {
+        let getLegacyBrainConfigCalled = false
+        let getAIProfileCalled = false
+
+        const context = await resolveSessionSelfSystemContext({
+            userEmail: 'dev@example.com',
+            store: {
+                getUserSelfSystemConfig: async () => ({
+                    orgId: 'org-1',
+                    userEmail: 'dev@example.com',
+                    enabled: true,
+                    defaultProfileId: 'profile-user',
+                    memoryProvider: 'yoho-memory',
+                    updatedAt: 1,
+                    updatedBy: null,
+                }),
+                getBrainConfig: async () => {
+                    getLegacyBrainConfigCalled = true
+                    return {
+                        namespace: 'default',
+                        orgId: null,
+                        agent: 'claude',
+                        claudeModelMode: 'opus',
+                        codexModel: 'gpt-5.4',
+                        extra: {
+                            selfSystem: {
+                                enabled: true,
+                                defaultProfileId: 'profile-legacy',
+                                memoryProvider: 'yoho-memory',
+                            },
+                        },
+                        updatedAt: 1,
+                        updatedBy: null,
+                    }
+                },
+                getAIProfile: async () => {
+                    getAIProfileCalled = true
+                    return null
+                },
+            } as any,
+        })
+
+        expect(getLegacyBrainConfigCalled).toBe(false)
+        expect(getAIProfileCalled).toBe(false)
+        expect(context.prompt).toBeNull()
+        expect(context.metadataPatch.selfSystemEnabled).toBe(false)
+        expect(context.metadataPatch.selfProfileId).toBeNull()
+        expect(context.metadataPatch.selfMemoryStatus).toBe('disabled')
+    })
+
+    it('matchesProfileScope rejects null orgId with warning', () => {
+        const warnings: string[] = []
+        const originalWarn = console.warn
+        console.warn = ((...args: unknown[]) => {
+            warnings.push(args.map(String).join(' '))
+        }) as typeof console.warn
+
+        try {
+            const profile = {
+                id: 'profile-1',
+                orgId: 'org-1',
+                namespace: 'org:org-1',
+                name: 'K1',
+                role: 'architect',
+                specialties: [],
+                personality: null,
+                greetingTemplate: null,
+                preferredProjects: [],
+                workStyle: null,
+                avatarEmoji: '🤖',
+                status: 'idle',
+                stats: { tasksCompleted: 0, activeMinutes: 0, lastActiveAt: null },
+                createdAt: 1,
+                updatedAt: 1,
+            } as unknown as StoredAIProfile
+
+            expect(matchesProfileScope(profile, null)).toBe(false)
+            expect(warnings.some(w => w.includes('session orgId is null'))).toBe(true)
+            warnings.length = 0
+
+            expect(matchesProfileScope(profile, 'org-1')).toBe(true)
+            expect(warnings.length).toBe(0)
+
+            expect(matchesProfileScope(profile, 'org-2')).toBe(false)
+            expect(warnings.length).toBe(0)
+        } finally {
+            console.warn = originalWarn
+        }
     })
 })

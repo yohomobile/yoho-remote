@@ -579,10 +579,8 @@ function dedupeUserEchoBlocks(blocks: ChatBlock[]): ChatBlock[] {
             const nextSentFrom = getMetaSentFrom(block.meta)
             const hasCliEcho = prevSentFrom === 'cli' || nextSentFrom === 'cli'
             const hasUserOrigin = prevSentFrom === 'webapp'
-                || prevSentFrom === 'telegram-bot'
                 || prevSentFrom === 'brain'
                 || nextSentFrom === 'webapp'
-                || nextSentFrom === 'telegram-bot'
                 || nextSentFrom === 'brain'
 
             if (hasCliEcho && hasUserOrigin) {
@@ -808,7 +806,6 @@ function mergeAgentReasoningBlocks(blocks: ChatBlock[]): ChatBlock[] {
 function mergeReadBlocks(blocks: ChatBlock[]): ChatBlock[] {
     const merged: ChatBlock[] = []
     let runStart = -1
-    let runParentUUID: string | null = null
 
     function isReadLikeBlock(block: ChatBlock): block is ToolCallBlock {
         return block.kind === 'tool-call' && extractReadLikeToolPath(block.tool) !== null
@@ -822,7 +819,6 @@ function mergeReadBlocks(blocks: ChatBlock[]): ChatBlock[] {
         const first = run[0]
         if (!first) {
             runStart = -1
-            runParentUUID = null
             return
         }
 
@@ -872,19 +868,12 @@ function mergeReadBlocks(blocks: ChatBlock[]): ChatBlock[] {
         })
 
         runStart = -1
-        runParentUUID = null
     }
 
     for (const block of blocks) {
         if (isReadLikeBlock(block)) {
-            const parentUUID = block.tool.parentUUID ?? null
-            if (runStart !== -1 && parentUUID !== runParentUUID) {
-                flushRun()
-            }
-
             if (runStart === -1) {
                 runStart = merged.length
-                runParentUUID = parentUUID
             }
 
             merged.push(block)

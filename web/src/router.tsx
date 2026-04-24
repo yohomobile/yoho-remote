@@ -19,7 +19,6 @@ import { OnlineUsersBadge } from '@/components/OnlineUsersBadge'
 import { useAppContext } from '@/lib/app-context'
 import { useMyOrgs, useOrg } from '@/hooks/queries/useOrgs'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
-import { isTelegramApp } from '@/hooks/useTelegram'
 import { isFlutterApp, callNativeHandler } from '@/hooks/useFlutterApp'
 import { pushSessionsHeader, getOnlineUsersForBadge } from '@/hooks/useFlutterBridge'
 import { useMessages } from '@/hooks/queries/useMessages'
@@ -44,6 +43,7 @@ import {
 } from '@/lib/session-filters'
 import { isSessionVisibleInActiveList } from '@/lib/sessionActivity'
 import SettingsPage from '@/routes/settings'
+import SelfSystemPage from '@/routes/self-system'
 import AcceptInvitationPage from '@/routes/invitations/accept'
 import { LoginPage } from '@/routes/login'
 import { AuthCallbackPage } from '@/routes/auth/callback'
@@ -134,6 +134,51 @@ function BrainIcon(props: { className?: string }) {
     )
 }
 
+function OrchestratorIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <circle cx="12" cy="5" r="2.5" />
+            <circle cx="6" cy="18" r="2.5" />
+            <circle cx="18" cy="18" r="2.5" />
+            <path d="M12 7.5v4.5" />
+            <path d="M12 12H6" />
+            <path d="M12 12h6" />
+        </svg>
+    )
+}
+
+function SelfSystemIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <path d="M12 14a4 4 0 1 0-4-4" />
+            <path d="M6 20a6 6 0 0 1 12 0" />
+            <path d="m18 3 .8 1.7L20.5 5l-1.7.8L18 7.5l-.8-1.7L15.5 5l1.7-.8z" />
+        </svg>
+    )
+}
+
 function SessionsPage() {
     const { api, userEmail, currentOrgId, setCurrentOrgId } = useAppContext()
     const navigate = useNavigate()
@@ -143,6 +188,7 @@ function SessionsPage() {
         ? 'archive'
         : DEFAULT_SESSION_LIST_SEARCH.archive
     const ownerFilter: OwnerFilter = search.owner === 'brain'
+        || search.owner === 'orchestrator'
         || search.owner === 'others'
         ? search.owner
         : DEFAULT_SESSION_LIST_SEARCH.owner
@@ -256,6 +302,14 @@ function SessionsPage() {
                         </span>
                         <button
                             type="button"
+                            onClick={() => navigate({ to: '/self-system' })}
+                            className="flex items-center justify-center h-7 w-7 rounded-lg text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors"
+                            title="Self System"
+                        >
+                            <SelfSystemIcon />
+                        </button>
+                        <button
+                            type="button"
                             onClick={() => navigate({ to: '/settings' })}
                             className="flex items-center justify-center h-7 w-7 rounded-lg text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors"
                             title="Settings"
@@ -272,6 +326,17 @@ function SessionsPage() {
                             title="New Brain Session"
                         >
                             <BrainIcon className="h-4 w-4" />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => navigate({
+                                to: '/sessions/new',
+                                search: { ...search, kind: 'orchestrator' },
+                            })}
+                            className="flex items-center justify-center h-7 w-7 rounded-lg bg-gradient-to-br from-sky-500 to-cyan-600 text-white shadow-sm hover:shadow-md transition-all hover:scale-105"
+                            title="New Orchestrator Session"
+                        >
+                            <OrchestratorIcon className="h-4 w-4" />
                         </button>
                         <button
                             type="button"
@@ -465,6 +530,7 @@ function NewSessionPage() {
         owner: search.owner ?? DEFAULT_SESSION_LIST_SEARCH.owner,
     } satisfies NewSessionSearch
     const isBrainCreation = search.kind === 'brain'
+    const isOrchestratorCreation = search.kind === 'orchestrator'
 
     const handleCancel = useCallback(() => {
         goBack()
@@ -496,17 +562,19 @@ function NewSessionPage() {
             {!isFlutterApp() && (
                 <div className="bg-[var(--app-bg)] border-b border-[var(--app-divider)] pt-[env(safe-area-inset-top)]">
                     <div className="mx-auto w-full max-w-content flex items-center gap-2 px-3 py-1.5">
-                        {!isTelegramApp() && (
-                            <button
-                                type="button"
-                                onClick={goBack}
-                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
-                            >
-                                <BackIcon />
-                            </button>
-                        )}
+                        <button
+                            type="button"
+                            onClick={goBack}
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                        >
+                            <BackIcon />
+                        </button>
                         <div className="flex-1 font-medium text-sm">
-                            {isBrainCreation ? 'Create Brain Session' : 'Create Session'}
+                            {isBrainCreation
+                                ? 'Create Brain Session'
+                                : isOrchestratorCreation
+                                    ? 'Create Orchestrator Session'
+                                    : 'Create Session'}
                         </div>
                     </div>
                 </div>
@@ -558,6 +626,17 @@ function NewSessionPage() {
                                 isLoading={machinesLoading}
                                 onCancel={handleCancel}
                                 onSuccess={handleSuccess}
+                            />
+                        ) : isOrchestratorCreation ? (
+                            <NewSession
+                                api={api}
+                                machines={machines}
+                                isLoading={machinesLoading}
+                                onCancel={handleCancel}
+                                onSuccess={handleSuccess}
+                                source="orchestrator"
+                                introTitle="Create an Orchestrator Session"
+                                introDescription="Orchestrator sessions use a regular project workspace and can coordinate child sessions without Brain self-system or the managed Brain workspace."
                             />
                         ) : (
                             <NewSession
@@ -612,6 +691,12 @@ const settingsRoute = createRoute({
     component: SettingsPage,
 })
 
+const selfSystemRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/self-system',
+    component: SelfSystemPage,
+})
+
 // Auth routes (public - no authentication required)
 const loginRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -638,6 +723,7 @@ export const routeTree = rootRoute.addChildren([
     sessionsRoute,
     sessionRoute,
     newSessionRoute,
+    selfSystemRoute,
     settingsRoute,
     acceptInvitationRoute,
 ])

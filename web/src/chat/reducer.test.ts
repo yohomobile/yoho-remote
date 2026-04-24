@@ -175,6 +175,137 @@ describe('reduceChatBlocks duplicate handling', () => {
         })
     })
 
+    test('groups Claude-style chained reads even when parentUUID changes across tool-result hops', () => {
+        const reduced = reduceChatBlocks([
+            {
+                id: 'read-call-1',
+                localId: null,
+                createdAt: 1,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'read-1',
+                    name: 'Read',
+                    input: { file_path: 'worker/src/boss.ts' },
+                    description: null,
+                    uuid: 'read-call-1',
+                    parentUUID: null
+                }]
+            },
+            {
+                id: 'read-result-1',
+                localId: null,
+                createdAt: 2,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'read-1',
+                    content: {
+                        file: {
+                            filePath: 'worker/src/boss.ts',
+                            content: 'export const boss = true'
+                        }
+                    },
+                    is_error: false,
+                    uuid: 'read-result-1',
+                    parentUUID: 'read-call-1'
+                }]
+            },
+            {
+                id: 'read-call-2',
+                localId: null,
+                createdAt: 3,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'read-2',
+                    name: 'Read',
+                    input: { file_path: 'worker/src/jobs/aiTask.ts' },
+                    description: null,
+                    uuid: 'read-call-2',
+                    parentUUID: 'read-result-1'
+                }]
+            },
+            {
+                id: 'read-result-2',
+                localId: null,
+                createdAt: 4,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'read-2',
+                    content: {
+                        file: {
+                            filePath: 'worker/src/jobs/aiTask.ts',
+                            content: 'export const run = true'
+                        }
+                    },
+                    is_error: false,
+                    uuid: 'read-result-2',
+                    parentUUID: 'read-call-2'
+                }]
+            },
+            {
+                id: 'read-call-3',
+                localId: null,
+                createdAt: 5,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'read-3',
+                    name: 'Read',
+                    input: { file_path: 'worker/src/handlers/aiTask.ts' },
+                    description: null,
+                    uuid: 'read-call-3',
+                    parentUUID: 'read-result-2'
+                }]
+            },
+            {
+                id: 'read-result-3',
+                localId: null,
+                createdAt: 6,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'read-3',
+                    content: {
+                        file: {
+                            filePath: 'worker/src/handlers/aiTask.ts',
+                            content: 'export const handle = true'
+                        }
+                    },
+                    is_error: false,
+                    uuid: 'read-result-3',
+                    parentUUID: 'read-call-3'
+                }]
+            }
+        ] satisfies NormalizedMessage[], null)
+
+        expect(reduced.blocks).toHaveLength(1)
+        const block = reduced.blocks[0]
+        expect(block?.kind).toBe('tool-call')
+        if (!block || block.kind !== 'tool-call') {
+            throw new Error('Expected ReadBatch block')
+        }
+
+        expect(block.tool.name).toBe('ReadBatch')
+        expect(block.children).toHaveLength(3)
+        expect(block.tool.input).toEqual({
+            count: 3,
+            files: [
+                'worker/src/boss.ts',
+                'worker/src/jobs/aiTask.ts',
+                'worker/src/handlers/aiTask.ts'
+            ]
+        })
+    })
+
     test('uses the command file path when Codex parsed_cmd reports a sed line range as the read name', () => {
         const reduced = reduceChatBlocks([
             {

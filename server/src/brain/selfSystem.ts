@@ -24,11 +24,18 @@ export type BrainSelfSystemContext = {
     }
 }
 
-type ResolveBrainSelfSystemContextOptions = {
+type ResolveSessionSelfSystemContextOptions = {
     store: IStore
-    namespace: string
+    orgId?: string | null
+    userEmail?: string | null
+    includeMemory?: boolean
     yohoMemoryUrl?: string
     fetchImpl?: typeof fetch
+}
+
+type RecallSelfMemoryResult = {
+    snippet: string | null
+    status: Extract<SelfSystemMemoryStatus, 'attached' | 'empty' | 'error'>
 }
 
 const DEFAULT_YOHO_MEMORY_URL = process.env.YOHO_MEMORY_URL || 'http://localhost:3100/api'
@@ -63,13 +70,14 @@ function trimMemorySnippet(value: string): string {
 function buildSelfSystemPrompt(profile: StoredAIProfile, memorySnippet: string | null): string {
     const lines = [
         '## K1 自我系统',
-        '以下内容是当前 Brain 绑定的稳定自我设定与长期自我记忆。保持一致性，但若与用户本轮明确指令冲突，以用户指令为准。',
+        '以下内容是当前会话绑定的稳定 AI 风格设定与长期记忆提示。保持一致性，但若与用户本轮明确指令冲突，以用户指令为准。',
         `- 名称：${profile.name}`,
-        `- 角色：${profile.role}`,
+        `- 风格标签：${profile.role}`,
+        '- 说明：这是一个全能 AI，此标签只表示偏好的思考与表达风格，不限制实现、评审、测试、规划、排障或运维等职责边界。',
     ]
 
     if (profile.specialties.length > 0) {
-        lines.push(`- 专长：${profile.specialties.join('、')}`)
+        lines.push(`- 常见切入点：${profile.specialties.join('、')}`)
     }
     if (profile.personality) {
         lines.push(`- 个性：${profile.personality}`)
@@ -81,7 +89,7 @@ function buildSelfSystemPrompt(profile: StoredAIProfile, memorySnippet: string |
         lines.push(`- 常用开场：${profile.greetingTemplate}`)
     }
     if (profile.preferredProjects.length > 0) {
-        lines.push(`- 偏好项目：${profile.preferredProjects.join('、')}`)
+        lines.push(`- 偏好场景：${profile.preferredProjects.join('、')}`)
     }
 
     if (memorySnippet) {
@@ -91,11 +99,6 @@ function buildSelfSystemPrompt(profile: StoredAIProfile, memorySnippet: string |
     }
 
     return lines.join('\n')
-}
-
-type RecallSelfMemoryResult = {
-    snippet: string | null
-    status: Extract<SelfSystemMemoryStatus, 'attached' | 'empty' | 'error'>
 }
 
 function buildYohoMemoryRequestHeaders(): Record<string, string> {
@@ -163,7 +166,7 @@ async function fetchSelfProfileMemory(
 
 async function recallSelfMemory(
     profile: StoredAIProfile,
-    namespace: string,
+    scopeKey: string,
     yohoMemoryUrl: string,
     fetchImpl: typeof fetch,
 ): Promise<RecallSelfMemoryResult> {
@@ -179,12 +182,12 @@ async function recallSelfMemory(
             method: 'POST',
             headers: buildYohoMemoryRequestHeaders(),
             body: JSON.stringify({
-                input: `K1 Brain 自我记忆 ${profile.name} ${profile.role} namespace:${namespace}`,
+                input: `K1 会话自我记忆 ${profile.name} 风格:${profile.role} scope:${scopeKey}`,
                 keywords: [
                     profile.name,
                     profile.role,
-                    namespace,
-                    'K1 Brain',
+                    scopeKey,
+                    'K1',
                     '自我记忆',
                 ],
                 maxFiles: 1,
@@ -201,7 +204,7 @@ async function recallSelfMemory(
             return { snippet: null, status: 'empty' }
         }
         const gate = evaluateRecallConsumption(result, {
-            matchTerms: [profile.name, namespace],
+            matchTerms: [profile.name, scopeKey],
             requireResultCount: true,
         })
         if (!gate.reliable || typeof result.answer !== 'string' || result.answer.trim().length === 0) {
@@ -217,6 +220,51 @@ async function recallSelfMemory(
     }
 }
 
+function toSelfSystemConfig(value: {
+    enabled: boolean
+    defaultProfileId: string | null
+    memoryProvider: SelfSystemMemoryProvider | string
+} | null | undefined): SelfSystemConfig {
+    if (!value) {
+        return DEFAULT_SELF_SYSTEM_CONFIG
+    }
+    return {
+        enabled: value.enabled === true,
+        defaultProfileId: cleanOptionalString(value.defaultProfileId),
+        memoryProvider: normalizeMemoryProvider(value.memoryProvider),
+    }
+}
+
+function buildContextWithConfig(config: SelfSystemConfig, memoryStatus?: SelfSystemMemoryStatus): BrainSelfSystemContext {
+    const resolvedMemoryStatus = memoryStatus ?? (!config.enabled || config.memoryProvider === 'none' ? 'disabled' : 'skipped')
+    return {
+        config,
+        prompt: null,
+        metadataPatch: {
+            selfSystemEnabled: config.enabled,
+            selfProfileId: config.defaultProfileId,
+            selfProfileName: null,
+            selfProfileResolved: false,
+            selfMemoryProvider: config.memoryProvider,
+            selfMemoryAttached: false,
+            selfMemoryStatus: resolvedMemoryStatus,
+        },
+    }
+}
+
+export function matchesProfileScope(
+    profile: StoredAIProfile,
+    orgId: string | null,
+): boolean {
+    if (!orgId) {
+        console.warn(
+            `[selfSystem] rejecting profile ${profile.id}: session orgId is null; profile scope requires a concrete orgId`
+        )
+        return false
+    }
+    return profile.orgId === orgId
+}
+
 export function extractSelfSystemConfig(extra: unknown): SelfSystemConfig {
     if (!isRecord(extra) || !isRecord(extra.selfSystem)) {
         return DEFAULT_SELF_SYSTEM_CONFIG
@@ -230,70 +278,77 @@ export function extractSelfSystemConfig(extra: unknown): SelfSystemConfig {
     }
 }
 
-export async function resolveBrainSelfSystemContext(
-    options: ResolveBrainSelfSystemContextOptions,
+async function resolveEffectiveSelfSystemConfig(
+    options: ResolveSessionSelfSystemContextOptions,
+): Promise<SelfSystemConfig> {
+    const orgId = cleanOptionalString(options.orgId)
+    const userEmail = cleanOptionalString(options.userEmail)
+    const storeWithUserConfig = options.store as IStore & {
+        getUserSelfSystemConfig?: IStore['getUserSelfSystemConfig']
+    }
+    const storeWithOrgConfig = options.store as IStore & {
+        getBrainConfigByOrg?: IStore['getBrainConfigByOrg']
+    }
+
+    if (orgId && userEmail && typeof storeWithUserConfig.getUserSelfSystemConfig === 'function') {
+        const userConfig = await storeWithUserConfig.getUserSelfSystemConfig(orgId, userEmail)
+        if (userConfig) {
+            return toSelfSystemConfig(userConfig)
+        }
+    }
+
+    if (orgId && typeof storeWithOrgConfig.getBrainConfigByOrg === 'function') {
+        const orgConfig = await storeWithOrgConfig.getBrainConfigByOrg(orgId)
+        return orgConfig ? extractSelfSystemConfig(orgConfig.extra) : DEFAULT_SELF_SYSTEM_CONFIG
+    }
+
+    return DEFAULT_SELF_SYSTEM_CONFIG
+}
+
+export async function resolveSessionSelfSystemContext(
+    options: ResolveSessionSelfSystemContextOptions,
 ): Promise<BrainSelfSystemContext> {
     const fetchImpl = options.fetchImpl ?? fetch
     const yohoMemoryUrl = options.yohoMemoryUrl ?? DEFAULT_YOHO_MEMORY_URL
-    if (typeof options.store.getBrainConfig !== 'function' || typeof options.store.getAIProfile !== 'function') {
-        return {
-            config: DEFAULT_SELF_SYSTEM_CONFIG,
-            prompt: null,
-            metadataPatch: {
-                selfSystemEnabled: false,
-                selfProfileId: null,
-                selfProfileName: null,
-                selfProfileResolved: false,
-                selfMemoryProvider: 'yoho-memory',
-                selfMemoryAttached: false,
-                selfMemoryStatus: 'disabled',
-            },
-        }
-    }
-    const brainConfig = await options.store.getBrainConfig(options.namespace)
-    const config = extractSelfSystemConfig(brainConfig?.extra)
-    const baseMemoryStatus: SelfSystemMemoryStatus = !config.enabled || config.memoryProvider === 'none'
-        ? 'disabled'
-        : 'skipped'
+    const getAIProfile = (options.store as IStore & { getAIProfile?: IStore['getAIProfile'] }).getAIProfile
 
-    const emptyContext: BrainSelfSystemContext = {
-        config,
-        prompt: null,
-        metadataPatch: {
-            selfSystemEnabled: config.enabled,
-            selfProfileId: config.defaultProfileId,
-            selfProfileName: null,
-            selfProfileResolved: false,
-            selfMemoryProvider: config.memoryProvider,
-            selfMemoryAttached: false,
-            selfMemoryStatus: baseMemoryStatus,
-        },
+    if (typeof getAIProfile !== 'function') {
+        return buildContextWithConfig(DEFAULT_SELF_SYSTEM_CONFIG, 'disabled')
     }
 
+    const config = await resolveEffectiveSelfSystemConfig(options)
+    const emptyContext = buildContextWithConfig(config)
     if (!config.enabled || !config.defaultProfileId) {
         return emptyContext
     }
 
-    const profile = await options.store.getAIProfile(config.defaultProfileId)
-    if (!profile || profile.namespace !== options.namespace) {
+    const orgId = cleanOptionalString(options.orgId)
+    const profile = await getAIProfile(config.defaultProfileId)
+    if (!profile || !matchesProfileScope(profile, orgId)) {
         return emptyContext
     }
 
-    const memoryResult = config.memoryProvider === 'yoho-memory'
-        ? await recallSelfMemory(profile, options.namespace, yohoMemoryUrl, fetchImpl)
-        : { snippet: null, status: 'disabled' as const }
+    const includeMemory = options.includeMemory !== false
+    const scopeKey = orgId ? `org:${orgId}` : 'global'
+    let memorySnippet: string | null = null
+    let memoryStatus: SelfSystemMemoryStatus = config.memoryProvider === 'none' ? 'disabled' : 'skipped'
+    if (includeMemory && config.memoryProvider === 'yoho-memory') {
+        const memoryResult = await recallSelfMemory(profile, scopeKey, yohoMemoryUrl, fetchImpl)
+        memorySnippet = memoryResult.snippet
+        memoryStatus = memoryResult.status
+    }
 
     return {
         config,
-        prompt: buildSelfSystemPrompt(profile, memoryResult.snippet),
+        prompt: buildSelfSystemPrompt(profile, memorySnippet),
         metadataPatch: {
             selfSystemEnabled: true,
             selfProfileId: profile.id,
             selfProfileName: profile.name,
             selfProfileResolved: true,
             selfMemoryProvider: config.memoryProvider,
-            selfMemoryAttached: memoryResult.status === 'attached',
-            selfMemoryStatus: memoryResult.status,
+            selfMemoryAttached: memoryStatus === 'attached',
+            selfMemoryStatus: memoryStatus,
         },
     }
 }

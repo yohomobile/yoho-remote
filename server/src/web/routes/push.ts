@@ -4,7 +4,7 @@
  * Handles Web Push subscription management and VAPID key retrieval.
  */
 
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { z } from 'zod'
 import type { WebAppEnv } from '../middleware/auth'
 import { getWebPushService } from '../../services/webPush'
@@ -15,13 +15,44 @@ const subscribeSchema = z.object({
         p256dh: z.string().min(1),
         auth: z.string().min(1)
     }),
-    clientId: z.string().optional(),
-    chatId: z.string().optional()  // Telegram chatId，用于关联 Web Push 和通知订阅
+    clientId: z.string().optional()
 })
 
 const unsubscribeSchema = z.object({
     endpoint: z.string().url()
 })
+
+function normalizeRequestedOrgId(raw: string | undefined): string | null {
+    const trimmed = raw?.trim()
+    return trimmed ? trimmed : null
+}
+
+function canManageOrg(role: 'owner' | 'admin' | 'member' | null): boolean {
+    return role === 'owner' || role === 'admin'
+}
+
+function requirePushOrgAccess(c: Context<WebAppEnv>): { orgId: string; orgRole: 'owner' | 'admin' | 'member' | null } | Response {
+    const orgId = normalizeRequestedOrgId(c.req.query('orgId'))
+    if (!orgId) {
+        return c.json({ error: 'orgId is required' }, 400)
+    }
+
+    const userRole = c.get('role')
+    if (!userRole) {
+        return c.json({ error: 'Unauthorized' }, 401)
+    }
+    if (userRole === 'operator') {
+        return { orgId, orgRole: 'owner' }
+    }
+
+    const orgs = c.get('orgs') || []
+    const membership = orgs.find((org: { id: string; role: 'owner' | 'admin' | 'member' }) => org.id === orgId)
+    if (!membership) {
+        return c.json({ error: 'Insufficient permissions' }, 403)
+    }
+
+    return { orgId, orgRole: membership.role }
+}
 
 export function createPushRoutes(): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
@@ -44,16 +75,19 @@ export function createPushRoutes(): Hono<WebAppEnv> {
             return c.json({ error: 'Push notifications not configured' }, 503)
         }
 
+        const access = requirePushOrgAccess(c)
+        if (access instanceof Response) {
+            return access
+        }
+
         const json = await c.req.json().catch(() => null)
         const parsed = subscribeSchema.safeParse(json)
         if (!parsed.success) {
             return c.json({ error: 'Invalid subscription data', details: parsed.error.issues }, 400)
         }
 
-        const namespace = c.get('namespace') || 'default'
         const userAgent = c.req.header('user-agent')
         const clientId = parsed.data.clientId
-        const chatId = parsed.data.chatId
 
         // keys 为空会导致崩溃，提前校验
         if (!parsed.data.keys?.p256dh || !parsed.data.keys?.auth) {
@@ -61,12 +95,11 @@ export function createPushRoutes(): Hono<WebAppEnv> {
         }
 
         const subscription = await webPush.subscribe(
-            namespace,
+            access.orgId,
             parsed.data.endpoint,
             parsed.data.keys,
             userAgent,
-            clientId,
-            chatId
+            clientId
         ).catch((err) => {
             console.error('[push] failed to save subscription:', err)
             return null
@@ -77,7 +110,7 @@ export function createPushRoutes(): Hono<WebAppEnv> {
         }
 
         console.log('[push] new subscription:', {
-            namespace,
+            orgId: access.orgId,
             endpoint: parsed.data.endpoint.slice(0, 60) + '...'
         })
 
@@ -108,15 +141,21 @@ export function createPushRoutes(): Hono<WebAppEnv> {
             return c.json({ error: 'Push notifications not configured' }, 503)
         }
 
+        const access = requirePushOrgAccess(c)
+        if (access instanceof Response) {
+            return access
+        }
+
         const json = await c.req.json().catch(() => null)
         const parsed = unsubscribeSchema.safeParse(json)
         if (!parsed.success) {
             return c.json({ error: 'Invalid endpoint' }, 400)
         }
 
-        const success = await webPush.unsubscribe(parsed.data.endpoint)
+        const success = await webPush.unsubscribe(access.orgId, parsed.data.endpoint)
 
         console.log('[push] unsubscribe:', {
+            orgId: access.orgId,
             endpoint: parsed.data.endpoint.slice(0, 60) + '...',
             success
         })
@@ -131,8 +170,15 @@ export function createPushRoutes(): Hono<WebAppEnv> {
             return c.json({ error: 'Push notifications not configured' }, 503)
         }
 
-        const namespace = c.get('namespace') || 'default'
-        const subscriptions = await webPush.getSubscriptions(namespace)
+        const access = requirePushOrgAccess(c)
+        if (access instanceof Response) {
+            return access
+        }
+        if (!canManageOrg(access.orgRole)) {
+            return c.json({ error: 'Insufficient permissions' }, 403)
+        }
+
+        const subscriptions = await webPush.getSubscriptions(access.orgId)
 
         return c.json({
             count: subscriptions.length,
@@ -151,8 +197,15 @@ export function createPushRoutes(): Hono<WebAppEnv> {
             return c.json({ error: 'Push notifications not configured' }, 503)
         }
 
-        const namespace = c.get('namespace') || 'default'
-        const result = await webPush.sendToNamespace(namespace, {
+        const access = requirePushOrgAccess(c)
+        if (access instanceof Response) {
+            return access
+        }
+        if (!canManageOrg(access.orgRole)) {
+            return c.json({ error: 'Insufficient permissions' }, 403)
+        }
+
+        const result = await webPush.sendToNamespace(access.orgId, {
             title: '🎉 Yoho Remote 测试通知',
             body: '如果你看到这条通知，说明 Web Push 功能正常工作！',
             tag: 'test-notification',

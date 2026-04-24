@@ -1,15 +1,9 @@
 import { isLicenseTermination } from '@/lib/license'
+import { getSessionOrchestrationParentSessionId } from '@/lib/sessionOrchestration'
 import type { Session, SessionSummary, SessionsResponse } from '@/types/api'
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object'
-}
-
-function getBrainChildMainSessionId(metadata: Session['metadata']): string | undefined {
-    if (!metadata || metadata.source !== 'brain-child' || typeof metadata.mainSessionId !== 'string') {
-        return undefined
-    }
-    return metadata.mainSessionId
 }
 
 export type SessionStatusUpdateData = {
@@ -206,7 +200,7 @@ function toSessionSummaryMetadata(
         ...(typeof metadata.name === 'string' && { name: metadata.name }),
         path: metadata.path,
         ...(typeof metadata.machineId === 'string' && { machineId: metadata.machineId }),
-        ...(getBrainChildMainSessionId(metadata) !== undefined && { mainSessionId: getBrainChildMainSessionId(metadata) }),
+        ...(getSessionOrchestrationParentSessionId(metadata) !== undefined && { mainSessionId: getSessionOrchestrationParentSessionId(metadata) }),
         ...(metadata.summary?.text ? { summary: { text: metadata.summary.text } } : {}),
         ...(metadata.flavor !== undefined && { flavor: metadata.flavor ?? null }),
         ...(typeof metadata.runtimeAgent === 'string' && { runtimeAgent: metadata.runtimeAgent }),

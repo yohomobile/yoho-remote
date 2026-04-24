@@ -1,66 +1,15 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
-import { parseExpression } from 'cron-parser'
 import type { SyncEngine, Session } from '../../sync/syncEngine'
 import type { IStore } from '../../store'
 import { PostgresStore } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
-
-// Returns next fire timestamp (ms) for a 5-field cron, or null on failure.
-function cronNextFireAt(expr: string): number | null {
-    try {
-        return parseExpression(expr, { tz: 'UTC' }).next().toDate().getTime()
-    } catch {
-        return null
-    }
-}
-
-// Parses ISO 8601 duration like "PT30M", "PT1H30M" into milliseconds.
-function parseIso8601DurationMs(value: string): number | null {
-    const m = value.match(/^P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/)
-    if (!m) return null
-    const ms = (parseInt(m[1] ?? '0') * 86400
-        + parseInt(m[2] ?? '0') * 3600
-        + parseInt(m[3] ?? '0') * 60
-        + parseInt(m[4] ?? '0')) * 1000
-    return ms > 0 ? ms : null
-}
-
-type ParsedCron =
-    | { ok: true; normalizedCron: string; nextFireAt: number | null }
-    | { ok: false; error: string }
-
-function parseCronOrDelay(value: string): ParsedCron {
-    if (value.startsWith('P')) {
-        const ms = parseIso8601DurationMs(value)
-        if (ms === null) return { ok: false, error: 'invalid_iso8601_duration' }
-        return { ok: true, normalizedCron: `+${ms}`, nextFireAt: Date.now() + ms }
-    }
-    const next = cronNextFireAt(value)
-    if (next === null) return { ok: false, error: 'invalid_cron' }
-    return { ok: true, normalizedCron: value, nextFireAt: next }
-}
-
-const scheduleTaskSchema = z.object({
-    cronOrDelay: z.string().min(1),
-    prompt: z.string().min(1).max(4000),
-    directory: z.string().min(1),
-    recurring: z.boolean(),
-    label: z.string().optional(),
-    agent: z.enum(['claude', 'codex']),
-    mode: z.string().optional(),
-    machineId: z.string().optional(),
-})
-
-const listSchedulesSchema = z.object({
-    includeDisabled: z.boolean().optional(),
-    machineId: z.string().optional(),
-})
-
-const cancelScheduleSchema = z.object({
-    scheduleId: z.string().min(1),
-})
+import {
+    aiTaskScheduleCreateWithMachineSchema as scheduleTaskSchema,
+    parseCronOrDelay,
+    serializeAiTaskScheduleRow,
+} from './aiTaskScheduleShared'
 
 const findOrCreateSchema = z.object({
     directory: z.string().min(1),
@@ -69,6 +18,19 @@ const findOrCreateSchema = z.object({
     modelMode: z.string().optional(),
     codexModel: z.string().optional(),
     permissionMode: z.string().optional(),
+    mainSessionId: z.string().min(1).optional(),
+    source: z.string().min(1).optional(),
+    callbackOnFailureOnly: z.boolean().optional(),
+})
+
+const listSchedulesInternalSchema = z.object({
+    machineId: z.string().min(1),
+    includeDisabled: z.boolean().optional(),
+})
+
+const cancelScheduleInternalSchema = z.object({
+    scheduleId: z.string().min(1),
+    machineId: z.string().min(1),
 })
 
 const sessionSendSchema = z.object({
@@ -107,28 +69,45 @@ export function createWorkerMcpRoutes(
         const parsed = scheduleTaskSchema.safeParse(body)
         if (!parsed.success) return c.json({ error: 'invalid_body' }, 400)
 
-        const { cronOrDelay, prompt, directory, recurring, label, agent, mode, machineId } = parsed.data
+        const {
+            cronOrDelay,
+            prompt,
+            directory,
+            recurring,
+            label,
+            agent,
+            mode,
+            machineId,
+            createdBySessionId,
+        } = parsed.data
 
         const cronResult = parseCronOrDelay(cronOrDelay)
         if (!cronResult.ok) return c.json({ error: cronResult.error }, 400)
+        if (cronResult.kind === 'delay' && recurring) {
+            return c.json({ error: 'delay_requires_non_recurring' }, 400)
+        }
 
         // Validate directory is a registered project
         const projects = await store.getProjects(machineId ?? null)
         const project = projects.find(p => p.path === directory)
         if (!project) return c.json({ error: 'directory_not_registered' }, 400)
 
-        // Resolve namespace from engine (online machine) or store (offline)
+        // Resolve machine & orgId from engine (online) or store (offline).
+        // The namespace column semantically stores orgId.
         const engine = getSyncEngine()
         const resolvedMachineId = machineId ?? project.machineId ?? ''
-        let namespace = 'default'
+        if (!resolvedMachineId) return c.json({ error: 'machine_not_resolved' }, 400)
+
+        let orgId: string | null = null
         if (engine) {
             const machine = engine.getMachines().find(m => m.id === resolvedMachineId)
-            if (machine) namespace = machine.namespace
+            if (machine) orgId = machine.orgId ?? null
         }
-        if (namespace === 'default' && resolvedMachineId) {
+        if (!orgId) {
             const storedMachine = await store.getMachine(resolvedMachineId).catch(() => null)
-            if (storedMachine) namespace = storedMachine.namespace
+            if (storedMachine) orgId = storedMachine.orgId ?? null
         }
+        if (!orgId) return c.json({ error: 'org_not_resolved' }, 400)
 
         // Enforce quota: max 20 enabled schedules per machine
         const pool = (store as PostgresStore).getPool()
@@ -144,12 +123,13 @@ export function createWorkerMcpRoutes(
         const now = Date.now()
         await pool.query(
             `INSERT INTO ai_task_schedules
-                (id, namespace, machine_id, label, cron_expr, payload_prompt, directory, agent, mode, recurring, enabled, created_at, next_fire_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+                (id, namespace, machine_id, label, cron_expr, payload_prompt, directory, agent, mode, recurring, enabled, created_at, next_fire_at, created_by_session_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
             [
-                id, namespace, resolvedMachineId, label ?? null,
+                id, orgId, resolvedMachineId, label ?? null,
                 cronResult.normalizedCron, prompt, directory, agent, mode ?? null,
                 recurring, true, now, cronResult.nextFireAt ?? null,
+                createdBySessionId ?? null,
             ]
         )
 
@@ -161,61 +141,40 @@ export function createWorkerMcpRoutes(
     })
 
     app.post('/worker/list-schedules', async (c) => {
-        const body = await c.req.json().catch(() => ({}))
-        const parsed = listSchedulesSchema.safeParse(body)
+        const body = await c.req.json().catch(() => null)
+        const parsed = listSchedulesInternalSchema.safeParse(body)
         if (!parsed.success) return c.json({ error: 'invalid_body' }, 400)
 
         const pool = (store as PostgresStore).getPool()
-        const conditions: string[] = []
-        const params: unknown[] = []
-        let idx = 1
-
+        const conditions: string[] = ['machine_id = $1']
+        const params: unknown[] = [parsed.data.machineId]
         if (!parsed.data.includeDisabled) {
             conditions.push('enabled = true')
         }
-        if (parsed.data.machineId) {
-            conditions.push(`machine_id = $${idx++}`)
-            params.push(parsed.data.machineId)
-        }
 
-        const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+        const where = `WHERE ${conditions.join(' AND ')}`
         const result = await pool.query(
-            `SELECT id, label, cron_expr, recurring, directory, agent, enabled, created_at, next_fire_at, last_fire_at, last_run_status
+            `SELECT id, machine_id, label, cron_expr, payload_prompt, recurring, directory, agent, mode, enabled, created_at, next_fire_at, last_fire_at, last_run_status
              FROM ai_task_schedules ${where} ORDER BY created_at DESC`,
             params
         )
 
-        const schedules = result.rows.map(row => ({
-            scheduleId: row.id as string,
-            label: row.label as string | null,
-            cron: row.cron_expr as string,
-            recurring: row.recurring as boolean,
-            directory: row.directory as string,
-            agent: row.agent as string,
-            enabled: row.enabled as boolean,
-            createdAt: new Date(Number(row.created_at)).toISOString(),
-            nextFireAt: row.next_fire_at ? new Date(Number(row.next_fire_at)).toISOString() : null,
-            lastRunAt: row.last_fire_at ? new Date(Number(row.last_fire_at)).toISOString() : null,
-            lastRunStatus: row.last_run_status as string | null,
-        }))
+        const schedules = (result.rows as Record<string, unknown>[]).map(serializeAiTaskScheduleRow)
 
         return c.json({ schedules })
     })
 
     app.post('/worker/cancel-schedule', async (c) => {
         const body = await c.req.json().catch(() => null)
-        const parsed = cancelScheduleSchema.safeParse(body)
+        const parsed = cancelScheduleInternalSchema.safeParse(body)
         if (!parsed.success) return c.json({ error: 'invalid_body' }, 400)
 
         const pool = (store as PostgresStore).getPool()
         const result = await pool.query(
-            'UPDATE ai_task_schedules SET enabled = false WHERE id = $1 RETURNING id, enabled',
-            [parsed.data.scheduleId]
+            'UPDATE ai_task_schedules SET enabled = false WHERE id = $1 AND machine_id = $2 RETURNING id',
+            [parsed.data.scheduleId, parsed.data.machineId]
         )
         if (result.rows.length === 0) return c.json({ error: 'schedule_not_found' }, 404)
-        if (!result.rows[0].enabled) {
-            // already disabled before our update — still ok, idempotent
-        }
         return c.json({ ok: true })
     })
 
@@ -227,7 +186,17 @@ export function createWorkerMcpRoutes(
         const parsed = findOrCreateSchema.safeParse(body)
         if (!parsed.success) return c.json({ error: 'invalid_body' }, 400)
 
-        const { directory, agent, machineId, modelMode, codexModel, permissionMode } = parsed.data
+        const {
+            directory,
+            agent,
+            machineId,
+            modelMode,
+            codexModel,
+            permissionMode,
+            mainSessionId,
+            source,
+            callbackOnFailureOnly,
+        } = parsed.data
 
         const machines = engine.getMachines()
         const machine = machineId
@@ -235,25 +204,83 @@ export function createWorkerMcpRoutes(
             : machines.find(m => m.active)
 
         if (!machine) return c.json({ error: 'machine_not_found' }, 404)
+        if (!machine.orgId) return c.json({ error: 'org_not_resolved' }, 400)
 
-        // Look for an existing active session on this machine with matching directory and agent
-        const sessions = engine.getSessionsByNamespace(machine.namespace)
-        const existing = sessions.find(s =>
-            s.active &&
-            s.metadata?.machineId === machine.id &&
-            s.metadata?.path === directory &&
-            (s.metadata?.runtimeAgent ?? 'claude') === agent
-        )
-        if (existing) return c.json({ sessionId: existing.id })
+        // Resolve the session source — fall back to a neutral worker-task tag so legacy
+        // callers (no mainSessionId) keep the previous behaviour. Only orchestrator-child
+        // sessions get the creator-session link wired up.
+        const resolvedSource = source ?? (mainSessionId ? 'orchestrator-child' : 'worker-ai-task')
+
+        // Look for an existing active session on this machine with matching directory and agent.
+        // Scope by orgId — namespace is kept only for backwards-compat on older rows.
+        // When mainSessionId is provided, also require the candidate to be attached to the
+        // same creator session with the same source, so unrelated plain sessions never get
+        // mis-attributed as orchestrator-child.
+        const sessions = engine.getSessionsByOrg(machine.orgId)
+        const existing = sessions.find(s => {
+            if (!s.active) return false
+            if (s.metadata?.machineId !== machine.id) return false
+            if (s.metadata?.path !== directory) return false
+            if ((s.metadata?.runtimeAgent ?? 'claude') !== agent) return false
+            if (mainSessionId) {
+                const meta = s.metadata as Record<string, unknown> | null
+                if (meta?.mainSessionId !== mainSessionId) return false
+                if (meta?.source !== resolvedSource) return false
+            }
+            return true
+        })
+        if (existing) {
+            // Keep the suppression flag in sync for reused sessions; recurring schedules
+            // may toggle this independently of whether the session needed spawning.
+            if (callbackOnFailureOnly !== undefined) {
+                await store.patchSessionMetadata(existing.id, { callbackOnFailureOnly }, machine.orgId).catch((error: unknown) => {
+                    console.warn(`[worker-mcp] Failed to patch callbackOnFailureOnly on reused session ${existing.id}:`, error)
+                })
+                const meta = (existing.metadata as Record<string, unknown> | null) ?? {}
+                existing.metadata = { ...meta, callbackOnFailureOnly } as unknown as typeof existing.metadata
+            }
+            return c.json({ sessionId: existing.id })
+        }
 
         const spawnResult = await engine.spawnSession(machine.id, directory, agent, false, {
             permissionMode: (permissionMode ?? 'safe-yolo') as Session['permissionMode'],
             modelMode: modelMode as Session['modelMode'] | undefined,
             codexModel: codexModel ?? undefined,
-            source: 'worker-ai-task',
+            source: resolvedSource,
+            mainSessionId,
         })
         if (spawnResult.type === 'error') return c.json({ error: spawnResult.message }, 502)
+
+        // Persist callbackOnFailureOnly after spawn completes so the syncEngine sees it
+        // before the first task-complete event for the new session.
+        if (callbackOnFailureOnly !== undefined) {
+            await store.patchSessionMetadata(spawnResult.sessionId, { callbackOnFailureOnly }, machine.orgId).catch((error: unknown) => {
+                console.warn(`[worker-mcp] Failed to patch callbackOnFailureOnly on new session ${spawnResult.sessionId}:`, error)
+            })
+            const spawned = engine.getSession(spawnResult.sessionId)
+            if (spawned) {
+                const meta = (spawned.metadata as Record<string, unknown> | null) ?? {}
+                spawned.metadata = { ...meta, callbackOnFailureOnly } as unknown as typeof spawned.metadata
+            }
+        }
+
         return c.json({ sessionId: spawnResult.sessionId })
+    })
+
+    app.post('/session/trigger-callback', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) return c.json({ error: 'not_connected' }, 503)
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = sessionIdSchema.safeParse(body)
+        if (!parsed.success) return c.json({ error: 'invalid_body' }, 400)
+
+        const result = await engine.triggerChildCallback(parsed.data.sessionId)
+        if (!result.ok) {
+            const status = result.reason === 'session_not_found' ? 404 : 400
+            return c.json({ error: result.reason }, status)
+        }
+        return c.json({ ok: true })
     })
 
     app.post('/session/send', async (c) => {

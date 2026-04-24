@@ -83,11 +83,15 @@ const listAuditEventsQuerySchema = z.object({
 })
 
 async function requireOrgRole(
+    c: Context<WebAppEnv>,
     store: IStore,
     orgId: string,
     email: string,
     minimumRoles: OrgRole[],
 ): Promise<{ role: OrgRole } | { error: string; status: 403 }> {
+    if (c.get('role') === 'operator') {
+        return { role: 'owner' }
+    }
     const role = await store.getUserOrgRole(orgId, email)
     if (!role) {
         return { error: 'Not a member of this organization', status: 403 }
@@ -104,6 +108,10 @@ function mapControlPlaneError(c: Context<WebAppEnv>, error: unknown): Response {
     }
     console.error('[control-plane] unexpected error', error)
     return c.json({ error: 'Internal server error' }, 500)
+}
+
+function getControlPlaneNamespace(orgId: string): string {
+    return orgId
 }
 
 export function createControlPlaneRoutes(store: IStore): Hono<WebAppEnv> {
@@ -123,7 +131,7 @@ export function createControlPlaneRoutes(store: IStore): Hono<WebAppEnv> {
             return c.json({ error: 'Invalid data', details: parsed.error.flatten() }, 400)
         }
 
-        const roleCheck = await requireOrgRole(store, parsed.data.orgId, email, ['owner', 'admin', 'member'])
+        const roleCheck = await requireOrgRole(c, store, parsed.data.orgId, email, ['owner', 'admin', 'member'])
         if ('error' in roleCheck) {
             return c.json({ error: roleCheck.error }, roleCheck.status)
         }
@@ -131,7 +139,7 @@ export function createControlPlaneRoutes(store: IStore): Hono<WebAppEnv> {
         try {
             const approvalRequest = await approvalService.createRequest({
                 ...parsed.data,
-                namespace: c.get('namespace'),
+                namespace: getControlPlaneNamespace(parsed.data.orgId),
                 requestedByType: 'user',
                 requestedById: userId,
             })
@@ -152,7 +160,7 @@ export function createControlPlaneRoutes(store: IStore): Hono<WebAppEnv> {
             return c.json({ error: 'Invalid data', details: parsed.error.flatten() }, 400)
         }
 
-        const roleCheck = await requireOrgRole(store, parsed.data.orgId, email, ['owner', 'admin'])
+        const roleCheck = await requireOrgRole(c, store, parsed.data.orgId, email, ['owner', 'admin'])
         if ('error' in roleCheck) {
             return c.json({ error: roleCheck.error }, roleCheck.status)
         }
@@ -160,7 +168,7 @@ export function createControlPlaneRoutes(store: IStore): Hono<WebAppEnv> {
         try {
             const approvalDecision = await approvalService.recordDecision({
                 ...parsed.data,
-                namespace: c.get('namespace'),
+                namespace: getControlPlaneNamespace(parsed.data.orgId),
                 decidedByType: 'user',
                 decidedById: userId,
             })
@@ -180,7 +188,7 @@ export function createControlPlaneRoutes(store: IStore): Hono<WebAppEnv> {
             return c.json({ error: 'Invalid data', details: parsed.error.flatten() }, 400)
         }
 
-        const roleCheck = await requireOrgRole(store, parsed.data.orgId, email, ['owner', 'admin'])
+        const roleCheck = await requireOrgRole(c, store, parsed.data.orgId, email, ['owner', 'admin'])
         if ('error' in roleCheck) {
             return c.json({ error: roleCheck.error }, roleCheck.status)
         }
@@ -188,7 +196,7 @@ export function createControlPlaneRoutes(store: IStore): Hono<WebAppEnv> {
         try {
             const grant = await grantService.issueGrant({
                 ...parsed.data,
-                namespace: c.get('namespace'),
+                namespace: getControlPlaneNamespace(parsed.data.orgId),
             })
             return c.json({ ok: true, grant })
         } catch (error) {
@@ -206,7 +214,7 @@ export function createControlPlaneRoutes(store: IStore): Hono<WebAppEnv> {
             return c.json({ error: 'Invalid data', details: parsed.error.flatten() }, 400)
         }
 
-        const roleCheck = await requireOrgRole(store, parsed.data.orgId, email, ['owner', 'admin', 'member'])
+        const roleCheck = await requireOrgRole(c, store, parsed.data.orgId, email, ['owner', 'admin', 'member'])
         if ('error' in roleCheck) {
             return c.json({ error: roleCheck.error }, roleCheck.status)
         }
@@ -216,7 +224,7 @@ export function createControlPlaneRoutes(store: IStore): Hono<WebAppEnv> {
             if (!introspection) {
                 return c.json({ error: 'Grant not found' }, 404)
             }
-            if (introspection.grant.namespace !== c.get('namespace') || introspection.grant.orgId !== parsed.data.orgId) {
+            if (introspection.grant.orgId !== parsed.data.orgId) {
                 return c.json({ error: 'Grant access denied' }, 403)
             }
             return c.json({ ok: true, introspection })
@@ -236,7 +244,7 @@ export function createControlPlaneRoutes(store: IStore): Hono<WebAppEnv> {
             return c.json({ error: 'Invalid data', details: parsed.error.flatten() }, 400)
         }
 
-        const roleCheck = await requireOrgRole(store, parsed.data.orgId, email, ['owner', 'admin'])
+        const roleCheck = await requireOrgRole(c, store, parsed.data.orgId, email, ['owner', 'admin'])
         if ('error' in roleCheck) {
             return c.json({ error: roleCheck.error }, roleCheck.status)
         }
@@ -246,7 +254,7 @@ export function createControlPlaneRoutes(store: IStore): Hono<WebAppEnv> {
             if (!introspection) {
                 return c.json({ error: 'Grant not found' }, 404)
             }
-            if (introspection.grant.namespace !== c.get('namespace') || introspection.grant.orgId !== parsed.data.orgId) {
+            if (introspection.grant.orgId !== parsed.data.orgId) {
                 return c.json({ error: 'Grant access denied' }, 403)
             }
 
@@ -275,7 +283,7 @@ export function createControlPlaneRoutes(store: IStore): Hono<WebAppEnv> {
             return c.json({ error: 'Invalid data', details: parsed.error.flatten() }, 400)
         }
 
-        const roleCheck = await requireOrgRole(store, parsed.data.orgId, email, ['owner', 'admin', 'member'])
+        const roleCheck = await requireOrgRole(c, store, parsed.data.orgId, email, ['owner', 'admin', 'member'])
         if ('error' in roleCheck) {
             return c.json({ error: roleCheck.error }, roleCheck.status)
         }
@@ -283,7 +291,7 @@ export function createControlPlaneRoutes(store: IStore): Hono<WebAppEnv> {
         try {
             const auditEvent = await auditService.writeEvent({
                 ...parsed.data,
-                namespace: c.get('namespace'),
+                namespace: getControlPlaneNamespace(parsed.data.orgId),
             })
             return c.json({ ok: true, auditEvent })
         } catch (error) {
@@ -300,7 +308,7 @@ export function createControlPlaneRoutes(store: IStore): Hono<WebAppEnv> {
             return c.json({ error: 'Invalid query', details: parsed.error.flatten() }, 400)
         }
 
-        const roleCheck = await requireOrgRole(store, parsed.data.orgId, email, ['owner', 'admin', 'member'])
+        const roleCheck = await requireOrgRole(c, store, parsed.data.orgId, email, ['owner', 'admin', 'member'])
         if ('error' in roleCheck) {
             return c.json({ error: roleCheck.error }, roleCheck.status)
         }

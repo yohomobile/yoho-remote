@@ -146,6 +146,31 @@ function createPersonIdentityLinkRow(overrides: Record<string, unknown> = {}): R
     }
 }
 
+function createPersonIdentityRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        id: 'ident-1',
+        namespace: 'org-1',
+        org_id: 'org-1',
+        channel: 'feishu',
+        provider_tenant_id: '',
+        external_id: 'ou_user_1',
+        secondary_id: null,
+        account_type: 'human',
+        assurance: 'medium',
+        canonical_email: 'dev@example.com',
+        display_name: 'Dev User',
+        login_name: null,
+        employee_code: null,
+        status: 'active',
+        attributes: {},
+        first_seen_at: '1700000000000',
+        last_seen_at: '1700000000100',
+        created_at: '1700000000000',
+        updated_at: '1700000000100',
+        ...overrides,
+    }
+}
+
 function createPersonIdentityAuditRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
         id: 'audit-1',
@@ -368,6 +393,139 @@ describe('PostgresStore identity graph governance', () => {
             },
             1_700_000_000_300,
         ])
+    })
+
+    it('findResolvedActorByChannelExternalId reads a unique identity without mutating namespace scope', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            if (sql.includes('SELECT * FROM person_identities') && sql.includes('external_id = $2')) {
+                return { rows: [createPersonIdentityRow()] }
+            }
+            if (sql.includes('SELECT * FROM person_identity_links')) {
+                return { rows: [createPersonIdentityLinkRow()] }
+            }
+            if (sql.includes('SELECT * FROM persons') && params?.[0] === 'person-1') {
+                return { rows: [createPersonRow()] }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        await expect(store.findResolvedActorByChannelExternalId('feishu', 'ou_user_1')).resolves.toEqual({
+            identityId: 'ident-1',
+            personId: 'person-1',
+            channel: 'feishu',
+            resolution: 'admin_verified',
+            displayName: 'Dev User',
+            email: 'dev@example.com',
+            externalId: 'ou_user_1',
+            accountType: 'human',
+        })
+
+        expect(calls[0]?.params).toEqual(['feishu', 'ou_user_1'])
+    })
+})
+
+describe('PostgresStore AI profile cleanup transaction', () => {
+    it('clears org and user self-system references before deleting an AI profile', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('SELECT * FROM brain_config WHERE namespace = $1 FOR UPDATE')) {
+                return {
+                    rows: [{
+                        namespace: 'org:org-1',
+                        extra: {
+                            childClaudeModels: ['sonnet'],
+                            selfSystem: {
+                                enabled: true,
+                                defaultProfileId: 'profile-1',
+                                memoryProvider: 'yoho-memory',
+                            },
+                        },
+                    }],
+                }
+            }
+            if (sql.includes('UPDATE brain_config')) {
+                return { rows: [], rowCount: 1 }
+            }
+            if (sql.includes('UPDATE user_self_system_settings')) {
+                return { rows: [], rowCount: 2 }
+            }
+            if (sql.includes('DELETE FROM ai_profiles')) {
+                return { rows: [], rowCount: 1 }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const originalNow = Date.now
+        Date.now = () => 1_700_000_000_200
+        try {
+            await expect(store.deleteAIProfileWithSelfSystemCleanup('org-1', 'profile-1', 'owner@example.com')).resolves.toBe(true)
+        } finally {
+            Date.now = originalNow
+        }
+
+        const brainConfigUpdate = calls.find((call) => call.sql.includes('UPDATE brain_config'))
+        expect(brainConfigUpdate).toBeDefined()
+        expect(JSON.parse(brainConfigUpdate?.params?.[0] as string)).toEqual({
+            childClaudeModels: ['sonnet'],
+            selfSystem: {
+                enabled: false,
+                defaultProfileId: null,
+                memoryProvider: 'yoho-memory',
+            },
+        })
+        expect(brainConfigUpdate?.params?.slice(1)).toEqual([
+            1_700_000_000_200,
+            'owner@example.com',
+            'org:org-1',
+        ])
+
+        const userCleanup = calls.find((call) => call.sql.includes('UPDATE user_self_system_settings'))
+        expect(userCleanup?.params).toEqual([
+            'org-1',
+            'profile-1',
+            1_700_000_000_200,
+            'owner@example.com',
+        ])
+        expect(calls.at(-1)?.sql).toBe('COMMIT')
+    })
+
+    it('rolls back when the AI profile deletion does not remove any row', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('SELECT * FROM brain_config WHERE namespace = $1 FOR UPDATE')) {
+                return { rows: [] }
+            }
+            if (sql.includes('UPDATE user_self_system_settings')) {
+                return { rows: [], rowCount: 0 }
+            }
+            if (sql.includes('DELETE FROM ai_profiles')) {
+                return { rows: [], rowCount: 0 }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        await expect(store.deleteAIProfileWithSelfSystemCleanup('org-1', 'profile-missing', 'owner@example.com')).resolves.toBe(false)
+        expect(calls.at(-1)?.sql).toBe('ROLLBACK')
+        expect(calls.some((call) => call.sql === 'COMMIT')).toBe(false)
     })
 })
 
@@ -693,7 +851,7 @@ describe('PostgresStore control plane persistence', () => {
 })
 
 describe('PostgresStore session history search', () => {
-    it('scopes mainSessionId searches to brain-child sessions only', async () => {
+    it('scopes mainSessionId searches to orchestration child sessions only', async () => {
         const calls: MockQueryCall[] = []
         const sessionRow = createSessionRow({
             metadata: {
@@ -729,7 +887,7 @@ describe('PostgresStore session history search', () => {
         })
 
         expect(calls).toHaveLength(1)
-        expect(calls[0]?.sql).toContain(`LOWER(COALESCE(s.metadata->>'source', '')) = 'brain-child'`)
+        expect(calls[0]?.sql).toContain(`LOWER(COALESCE(s.metadata->>'source', '')) IN ('brain-child', 'orchestrator-child')`)
         expect(calls[0]?.sql).toContain(`s.metadata->>'mainSessionId' = $2`)
         expect(calls[0]?.params?.[1]).toBe('brain-main-1')
     })
@@ -873,7 +1031,7 @@ describe('PostgresStore.getOrCreateSession', () => {
         })
 
         expect(calls).toHaveLength(1)
-        expect(calls[0]?.sql).toContain('ON CONFLICT (id) DO UPDATE SET updated_at = $6')
+        expect(calls[0]?.sql).toContain('ON CONFLICT (id) DO UPDATE SET updated_at = $7')
         expect(calls[0]?.params?.[0]).toBe('tag-1')
         expect(calls[0]?.params?.[1]).toBe('tag-1')
         expect(calls[0]?.params?.[2]).toBe('ns-a')
@@ -1171,5 +1329,96 @@ describe('PostgresStore.getTurnBoundary', () => {
             turnStartSeq: 1,
             turnEndSeq: 3
         })
+    })
+})
+
+describe('PostgresStore brain_config upsert by org', () => {
+    it('uses ON CONFLICT (namespace) namespaced as org:<id> and persists org_id column', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({ sql, params: Array.isArray(params) ? params : undefined })
+            if (sql.includes('INSERT INTO brain_config')) {
+                return {
+                    rows: [{
+                        namespace: 'org:org-1',
+                        org_id: 'org-1',
+                        agent: 'claude',
+                        claude_model_mode: 'opus',
+                        codex_model: 'gpt-5.4',
+                        extra: { feature: 'x' },
+                        updated_at: 1_700_000_000_000,
+                        updated_by: 'owner@example.com',
+                    }],
+                }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const originalNow = Date.now
+        Date.now = () => 1_700_000_000_000
+        try {
+            const result = await store.setBrainConfigByOrg('org-1', {
+                agent: 'claude',
+                extra: { feature: 'x' },
+                updatedBy: 'owner@example.com',
+            })
+            expect(result.namespace).toBe('org:org-1')
+            expect(result.orgId).toBe('org-1')
+            expect(result.agent).toBe('claude')
+        } finally {
+            Date.now = originalNow
+        }
+
+        const upsert = calls.find(call => call.sql.includes('INSERT INTO brain_config'))
+        expect(upsert).toBeDefined()
+        expect(upsert?.sql).toContain('ON CONFLICT (namespace)')
+        expect(upsert?.sql).toContain('org_id = EXCLUDED.org_id')
+        // params: [namespace, org_id, agent, claude_model_mode, codex_model, extra, updated_at, updated_by]
+        expect(upsert?.params?.[0]).toBe('org:org-1')
+        expect(upsert?.params?.[1]).toBe('org-1')
+        expect(upsert?.params?.[2]).toBe('claude')
+        expect(upsert?.params?.[3]).toBe('opus')
+        expect(upsert?.params?.[4]).toBe('gpt-5.4')
+        expect(JSON.parse(upsert?.params?.[5] as string)).toEqual({ feature: 'x' })
+        expect(upsert?.params?.[6]).toBe(1_700_000_000_000)
+        expect(upsert?.params?.[7]).toBe('owner@example.com')
+    })
+
+    it('getBrainConfigByOrg returns org-scoped row and exposes orgId on the DTO', async () => {
+        const store = createStore(async (sql, params) => {
+            if (sql === 'SELECT * FROM brain_config WHERE org_id = $1') {
+                expect(params).toEqual(['org-42'])
+                return {
+                    rows: [{
+                        namespace: 'org:org-42',
+                        org_id: 'org-42',
+                        agent: 'codex',
+                        claude_model_mode: null,
+                        codex_model: 'gpt-5.4',
+                        extra: {},
+                        updated_at: 1_700_000_000_500,
+                        updated_by: null,
+                    }],
+                }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const result = await store.getBrainConfigByOrg('org-42')
+        expect(result).toEqual({
+            namespace: 'org:org-42',
+            orgId: 'org-42',
+            agent: 'codex',
+            claudeModelMode: null,
+            codexModel: 'gpt-5.4',
+            extra: {},
+            updatedAt: 1_700_000_000_500,
+            updatedBy: null,
+        })
+    })
+
+    it('getBrainConfigByOrg returns null when no row exists for that org', async () => {
+        const store = createStore(async () => ({ rows: [] }))
+        await expect(store.getBrainConfigByOrg('org-missing')).resolves.toBeNull()
     })
 })

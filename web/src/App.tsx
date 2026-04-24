@@ -22,6 +22,7 @@ import { OfflineBanner } from '@/components/OfflineBanner'
 import { SyncingBanner } from '@/components/SyncingBanner'
 import { UpdateBanner } from '@/components/UpdateBanner'
 import { LicenseBanner } from '@/components/LicenseBanner'
+import { PendingInvitationsBanner } from '@/components/PendingInvitationsBanner'
 import { LoadingState } from '@/components/LoadingState'
 import { Toaster } from '@/components/ui/toaster'
 import { useVersionCheck } from '@/hooks/useVersionCheck'
@@ -458,15 +459,15 @@ export function App() {
 
     const eventSubscription = useMemo(() => {
         if (selectedSessionId && selectedSessionId !== 'new') {
-            return { sessionId: selectedSessionId, all: true }
+            return { sessionId: selectedSessionId, all: true, orgId: currentOrgId }
         }
-        return { all: true }
-    }, [selectedSessionId])
+        return { all: true, orgId: currentOrgId }
+    }, [currentOrgId, selectedSessionId])
 
     const token = getAccessTokenSync()
 
     useSSE({
-        enabled: Boolean(api && token && isAuthenticated),
+        enabled: Boolean(api && token && isAuthenticated && currentOrgId),
         token: token ?? '',
         baseUrl,
         subscription: eventSubscription,
@@ -537,6 +538,7 @@ export function App() {
             <SyncingBanner isSyncing={isSyncing} />
             <OfflineBanner />
             <LicenseBanner />
+            <PendingInvitationsBanner />
             <div className="h-full flex flex-col">
                 <OrgGate>
                     <Outlet />

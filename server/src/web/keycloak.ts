@@ -193,7 +193,7 @@ export function getKeycloakLogoutUrl(redirectUri: string): string {
 
 /**
  * Extract user role from token payload
- * Checks realm_access.roles and resource_access[clientId].roles for 'operator' role
+ * Checks realm_access.roles and resource_access roles for elevated privileges.
  * Defaults to 'developer' if no operator role found
  */
 export function extractUserRole(payload: KeycloakTokenPayload): 'developer' | 'operator' {
@@ -206,6 +206,12 @@ export function extractUserRole(payload: KeycloakTokenPayload): 'developer' | 'o
     // Check client-specific roles
     const clientRoles = payload.resource_access?.[KEYCLOAK_CONFIG.clientId]?.roles ?? [];
     if (clientRoles.includes('operator')) {
+        return 'operator';
+    }
+
+    // Keycloak platform admins live under the realm-management client.
+    const realmManagementRoles = payload.resource_access?.['realm-management']?.roles ?? [];
+    if (realmManagementRoles.includes('realm-admin')) {
         return 'operator';
     }
 

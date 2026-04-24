@@ -1,13 +1,13 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
-import type { Session, SyncEngine } from '../../sync/syncEngine'
+import type { Machine, Session, SyncEngine } from '../../sync/syncEngine'
 import type { IStore, UserRole } from '../../store'
 import type { SSEManager } from '../../sse/sseManager'
 import type { WebAppEnv } from '../middleware/auth'
 import { resolvePersonalWorktreeSpawnOptions } from '../personalWorktree'
 import { buildInitPrompt } from '../prompts/initPrompt'
 import { getLocalTokenSourceEnabledForOrg, resolveTokenSourceForAgent } from '../tokenSources'
-import { requireMachine } from './guards'
+import { requireMachine, requireMachineInOrg, requireRequestedOrgId } from './guards'
 import { isMachineBlocked } from './blocklist'
 import { serializeMachine, sortMachinesForDisplay } from './machinePayload'
 import { getLicenseService } from '../../license/licenseService'
@@ -30,7 +30,7 @@ const spawnBodySchema = z.object({
     source: z.string().min(1).max(100).optional()
 })
 
-const modelModeValues = ['default', 'sonnet', 'opus', 'opus-4-7', 'glm-5.1', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2-codex', 'gpt-5.2', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini'] as const
+const modelModeValues = ['default', 'sonnet', 'opus', 'opus-4-7', 'glm-5.1', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2-codex', 'gpt-5.2', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini'] as const
 const isModelMode = (value: string): value is NonNullable<Session['modelMode']> => {
     return (modelModeValues as readonly string[]).includes(value)
 }
@@ -107,6 +107,13 @@ async function waitForSessionOnline(engine: SyncEngine, sessionId: string, timeo
 
 export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, store: IStore, getSseManager?: () => SSEManager | null): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
+    const getEngineMachinesByOrg = (engine: SyncEngine, orgId: string): Machine[] => {
+        if (typeof engine.getMachinesByOrg === 'function') {
+            return engine.getMachinesByOrg(orgId)
+        }
+        return (engine as { getMachinesByNamespace?: (namespace: string) => Machine[] })
+            .getMachinesByNamespace?.(orgId) ?? []
+    }
 
     app.get('/machines', (c) => {
         const engine = getSyncEngine()
@@ -114,10 +121,11 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
             return c.json({ error: 'Not connected' }, 503)
         }
 
-        const namespace = c.get('namespace')
-        const orgId = c.req.query('orgId')
-        const machines = engine.getMachinesByNamespace(namespace)
-            .filter((machine) => !orgId || machine.orgId === orgId || machine.orgId == null)
+        const orgId = requireRequestedOrgId(c)
+        if (orgId instanceof Response) {
+            return orgId
+        }
+        const machines = getEngineMachinesByOrg(engine, orgId)
             .filter((m) => !isMachineBlocked(m))
         return c.json({ machines: sortMachinesForDisplay(machines).map(serializeMachine) })
     })
@@ -128,8 +136,13 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
             return c.json({ error: 'Not connected' }, 503)
         }
 
+        const requestedOrgId = requireRequestedOrgId(c)
+        if (requestedOrgId instanceof Response) {
+            return requestedOrgId
+        }
+
         const machineId = c.req.param('id')
-        const machine = requireMachine(c, engine, machineId)
+        const machine = requireMachineInOrg(c, engine, machineId, requestedOrgId)
         if (machine instanceof Response) {
             return machine
         }
@@ -141,7 +154,7 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
         }
 
         // License check: 优先用 query param orgId，fallback 到 machine 自身的 orgId
-        const orgIdForLicense = c.req.query('orgId') || machine.orgId
+        const orgIdForLicense = requestedOrgId
         if (orgIdForLicense) {
             try {
                 const licenseService = getLicenseService()
@@ -192,7 +205,9 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
                 return c.json({ error: resolvedTokenSource.error }, resolvedTokenSource.status as 400 | 404)
             }
         } else if (orgIdForLicense) {
-            const localEnabled = await getLocalTokenSourceEnabledForOrg(store, orgIdForLicense)
+            const localEnabled = typeof store.getOrganization === 'function'
+                ? await getLocalTokenSourceEnabledForOrg(store, orgIdForLicense)
+                : true
             if (!localEnabled) {
                 return c.json({ error: 'Local Token Source is disabled for this organization' }, 400)
             }
@@ -227,7 +242,6 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
 
         // 如果 spawn 成功，等 session online 后设置 createdBy 并发送初始化 prompt
         if (result.type === 'success') {
-            const namespace = c.get('namespace')
             const role = c.get('role')  // Role from Keycloak token
             const userName = c.get('name')
             // Wait for session to be online, then set createdBy and send init prompt
@@ -247,12 +261,9 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
                 console.log(`[machines/spawn] Sending init prompt to session ${result.sessionId}`)
                 // Set createdBy after session is confirmed online (exists in DB)
                 if (email) {
-                    await store.setSessionCreatedBy(result.sessionId, email, namespace)
+                    await store.setSessionCreatedBy(result.sessionId, email, requestedOrgId)
                 }
-                const orgId = c.req.query('orgId')
-                if (orgId) {
-                    await store.setSessionOrgId(result.sessionId, orgId, namespace)
-                }
+                await store.setSessionOrgId(result.sessionId, requestedOrgId)
                 const identityPatch = buildSessionIdentityContextPatch(c.get('identityActor'))
                 if (identityPatch && typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
                     await engine.patchSessionMetadata(result.sessionId, identityPatch)
@@ -322,7 +333,10 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
         }
 
         const { supportedAgents } = parsed.data
-        const ok = await store.setMachineSupportedAgents(machine.id, supportedAgents, machine.namespace)
+        if (!machine.orgId) {
+            return c.json({ error: 'Machine orgId missing' }, 409)
+        }
+        const ok = await store.setMachineSupportedAgents(machine.id, supportedAgents, machine.orgId)
         if (!ok) {
             return c.json({ error: 'Failed to update supported agents' }, 500)
         }

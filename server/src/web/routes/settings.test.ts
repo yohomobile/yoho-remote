@@ -2,24 +2,76 @@ import { describe, expect, it } from 'bun:test'
 import { Hono } from 'hono'
 import { createSettingsRoutes } from './settings'
 
+function createSettingsApp(
+    store: Record<string, unknown>,
+    options?: { role?: 'developer' | 'operator'; email?: string; orgId?: string; orgRole?: 'member' | 'owner' | 'admin' }
+) {
+    const app = new Hono<any>()
+    app.use('/api/*', async (c, next) => {
+        c.set('namespace', 'default')
+        if (options?.role) {
+            c.set('role', options.role)
+        }
+        if (options?.email) {
+            c.set('email', options.email)
+        }
+        if (options?.orgId) {
+            c.set('orgs', [{
+                id: options.orgId,
+                role: options.orgRole ?? 'owner',
+            }])
+        }
+        await next()
+    })
+    app.route('/api', createSettingsRoutes(store as any))
+    return app
+}
+
 describe('createSettingsRoutes projects', () => {
     it('passes machineId through when listing projects', async () => {
         const calls: Array<{ machineId: string | null | undefined; orgId: string | null | undefined }> = []
         const store = {
             getProjects: async (machineId?: string | null, orgId?: string | null) => {
                 calls.push({ machineId, orgId })
-                return []
+                return [{
+                    id: 'project-1',
+                    name: 'YohoRemote',
+                    path: '/home/workspaces/repos/yoho-remote',
+                    description: null,
+                    machineId,
+                    orgId,
+                    createdAt: 1,
+                    updatedAt: 1,
+                }, {
+                    id: 'project-legacy',
+                    name: 'Legacy',
+                    path: '/tmp/legacy',
+                    description: null,
+                    machineId,
+                    orgId: null,
+                    createdAt: 1,
+                    updatedAt: 1,
+                }]
             },
+            getMachine: async () => ({
+                id: 'machine-a',
+                orgId: 'org-a',
+            }),
         }
 
-        const app = new Hono()
-        app.route('/api', createSettingsRoutes(store as any))
+        const app = createSettingsApp(store, {
+            role: 'developer',
+            orgId: 'org-a',
+        })
 
         const response = await app.request('/api/settings/projects?machineId=machine-a&orgId=org-a')
         expect(response.status).toBe(200)
         expect(calls).toEqual([
             { machineId: 'machine-a', orgId: 'org-a' },
         ])
+        expect(await response.json()).toEqual({
+            projects: [expect.objectContaining({ id: 'project-1', orgId: 'org-a' })],
+        })
     })
 
     it('stores created and updated projects with machineId', async () => {
@@ -66,10 +118,16 @@ describe('createSettingsRoutes projects', () => {
                     updatedAt: 2,
                 }
             },
+            getMachine: async () => ({
+                id: 'machine-a',
+                orgId: 'org-a',
+            }),
         }
 
-        const app = new Hono()
-        app.route('/api', createSettingsRoutes(store as any))
+        const app = createSettingsApp(store, {
+            role: 'developer',
+            orgId: 'org-a',
+        })
 
         const createResponse = await app.request('/api/settings/projects?orgId=org-a', {
             method: 'POST',
@@ -138,10 +196,16 @@ describe('createSettingsRoutes projects', () => {
                 updatedAt: 2,
             }),
             removeProject: async () => true,
+            getMachine: async () => ({
+                id: 'machine-a',
+                orgId: 'org-a',
+            }),
         }
 
-        const app = new Hono()
-        app.route('/api', createSettingsRoutes(store as any))
+        const app = createSettingsApp(store, {
+            role: 'developer',
+            orgId: 'org-a',
+        })
 
         const createResponse = await app.request('/api/settings/projects?orgId=org-a', {
             method: 'POST',
@@ -174,33 +238,96 @@ describe('createSettingsRoutes projects', () => {
             { machineId: 'machine-a', orgId: 'org-a' },
         ])
     })
+
+    it('rejects project access for users outside the requested org', async () => {
+        const store = {
+            getProjects: async () => [],
+        }
+
+        const app = createSettingsApp(store, {
+            role: 'developer',
+            orgId: 'org-a',
+        })
+
+        const response = await app.request('/api/settings/projects?orgId=org-b')
+        expect(response.status).toBe(403)
+    })
+
+    it('rejects creating projects on machines outside the requested org', async () => {
+        const store = {
+            getMachine: async () => ({
+                id: 'machine-b',
+                orgId: 'org-b',
+            }),
+        }
+
+        const app = createSettingsApp(store, {
+            role: 'developer',
+            orgId: 'org-a',
+        })
+
+        const response = await app.request('/api/settings/projects?orgId=org-a', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                name: 'OtherOrgProject',
+                path: '/tmp/other',
+                machineId: 'machine-b',
+            }),
+        })
+
+        expect(response.status).toBe(404)
+    })
+})
+
+describe('createSettingsRoutes role prompts', () => {
+    it('only allows operator users to manage role prompts', async () => {
+        const store = {
+            getAllRolePrompts: async () => [{ role: 'developer', prompt: 'prompt', updatedAt: 1 }],
+            setRolePrompt: async () => true,
+            removeRolePrompt: async () => true,
+            getRolePrompt: async () => 'prompt',
+        }
+
+        const memberApp = createSettingsApp(store, {
+            role: 'developer',
+            orgId: 'org-a',
+        })
+        const operatorApp = createSettingsApp(store, {
+            role: 'operator',
+            email: 'operator@example.com',
+        })
+
+        const memberResponse = await memberApp.request('/api/settings/role-prompts')
+        expect(memberResponse.status).toBe(403)
+
+        const operatorResponse = await operatorApp.request('/api/settings/role-prompts')
+        expect(operatorResponse.status).toBe(200)
+        expect(await operatorResponse.json()).toEqual({
+            prompts: [{ role: 'developer', prompt: 'prompt', updatedAt: 1 }],
+        })
+    })
 })
 
 describe('createSettingsRoutes AI profiles', () => {
     function createNamespacedApp(
         store: Record<string, unknown>,
         namespace = 'default',
-        options?: { email?: string; role?: 'developer' | 'operator' }
+        options?: { email?: string; role?: 'developer' | 'operator'; orgId?: string; orgRole?: 'member' | 'owner' | 'admin' }
     ) {
-        const app = new Hono<any>()
-        app.use('/api/*', async (c, next) => {
-            c.set('namespace', namespace)
-            if (options?.email) {
-                c.set('email', options.email)
-            }
-            if (options?.role) {
-                c.set('role', options.role)
-            }
-            await next()
+        return createSettingsApp(store, {
+            email: options?.email,
+            role: options?.role,
+            orgId: options?.orgId,
+            orgRole: options?.orgRole,
         })
-        app.route('/api', createSettingsRoutes(store as any))
-        return app
     }
 
-    it('supports CRUD for AI profiles in the current namespace', async () => {
+    it('supports CRUD for AI profiles in the current org', async () => {
         let profile = {
             id: 'profile-1',
-            namespace: 'ns-test',
+            namespace: 'org:org-a',
+            orgId: 'org-a',
             name: 'K1',
             role: 'architect',
             specialties: ['TypeScript'],
@@ -220,7 +347,8 @@ describe('createSettingsRoutes AI profiles', () => {
         }
 
         const store = {
-            getAIProfiles: async () => [profile],
+            getAIProfilesByOrg: async () => [profile],
+            getAIProfileByOrgAndRole: async () => null,
             createAIProfile: async (input: Record<string, unknown>) => ({
                 ...profile,
                 ...input,
@@ -235,16 +363,21 @@ describe('createSettingsRoutes AI profiles', () => {
                 }
                 return profile
             },
+            deleteAIProfileWithSelfSystemCleanup: async () => true,
             deleteAIProfile: async () => true,
         }
 
-        const app = createNamespacedApp(store, 'ns-test')
+        const app = createNamespacedApp(store, 'default', {
+            email: 'operator@example.com',
+            role: 'operator',
+            orgId: 'org-a',
+        })
 
-        const listResponse = await app.request('/api/settings/ai-profiles')
+        const listResponse = await app.request('/api/settings/ai-profiles?orgId=org-a')
         expect(listResponse.status).toBe(200)
         expect(await listResponse.json()).toEqual({ profiles: [profile] })
 
-        const createResponse = await app.request('/api/settings/ai-profiles', {
+        const createResponse = await app.request('/api/settings/ai-profiles?orgId=org-a', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
@@ -258,13 +391,14 @@ describe('createSettingsRoutes AI profiles', () => {
             ok: true,
             profile: expect.objectContaining({
                 id: 'profile-1',
-                namespace: 'ns-test',
+                namespace: 'org:org-a',
+                orgId: 'org-a',
                 name: 'K1',
                 role: 'architect',
             }),
         })
 
-        const updateResponse = await app.request('/api/settings/ai-profiles/profile-1', {
+        const updateResponse = await app.request('/api/settings/ai-profiles/profile-1?orgId=org-a', {
             method: 'PUT',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
@@ -280,18 +414,19 @@ describe('createSettingsRoutes AI profiles', () => {
             }),
         })
 
-        const deleteResponse = await app.request('/api/settings/ai-profiles/profile-1', {
+        const deleteResponse = await app.request('/api/settings/ai-profiles/profile-1?orgId=org-a', {
             method: 'DELETE',
         })
         expect(deleteResponse.status).toBe(200)
         expect(await deleteResponse.json()).toEqual({ ok: true })
     })
 
-    it('rejects AI profile updates outside the current namespace', async () => {
+    it('rejects AI profile updates outside the current org', async () => {
         const store = {
             getAIProfile: async () => ({
                 id: 'profile-foreign',
-                namespace: 'other',
+                namespace: 'org:org-b',
+                orgId: 'org-b',
                 name: 'Other',
                 role: 'developer',
                 specialties: [],
@@ -311,8 +446,12 @@ describe('createSettingsRoutes AI profiles', () => {
             }),
         }
 
-        const app = createNamespacedApp(store, 'ns-test')
-        const response = await app.request('/api/settings/ai-profiles/profile-foreign', {
+        const app = createNamespacedApp(store, 'default', {
+            email: 'operator@example.com',
+            role: 'operator',
+            orgId: 'org-a',
+        })
+        const response = await app.request('/api/settings/ai-profiles/profile-foreign?orgId=org-a', {
             method: 'PUT',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
@@ -324,14 +463,37 @@ describe('createSettingsRoutes AI profiles', () => {
         expect(await response.json()).toEqual({ error: 'AI profile not found' })
     })
 
-    it('rejects AI profile writes for non-operators in default namespace even if they are org owners', async () => {
+    it('allows org owners to write org-scoped AI profiles', async () => {
         const store = {
-            getUserOrgRole: async () => 'owner',
+            getAIProfileByOrgAndRole: async () => null,
+            createAIProfile: async (input: Record<string, unknown>) => ({
+                id: 'profile-owner',
+                namespace: input.namespace,
+                orgId: input.orgId,
+                name: input.name,
+                role: input.role,
+                specialties: [],
+                personality: null,
+                greetingTemplate: null,
+                preferredProjects: [],
+                workStyle: null,
+                avatarEmoji: '🤖',
+                status: 'idle',
+                stats: {
+                    tasksCompleted: 0,
+                    activeMinutes: 0,
+                    lastActiveAt: null,
+                },
+                createdAt: 1,
+                updatedAt: 1,
+            }),
         }
 
         const app = createNamespacedApp(store, 'default', {
             email: 'member@example.com',
             role: 'developer',
+            orgId: 'org-a',
+            orgRole: 'owner',
         })
         const response = await app.request('/api/settings/ai-profiles?orgId=org-a', {
             method: 'POST',
@@ -342,15 +504,24 @@ describe('createSettingsRoutes AI profiles', () => {
             }),
         })
 
-        expect(response.status).toBe(403)
-        expect(await response.json()).toEqual({ error: 'Insufficient permissions' })
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            ok: true,
+            profile: expect.objectContaining({
+                namespace: 'org:org-a',
+                orgId: 'org-a',
+                name: 'K1',
+            }),
+        })
     })
 
-    it('allows operator writes for shared default namespace AI profiles', async () => {
+    it('allows operator writes for org-scoped AI profiles', async () => {
         const store = {
+            getAIProfileByOrgAndRole: async () => null,
             createAIProfile: async (input: Record<string, unknown>) => ({
                 id: 'profile-1',
                 namespace: input.namespace,
+                orgId: input.orgId,
                 name: input.name,
                 role: input.role,
                 specialties: [],
@@ -373,8 +544,9 @@ describe('createSettingsRoutes AI profiles', () => {
         const app = createNamespacedApp(store, 'default', {
             email: 'operator@example.com',
             role: 'operator',
+            orgId: 'org-a',
         })
-        const response = await app.request('/api/settings/ai-profiles', {
+        const response = await app.request('/api/settings/ai-profiles?orgId=org-a', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
@@ -387,7 +559,8 @@ describe('createSettingsRoutes AI profiles', () => {
         expect(await response.json()).toEqual({
             ok: true,
             profile: expect.objectContaining({
-                namespace: 'default',
+                namespace: 'org:org-a',
+                orgId: 'org-a',
                 name: 'K1',
             }),
         })
@@ -398,7 +571,7 @@ describe('createSettingsRoutes brain config', () => {
     function createBrainConfigApp(
         store: Record<string, unknown>,
         namespace = 'default',
-        options?: { email?: string; role?: 'developer' | 'operator' }
+        options?: { email?: string; role?: 'developer' | 'operator'; orgId?: string; orgRole?: 'member' | 'owner' | 'admin' }
     ) {
         const app = new Hono<any>()
         app.use('/api/*', async (c, next) => {
@@ -409,18 +582,41 @@ describe('createSettingsRoutes brain config', () => {
             if (options?.role) {
                 c.set('role', options.role)
             }
+            if (options?.orgId) {
+                c.set('orgs', [{
+                    id: options.orgId,
+                    role: options.orgRole ?? 'owner',
+                }])
+            }
             await next()
         })
         app.route('/api', createSettingsRoutes(store as any))
         return app
     }
 
-    it('rejects brain-config updates for non-operators in default namespace even if they are org owners', async () => {
+    it('allows org owners to update org-scoped brain config', async () => {
         const app = createBrainConfigApp({
-            getUserOrgRole: async () => 'owner',
+            getBrainConfigByOrg: async () => null,
+            getAIProfile: async () => ({
+                id: 'profile-1',
+                namespace: 'org:org-a',
+                orgId: 'org-a',
+            }),
+            setBrainConfigByOrg: async (orgId: string, config: Record<string, unknown>) => ({
+                namespace: `org:${orgId}`,
+                orgId,
+                agent: config.agent,
+                claudeModelMode: config.claudeModelMode ?? 'opus',
+                codexModel: config.codexModel ?? 'gpt-5.4',
+                extra: config.extra ?? {},
+                updatedAt: 1,
+                updatedBy: config.updatedBy ?? null,
+            }),
         }, 'default', {
             email: 'member@example.com',
             role: 'developer',
+            orgId: 'org-a',
+            orgRole: 'owner',
         })
         const response = await app.request('/api/settings/brain-config?orgId=org-a', {
             method: 'PUT',
@@ -437,16 +633,24 @@ describe('createSettingsRoutes brain config', () => {
             }),
         })
 
-        expect(response.status).toBe(403)
-        expect(await response.json()).toEqual({ error: 'Insufficient permissions' })
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            ok: true,
+            config: expect.objectContaining({
+                namespace: 'org:org-a',
+                orgId: 'org-a',
+                agent: 'claude',
+            }),
+        })
     })
 
     it('rejects invalid selfSystem config with 400', async () => {
         const app = createBrainConfigApp({}, 'default', {
             email: 'operator@example.com',
             role: 'operator',
+            orgId: 'org-a',
         })
-        const response = await app.request('/api/settings/brain-config', {
+        const response = await app.request('/api/settings/brain-config?orgId=org-a', {
             method: 'PUT',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
@@ -466,19 +670,22 @@ describe('createSettingsRoutes brain config', () => {
         expect(payload.error).toBe('Invalid config')
     })
 
-    it('rejects selfSystem defaultProfileId outside current namespace', async () => {
+    it('rejects selfSystem defaultProfileId outside current org', async () => {
         const store = {
+            getBrainConfigByOrg: async () => null,
             getAIProfile: async () => ({
                 id: 'profile-foreign',
-                namespace: 'other',
+                namespace: 'org:org-b',
+                orgId: 'org-b',
             }),
         }
 
         const app = createBrainConfigApp(store, 'default', {
             email: 'operator@example.com',
             role: 'operator',
+            orgId: 'org-a',
         })
-        const response = await app.request('/api/settings/brain-config', {
+        const response = await app.request('/api/settings/brain-config?orgId=org-a', {
             method: 'PUT',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
@@ -498,19 +705,89 @@ describe('createSettingsRoutes brain config', () => {
             error: 'Invalid config',
             details: [{
                 path: ['extra', 'selfSystem', 'defaultProfileId'],
-                message: 'AI profile not found in current namespace',
+                message: 'AI profile not found in current org',
             }],
         })
     })
 
-    it('allows operator updates for shared default namespace brain config', async () => {
+    it('normalizes stale org selfSystem defaultProfileId when clients resubmit it', async () => {
+        let savedConfig: Record<string, unknown> | null = null
         const store = {
+            getAIProfile: async () => null,
+            getBrainConfigByOrg: async () => ({
+                namespace: 'org:org-a',
+                orgId: 'org-a',
+                agent: 'claude',
+                claudeModelMode: 'opus',
+                codexModel: 'gpt-5.4',
+                extra: {
+                    selfSystem: {
+                        enabled: true,
+                        defaultProfileId: 'profile-stale',
+                        memoryProvider: 'yoho-memory',
+                    },
+                },
+                updatedAt: 1,
+                updatedBy: 'operator@example.com',
+            }),
+            setBrainConfigByOrg: async (orgId: string, config: Record<string, unknown>) => {
+                savedConfig = config
+                return {
+                    namespace: `org:${orgId}`,
+                    orgId,
+                    agent: config.agent,
+                    claudeModelMode: config.claudeModelMode ?? 'opus',
+                    codexModel: config.codexModel ?? 'gpt-5.4',
+                    extra: config.extra ?? {},
+                    updatedAt: 1,
+                    updatedBy: config.updatedBy ?? null,
+                }
+            },
+        }
+
+        const app = createBrainConfigApp(store, 'default', {
+            email: 'operator@example.com',
+            role: 'operator',
+            orgId: 'org-a',
+        })
+        const response = await app.request('/api/settings/brain-config?orgId=org-a', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                agent: 'claude',
+                extra: {
+                    selfSystem: {
+                        enabled: true,
+                        defaultProfileId: 'profile-stale',
+                        memoryProvider: 'none',
+                    },
+                },
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        expect(savedConfig).toMatchObject({
+            extra: {
+                selfSystem: {
+                    enabled: false,
+                    defaultProfileId: null,
+                    memoryProvider: 'none',
+                },
+            },
+        })
+    })
+
+    it('allows operator updates for org-scoped brain config', async () => {
+        const store = {
+            getBrainConfigByOrg: async () => null,
             getAIProfile: async () => ({
                 id: 'profile-1',
-                namespace: 'default',
+                namespace: 'org:org-a',
+                orgId: 'org-a',
             }),
-            setBrainConfig: async (namespace: string, config: Record<string, unknown>) => ({
-                namespace,
+            setBrainConfigByOrg: async (orgId: string, config: Record<string, unknown>) => ({
+                namespace: `org:${orgId}`,
+                orgId,
                 agent: config.agent,
                 claudeModelMode: config.claudeModelMode ?? 'opus',
                 codexModel: config.codexModel ?? 'gpt-5.4',
@@ -523,8 +800,9 @@ describe('createSettingsRoutes brain config', () => {
         const app = createBrainConfigApp(store, 'default', {
             email: 'operator@example.com',
             role: 'operator',
+            orgId: 'org-a',
         })
-        const response = await app.request('/api/settings/brain-config', {
+        const response = await app.request('/api/settings/brain-config?orgId=org-a', {
             method: 'PUT',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
@@ -543,9 +821,87 @@ describe('createSettingsRoutes brain config', () => {
         expect(await response.json()).toEqual({
             ok: true,
             config: expect.objectContaining({
-                namespace: 'default',
+                namespace: 'org:org-a',
+                orgId: 'org-a',
                 agent: 'claude',
             }),
+        })
+    })
+})
+
+describe('createSettingsRoutes self system', () => {
+    function createSelfSystemApp(
+        store: Record<string, unknown>,
+        namespace = 'default',
+        options?: { email?: string; role?: 'developer' | 'operator'; orgId?: string; orgRole?: 'member' | 'owner' | 'admin' }
+    ) {
+        const app = new Hono<any>()
+        app.use('/api/*', async (c, next) => {
+            c.set('namespace', namespace)
+            if (options?.email) {
+                c.set('email', options.email)
+            }
+            if (options?.role) {
+                c.set('role', options.role)
+            }
+            if (options?.orgId) {
+                c.set('orgs', [{
+                    id: options.orgId,
+                    role: options.orgRole ?? 'owner',
+                }])
+            }
+            await next()
+        })
+        app.route('/api', createSettingsRoutes(store as any))
+        return app
+    }
+
+    it('normalizes stale user selfSystem defaultProfileId when clients resubmit it', async () => {
+        let savedConfig: Record<string, unknown> | null = null
+        const store = {
+            getAIProfile: async () => null,
+            getUserSelfSystemConfig: async () => ({
+                orgId: 'org-a',
+                userEmail: 'member@example.com',
+                enabled: true,
+                defaultProfileId: 'profile-stale',
+                memoryProvider: 'yoho-memory',
+                updatedAt: 1,
+                updatedBy: 'member@example.com',
+            }),
+            setUserSelfSystemConfig: async (config: Record<string, unknown>) => {
+                savedConfig = config
+                return {
+                    ...config,
+                    updatedAt: 2,
+                }
+            },
+        }
+
+        const app = createSelfSystemApp(store, 'default', {
+            email: 'member@example.com',
+            role: 'developer',
+            orgId: 'org-a',
+            orgRole: 'member',
+        })
+        const response = await app.request('/api/settings/self-system?orgId=org-a', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                enabled: true,
+                defaultProfileId: 'profile-stale',
+                memoryProvider: 'none',
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        expect(savedConfig).toMatchObject({
+            orgId: 'org-a',
+            userEmail: 'member@example.com',
+            enabled: false,
+            defaultProfileId: null,
+            memoryProvider: 'none',
+            updatedBy: 'member@example.com',
         })
     })
 })

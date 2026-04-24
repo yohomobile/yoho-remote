@@ -9,16 +9,24 @@ describe('YohoRemoteSystemEvent', () => {
             type: 'todo-reminder',
             items: [
                 { content: 'Inspect the repo', status: 'completed' },
-                { content: 'Patch the UI', status: 'in_progress', activeForm: 'Patching the UI' }
+                {
+                    content: 'Patch the UI',
+                    status: 'in_progress',
+                    activeForm: 'Patching the UI',
+                },
             ],
             itemCount: 2,
             pendingCount: 0,
             inProgressCount: 1,
-            completedCount: 1
+            completedCount: 1,
         } satisfies AgentEvent
 
         const html = renderToStaticMarkup(
-            <YohoRemoteSystemEvent api={{} as never} messageId="event-todo" event={event} />
+            <YohoRemoteSystemEvent
+                api={{} as never}
+                messageId="event-todo"
+                event={event}
+            />
         )
 
         expect(html).toContain('data-message-id="event-todo"')
@@ -33,11 +41,15 @@ describe('YohoRemoteSystemEvent', () => {
         const event = {
             type: 'plan-mode',
             planFilePath: '/tmp/demo-plan.md',
-            planExists: false
+            planExists: false,
         } satisfies AgentEvent
 
         const html = renderToStaticMarkup(
-            <YohoRemoteSystemEvent api={{} as never} messageId="event-plan-mode" event={event} />
+            <YohoRemoteSystemEvent
+                api={{} as never}
+                messageId="event-plan-mode"
+                event={event}
+            />
         )
 
         expect(html).toContain('Plan mode active')
@@ -49,15 +61,39 @@ describe('YohoRemoteSystemEvent', () => {
         const event = {
             type: 'brain-child-callback',
             title: '子任务完成',
-            details: ['消息数: 5']
+            details: ['消息数: 5'],
         } satisfies AgentEvent
 
         const html = renderToStaticMarkup(
-            <YohoRemoteSystemEvent api={{} as never} messageId="event-brain" event={event} />
+            <YohoRemoteSystemEvent
+                api={{} as never}
+                messageId="event-brain"
+                event={event}
+            />
         )
 
         expect(html).toContain('子任务回传')
         expect(html).toContain('子任务完成')
         expect(html).toContain('运行信息 (1)')
+    })
+
+    test('renders orchestrator callback cards with the orchestrator label', () => {
+        const event = {
+            type: 'brain-child-callback',
+            title: '编排子任务完成',
+            childSource: 'orchestrator-child',
+            details: ['消息数: 5'],
+        } satisfies AgentEvent
+
+        const html = renderToStaticMarkup(
+            <YohoRemoteSystemEvent
+                api={{} as never}
+                messageId="event-orchestrator"
+                event={event}
+            />
+        )
+
+        expect(html).toContain('编排子任务回传')
+        expect(html).toContain('编排子任务完成')
     })
 })

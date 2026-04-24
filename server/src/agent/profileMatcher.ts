@@ -30,7 +30,14 @@ const ROLE_KEYWORDS: Record<AIProfileRole, string[]> = {
     reviewer: ['审查', '检查', '评审', 'review', 'check', '代码审查', 'code review', 'pr'],
     pm: ['产品', '需求', '规划', 'product', 'requirement', 'plan', '计划', '管理', 'manage'],
     tester: ['测试', '用例', 'test', 'case', 'unit test', '单元测试', '集成测试', 'integration', 'qa', '质量'],
-    devops: ['部署', '运维', 'deploy', 'devops', 'ci', 'cd', 'pipeline', '容器', 'docker', 'k8s', 'kubernetes', '监控', 'monitor']
+    devops: ['部署', '运维', 'deploy', 'devops', 'ci', 'cd', 'pipeline', '容器', 'docker', 'k8s', 'kubernetes', '监控', 'monitor'],
+    INTP: ['架构', '设计', '探索', '拆解', '前提', 'architecture', 'design', 'explore', '非常规', '排障'],
+    INTJ: ['战略', '规划', '长期', 'strategy', 'plan', '目标', '决策', 'roadmap'],
+    ENTP: ['头脑风暴', '挑战', '假设', 'brainstorm', 'review', '多角度', '发散', '评审'],
+    ISTJ: ['部署', '合规', '流程', 'deploy', 'compliance', '规范', '运维', '低惊喜'],
+    ISTP: ['排障', '修复', '线上', '快速', 'debug', 'fix', 'troubleshoot', '动手'],
+    ENFP: ['产品', '讨论', '探索', 'product', '启发', '用户', '体验', 'discussion'],
+    INFJ: ['沟通', '冲突', '协调', 'communication', '同理心', '深度', '洞察', '调解']
 }
 
 /**

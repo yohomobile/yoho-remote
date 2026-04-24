@@ -10,7 +10,7 @@
 
 这一版不再使用我上轮抽象出来的 7 个议题，而是**严格对照用户补充的原始 1-8 条**逐条收束。
 
-另外，本轮仍需说明一个执行边界：当前运行时工具列表里没有暴露可直接调用的 `mcp__skill__search` / `functions.yoho_vault__skill_search` / `functions.yoho_memory__skill_search`，因此本轮按 no-match 路径继续，但保留了这个限制记录。
+另外，本轮仍需说明一个执行边界：当前运行时工具列表里没有暴露可直接调用的 skill search 工具，因此本轮按 no-match 路径继续，但保留了这个限制记录。
 
 ## 2. 增强 / 改进 / 质疑矩阵
 

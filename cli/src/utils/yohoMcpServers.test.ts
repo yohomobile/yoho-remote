@@ -17,7 +17,6 @@ import {
 } from './yohoMcpServers';
 
 const vaultEntry = join(YOHO_MEMORY_REPO_ROOT, 'src/mcp/stdio.ts');
-const skillEntry = join(YOHO_MEMORY_REPO_ROOT, 'src/mcp/skill-stdio.ts');
 
 function mockExistingPaths(paths: string[]): void {
     const existing = new Set(paths);
@@ -27,21 +26,16 @@ function mockExistingPaths(paths: string[]): void {
 describe('getYohoAuxMcpServers', () => {
     beforeEach(() => {
         mocks.existsSync.mockReset();
-        mockExistingPaths([vaultEntry, skillEntry]);
+        mockExistingPaths([vaultEntry]);
     });
 
-    it('returns fixed-path stdio servers for Codex', async () => {
+    it('returns the unified fixed-path stdio server for Codex', async () => {
         const servers = await getYohoAuxMcpServers('codex');
 
-        expect(Object.keys(servers).sort()).toEqual(['skill', 'yoho_vault']);
+        expect(Object.keys(servers)).toEqual(['yoho_vault']);
         expect(servers.yoho_vault).toMatchObject({
             command: 'bun',
             args: ['run', vaultEntry],
-            cwd: YOHO_MEMORY_REPO_ROOT,
-        });
-        expect(servers.skill).toMatchObject({
-            command: 'bun',
-            args: ['run', skillEntry],
             cwd: YOHO_MEMORY_REPO_ROOT,
         });
     });
@@ -73,7 +67,6 @@ describe('getYohoAuxMcpServers', () => {
         const servers = await getYohoAuxMcpServers('codex');
 
         expect(servers.yoho_vault?.env?.DB_MAX_CONNECTIONS).toBe(YOHO_MEMORY_MCP_DB_MAX_CONNECTIONS);
-        expect(servers.skill?.env?.DB_MAX_CONNECTIONS).toBe(YOHO_MEMORY_MCP_DB_MAX_CONNECTIONS);
     });
 
     it('does not use YOHO_MEMORY_PATH, Project list, or working-directory fallbacks', async () => {

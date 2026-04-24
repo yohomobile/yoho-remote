@@ -3,7 +3,14 @@ import { useNavigate } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
-import type { DecryptedMessage, ModelMode, ModelReasoningEffort, Session, SessionViewer, TypingUser } from '@/types/api'
+import type {
+    DecryptedMessage,
+    ModelMode,
+    ModelReasoningEffort,
+    Session,
+    SessionViewer,
+    TypingUser,
+} from '@/types/api'
 import type { ChatBlock, NormalizedMessage } from '@/chat/types'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
@@ -15,11 +22,28 @@ import { YohoRemoteThread } from '@/components/AssistantChat/YohoRemoteThread'
 import { BrainChildPageActionBar } from '@/components/BrainChildActions'
 import { useYohoRemoteRuntime } from '@/lib/assistant-runtime'
 import { SessionHeader } from '@/components/SessionHeader'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
-import { deriveBrainChildPageActionState, getBrainChildPageInactiveHint } from '@/lib/brainChildActions'
-import { canQueueMessagesWhenInactive, shouldShowSessionComposer } from '@/lib/sessionActivity'
+import {
+    deriveBrainChildPageActionState,
+    getBrainChildPageInactiveHint,
+} from '@/lib/brainChildActions'
+import {
+    canQueueMessagesWhenInactive,
+    shouldShowSessionComposer,
+} from '@/lib/sessionActivity'
+import {
+    getSessionOrchestrationInactiveQueueCopy,
+    getSessionOrchestrationReadyPhaseCopy,
+    isSessionOrchestrationChildSource,
+} from '@/lib/sessionOrchestration'
 import {
     clearBrainSessionReadyMarker,
     deriveBrainCreationReadyPhase,
@@ -54,6 +78,7 @@ export const MODEL_MODE_VALUES = new Set<string>([
     'opus',
     'opus-4-7',
     'glm-5.1',
+    'gpt-5.5',
     'gpt-5.4',
     'gpt-5.4-mini',
     'gpt-5.3-codex',
@@ -61,10 +86,12 @@ export const MODEL_MODE_VALUES = new Set<string>([
     'gpt-5.2-codex',
     'gpt-5.1-codex-max',
     'gpt-5.1-codex-mini',
-    'gpt-5.2'
+    'gpt-5.2',
 ])
 
-export function coerceModelMode(value: string | null | undefined): ModelMode | undefined {
+export function coerceModelMode(
+    value: string | null | undefined
+): ModelMode | undefined {
     if (!value) {
         return undefined
     }
@@ -87,22 +114,27 @@ export function coerceModelMode(value: string | null | undefined): ModelMode | u
 function getAvailableModels(session: Session): { id: string; label: string }[] {
     const flavor = session.metadata?.flavor ?? 'claude'
     if (flavor === 'claude') {
-        return MODEL_MODES.map(m => ({ id: m, label: MODEL_MODE_LABELS[m] ?? m }))
+        return MODEL_MODES.map((m) => ({
+            id: m,
+            label: MODEL_MODE_LABELS[m] ?? m,
+        }))
     }
     if (flavor === 'codex') {
-        return CODEX_MODELS.map(m => ({ id: m.id, label: m.label }))
+        return CODEX_MODELS.map((m) => ({ id: m.id, label: m.label }))
     }
     if (flavor === 'grok') {
-        return GROK_MODELS.map(m => ({ id: m.id, label: m.label }))
+        return GROK_MODELS.map((m) => ({ id: m.id, label: m.label }))
     }
-    return OPENROUTER_MODELS.map(m => ({ id: m.id, label: m.label }))
+    return OPENROUTER_MODELS.map((m) => ({ id: m.id, label: m.label }))
 }
 
 type ResumePhase = 'idle' | 'pending' | 'resolving'
 
 export type SessionConnectionState = 'active' | 'reconnecting' | 'inactive'
 
-export function getSessionConnectionState(session: Pick<Session, 'active' | 'reconnecting'>): SessionConnectionState {
+export function getSessionConnectionState(
+    session: Pick<Session, 'active' | 'reconnecting'>
+): SessionConnectionState {
     if (session.reconnecting) {
         return 'reconnecting'
     }
@@ -134,29 +166,37 @@ export function getSessionChatConnectionNotices(options: {
         canQueueWhileInactive,
     } = options
 
-    const reconnectingText = connectionState === 'reconnecting'
-        ? (showComposer
-            ? 'Session is reconnecting. New messages will queue until it is ready.'
-            : brainChildInactiveHint ?? 'Session is reconnecting. Brain subtask pages do not accept manual input.')
-        : null
+    const reconnectingText =
+        connectionState === 'reconnecting'
+            ? showComposer
+                ? 'Session is reconnecting. New messages will queue until it is ready.'
+                : (brainChildInactiveHint ??
+                  'Session is reconnecting. Orchestration child pages do not accept manual input.')
+            : null
 
-    const licenseTerminationText = !reconnectingText && isLicenseTermination(terminationReason)
-        ? `Session terminated — ${getLicenseTerminationLabel(terminationReason!).toLowerCase()}. Contact your administrator.`
-        : null
+    const licenseTerminationText =
+        !reconnectingText && isLicenseTermination(terminationReason)
+            ? `Session terminated — ${getLicenseTerminationLabel(terminationReason!).toLowerCase()}. Contact your administrator.`
+            : null
 
-    const inactiveText = !reconnectingText && connectionState === 'inactive' && !canQueueWhileInactive
-        ? (isResuming
-            ? 'Resuming session...'
-            : resumeError
-                ? showComposer
-                    ? 'Resume failed. Tap the composer to retry.'
-                    : brainChildInactiveHint ?? 'Resume failed. Brain subtask pages do not accept manual input.'
-                : messageCount === 0
-                    ? brainChildInactiveHint ?? 'Starting session...'
+    const inactiveText =
+        !reconnectingText &&
+        connectionState === 'inactive' &&
+        !canQueueWhileInactive
+            ? isResuming
+                ? 'Resuming session...'
+                : resumeError
+                  ? showComposer
+                      ? 'Resume failed. Tap the composer to retry.'
+                      : (brainChildInactiveHint ??
+                        'Resume failed. Orchestration child pages do not accept manual input.')
+                  : messageCount === 0
+                    ? (brainChildInactiveHint ?? 'Starting session...')
                     : showComposer
-                        ? 'Session is inactive. Tap the composer to resume.'
-                        : brainChildInactiveHint ?? 'Session is inactive. Brain subtask pages do not accept manual input.')
-        : null
+                      ? 'Session is inactive. Tap the composer to resume.'
+                      : (brainChildInactiveHint ??
+                        'Session is inactive. Orchestration child pages do not accept manual input.')
+            : null
 
     return {
         reconnectingText,
@@ -188,12 +228,16 @@ export function SessionChat(props: {
     const connectionState = getSessionConnectionState(props.session)
     const reconnecting = connectionState === 'reconnecting'
     const canQueueWhileInactive = canQueueMessagesWhenInactive(props.session)
-    const controlsDisabled = connectionState !== 'active' && !canQueueWhileInactive
+    const controlsDisabled =
+        connectionState !== 'active' && !canQueueWhileInactive
     const showComposer = shouldShowSessionComposer(props.session)
     const brainChildActionState = useMemo(
         () => deriveBrainChildPageActionState(props.session),
         [props.session]
     )
+    const childSessionSource = props.session.metadata?.source ?? null
+    const isOrchestrationChildSession =
+        isSessionOrchestrationChildSource(childSessionSource)
 
     const { data: privacyData } = useQuery({
         queryKey: ['session-privacy-mode', props.session.id],
@@ -201,26 +245,51 @@ export function SessionChat(props: {
         enabled: Boolean(props.session.id),
     })
     const privacyMode = privacyData?.privacyMode ?? false
-    const normalizedCacheRef = useRef<Map<string, { source: DecryptedMessage; normalized: NormalizedMessage | NormalizedMessage[] | null }>>(new Map())
+    const normalizedCacheRef = useRef<
+        Map<
+            string,
+            {
+                source: DecryptedMessage
+                normalized: NormalizedMessage | NormalizedMessage[] | null
+            }
+        >
+    >(new Map())
     const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
-    const { abortSession, switchSession, setModelMode, setFastMode, deleteSession, refreshAccount, isPending } = useSessionActions(props.api, props.session.id)
+    const {
+        abortSession,
+        switchSession,
+        setModelMode,
+        setFastMode,
+        deleteSession,
+        refreshAccount,
+        isPending,
+    } = useSessionActions(props.api, props.session.id)
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
     const [isResuming, setIsResuming] = useState(false)
     const [resumeError, setResumeError] = useState<string | null>(null)
-    const [brainReadyMarker, setBrainReadyMarker] = useState(() => getBrainSessionReadyMarker(props.session.id))
-    const brainChildInactiveHint = useMemo(() => props.session.metadata?.source === 'brain-child'
-        ? getBrainChildPageInactiveHint({
-            resumeError: Boolean(resumeError),
-            hasMainSessionId: Boolean(brainChildActionState.mainSessionId),
-            hasMessages: props.messages.length > 0,
-        })
-        : null,
-    [
-        brainChildActionState.mainSessionId,
-        props.messages.length,
-        props.session.metadata?.source,
-        resumeError,
-    ])
+    const [brainReadyMarker, setBrainReadyMarker] = useState(() =>
+        getBrainSessionReadyMarker(props.session.id)
+    )
+    const brainChildInactiveHint = useMemo(
+        () =>
+            isOrchestrationChildSession
+                ? getBrainChildPageInactiveHint({
+                      childSource: childSessionSource,
+                      resumeError: Boolean(resumeError),
+                      hasMainSessionId: Boolean(
+                          brainChildActionState.mainSessionId
+                      ),
+                      hasMessages: props.messages.length > 0,
+                  })
+                : null,
+        [
+            brainChildActionState.mainSessionId,
+            childSessionSource,
+            isOrchestrationChildSession,
+            props.messages.length,
+            resumeError,
+        ]
+    )
     const resumeQueueRef = useRef<string[]>([])
     const resumePhaseRef = useRef<ResumePhase>('idle')
     const resumeInFlightRef = useRef(false)
@@ -302,28 +371,37 @@ export function SessionChat(props: {
     }, [reconciled.byId])
 
     // Model mode change handler
-    const handleModelModeChange = useCallback(async (config: { model: ModelMode; reasoningEffort?: ModelReasoningEffort | null }) => {
-        try {
-            await setModelMode(config)
-            haptic.notification('success')
-            props.onRefresh()
-        } catch (e) {
-            haptic.notification('error')
-            console.error('Failed to set model mode:', e)
-        }
-    }, [setModelMode, props.onRefresh, haptic])
+    const handleModelModeChange = useCallback(
+        async (config: {
+            model: ModelMode
+            reasoningEffort?: ModelReasoningEffort | null
+        }) => {
+            try {
+                await setModelMode(config)
+                haptic.notification('success')
+                props.onRefresh()
+            } catch (e) {
+                haptic.notification('error')
+                console.error('Failed to set model mode:', e)
+            }
+        },
+        [setModelMode, props.onRefresh, haptic]
+    )
 
     // Fast mode change handler
-    const handleFastModeChange = useCallback(async (fastMode: boolean) => {
-        try {
-            await setFastMode(fastMode)
-            haptic.notification('success')
-        } catch (e) {
-            haptic.notification('error')
-            console.error('Failed to set fast mode:', e)
-            throw e // Re-throw so optimistic UI can revert
-        }
-    }, [setFastMode, haptic])
+    const handleFastModeChange = useCallback(
+        async (fastMode: boolean) => {
+            try {
+                await setFastMode(fastMode)
+                haptic.notification('success')
+            } catch (e) {
+                haptic.notification('error')
+                console.error('Failed to set fast mode:', e)
+                throw e // Re-throw so optimistic UI can revert
+            }
+        },
+        [setFastMode, haptic]
+    )
 
     // Abort handler
     const handleAbort = useCallback(async () => {
@@ -357,7 +435,10 @@ export function SessionChat(props: {
         try {
             const result = await refreshAccount()
             if (result?.usedResume && result.resumeVerified === false) {
-                console.warn('[session] refresh-account: resume failed, fallback context sent', result)
+                console.warn(
+                    '[session] refresh-account: resume failed, fallback context sent',
+                    result
+                )
             }
             haptic.notification('success')
         } catch (error) {
@@ -366,152 +447,201 @@ export function SessionChat(props: {
         }
     }, [refreshAccount, haptic])
 
-    const sendPendingMessage = useCallback(async (sessionId: string, text: string) => {
-        const trimmed = text.trim()
-        if (!trimmed) return
-        if (sessionId === props.session.id) {
-            props.onSend(trimmed)
-            return
-        }
-        await props.api.sendMessage(sessionId, trimmed)
-    }, [props.api, props.onSend, props.session.id])
+    const sendPendingMessage = useCallback(
+        async (sessionId: string, text: string) => {
+            const trimmed = text.trim()
+            if (!trimmed) return
+            if (sessionId === props.session.id) {
+                props.onSend(trimmed)
+                return
+            }
+            await props.api.sendMessage(sessionId, trimmed)
+        },
+        [props.api, props.onSend, props.session.id]
+    )
 
-    const enqueueResumeText = useCallback((pendingText: string) => {
-        const trimmed = pendingText.trim()
-        if (!trimmed) {
-            return false
-        }
-
-        resumeQueueRef.current.push(trimmed)
-        if (resumePhaseRef.current === 'idle') {
-            setResumePhase('pending')
-        }
-        return true
-    }, [setResumePhase])
-
-    const flushResumeQueue = useCallback(async (sessionId: string) => {
-        while (resumeQueueRef.current.length > 0) {
-            const next = resumeQueueRef.current.shift()
-            if (!next) {
-                continue
+    const enqueueResumeText = useCallback(
+        (pendingText: string) => {
+            const trimmed = pendingText.trim()
+            if (!trimmed) {
+                return false
             }
 
-            try {
-                await sendPendingMessage(sessionId, next)
-            } catch (error) {
-                resumeQueueRef.current.unshift(next)
-                throw error
+            resumeQueueRef.current.push(trimmed)
+            if (resumePhaseRef.current === 'idle') {
+                setResumePhase('pending')
             }
-        }
-    }, [sendPendingMessage])
+            return true
+        },
+        [setResumePhase]
+    )
 
-    const resumeSession = useCallback(async (pendingText?: string) => {
-        if (pendingText) {
-            enqueueResumeText(pendingText)
-        }
-        if (resumeInFlightRef.current) {
-            return
-        }
+    const flushResumeQueue = useCallback(
+        async (sessionId: string) => {
+            while (resumeQueueRef.current.length > 0) {
+                const next = resumeQueueRef.current.shift()
+                if (!next) {
+                    continue
+                }
 
-        if (connectionState === 'active' && resumeQueueRef.current.length === 0) {
-            setResumePhase('idle')
-            return
-        }
-
-        resumeInFlightRef.current = true
-        if (resumeQueueRef.current.length > 0 || connectionState !== 'active') {
-            setResumePhase('resolving')
-        }
-        setResumeError(null)
-        let completedNormally = false
-        try {
-            let targetSessionId = props.session.id
-
-            if (connectionState !== 'active') {
-                const result = await props.api.resumeSession(props.session.id)
-                targetSessionId = result.sessionId
-                await queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
-                props.onRefresh()
-
-                if (result.type === 'created' && result.sessionId !== props.session.id) {
-                    await flushResumeQueue(targetSessionId)
-                    navigate({
-                        to: '/sessions/$sessionId',
-                        params: { sessionId: result.sessionId }
-                    })
-                    return
+                try {
+                    await sendPendingMessage(sessionId, next)
+                } catch (error) {
+                    resumeQueueRef.current.unshift(next)
+                    throw error
                 }
             }
+        },
+        [sendPendingMessage]
+    )
 
-            await flushResumeQueue(targetSessionId)
-            completedNormally = true
-        } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to resume session'
-            setResumeError(message)
-            haptic.notification('error')
-            console.error('Failed to resume session:', error)
-        } finally {
-            resumeInFlightRef.current = false
-            if (completedNormally && connectionState === 'active' && resumeQueueRef.current.length > 0) {
-                setResumePhase('pending')
-                void resumeSession()
-            } else if (resumeQueueRef.current.length > 0) {
-                setResumePhase('pending')
-            } else {
-                setResumePhase('idle')
+    const resumeSession = useCallback(
+        async (pendingText?: string) => {
+            if (pendingText) {
+                enqueueResumeText(pendingText)
             }
-        }
-    }, [
-        enqueueResumeText,
-        haptic,
-        navigate,
-        props.api,
-        props.onRefresh,
-        connectionState,
-        props.session.id,
-        queryClient,
-        flushResumeQueue,
-        setResumePhase
-    ])
+            if (resumeInFlightRef.current) {
+                return
+            }
+
+            if (
+                connectionState === 'active' &&
+                resumeQueueRef.current.length === 0
+            ) {
+                setResumePhase('idle')
+                return
+            }
+
+            resumeInFlightRef.current = true
+            if (
+                resumeQueueRef.current.length > 0 ||
+                connectionState !== 'active'
+            ) {
+                setResumePhase('resolving')
+            }
+            setResumeError(null)
+            let completedNormally = false
+            try {
+                let targetSessionId = props.session.id
+
+                if (connectionState !== 'active') {
+                    const result = await props.api.resumeSession(
+                        props.session.id
+                    )
+                    targetSessionId = result.sessionId
+                    await queryClient.invalidateQueries({
+                        queryKey: queryKeys.sessions,
+                    })
+                    props.onRefresh()
+
+                    if (
+                        result.type === 'created' &&
+                        result.sessionId !== props.session.id
+                    ) {
+                        await flushResumeQueue(targetSessionId)
+                        navigate({
+                            to: '/sessions/$sessionId',
+                            params: { sessionId: result.sessionId },
+                        })
+                        return
+                    }
+                }
+
+                await flushResumeQueue(targetSessionId)
+                completedNormally = true
+            } catch (error) {
+                const message =
+                    error instanceof Error
+                        ? error.message
+                        : 'Failed to resume session'
+                setResumeError(message)
+                haptic.notification('error')
+                console.error('Failed to resume session:', error)
+            } finally {
+                resumeInFlightRef.current = false
+                if (
+                    completedNormally &&
+                    connectionState === 'active' &&
+                    resumeQueueRef.current.length > 0
+                ) {
+                    setResumePhase('pending')
+                    void resumeSession()
+                } else if (resumeQueueRef.current.length > 0) {
+                    setResumePhase('pending')
+                } else {
+                    setResumePhase('idle')
+                }
+            }
+        },
+        [
+            enqueueResumeText,
+            haptic,
+            navigate,
+            props.api,
+            props.onRefresh,
+            connectionState,
+            props.session.id,
+            queryClient,
+            flushResumeQueue,
+            setResumePhase,
+        ]
+    )
 
     const handleResumeRequest = useCallback(() => {
         void resumeSession()
     }, [resumeSession])
 
-    const handleSendMessage = useCallback((text: string) => {
-        if (connectionState === 'active') {
-            props.onSend(text)
-            return
-        }
-        void resumeSession(text)
-    }, [connectionState, props.onSend, resumeSession])
+    const handleSendMessage = useCallback(
+        (text: string) => {
+            if (connectionState === 'active') {
+                props.onSend(text)
+                return
+            }
+            void resumeSession(text)
+        },
+        [connectionState, props.onSend, resumeSession]
+    )
 
     const runtime = useYohoRemoteRuntime({
         session: props.session,
         blocks: reconciled.blocks,
         isSending: props.isSending,
         onSendMessage: handleSendMessage,
-        onAbort: handleAbort
+        onAbort: handleAbort,
     })
     const activeMonitors = useMemo(
-        () => props.session.activeMonitors ?? collectActiveMonitors(reconciled.blocks),
+        () =>
+            props.session.activeMonitors ??
+            collectActiveMonitors(reconciled.blocks),
         [props.session.activeMonitors, reconciled.blocks]
     )
-    const brainCreationReadyPhase = useMemo(() => deriveBrainCreationReadyPhase({
-        source: props.session.metadata?.source,
-        active: props.session.active,
-        thinking: props.session.thinking,
-        marker: brainReadyMarker,
-    }), [brainReadyMarker, props.session.active, props.session.metadata?.source, props.session.thinking])
+    const brainCreationReadyPhase = useMemo(
+        () =>
+            deriveBrainCreationReadyPhase({
+                source: props.session.metadata?.source,
+                active: props.session.active,
+                thinking: props.session.thinking,
+                marker: brainReadyMarker,
+            }),
+        [
+            brainReadyMarker,
+            props.session.active,
+            props.session.metadata?.source,
+            props.session.thinking,
+        ]
+    )
     const resolvedModelMode = useMemo(() => {
-        const fallbackMode = coerceModelMode(props.session.metadata?.runtimeModel)
+        const fallbackMode = coerceModelMode(
+            props.session.metadata?.runtimeModel
+        )
         if (props.session.modelMode && props.session.modelMode !== 'default') {
             return props.session.modelMode
         }
         return fallbackMode ?? props.session.modelMode
     }, [props.session.modelMode, props.session.metadata?.runtimeModel])
-    const resolvedReasoningEffort = props.session.modelReasoningEffort
-        ?? props.session.metadata?.runtimeModelReasoningEffort
+    const resolvedReasoningEffort =
+        props.session.modelReasoningEffort ??
+        props.session.metadata?.runtimeModelReasoningEffort
 
     useEffect(() => {
         if (!brainReadyMarker || brainCreationReadyPhase !== 'ready') {
@@ -522,28 +652,53 @@ export function SessionChat(props: {
         }
         clearBrainSessionReadyMarker(props.session.id)
         setBrainReadyMarker(null)
-    }, [brainCreationReadyPhase, brainReadyMarker, props.messages, props.session.id])
+    }, [
+        brainCreationReadyPhase,
+        brainReadyMarker,
+        props.messages,
+        props.session.id,
+    ])
 
-    const availableModels = useMemo(() => getAvailableModels(props.session), [props.session])
+    const availableModels = useMemo(
+        () => getAvailableModels(props.session),
+        [props.session]
+    )
 
-    const handleBridgeSendMessage = useCallback((text: string) => {
-        if (!showComposer) {
+    const handleBridgeSendMessage = useCallback(
+        (text: string) => {
+            if (!showComposer) {
+                pushComposerReset(props.session.id)
+                return
+            }
+            handleSendMessage(text)
             pushComposerReset(props.session.id)
-            return
-        }
-        handleSendMessage(text)
-        pushComposerReset(props.session.id)
-    }, [handleSendMessage, props.session.id, showComposer])
+        },
+        [handleSendMessage, props.session.id, showComposer]
+    )
 
-    const handleBridgeSetModel = useCallback((model: string) => {
-        const coerced = coerceModelMode(model) ?? 'default'
-        void handleModelModeChange({ model: coerced, reasoningEffort: resolvedReasoningEffort ?? null })
-    }, [handleModelModeChange, resolvedReasoningEffort])
+    const handleBridgeSetModel = useCallback(
+        (model: string) => {
+            const coerced = coerceModelMode(model) ?? 'default'
+            void handleModelModeChange({
+                model: coerced,
+                reasoningEffort: resolvedReasoningEffort ?? null,
+            })
+        },
+        [handleModelModeChange, resolvedReasoningEffort]
+    )
 
-    const handleBridgeSetReasoningLevel = useCallback((level: string) => {
-        const effort = ['low', 'medium', 'high', 'xhigh'].includes(level) ? level as ModelReasoningEffort : undefined
-        void handleModelModeChange({ model: resolvedModelMode ?? 'default', reasoningEffort: effort ?? null })
-    }, [handleModelModeChange, resolvedModelMode])
+    const handleBridgeSetReasoningLevel = useCallback(
+        (level: string) => {
+            const effort = ['low', 'medium', 'high', 'xhigh'].includes(level)
+                ? (level as ModelReasoningEffort)
+                : undefined
+            void handleModelModeChange({
+                model: resolvedModelMode ?? 'default',
+                reasoningEffort: effort ?? null,
+            })
+        },
+        [handleModelModeChange, resolvedModelMode]
+    )
 
     const handleBridgeShare = useCallback(() => {
         const url = `${window.location.origin}/sessions/${props.session.id}`
@@ -552,41 +707,65 @@ export function SessionChat(props: {
 
     const handleBridgeTogglePrivacy = useCallback(async () => {
         try {
-            const result = await props.api.setSessionPrivacyMode(props.session.id, !privacyMode)
-            queryClient.setQueryData(['session-privacy-mode', props.session.id], {
-                privacyMode: result.privacyMode
-            })
+            const result = await props.api.setSessionPrivacyMode(
+                props.session.id,
+                !privacyMode
+            )
+            queryClient.setQueryData(
+                ['session-privacy-mode', props.session.id],
+                {
+                    privacyMode: result.privacyMode,
+                }
+            )
         } catch (e) {
             console.error('Failed to toggle privacy:', e)
         }
     }, [props.api, props.session.id, privacyMode, queryClient])
 
-    const handleBridgeUploadImages = useCallback(async (images: string[]) => {
-        if (!showComposer) return
-        for (const image of images) {
-            try {
-                const mimeType = image.startsWith('data:image/png') ? 'image/png' : 'image/jpeg'
-                const base64Content = image.split(',')[1] ?? image
-                const filename = `upload-${Date.now()}.jpg`
-                await props.api.uploadImage(props.session.id, filename, base64Content, mimeType)
-            } catch (e) {
-                console.error('Failed to upload image:', e)
+    const handleBridgeUploadImages = useCallback(
+        async (images: string[]) => {
+            if (!showComposer) return
+            for (const image of images) {
+                try {
+                    const mimeType = image.startsWith('data:image/png')
+                        ? 'image/png'
+                        : 'image/jpeg'
+                    const base64Content = image.split(',')[1] ?? image
+                    const filename = `upload-${Date.now()}.jpg`
+                    await props.api.uploadImage(
+                        props.session.id,
+                        filename,
+                        base64Content,
+                        mimeType
+                    )
+                } catch (e) {
+                    console.error('Failed to upload image:', e)
+                }
             }
-        }
-    }, [props.api, props.session.id, showComposer])
+        },
+        [props.api, props.session.id, showComposer]
+    )
 
-    const handleBridgeUploadFiles = useCallback(async (files: { name: string; data: string }[]) => {
-        if (!showComposer) return
-        for (const file of files) {
-            try {
-                const mimeType = 'application/octet-stream'
-                const base64Content = file.data.split(',')[1] ?? file.data
-                await props.api.uploadFile(props.session.id, file.name, base64Content, mimeType)
-            } catch (e) {
-                console.error('Failed to upload file:', e)
+    const handleBridgeUploadFiles = useCallback(
+        async (files: { name: string; data: string }[]) => {
+            if (!showComposer) return
+            for (const file of files) {
+                try {
+                    const mimeType = 'application/octet-stream'
+                    const base64Content = file.data.split(',')[1] ?? file.data
+                    await props.api.uploadFile(
+                        props.session.id,
+                        file.name,
+                        base64Content,
+                        mimeType
+                    )
+                } catch (e) {
+                    console.error('Failed to upload file:', e)
+                }
             }
-        }
-    }, [props.api, props.session.id, showComposer])
+        },
+        [props.api, props.session.id, showComposer]
+    )
 
     const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -600,16 +779,21 @@ export function SessionChat(props: {
         }, 300)
     }, [props.api, props.session.id, showComposer])
 
-    const handleBridgeRequestAutocomplete = useCallback(async (prefix: string) => {
-        if (!showComposer || !props.autocompleteSuggestions) return
-        const suggestions = await props.autocompleteSuggestions(prefix)
-        pushAutocompleteSuggestions(suggestions.map(s => ({
-            type: s.text.startsWith('@') ? 'file' : 'command',
-            label: s.label,
-            value: s.text,
-            description: s.description,
-        })))
-    }, [props.autocompleteSuggestions, showComposer])
+    const handleBridgeRequestAutocomplete = useCallback(
+        async (prefix: string) => {
+            if (!showComposer || !props.autocompleteSuggestions) return
+            const suggestions = await props.autocompleteSuggestions(prefix)
+            pushAutocompleteSuggestions(
+                suggestions.map((s) => ({
+                    type: s.text.startsWith('@') ? 'file' : 'command',
+                    label: s.label,
+                    value: s.text,
+                    description: s.description,
+                }))
+            )
+        },
+        [props.autocompleteSuggestions, showComposer]
+    )
 
     useEffect(() => {
         if (!showComposer) {
@@ -676,7 +860,8 @@ export function SessionChat(props: {
     useEffect(() => {
         if (!isFlutterApp()) return
         const contextSizeNum = reduced.latestUsage?.contextSize ?? 0
-        const modelContextWindowNum = reduced.latestUsage?.modelContextWindow ?? 0
+        const modelContextWindowNum =
+            reduced.latestUsage?.modelContextWindow ?? 0
         pushComposerState({
             isConnected: true,
             contextUsage: {
@@ -684,13 +869,23 @@ export function SessionChat(props: {
                 total: modelContextWindowNum,
             },
             rateLimit: {
-                remaining: Math.max(0, 100 - Math.round(reduced.latestUsage?.rateLimitUsedPercent ?? 0)),
+                remaining: Math.max(
+                    0,
+                    100 -
+                        Math.round(
+                            reduced.latestUsage?.rateLimitUsedPercent ?? 0
+                        )
+                ),
             },
             isTyping: Boolean(props.otherUserTyping),
             selectedModel: resolvedModelMode ?? 'default',
             fastMode: props.session.fastMode ?? false,
             reasoningLevel: resolvedReasoningEffort ?? 'medium',
-            canSend: showComposer && !props.isSending && !isResuming && (props.session.active || reconnecting || canQueueWhileInactive),
+            canSend:
+                showComposer &&
+                !props.isSending &&
+                !isResuming &&
+                (props.session.active || reconnecting || canQueueWhileInactive),
             isGenerating: props.session.thinking ?? false,
             availableModels,
         })
@@ -719,169 +914,201 @@ export function SessionChat(props: {
                     viewers={props.viewers}
                     onBack={props.onBack}
                     onDelete={handleDeleteClick}
-                    onRefreshAccount={props.session.metadata?.flavor === 'claude' ? handleRefreshAccount : undefined}
+                    onRefreshAccount={
+                        props.session.metadata?.flavor === 'claude'
+                            ? handleRefreshAccount
+                            : undefined
+                    }
                     deleteDisabled={isPending}
                     refreshAccountDisabled={isPending}
                     modelMode={resolvedModelMode}
                     modelReasoningEffort={resolvedReasoningEffort}
                 />
 
-            <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Delete Session</DialogTitle>
-                        <DialogDescription>
-                            {props.session.active
-                                ? 'This session is still active. Delete it and remove all messages? This will stop the session.'
-                                : 'Delete this session and all messages? This cannot be undone.'}
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="mt-4 flex justify-end gap-2">
-                        <button
-                            type="button"
-                            onClick={() => setDeleteDialogOpen(false)}
-                            className="rounded-lg px-4 py-2 text-sm font-medium text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            type="button"
-                            onClick={handleDeleteConfirm}
-                            className="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600"
-                        >
-                            Delete
-                        </button>
-                    </div>
-                </DialogContent>
-            </Dialog>
+                <Dialog
+                    open={deleteDialogOpen}
+                    onOpenChange={setDeleteDialogOpen}
+                >
+                    <DialogContent>
+                        <DialogHeader>
+                            <DialogTitle>Delete Session</DialogTitle>
+                            <DialogDescription>
+                                {props.session.active
+                                    ? 'This session is still active. Delete it and remove all messages? This will stop the session.'
+                                    : 'Delete this session and all messages? This cannot be undone.'}
+                            </DialogDescription>
+                        </DialogHeader>
+                        <div className="mt-4 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setDeleteDialogOpen(false)}
+                                className="rounded-lg px-4 py-2 text-sm font-medium text-[var(--app-fg)] hover:bg-[var(--app-subtle-bg)]"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleDeleteConfirm}
+                                className="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600"
+                            >
+                                Delete
+                            </button>
+                        </div>
+                    </DialogContent>
+                </Dialog>
 
-            {props.session.metadata?.source === 'brain-child' ? (
-                <BrainChildPageActionBar
-                    api={props.api}
-                    sessionId={props.session.id}
-                    mainSessionId={brainChildActionState.mainSessionId}
-                    canStop={brainChildActionState.canStop}
-                    canResume={brainChildActionState.canResume}
-                    onStop={handleAbort}
-                    onResume={async () => {
-                        await resumeSession()
-                    }}
-                    initialMessages={props.messages}
-                />
-            ) : null}
-
-            {connectionNotices.reconnectingText ? (
-                <div className="px-3 pt-3">
-                    <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-hint)]">
-                        {connectionNotices.reconnectingText}
-                    </div>
-                </div>
-            ) : null}
-
-            {connectionNotices.licenseTerminationText ? (
-                <div className="px-3 pt-3">
-                    <div className="mx-auto w-full max-w-content rounded-md bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-600 dark:text-red-400">
-                        {connectionNotices.licenseTerminationText}
-                    </div>
-                </div>
-            ) : null}
-
-            {connectionNotices.inactiveText ? (
-                <div className="px-3 pt-3">
-                    <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-hint)]">
-                        {connectionNotices.inactiveText}
-                    </div>
-                </div>
-            ) : null}
-
-            {brainCreationReadyPhase ? (
-                <div className="px-3 pt-3">
-                    <div
-                        className={`mx-auto w-full max-w-content rounded-md border p-3 text-sm ${
-                            brainCreationReadyPhase === 'created'
-                                ? 'border-sky-500/20 bg-sky-500/10 text-sky-700'
-                                : brainCreationReadyPhase === 'initializing'
-                                    ? 'border-amber-500/20 bg-amber-500/10 text-amber-700'
-                                    : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700'
-                        }`}
-                    >
-                        {brainCreationReadyPhase === 'created'
-                            ? '已创建：Brain 会话已创建成功，正在等待 runtime 上线。现在发送的消息会先入队。'
-                            : brainCreationReadyPhase === 'initializing'
-                                ? '初始化中：Brain 已上线，正在加载初始化指令和工具，暂时不要把“创建成功”误当成“已经完全可用”。'
-                                : '可开始使用：Brain 已准备就绪，现在可以开始派发任务。'}
-                    </div>
-                </div>
-            ) : null}
-
-            {!brainCreationReadyPhase && connectionState === 'inactive' && canQueueWhileInactive ? (
-                <div className="px-3 pt-3">
-                    <div className="mx-auto flex w-full max-w-content items-center justify-between gap-3 rounded-md border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-700">
-                        <span>Brain 当前未运行。新消息会先入队，等恢复后再消费。</span>
-                        <button
-                            type="button"
-                            onClick={handleResumeRequest}
-                            className="shrink-0 rounded-md border border-amber-500/30 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-500/10"
-                        >
-                            立即恢复
-                        </button>
-                    </div>
-                </div>
-            ) : null}
-
-            <AssistantRuntimeProvider runtime={runtime}>
-                <div className="relative flex min-h-0 flex-1 flex-col">
-                    <YohoRemoteThread
-                        key={props.session.id}
+                {isOrchestrationChildSession ? (
+                    <BrainChildPageActionBar
                         api={props.api}
                         sessionId={props.session.id}
-                        metadata={props.session.metadata}
-                        disabled={controlsDisabled}
-                        onRefresh={props.onRefresh}
-                        onRetryMessage={props.onRetryMessage}
-                        isLoadingMessages={props.isLoadingMessages}
-                        hasMoreMessages={props.hasMoreMessages}
-                        isLoadingMoreMessages={props.isLoadingMoreMessages}
-                        onLoadMore={props.onLoadMore}
-                        rawMessagesCount={props.messages.length}
-                        normalizedMessagesCount={normalizedMessages.length}
-                        renderedMessagesCount={reconciled.blocks.length}
+                        mainSessionId={brainChildActionState.mainSessionId}
+                        childSource={childSessionSource}
+                        canStop={brainChildActionState.canStop}
+                        canResume={brainChildActionState.canResume}
+                        onStop={handleAbort}
+                        onResume={async () => {
+                            await resumeSession()
+                        }}
+                        initialMessages={props.messages}
                     />
+                ) : null}
 
-                    {showComposer ? (
-                        <YohoRemoteComposer
-                            apiClient={props.api}
+                {connectionNotices.reconnectingText ? (
+                    <div className="px-3 pt-3">
+                        <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-hint)]">
+                            {connectionNotices.reconnectingText}
+                        </div>
+                    </div>
+                ) : null}
+
+                {connectionNotices.licenseTerminationText ? (
+                    <div className="px-3 pt-3">
+                        <div className="mx-auto w-full max-w-content rounded-md bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-600 dark:text-red-400">
+                            {connectionNotices.licenseTerminationText}
+                        </div>
+                    </div>
+                ) : null}
+
+                {connectionNotices.inactiveText ? (
+                    <div className="px-3 pt-3">
+                        <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-hint)]">
+                            {connectionNotices.inactiveText}
+                        </div>
+                    </div>
+                ) : null}
+
+                {brainCreationReadyPhase ? (
+                    <div className="px-3 pt-3">
+                        <div
+                            className={`mx-auto w-full max-w-content rounded-md border p-3 text-sm ${
+                                brainCreationReadyPhase === 'created'
+                                    ? 'border-sky-500/20 bg-sky-500/10 text-sky-700'
+                                    : brainCreationReadyPhase === 'initializing'
+                                      ? 'border-amber-500/20 bg-amber-500/10 text-amber-700'
+                                      : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700'
+                            }`}
+                        >
+                            {getSessionOrchestrationReadyPhaseCopy(
+                                props.session.metadata?.source,
+                                brainCreationReadyPhase
+                            ) ??
+                                '可开始使用：Brain 已准备就绪，现在可以开始派发任务。'}
+                        </div>
+                    </div>
+                ) : null}
+
+                {!brainCreationReadyPhase &&
+                connectionState === 'inactive' &&
+                canQueueWhileInactive ? (
+                    <div className="px-3 pt-3">
+                        <div className="mx-auto flex w-full max-w-content items-center justify-between gap-3 rounded-md border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-700">
+                            <span>
+                                {getSessionOrchestrationInactiveQueueCopy(
+                                    props.session.metadata?.source
+                                ) ??
+                                    'Session 当前未运行。新消息会先入队，等恢复后再消费。'}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={handleResumeRequest}
+                                className="shrink-0 rounded-md border border-amber-500/30 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-500/10"
+                            >
+                                立即恢复
+                            </button>
+                        </div>
+                    </div>
+                ) : null}
+
+                <AssistantRuntimeProvider runtime={runtime}>
+                    <div className="relative flex min-h-0 flex-1 flex-col">
+                        <YohoRemoteThread
+                            key={props.session.id}
+                            api={props.api}
                             sessionId={props.session.id}
-                            disabled={props.isSending || isResuming || controlsDisabled}
-                            modelMode={resolvedModelMode}
-                            modelReasoningEffort={resolvedReasoningEffort}
-                            fastMode={props.session.fastMode}
-                            agentFlavor={props.session.metadata?.flavor ?? 'claude'}
-                            active={props.session.active}
-                            allowInactiveQueueing={canQueueWhileInactive}
-                            thinking={props.session.thinking}
-                            agentState={props.session.agentState}
-                            contextSize={reduced.latestUsage?.contextSize}
-                            outputTokens={reduced.latestUsage?.outputTokens}
-                            modelContextWindow={reduced.latestUsage?.modelContextWindow}
-                            rateLimitUsedPercent={reduced.latestUsage?.rateLimitUsedPercent}
-                            runtimeModel={props.session.metadata?.runtimeModel}
-                            controlledByUser={props.session.agentState?.controlledByUser === true}
-                            onRequestResume={handleResumeRequest}
-                            resumePending={isResuming}
-                            resumeError={resumeError}
-                            reconnecting={reconnecting}
-                            onModelModeChange={handleModelModeChange}
-                            onFastModeChange={handleFastModeChange}
-                            onSwitchToRemote={handleSwitchToRemote}
-                            autocompleteSuggestions={props.autocompleteSuggestions}
-                            otherUserTyping={props.otherUserTyping}
-                            setTextRef={composerSetTextRef}
-                            activeMonitors={activeMonitors}
+                            metadata={props.session.metadata}
+                            disabled={controlsDisabled}
+                            onRefresh={props.onRefresh}
+                            onRetryMessage={props.onRetryMessage}
+                            isLoadingMessages={props.isLoadingMessages}
+                            hasMoreMessages={props.hasMoreMessages}
+                            isLoadingMoreMessages={props.isLoadingMoreMessages}
+                            onLoadMore={props.onLoadMore}
+                            rawMessagesCount={props.messages.length}
+                            normalizedMessagesCount={normalizedMessages.length}
+                            renderedMessagesCount={reconciled.blocks.length}
                         />
-                    ) : null}
-                </div>
-            </AssistantRuntimeProvider>
+
+                        {showComposer ? (
+                            <YohoRemoteComposer
+                                apiClient={props.api}
+                                sessionId={props.session.id}
+                                disabled={
+                                    props.isSending ||
+                                    isResuming ||
+                                    controlsDisabled
+                                }
+                                modelMode={resolvedModelMode}
+                                modelReasoningEffort={resolvedReasoningEffort}
+                                fastMode={props.session.fastMode}
+                                agentFlavor={
+                                    props.session.metadata?.flavor ?? 'claude'
+                                }
+                                active={props.session.active}
+                                allowInactiveQueueing={canQueueWhileInactive}
+                                thinking={props.session.thinking}
+                                agentState={props.session.agentState}
+                                contextSize={reduced.latestUsage?.contextSize}
+                                outputTokens={reduced.latestUsage?.outputTokens}
+                                modelContextWindow={
+                                    reduced.latestUsage?.modelContextWindow
+                                }
+                                rateLimitUsedPercent={
+                                    reduced.latestUsage?.rateLimitUsedPercent
+                                }
+                                runtimeModel={
+                                    props.session.metadata?.runtimeModel
+                                }
+                                controlledByUser={
+                                    props.session.agentState
+                                        ?.controlledByUser === true
+                                }
+                                onRequestResume={handleResumeRequest}
+                                resumePending={isResuming}
+                                resumeError={resumeError}
+                                reconnecting={reconnecting}
+                                onModelModeChange={handleModelModeChange}
+                                onFastModeChange={handleFastModeChange}
+                                onSwitchToRemote={handleSwitchToRemote}
+                                autocompleteSuggestions={
+                                    props.autocompleteSuggestions
+                                }
+                                otherUserTyping={props.otherUserTyping}
+                                setTextRef={composerSetTextRef}
+                                activeMonitors={activeMonitors}
+                            />
+                        ) : null}
+                    </div>
+                </AssistantRuntimeProvider>
             </div>
         </div>
     )

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAppContext } from '@/lib/app-context'
 import { Spinner } from '@/components/Spinner'
@@ -6,21 +6,35 @@ import { queryKeys } from '@/lib/query-keys'
 import type { AIProfile, AIProfileRole, AIProfileStatus } from '@/types/api'
 
 const ROLE_LABELS: Record<AIProfileRole, string> = {
-    developer: 'Developer',
-    architect: 'Architect',
-    reviewer: 'Reviewer',
-    pm: 'PM',
-    tester: 'Tester',
-    devops: 'DevOps'
+    developer: 'Execution Driver',
+    architect: 'Calm Strategist',
+    reviewer: 'Critical Thinker',
+    pm: 'Alignment Lead',
+    tester: 'Skeptical Validator',
+    devops: 'Steady Operator',
+    INTP: 'INTP',
+    INTJ: 'INTJ',
+    ENTP: 'ENTP',
+    ISTJ: 'ISTJ',
+    ISTP: 'ISTP',
+    ENFP: 'ENFP',
+    INFJ: 'INFJ',
 }
 
 const ROLE_DESCRIPTIONS: Record<AIProfileRole, string> = {
-    developer: 'Writes and maintains code',
-    architect: 'Designs system architecture',
-    reviewer: 'Reviews code and provides feedback',
-    pm: 'Manages project and tasks',
-    tester: 'Writes and runs tests',
-    devops: 'Handles deployment and infrastructure'
+    developer: 'All-purpose AI with a fast execution-first style',
+    architect: 'All-purpose AI with a structured, long-horizon style',
+    reviewer: 'All-purpose AI with a critical, risk-first style',
+    pm: 'All-purpose AI with a coordination and clarity-first style',
+    tester: 'All-purpose AI with a skeptical, verification-first style',
+    devops: 'All-purpose AI with a calm, reliability-first style',
+    INTP: '爱拆解前提、先探索可能性再选方案，适合架构决策与非常规排障',
+    INTJ: '战略、目标导向、长期主义，适合规划与高阶决策',
+    ENTP: '发散、挑战假设、多角度，适合头脑风暴与 Review',
+    ISTJ: '严谨、守流程、低惊喜，适合部署、合规与运维',
+    ISTP: '冷静动手派、聚焦问题本体，适合线上排障与快速修复',
+    ENFP: '热情、启发式、人性化，适合产品讨论与探索期',
+    INFJ: '洞察、深思、同理心，适合复杂沟通与冲突调解',
 }
 
 const STATUS_COLORS: Record<AIProfileStatus, string> = {
@@ -61,6 +75,7 @@ const defaultFormData: AIProfileFormData = {
 
 function ProfileForm({
     initial,
+    roleOptions,
     onSubmit,
     onCancel,
     isPending,
@@ -68,13 +83,18 @@ function ProfileForm({
     readOnly = false,
 }: {
     initial?: AIProfileFormData
+    roleOptions?: AIProfileRole[]
     onSubmit: (data: AIProfileFormData) => void
     onCancel: () => void
     isPending: boolean
     submitLabel: string
     readOnly?: boolean
 }) {
-    const [formData, setFormData] = useState<AIProfileFormData>(initial ?? defaultFormData)
+    const options = roleOptions && roleOptions.length > 0 ? roleOptions : (Object.keys(ROLE_LABELS) as AIProfileRole[])
+    const [formData, setFormData] = useState<AIProfileFormData>(initial ?? {
+        ...defaultFormData,
+        role: options[0] ?? defaultFormData.role,
+    })
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault()
@@ -117,8 +137,8 @@ function ProfileForm({
                         className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
                         disabled={isPending || readOnly}
                     >
-                        {Object.entries(ROLE_LABELS).map(([role, label]) => (
-                            <option key={role} value={role}>{label} - {ROLE_DESCRIPTIONS[role as AIProfileRole]}</option>
+                        {options.map((role) => (
+                            <option key={role} value={role}>{ROLE_LABELS[role]} - {ROLE_DESCRIPTIONS[role]}</option>
                         ))}
                     </select>
                 </div>
@@ -155,6 +175,30 @@ function ProfileForm({
                     value={formData.greetingTemplate}
                     onChange={(e) => setFormData({ ...formData, greetingTemplate: e.target.value })}
                     placeholder="e.g. Hey! Ready to code something awesome?"
+                    className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
+                    disabled={isPending || readOnly}
+                />
+            </div>
+
+            <div>
+                <label className="block text-xs text-[var(--app-hint)] mb-1">Work Style</label>
+                <textarea
+                    value={formData.workStyle}
+                    onChange={(e) => setFormData({ ...formData, workStyle: e.target.value })}
+                    placeholder="How this AI frames tradeoffs, pushes work forward, and structures responses..."
+                    className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)] resize-none"
+                    rows={2}
+                    disabled={isPending || readOnly}
+                />
+            </div>
+
+            <div>
+                <label className="block text-xs text-[var(--app-hint)] mb-1">Preferred Contexts (comma separated)</label>
+                <input
+                    type="text"
+                    value={formData.preferredProjects}
+                    onChange={(e) => setFormData({ ...formData, preferredProjects: e.target.value })}
+                    placeholder="e.g. feature delivery, release day, bug triage"
                     className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
                     disabled={isPending || readOnly}
                 />
@@ -269,6 +313,11 @@ export function AIProfileSettings(props: {
     const queryClient = useQueryClient()
     const orgId = props.orgId ?? null
     const canManage = props.canManage !== false
+    const invalidatePersonaQueries = useCallback(() => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.aiProfiles(orgId) })
+        queryClient.invalidateQueries({ queryKey: queryKeys.brainConfig(orgId) })
+        queryClient.invalidateQueries({ queryKey: queryKeys.selfSystem(orgId) })
+    }, [orgId, queryClient])
     const [showAddForm, setShowAddForm] = useState(false)
     const [editingProfile, setEditingProfile] = useState<AIProfile | null>(null)
     const [error, setError] = useState<string | null>(null)
@@ -279,7 +328,7 @@ export function AIProfileSettings(props: {
             if (!api) throw new Error('API unavailable')
             return await api.getAIProfiles(orgId)
         },
-        enabled: Boolean(api)
+        enabled: Boolean(api && orgId),
     })
 
     const createMutation = useMutation({
@@ -297,7 +346,7 @@ export function AIProfileSettings(props: {
             }, orgId)
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: queryKeys.aiProfiles(orgId) })
+            invalidatePersonaQueries()
             setShowAddForm(false)
             setError(null)
         },
@@ -321,7 +370,7 @@ export function AIProfileSettings(props: {
             }, orgId)
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: queryKeys.aiProfiles(orgId) })
+            invalidatePersonaQueries()
             setEditingProfile(null)
             setError(null)
         },
@@ -336,7 +385,7 @@ export function AIProfileSettings(props: {
             return await api.deleteAIProfile(id, orgId)
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: queryKeys.aiProfiles(orgId) })
+            invalidatePersonaQueries()
             setError(null)
         },
         onError: (err: Error) => {
@@ -362,6 +411,12 @@ export function AIProfileSettings(props: {
     }, [canManage, deleteMutation])
 
     const profiles = Array.isArray(data?.profiles) ? data.profiles : []
+    const usedRoles = useMemo(() => new Set(profiles.map((profile) => profile.role)), [profiles])
+    const createRoleOptions = useMemo(
+        () => (Object.keys(ROLE_LABELS) as AIProfileRole[]).filter((role) => !usedRoles.has(role)),
+        [usedRoles],
+    )
+    const canAddMoreProfiles = createRoleOptions.length > 0
 
     const profileToFormData = (profile: AIProfile): AIProfileFormData => ({
         name: profile.name,
@@ -378,12 +433,12 @@ export function AIProfileSettings(props: {
         <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
             <div className="px-3 py-2 border-b border-[var(--app-divider)] flex items-center justify-between">
                 <div>
-                    <h2 className="text-sm font-medium">AI Employees</h2>
+                    <h2 className="text-sm font-medium">AI Style Presets</h2>
                     <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
-                        Create AI profiles with unique personalities and roles
+                        One all-purpose AI style preset per slot for this org
                     </p>
                 </div>
-                {!showAddForm && !editingProfile && (
+                {!showAddForm && !editingProfile && canAddMoreProfiles && (
                     <button
                         type="button"
                         onClick={() => setShowAddForm(true)}
@@ -401,12 +456,19 @@ export function AIProfileSettings(props: {
 
             {!canManage && (
                 <div className="px-3 py-2 text-xs text-[var(--app-hint)] border-b border-[var(--app-divider)]">
-                    Only platform operators can create or edit AI profiles for the shared K1 Brain configuration.
+                    Only org admins or platform operators can create or edit AI styles for this org.
+                </div>
+            )}
+
+            {canManage && !showAddForm && !editingProfile && !canAddMoreProfiles && (
+                <div className="px-3 py-2 text-xs text-[var(--app-hint)] border-b border-[var(--app-divider)]">
+                    All six style slots are already used. Edit an existing preset to change it.
                 </div>
             )}
 
             {showAddForm && (
                 <ProfileForm
+                    roleOptions={createRoleOptions}
                     onSubmit={handleCreate}
                     onCancel={() => {
                         setShowAddForm(false)
@@ -430,7 +492,7 @@ export function AIProfileSettings(props: {
                 </div>
             ) : profiles.length === 0 && !showAddForm ? (
                 <div className="px-3 py-4 text-center text-sm text-[var(--app-hint)]">
-                    No AI employees yet. Create one to get started!
+                    No AI styles yet. Create the org presets to get started.
                 </div>
             ) : (
                 <div className="divide-y divide-[var(--app-divider)]">
@@ -439,6 +501,7 @@ export function AIProfileSettings(props: {
                             <ProfileForm
                                 key={profile.id}
                                 initial={profileToFormData(profile)}
+                                roleOptions={Object.keys(ROLE_LABELS) as AIProfileRole[]}
                                 onSubmit={handleUpdate}
                                 onCancel={() => {
                                     setEditingProfile(null)

@@ -116,7 +116,7 @@ OpenClaw (M4)                                          yoho-remote
                        (高风险→approval flow)          └──────────────────┘
 ```
 
-- M4 有**自己的 IM bot**(Feishu / Telegram)、**自己的调度器**、**自己的 session 模型**。
+- M4 有**自己的 IM bot**(Feishu / 其他自有通道)、**自己的调度器**、**自己的 session 模型**。
 - 需要 memory / audit / config 时,调 remote 的 capability API,**每一次调用**都经 PolicyGate(10.5)。
 - **remote 永远不向 M4 dispatch 用户消息**;用户在 M4 IM bot 下的对话走 M4 自己的 channel adapter,跟 remote 的 bridge 无关。
 - H2 同理。

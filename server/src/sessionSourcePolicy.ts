@@ -1,8 +1,15 @@
 import { parseBrainSessionPreferences } from './brain/brainSessionPreferences'
+import {
+    getAllSessionOrchestrationReservedMetadataKeys,
+    getAllSessionOrchestrationSources,
+    getReservedSessionMetadataKeysForSource,
+    getSessionOrchestrationParentSessionId,
+    hasSessionOrchestrationMetadata,
+    isSessionOrchestrationChildSource,
+} from './sessionOrchestrationPolicy'
 
 const EXACT_SESSION_SOURCES = new Set([
-    'brain',
-    'brain-child',
+    ...getAllSessionOrchestrationSources(),
     'external-api',
     'manual',
     'webapp',
@@ -75,13 +82,13 @@ export function getSessionMetadataInvariantError(metadata: unknown): string | nu
 
     const source = getSessionSourceFromMetadata(metadata)
     const mainSessionId = asNonEmptyString(metadata.mainSessionId)
-    const hasBrainPreferences = hasOwn(metadata, 'brainPreferences')
 
-    if (source === 'brain-child' && !mainSessionId) {
-        return 'brain-child sessions require mainSessionId'
+    if (isSessionOrchestrationChildSource(source) && !mainSessionId) {
+        return `${source} sessions require mainSessionId`
     }
 
-    if (!source && (mainSessionId || hasBrainPreferences)) {
+    // Keep the legacy Brain-specific error text for compatibility with current callers.
+    if (!source && hasSessionOrchestrationMetadata(metadata)) {
         return 'brain-linked metadata requires source=brain or source=brain-child'
     }
 
@@ -98,7 +105,7 @@ export function getSessionMetadataPersistenceError(metadata: unknown): string | 
     }
 
     const source = getSessionSourceFromMetadata(metadata)
-    if ((source === 'brain' || source === 'brain-child') && metadata.brainPreferences !== undefined) {
+    if (getReservedSessionMetadataKeysForSource(source).includes('brainPreferences') && metadata.brainPreferences !== undefined) {
         if (parseBrainSessionPreferences(metadata.brainPreferences) === null) {
             return 'Invalid brainPreferences in session metadata'
         }
@@ -108,14 +115,7 @@ export function getSessionMetadataPersistenceError(metadata: unknown): string | 
 }
 
 export function getBrainChildMainSessionId(metadata: unknown): string | undefined {
-    if (!isRecord(metadata)) {
-        return undefined
-    }
-    if (getSessionSourceFromMetadata(metadata) !== 'brain-child') {
-        return undefined
-    }
-
-    return asNonEmptyString(metadata.mainSessionId) ?? undefined
+    return getSessionOrchestrationParentSessionId(metadata, 'brain-child')
 }
 
 const ARCHIVE_STAMP_FIELDS = ['lifecycleState', 'lifecycleStateSince', 'archivedBy', 'archiveReason'] as const
@@ -198,14 +198,17 @@ export function normalizeSessionMetadataInvariants(metadata: unknown): unknown {
         delete normalized.source
     }
 
-    if (source === 'brain-child') {
+    if (isSessionOrchestrationChildSource(source)) {
         return normalized
     }
 
     delete normalized.mainSessionId
 
-    if (source !== 'brain') {
-        delete normalized.brainPreferences
+    const reservedMetadataKeys = new Set(getReservedSessionMetadataKeysForSource(source))
+    for (const key of getAllSessionOrchestrationReservedMetadataKeys()) {
+        if (!reservedMetadataKeys.has(key)) {
+            delete normalized[key]
+        }
     }
 
     return normalized

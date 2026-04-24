@@ -16,7 +16,7 @@ Run Claude Code, Codex, or Gemini sessions from your terminal and control them r
 1. Start the server and set env vars (see ../server/README.md).
 2. Set the same CLI_API_TOKEN on this machine or run `hapi auth login`.
 3. Run `hapi` to start a session.
-4. Use the web app or Telegram Mini App to monitor and control.
+4. Use the web app or PWA to monitor and control.
 
 ## Commands
 
@@ -25,7 +25,7 @@ Run Claude Code, Codex, or Gemini sessions from your terminal and control them r
 - `hapi` - Start a Claude Code session (passes through Claude CLI flags). See `src/index.ts`.
 - `hapi codex` - Start Codex mode. See `src/codex/runCodex.ts`.
 - `hapi gemini` - Start Gemini mode via ACP. See `src/agent/runners/runAgentSession.ts`.
-  Note: Gemini runs in remote mode only; it waits for messages from the server UI/Telegram.
+  Note: Gemini runs in remote mode only; it waits for messages from the server UI.
 
 ### Authentication
 

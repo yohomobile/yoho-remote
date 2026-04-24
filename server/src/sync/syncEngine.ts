@@ -29,6 +29,11 @@ import {
     getSessionSourceFromMetadata,
     isProtectedArchivedSession,
 } from '../sessionSourcePolicy'
+import {
+    getSessionOrchestrationParentSessionId,
+    getSessionOrchestrationParentSourceForChildSource,
+    isSessionOrchestrationChildSource,
+} from '../sessionOrchestrationPolicy'
 import { normalizeSessionPermissionMode, type SessionPermissionMode } from '../sessionPermissionMode'
 import {
     SUMMARIZE_TURN_QUEUE_NAME,
@@ -120,6 +125,7 @@ const machineMetadataSchema = z.object({
 export interface Session {
     id: string
     namespace: string
+    orgId: string | null
     seq: number
     createdAt: number
     updatedAt: number
@@ -135,7 +141,7 @@ export interface Session {
     thinkingAt: number
     todos?: TodoItem[]
     permissionMode?: SessionPermissionMode
-    modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'glm-5.1' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
+    modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'glm-5.1' | 'gpt-5.5' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
     modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
     fastMode?: boolean
     activeMonitors: SessionActiveMonitor[]
@@ -153,6 +159,8 @@ export type BrainChildCallbackEnvelope = {
     version: 1
     sessionId: string
     mainSessionId: string
+    parentSource?: string
+    childSource?: string
     title: string
     previousSummary?: string | null
     details: string[]
@@ -336,6 +344,7 @@ type GroupStoreLike = {
 export interface SyncEvent {
     type: SyncEventType
     namespace?: string
+    orgId?: string | null
     sessionId?: string
     machineId?: string
     groupId?: string
@@ -669,6 +678,10 @@ export class SyncEngine {
     // Callback currently queued for retry per brain-child session.
     private readonly brainChildPendingRetryCallbackKeyBySessionId: Map<string, string> = new Map()
     private brainCallbackRetryDelaysMs = [5_000, 10_000, 30_000, 60_000, 120_000]
+    // Active retry aborters so stop() can cancel them. The underlying setTimeout is unref'd
+    // so it never keeps the Node event loop alive on its own.
+    private readonly brainCallbackRetryAborters: Set<() => void> = new Set()
+    private stopped = false
     private _dbActiveSessionIds: Set<string> = new Set() // Sessions that were active in DB at startup
     private inactivityTimer: NodeJS.Timeout | null = null
     private orphanCleanupTimer: NodeJS.Timeout | null = null
@@ -721,6 +734,7 @@ export class SyncEngine {
     }
 
     stop(): void {
+        this.stopped = true
         if (this.inactivityTimer) {
             clearInterval(this.inactivityTimer)
             this.inactivityTimer = null
@@ -729,6 +743,11 @@ export class SyncEngine {
             clearInterval(this.orphanCleanupTimer)
             this.orphanCleanupTimer = null
         }
+        for (const abort of this.brainCallbackRetryAborters) {
+            abort()
+        }
+        this.brainCallbackRetryAborters.clear()
+        this.brainChildPendingRetryCallbackKeyBySessionId.clear()
     }
 
     start(): Promise<void> {
@@ -1187,6 +1206,10 @@ export class SyncEngine {
         return this.getSessions().filter((session) => session.namespace === namespace)
     }
 
+    getSessionsByOrg(orgId: string): Session[] {
+        return this.getSessions().filter((session) => session.orgId === orgId)
+    }
+
     getSession(sessionId: string): Session | undefined {
         return this.sessions.get(sessionId)
     }
@@ -1194,6 +1217,14 @@ export class SyncEngine {
     getSessionByNamespace(sessionId: string, namespace: string): Session | undefined {
         const session = this.sessions.get(sessionId)
         if (!session || session.namespace !== namespace) {
+            return undefined
+        }
+        return session
+    }
+
+    getSessionByOrg(sessionId: string, orgId: string): Session | undefined {
+        const session = this.sessions.get(sessionId)
+        if (!session || session.orgId !== orgId) {
             return undefined
         }
         return session
@@ -1421,8 +1452,20 @@ export class SyncEngine {
         return this.getMachines().filter((machine) => machine.namespace === namespace)
     }
 
+    getMachinesByOrg(orgId: string): Machine[] {
+        return this.getMachines().filter((machine) => machine.orgId === orgId)
+    }
+
     getMachine(machineId: string): Machine | undefined {
         return this.machines.get(machineId)
+    }
+
+    getMachineByOrg(machineId: string, orgId: string): Machine | undefined {
+        const machine = this.machines.get(machineId)
+        if (!machine || machine.orgId !== orgId) {
+            return undefined
+        }
+        return machine
     }
 
     isBrainChildInitDone(sessionId: string): boolean {
@@ -1518,12 +1561,16 @@ export class SyncEngine {
         return this.getMachines().filter(m => m.active)
     }
 
-    getOnlineMachinesByNamespace(namespace: string, orgId?: string | null): Machine[] {
-        const machines = this.getMachinesByNamespace(namespace).filter((machine) => machine.active)
-        if (orgId) {
-            return machines.filter((machine) => machine.orgId === orgId)
-        }
-        return machines
+    getOnlineMachinesByNamespace(namespace: string): Machine[] {
+        // Note: parameter name is kept for backwards-compat; it now carries an orgId.
+        // Filter by org (machines scoped to the org); legacy namespace-column filtering has been removed.
+        return this.getMachines().filter(
+            (machine) => machine.active && machine.orgId === namespace
+        )
+    }
+
+    getOnlineMachinesByOrg(orgId: string): Machine[] {
+        return this.getMachines().filter((machine) => machine.active && machine.orgId === orgId)
     }
 
     getSessionMessages(sessionId: string): DecryptedMessage[] {
@@ -1786,7 +1833,7 @@ export class SyncEngine {
         thinking?: boolean
         mode?: 'local' | 'remote'
         permissionMode?: SessionPermissionMode
-        modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'glm-5.1' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
+        modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'glm-5.1' | 'gpt-5.5' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
         modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
         fastMode?: boolean
     }): Promise<void> {
@@ -2212,11 +2259,12 @@ export class SyncEngine {
     }
 
     private async reconcilePendingBrainCallbacksForMain(mainSessionId: string, namespace: string): Promise<void> {
-        const pendingChildren = this.getSessionsByNamespace(namespace).filter((session) =>
-            getSessionSourceFromMetadata(session.metadata) === 'brain-child'
-            && getBrainChildMainSessionId(session.metadata) === mainSessionId
-            && this.isBrainCallbackPendingPersisted(session)
-        )
+        const pendingChildren = this.getSessionsByNamespace(namespace).filter((session) => {
+            const source = getSessionSourceFromMetadata(session.metadata)
+            return isSessionOrchestrationChildSource(source)
+                && getSessionOrchestrationParentSessionId(session.metadata) === mainSessionId
+                && this.isBrainCallbackPendingPersisted(session)
+        })
         if (pendingChildren.length === 0) {
             return
         }
@@ -2228,11 +2276,20 @@ export class SyncEngine {
         }
     }
 
-    private async sendBrainCallbackIfNeeded(session: Session): Promise<void> {
+    private async sendBrainCallbackIfNeeded(session: Session, options?: { force?: boolean }): Promise<void> {
         try {
             const source = (session.metadata as any)?.source
             const mainSessionId = (session.metadata as any)?.mainSessionId
-            if (source !== 'brain-child' || !mainSessionId) {
+            if (!isSessionOrchestrationChildSource(source) || !mainSessionId) {
+                return
+            }
+
+            // callbackOnFailureOnly: auto-callback is suppressed; an authoritative caller
+            // (e.g. the AI-task worker) must trigger callbacks explicitly via
+            // triggerChildCallback / /api/internal/session/trigger-callback. Bypass when
+            // `force` is set so the explicit trigger path still works.
+            const callbackOnFailureOnly = (session.metadata as any)?.callbackOnFailureOnly === true
+            if (callbackOnFailureOnly && !options?.force) {
                 return
             }
 
@@ -2242,9 +2299,10 @@ export class SyncEngine {
             const messages = await this.store.getMessages(session.id, 30)
 
             // Skip the first callback only when the message history shows the child is still
-            // finishing its init prompt. This avoids dropping legitimate task results in
-            // tests or resumed sessions where no init prompt is present in history.
-            if (!this.brainChildInitCompleted.has(session.id)) {
+            // finishing its init prompt. Only applies to brain-child: orchestrator-child
+            // sessions (e.g. AI task workers) don't have an init prompt — their first task
+            // completion IS the result the caller is waiting for.
+            if (source === 'brain-child' && !this.brainChildInitCompleted.has(session.id)) {
                 await this.markBrainChildInitCompleted(session.id, session)
                 if (this.shouldSkipInitialBrainCallback(messages)) {
                     console.log(`[brain-callback] Skipping init prompt callback for ${shortId(session.id)}`)
@@ -2430,11 +2488,14 @@ export class SyncEngine {
                 statsLine = `Context 剩余: ~${contextRemainingPercent}% (${lastUsage.contextSize.toLocaleString()} / ${CONTEXT_BUDGET.toLocaleString()} tokens) | ${statsLine}`
             }
 
+            const parentSource = getSessionOrchestrationParentSourceForChildSource(source)
             const callbackEnvelope: BrainChildCallbackEnvelope = {
                 type: 'brain-child-callback',
                 version: 1,
                 sessionId: session.id,
                 mainSessionId,
+                ...(parentSource ? { parentSource } : {}),
+                ...(typeof source === 'string' ? { childSource: source } : {}),
                 title: sessionTitle,
                 previousSummary: typeof brainSummary === 'string' ? brainSummary : null,
                 details: [statsLine],
@@ -2506,6 +2567,28 @@ export class SyncEngine {
     }
 
     /**
+     * Public entry for authoritative callers (e.g. AI-task worker) to explicitly push the
+     * child-session result back to its creator session. Bypasses the callbackOnFailureOnly
+     * suppression so recurring schedules can surface failures on demand.
+     */
+    async triggerChildCallback(sessionId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+        const session = this.getSession(sessionId)
+        if (!session) {
+            return { ok: false, reason: 'session_not_found' }
+        }
+        const source = getSessionSourceFromMetadata(session.metadata)
+        if (!isSessionOrchestrationChildSource(source)) {
+            return { ok: false, reason: 'not_child_session' }
+        }
+        const mainSessionId = getSessionOrchestrationParentSessionId(session.metadata)
+        if (!mainSessionId) {
+            return { ok: false, reason: 'main_session_missing' }
+        }
+        await this.sendBrainCallbackIfNeeded(session, { force: true })
+        return { ok: true }
+    }
+
+    /**
      * Retry brain callback with delay - used when Brain session is temporarily unavailable
      */
     private async retryBrainCallback(
@@ -2517,7 +2600,10 @@ export class SyncEngine {
         const maxRetries = this.brainCallbackRetryDelaysMs.length
 
         for (let i = 0; i < maxRetries; i++) {
-            await new Promise(r => setTimeout(r, this.brainCallbackRetryDelaysMs[i]))
+            const aborted = await this.waitForBrainCallbackRetry(this.brainCallbackRetryDelaysMs[i])
+            if (aborted || this.stopped) {
+                return
+            }
             if (this.brainChildPendingRetryCallbackKeyBySessionId.get(childSessionId) !== callbackDeliveryKey) {
                 return
             }
@@ -2537,6 +2623,40 @@ export class SyncEngine {
             this.brainChildPendingRetryCallbackKeyBySessionId.delete(childSessionId)
         }
         console.error(`[brain-callback] Gave up waiting for brain session ${shortId(mainSessionId)} after ${maxRetries} retries. Child session: ${shortId(childSessionId)}`)
+    }
+
+    /**
+     * Awaitable delay for brain-callback retries. The underlying timer is
+     * unref'd so it never keeps the Node event loop alive on its own, and is
+     * tracked so stop() can cancel every pending retry in flight.
+     *
+     * Resolves to true when aborted (stop() or caller-level cancel), false on
+     * natural timeout.
+     */
+    private waitForBrainCallbackRetry(delayMs: number): Promise<boolean> {
+        if (this.stopped) {
+            return Promise.resolve(true)
+        }
+        return new Promise<boolean>(resolve => {
+            let settled = false
+            const abort = (): void => {
+                if (settled) return
+                settled = true
+                clearTimeout(timer)
+                this.brainCallbackRetryAborters.delete(abort)
+                resolve(true)
+            }
+            const timer = setTimeout(() => {
+                if (settled) return
+                settled = true
+                this.brainCallbackRetryAborters.delete(abort)
+                resolve(false)
+            }, delayMs)
+            if (typeof timer.unref === 'function') {
+                timer.unref()
+            }
+            this.brainCallbackRetryAborters.add(abort)
+        })
     }
 
     /**
@@ -2867,20 +2987,26 @@ export class SyncEngine {
         machineSupportedAgents: SpawnAgentType[] | null | undefined,
         now: number
     ): boolean {
-        if (getSessionSourceFromMetadata(session.metadata) !== 'brain-child') {
+        const childSource = getSessionSourceFromMetadata(session.metadata)
+        if (!isSessionOrchestrationChildSource(childSource)) {
             return false
         }
         if (session.metadata?.lifecycleState !== 'running') {
             return false
         }
 
-        const mainSessionId = getBrainChildMainSessionId(session.metadata)
+        const mainSessionId = getSessionOrchestrationParentSessionId(session.metadata)
         if (!mainSessionId) {
             return false
         }
 
         const parent = this.sessions.get(mainSessionId)
-        if (!parent || getSessionSourceFromMetadata(parent.metadata) !== 'brain') {
+        if (!parent) {
+            return false
+        }
+        const parentSource = getSessionSourceFromMetadata(parent.metadata)
+        const expectedParentSource = getSessionOrchestrationParentSourceForChildSource(childSource)
+        if (!expectedParentSource || parentSource !== expectedParentSource) {
             return false
         }
 
@@ -3364,6 +3490,7 @@ export class SyncEngine {
         const session: Session = {
             id: stored.id,
             namespace: stored.namespace,
+            orgId: stored.orgId ?? null,
             seq: stored.seq,
             createdAt: stored.createdAt,
             updatedAt: stored.updatedAt,
@@ -4104,7 +4231,7 @@ export class SyncEngine {
         sessionId: string,
         config: {
             permissionMode?: SessionPermissionMode
-            modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'glm-5.1' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
+            modelMode?: 'default' | 'sonnet' | 'opus' | 'opus-4-7' | 'glm-5.1' | 'gpt-5.5' | 'gpt-5.4' | 'gpt-5.4-mini' | 'gpt-5.3-codex' | 'gpt-5.3-codex-spark' | 'gpt-5.2-codex' | 'gpt-5.1-codex-max' | 'gpt-5.1-codex-mini' | 'gpt-5.2'
             modelReasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh'
             fastMode?: boolean
         }

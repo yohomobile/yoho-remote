@@ -12,7 +12,6 @@ import { join } from 'node:path'
 import { readSettings, writeSettings, type Settings } from './web/cliApiToken'
 
 export interface ServerSettings {
-    telegramBotToken: string | null
     webappPort: number
     webappUrl: string
     corsOrigins: string[]
@@ -28,7 +27,6 @@ export interface ServerSettings {
 export interface ServerSettingsResult {
     settings: ServerSettings
     sources: {
-        telegramBotToken: 'env' | 'file' | 'default'
         webappPort: 'env' | 'file' | 'default'
         webappUrl: 'env' | 'file' | 'default'
         corsOrigins: 'env' | 'file' | 'default'
@@ -96,7 +94,6 @@ export async function loadServerSettings(dataDir: string): Promise<ServerSetting
 
     let needsSave = false
     const sources: ServerSettingsResult['sources'] = {
-        telegramBotToken: 'default',
         webappPort: 'default',
         webappUrl: 'default',
         corsOrigins: 'default',
@@ -107,20 +104,6 @@ export async function loadServerSettings(dataDir: string): Promise<ServerSetting
         webPushVapidPublicKey: 'default',
         webPushVapidPrivateKey: 'default',
         webPushVapidSubject: 'default',
-    }
-
-    // telegramBotToken: env > file > null
-    let telegramBotToken: string | null = null
-    if (process.env.TELEGRAM_BOT_TOKEN) {
-        telegramBotToken = process.env.TELEGRAM_BOT_TOKEN
-        sources.telegramBotToken = 'env'
-        if (settings.telegramBotToken === undefined) {
-            settings.telegramBotToken = telegramBotToken
-            needsSave = true
-        }
-    } else if (settings.telegramBotToken !== undefined) {
-        telegramBotToken = settings.telegramBotToken
-        sources.telegramBotToken = 'file'
     }
 
     // webappPort: env > file > 3006
@@ -282,7 +265,6 @@ export async function loadServerSettings(dataDir: string): Promise<ServerSetting
 
     return {
         settings: {
-            telegramBotToken,
             webappPort,
             webappUrl,
             corsOrigins,

@@ -4,7 +4,6 @@
  * 集中管理所有凭证和 API Token，包括：
  * - CLI API Token (Web 认证)
  * - JWT Secret (会话签名)
- * - Telegram Bot Token
  * - Feishu/Lark App Credentials
  * - Gemini API Key
  * - Web Push VAPID Keys
@@ -31,7 +30,6 @@ export interface JwtSecretData {
 
 export interface ApiTokensData {
     cliApiToken?: string
-    telegramBotToken?: string
     feishuAppId?: string
     feishuAppSecret?: string
     geminiApiKey?: string
@@ -50,7 +48,6 @@ export interface VapidKeysData {
 export interface AllCredentials {
     jwtSecret: Uint8Array
     cliApiToken: string
-    telegramBotToken: string | null
     feishuAppId: string | null
     feishuAppSecret: string | null
     geminiApiKey: string | null
@@ -198,17 +195,6 @@ export class CredentialManager {
     }
 
     /**
-     * 获取 Telegram Bot Token
-     */
-    async getTelegramBotToken(): Promise<string | null> {
-        const envToken = process.env.TELEGRAM_BOT_TOKEN
-        if (envToken) return envToken
-
-        const tokens = await this.getApiTokens()
-        return tokens.telegramBotToken || null
-    }
-
-    /**
      * 获取 Feishu 凭证
      */
     async getFeishuCredentials(): Promise<{ appId: string | null; appSecret: string | null }> {
@@ -331,7 +317,6 @@ export class CredentialManager {
                 const updates: Partial<ApiTokensData> = {}
 
                 if (settings.cliApiToken) updates.cliApiToken = settings.cliApiToken
-                if (settings.telegramBotToken) updates.telegramBotToken = settings.telegramBotToken
                 if (settings.appId) updates.feishuAppId = settings.appId
                 if (settings.appSecret) updates.feishuAppSecret = settings.appSecret
                 if (settings.geminiApiKey) updates.geminiApiKey = settings.geminiApiKey
@@ -364,10 +349,9 @@ export class CredentialManager {
      * 获取所有凭证（用于一次性加载）
      */
     async getAllCredentials(): Promise<AllCredentials> {
-        const [jwtSecret, cliApiToken, telegramToken, feishu, geminiKey, minimax, vapid] = await Promise.all([
+        const [jwtSecret, cliApiToken, feishu, geminiKey, minimax, vapid] = await Promise.all([
             this.getJwtSecret(),
             this.getCliApiToken(),
-            this.getTelegramBotToken(),
             this.getFeishuCredentials(),
             this.getGeminiApiKey(),
             this.getMinimaxCredentials(),
@@ -377,7 +361,6 @@ export class CredentialManager {
         return {
             jwtSecret,
             cliApiToken,
-            telegramBotToken: telegramToken,
             feishuAppId: feishu.appId,
             feishuAppSecret: feishu.appSecret,
             geminiApiKey: geminiKey,

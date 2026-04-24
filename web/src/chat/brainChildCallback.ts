@@ -5,9 +5,15 @@ const SESSION_PREFIX = 'Session:'
 const TITLE_PREFIX = '标题:'
 const PREVIOUS_SUMMARY_PREFIX = '上次总结:'
 
-export type BrainChildCallbackEvent = Extract<AgentEvent, { type: 'brain-child-callback' }>
+export type BrainChildCallbackEvent = Extract<
+    AgentEvent,
+    { type: 'brain-child-callback' }
+>
 
-function extractPrefixedValue(line: string, prefix: string): string | undefined {
+function extractPrefixedValue(
+    line: string,
+    prefix: string
+): string | undefined {
     if (!line.startsWith(prefix)) {
         return undefined
     }
@@ -26,7 +32,9 @@ function asString(value: unknown): string | undefined {
     return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
-function parseBrainChildCallbackEnvelope(meta: unknown): BrainChildCallbackEnvelope | null {
+function parseBrainChildCallbackEnvelope(
+    meta: unknown
+): BrainChildCallbackEnvelope | null {
     const metaRecord = asRecord(meta)
     const rawEnvelope = asRecord(metaRecord?.brainChildCallback)
     if (!rawEnvelope) {
@@ -37,6 +45,8 @@ function parseBrainChildCallbackEnvelope(meta: unknown): BrainChildCallbackEnvel
     const result = asRecord(rawEnvelope.result)
     const sessionId = asString(rawEnvelope.sessionId)
     const mainSessionId = asString(rawEnvelope.mainSessionId)
+    const parentSource = asString(rawEnvelope.parentSource)
+    const childSource = asString(rawEnvelope.childSource)
     const title = asString(rawEnvelope.title)
     const type = rawEnvelope.type
     const version = rawEnvelope.version
@@ -51,15 +61,19 @@ function parseBrainChildCallbackEnvelope(meta: unknown): BrainChildCallbackEnvel
     const resultSeq = result?.seq
 
     if (
-        type !== 'brain-child-callback'
-        || version !== 1
-        || !sessionId
-        || !mainSessionId
-        || !title
-        || typeof messageCount !== 'number'
-        || typeof contextBudget !== 'number'
-        || !resultText
-        || (resultSource !== 'result' && resultSource !== 'assistant' && resultSource !== 'message' && resultSource !== 'raw-data' && resultSource !== 'none')
+        type !== 'brain-child-callback' ||
+        version !== 1 ||
+        !sessionId ||
+        !mainSessionId ||
+        !title ||
+        typeof messageCount !== 'number' ||
+        typeof contextBudget !== 'number' ||
+        !resultText ||
+        (resultSource !== 'result' &&
+            resultSource !== 'assistant' &&
+            resultSource !== 'message' &&
+            resultSource !== 'raw-data' &&
+            resultSource !== 'none')
     ) {
         return null
     }
@@ -69,15 +83,24 @@ function parseBrainChildCallbackEnvelope(meta: unknown): BrainChildCallbackEnvel
         version: 1,
         sessionId,
         mainSessionId,
+        ...(parentSource ? { parentSource } : {}),
+        ...(childSource ? { childSource } : {}),
         title,
-        previousSummary: typeof rawEnvelope.previousSummary === 'string' ? rawEnvelope.previousSummary : null,
+        previousSummary:
+            typeof rawEnvelope.previousSummary === 'string'
+                ? rawEnvelope.previousSummary
+                : null,
         details: Array.isArray(rawEnvelope.details)
-            ? rawEnvelope.details.filter((item): item is string => typeof item === 'string')
+            ? rawEnvelope.details.filter(
+                  (item): item is string => typeof item === 'string'
+              )
             : [],
         stats: {
             messageCount,
             contextBudget,
-            ...(typeof contextRemainingPercent === 'number' ? { contextRemainingPercent } : {}),
+            ...(typeof contextRemainingPercent === 'number'
+                ? { contextRemainingPercent }
+                : {}),
             ...(typeof inputTokens === 'number' ? { inputTokens } : {}),
             ...(typeof outputTokens === 'number' ? { outputTokens } : {}),
             ...(typeof contextSize === 'number' ? { contextSize } : {}),
@@ -90,7 +113,10 @@ function parseBrainChildCallbackEnvelope(meta: unknown): BrainChildCallbackEnvel
     }
 }
 
-export function parseBrainChildCallbackMessage(text: string, meta?: unknown): BrainChildCallbackEvent | null {
+export function parseBrainChildCallbackMessage(
+    text: string,
+    meta?: unknown
+): BrainChildCallbackEvent | null {
     const envelope = parseBrainChildCallbackEnvelope(meta)
     if (envelope) {
         return {
@@ -98,6 +124,8 @@ export function parseBrainChildCallbackMessage(text: string, meta?: unknown): Br
             sessionId: envelope.sessionId,
             title: envelope.title,
             previousSummary: envelope.previousSummary ?? undefined,
+            parentSource: envelope.parentSource,
+            childSource: envelope.childSource,
             details: envelope.details,
             report: envelope.result.text,
             envelope,
@@ -124,7 +152,8 @@ export function parseBrainChildCallbackMessage(text: string, meta?: unknown): Br
             break
         }
 
-        sessionId = sessionId ?? extractPrefixedValue(trimmedLine, SESSION_PREFIX)
+        sessionId =
+            sessionId ?? extractPrefixedValue(trimmedLine, SESSION_PREFIX)
         if (sessionId && trimmedLine.startsWith(SESSION_PREFIX)) {
             continue
         }
@@ -134,8 +163,13 @@ export function parseBrainChildCallbackMessage(text: string, meta?: unknown): Br
             continue
         }
 
-        previousSummary = previousSummary ?? extractPrefixedValue(trimmedLine, PREVIOUS_SUMMARY_PREFIX)
-        if (previousSummary && trimmedLine.startsWith(PREVIOUS_SUMMARY_PREFIX)) {
+        previousSummary =
+            previousSummary ??
+            extractPrefixedValue(trimmedLine, PREVIOUS_SUMMARY_PREFIX)
+        if (
+            previousSummary &&
+            trimmedLine.startsWith(PREVIOUS_SUMMARY_PREFIX)
+        ) {
             continue
         }
 
@@ -150,6 +184,6 @@ export function parseBrainChildCallbackMessage(text: string, meta?: unknown): Br
         title,
         previousSummary,
         details,
-        report: report.trim().length > 0 ? report : undefined
+        report: report.trim().length > 0 ? report : undefined,
     }
 }

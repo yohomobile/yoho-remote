@@ -17,16 +17,23 @@ import {
 import {
     buildSessionListEntries,
     getCollapsedBrainChildCount,
-    type BrainGroupStatusSummary
+    type BrainGroupStatusSummary,
 } from '@/lib/session-list-brain'
-import { normalizeOwnerFilter, type ArchiveFilter, type OwnerFilter } from '@/lib/session-filters'
+import {
+    normalizeOwnerFilter,
+    type ArchiveFilter,
+    type OwnerFilter,
+} from '@/lib/session-filters'
 import { isLicenseTermination, getLicenseTerminationLabel } from '@/lib/license'
+import { getSessionOrchestrationLabels } from '@/lib/sessionOrchestration'
 
 const EXPANDED_BRAIN_SESSION_IDS_STORAGE_KEY = 'yr:expandedBrainSessionIds'
 
 function loadExpandedBrainSessionIds(): string[] {
     try {
-        const stored = localStorage.getItem(EXPANDED_BRAIN_SESSION_IDS_STORAGE_KEY)
+        const stored = localStorage.getItem(
+            EXPANDED_BRAIN_SESSION_IDS_STORAGE_KEY
+        )
         if (!stored) return []
         const parsed = JSON.parse(stored)
         if (!Array.isArray(parsed)) return []
@@ -38,7 +45,10 @@ function loadExpandedBrainSessionIds(): string[] {
 
 function saveExpandedBrainSessionIds(ids: string[]): void {
     try {
-        localStorage.setItem(EXPANDED_BRAIN_SESSION_IDS_STORAGE_KEY, JSON.stringify(ids))
+        localStorage.setItem(
+            EXPANDED_BRAIN_SESSION_IDS_STORAGE_KEY,
+            JSON.stringify(ids)
+        )
     } catch {
         // Ignore storage errors
     }
@@ -50,23 +60,60 @@ function filterSessions(
     archiveFilter: ArchiveFilter,
     ownerFilter: OwnerFilter
 ): SessionSummary[] {
-    return sessions.filter(session => {
+    return sessions.filter((session) => {
         // Archive filter
         if (!matchesArchiveFilter(session, archiveFilter)) return false
 
         // Owner filter
-        const isBrainSession = session.metadata?.source === 'brain' || session.metadata?.source === 'brain-child'
+        const isBrainSession =
+            session.metadata?.source === 'brain' ||
+            session.metadata?.source === 'brain-child'
+        const isOrchestratorSession =
+            session.metadata?.source === 'orchestrator' ||
+            session.metadata?.source === 'orchestrator-child'
         if (ownerFilter === 'mine') {
             if (session.ownerEmail) return false
             if (isBrainSession) return false
+            if (isOrchestratorSession) return false
         } else if (ownerFilter === 'brain') {
             if (!isBrainSession) return false
+        } else if (ownerFilter === 'orchestrator') {
+            if (!isOrchestratorSession) return false
         } else if (ownerFilter === 'others') {
             if (!session.ownerEmail) return false
         }
 
         return true
     })
+}
+
+function getEmptyStateCopy(
+    ownerFilter: OwnerFilter,
+    archiveFilter: ArchiveFilter
+): string {
+    if (archiveFilter === 'archive') {
+        if (ownerFilter === 'brain') {
+            return 'No archived Brain sessions'
+        }
+        if (ownerFilter === 'orchestrator') {
+            return 'No archived Orchestrator sessions'
+        }
+        if (ownerFilter === 'others') {
+            return 'No archived shared sessions'
+        }
+        return 'No archived sessions'
+    }
+
+    if (ownerFilter === 'brain') {
+        return 'No Brain sessions yet'
+    }
+    if (ownerFilter === 'orchestrator') {
+        return 'No Orchestrator sessions yet'
+    }
+    if (ownerFilter === 'others') {
+        return 'No shared sessions from others'
+    }
+    return 'No matching sessions'
 }
 
 function PlusIcon(props: { className?: string }) {
@@ -98,14 +145,19 @@ function getSessionTitle(session: SessionSummary): string {
     }
     if (session.metadata?.path) {
         const parts = session.metadata.path.split('/').filter(Boolean)
-        return parts.length > 0 ? parts[parts.length - 1] : session.id.slice(0, 8)
+        return parts.length > 0
+            ? parts[parts.length - 1]
+            : session.id.slice(0, 8)
     }
     return session.id.slice(0, 8)
 }
 
-function getTodoProgress(session: SessionSummary): { completed: number; total: number } | null {
+function getTodoProgress(
+    session: SessionSummary
+): { completed: number; total: number } | null {
     if (!session.todoProgress) return null
-    if (session.todoProgress.completed === session.todoProgress.total) return null
+    if (session.todoProgress.completed === session.todoProgress.total)
+        return null
     return session.todoProgress
 }
 
@@ -117,12 +169,17 @@ function getAgentLabel(session: SessionSummary): string {
     return 'Agent'
 }
 
-function getSourceTag(session: SessionSummary): { label: string; color: string } | null {
+function getSourceTag(
+    session: SessionSummary
+): { label: string; color: string } | null {
     const source = session.metadata?.source?.trim()
     if (!source) return null
     // Machine/automation session tags
     if (source.includes('_repair')) {
-        return { label: '🤖 Auto Repair', color: 'bg-purple-500/15 text-purple-600' }
+        return {
+            label: '🤖 Auto Repair',
+            color: 'bg-purple-500/15 text-purple-600',
+        }
     }
     if (source === 'brain') {
         return { label: '🧠 Brain', color: 'bg-amber-500/15 text-amber-600' }
@@ -130,11 +187,24 @@ function getSourceTag(session: SessionSummary): { label: string; color: string }
     if (source === 'brain-child') {
         return { label: '🧠 子任务', color: 'bg-amber-500/15 text-amber-500' }
     }
+    if (source === 'orchestrator') {
+        return { label: '🎛 Orchestrator', color: 'bg-sky-500/15 text-sky-600' }
+    }
+    if (source === 'orchestrator-child') {
+        return { label: '🎛 编排子任务', color: 'bg-sky-500/15 text-sky-500' }
+    }
     if (source === 'external-api') {
         return { label: '🔌 API', color: 'bg-blue-500/15 text-blue-600' }
     }
-    if (source.startsWith('automation:') || source.startsWith('bot:') || source.startsWith('script:')) {
-        return { label: '⚙️ Automation', color: 'bg-orange-500/15 text-orange-600' }
+    if (
+        source.startsWith('automation:') ||
+        source.startsWith('bot:') ||
+        source.startsWith('script:')
+    ) {
+        return {
+            label: '⚙️ Automation',
+            color: 'bg-orange-500/15 text-orange-600',
+        }
     }
     return null
 }
@@ -145,11 +215,15 @@ function getSessionModelLabel(session: SessionSummary): string | null {
         modelReasoningEffort: session.modelReasoningEffort,
         fastMode: session.fastMode,
         runtimeModel: session.metadata?.runtimeModel,
-        runtimeModelReasoningEffort: session.metadata?.runtimeModelReasoningEffort
+        runtimeModelReasoningEffort:
+            session.metadata?.runtimeModelReasoningEffort,
     })
 }
 
-function getSessionMachineLabel(session: SessionSummary, machineMap: Map<string, Machine>): string | null {
+function getSessionMachineLabel(
+    session: SessionSummary,
+    machineMap: Map<string, Machine>
+): string | null {
     const machineId = session.metadata?.machineId
     if (!machineId) return null
     const machine = machineMap.get(machineId)
@@ -167,15 +241,16 @@ function getBrainSelfLabel(session: SessionSummary): string | null {
         return 'Self: off'
     }
     if (session.metadata.selfProfileResolved === true) {
-        const suffix = session.metadata.selfMemoryStatus === 'attached'
-            ? ' + memory'
-            : session.metadata.selfMemoryStatus === 'error'
-                ? ' · memory error'
-                : session.metadata.selfMemoryStatus === 'empty'
+        const suffix =
+            session.metadata.selfMemoryStatus === 'attached'
+                ? ' + memory'
+                : session.metadata.selfMemoryStatus === 'error'
+                  ? ' · memory error'
+                  : session.metadata.selfMemoryStatus === 'empty'
                     ? ' · memory empty'
                     : session.metadata.selfMemoryStatus === 'skipped'
-                        ? ' · memory skipped'
-                        : ''
+                      ? ' · memory skipped'
+                      : ''
         return `Self: ${session.metadata.selfProfileName ?? session.metadata.selfProfileId ?? 'configured'}${suffix}`
     }
     if (session.metadata.selfProfileId) {
@@ -201,7 +276,9 @@ function formatRelativeTime(value: number): string | null {
 }
 
 // Get display name from email (first part before @, or full email if short)
-function getCreatorDisplayName(email: string | undefined | null): string | null {
+function getCreatorDisplayName(
+    email: string | undefined | null
+): string | null {
     if (!email) return null
     const atIndex = email.indexOf('@')
     if (atIndex === -1) return email
@@ -211,7 +288,17 @@ function getCreatorDisplayName(email: string | undefined | null): string | null 
 
 function TrashIcon() {
     return (
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
             <polyline points="3 6 5 6 21 6" />
             <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
             <path d="M10 11v6M14 11v6" />
@@ -265,23 +352,27 @@ function SessionItem(props: {
         childCount = 0,
         isExpanded = false,
         onToggleExpand,
-        statusSummary
+        statusSummary,
     } = props
     const isBrainSession = s.metadata?.source === 'brain'
 
     // Check if session was created by current user
-    const isMySession = currentUserEmail && s.createdBy
-        ? s.createdBy.toLowerCase() === currentUserEmail.toLowerCase()
-        : false
+    const isMySession =
+        currentUserEmail && s.createdBy
+            ? s.createdBy.toLowerCase() === currentUserEmail.toLowerCase()
+            : false
     const progress = getTodoProgress(s)
     const reconnecting = statusSummary?.reconnecting ?? isSessionReconnecting(s)
     const online = statusSummary
-        ? (statusSummary.active && !statusSummary.reconnecting)
+        ? statusSummary.active && !statusSummary.reconnecting
         : s.active
     const active = statusSummary?.active ?? isSessionVisibleInActiveList(s)
-    const pendingRequestsCount = statusSummary?.pendingRequestsCount ?? s.pendingRequestsCount
+    const pendingRequestsCount =
+        statusSummary?.pendingRequestsCount ?? s.pendingRequestsCount
     const hasPending = pendingRequestsCount > 0
-    const debouncedThinking = useDebouncedThinking(Boolean(statusSummary?.thinking ?? s.thinking))
+    const debouncedThinking = useDebouncedThinking(
+        Boolean(statusSummary?.thinking ?? s.thinking)
+    )
     const isThinking = debouncedThinking && !hasPending
     const isIdleBrainChild = isIdleBrainChildSession(
         {
@@ -294,8 +385,11 @@ function SessionItem(props: {
     const vibingMessage = useVibingMessage(Boolean(isThinking))
     const runtimeAgent = s.metadata?.runtimeAgent?.trim()
     const sourceTag = getSourceTag(s)
-    const timestamp = statusSummary?.timestamp ?? (s.lastMessageAt ?? s.updatedAt)
+    const timestamp = statusSummary?.timestamp ?? s.lastMessageAt ?? s.updatedAt
     const brainSelfLabel = getBrainSelfLabel(s)
+    const childSessionLabel =
+        getSessionOrchestrationLabels(s.metadata?.source)?.childSessionLabel ??
+        '子任务'
 
     const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
         if (event.key !== 'Enter' && event.key !== ' ') return
@@ -335,7 +429,9 @@ function SessionItem(props: {
                         {getSessionTitle(s)}
                     </span>
                     {sourceTag && (
-                        <span className={`shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${sourceTag.color}`}>
+                        <span
+                            className={`shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${sourceTag.color}`}
+                        >
                             {sourceTag.label}
                         </span>
                     )}
@@ -351,7 +447,7 @@ function SessionItem(props: {
                     )}
                     {childCount > 0 && (
                         <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[var(--app-subtle-bg)] text-[var(--app-hint)]">
-                            {childCount} 子任务
+                            {childCount} {childSessionLabel}
                         </span>
                     )}
                     {progress && (
@@ -403,24 +499,36 @@ function SessionItem(props: {
                     {project && (
                         <>
                             <span className="opacity-50">·</span>
-                            <span className="truncate" title={project.path}>{project.name}</span>
+                            <span className="truncate" title={project.path}>
+                                {project.name}
+                            </span>
                         </>
                     )}
                     {s.ownerEmail && (
                         <>
                             <span className="opacity-50">·</span>
-                            <span className="shrink-0 text-blue-500" title={s.ownerEmail}>@ {getCreatorDisplayName(s.ownerEmail)}</span>
+                            <span
+                                className="shrink-0 text-blue-500"
+                                title={s.ownerEmail}
+                            >
+                                @ {getCreatorDisplayName(s.ownerEmail)}
+                            </span>
                         </>
                     )}
                     {!isMySession && s.createdBy && !s.ownerEmail && (
                         <>
                             <span className="opacity-50">·</span>
-                            <span className="shrink-0" title={s.createdBy}>share by {getCreatorDisplayName(s.createdBy)}</span>
+                            <span className="shrink-0" title={s.createdBy}>
+                                share by {getCreatorDisplayName(s.createdBy)}
+                            </span>
                         </>
                     )}
                 </div>
                 {brainSelfLabel && (
-                    <div className="mt-0.5 text-[11px] text-[var(--app-hint)] truncate" title={brainSelfLabel}>
+                    <div
+                        className="mt-0.5 text-[11px] text-[var(--app-hint)] truncate"
+                        title={brainSelfLabel}
+                    >
                         {brainSelfLabel}
                     </div>
                 )}
@@ -436,11 +544,21 @@ function SessionItem(props: {
                             onToggleExpand()
                         }}
                         className="flex h-5 w-5 items-center justify-center rounded text-[var(--app-hint)] transition-colors hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]"
-                        aria-label={isExpanded ? '收起 brain 子任务' : '展开 brain 子任务'}
+                        aria-label={
+                            isExpanded
+                                ? `收起 ${childSessionLabel}`
+                                : `展开 ${childSessionLabel}`
+                        }
                         aria-expanded={isExpanded}
-                        title={isExpanded ? 'Collapse brain subtasks' : 'Expand brain subtasks'}
+                        title={
+                            isExpanded
+                                ? `Collapse ${childSessionLabel}`
+                                : `Expand ${childSessionLabel}`
+                        }
                     >
-                        <ChevronIcon className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                        <ChevronIcon
+                            className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                        />
                     </button>
                 )}
                 {!active ? (
@@ -474,7 +592,10 @@ function SessionItem(props: {
                 {isBrainSession && onDelete && (
                     <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); onDelete(s.id) }}
+                        onClick={(e) => {
+                            e.stopPropagation()
+                            onDelete(s.id)
+                        }}
                         className="opacity-0 group-hover:opacity-100 flex h-5 w-5 items-center justify-center rounded text-[var(--app-hint)] transition-all hover:bg-red-500/10 hover:text-red-500"
                         title="Delete brain session"
                     >
@@ -504,14 +625,19 @@ export function SessionList(props: {
     machines: Machine[]
 }) {
     const { renderHeader = true, viewOthersSessions = false, machines } = props
-    const [expandedBrainSessionIds, setExpandedBrainSessionIds] = useState<string[]>(loadExpandedBrainSessionIds)
+    const [expandedBrainSessionIds, setExpandedBrainSessionIds] = useState<
+        string[]
+    >(loadExpandedBrainSessionIds)
 
     // Build session to project mapping (still used for display)
     const sessionProjectMap = useMemo(() => {
         const map = new Map<string, Project | null>()
         if (Array.isArray(props.sessions) && Array.isArray(props.projects)) {
-            props.sessions.forEach(session => {
-                map.set(session.id, matchSessionToProject(session, props.projects))
+            props.sessions.forEach((session) => {
+                map.set(
+                    session.id,
+                    matchSessionToProject(session, props.projects)
+                )
             })
         }
         return map
@@ -525,27 +651,60 @@ export function SessionList(props: {
         return map
     }, [machines])
 
-    // Check if there are any brain or brain-child sessions
-    const hasBrainSessions = useMemo(() =>
-        props.sessions.some(s => s.metadata?.source === 'brain' || s.metadata?.source === 'brain-child'),
+    // Check if there are any brain/orchestrator parent or child sessions
+    const hasBrainSessions = useMemo(
+        () =>
+            props.sessions.some(
+                (s) =>
+                    s.metadata?.source === 'brain' ||
+                    s.metadata?.source === 'brain-child'
+            ),
+        [props.sessions]
+    )
+    const hasOrchestratorSessions = useMemo(
+        () =>
+            props.sessions.some(
+                (s) =>
+                    s.metadata?.source === 'orchestrator' ||
+                    s.metadata?.source === 'orchestrator-child'
+            ),
         [props.sessions]
     )
 
-    const effectiveOwnerFilter = useMemo(() => normalizeOwnerFilter(props.ownerFilter, {
-        viewOthersSessions,
-        hasBrainSessions,
-    }), [hasBrainSessions, props.ownerFilter, viewOthersSessions])
+    const effectiveOwnerFilter = useMemo(
+        () =>
+            normalizeOwnerFilter(props.ownerFilter, {
+                viewOthersSessions,
+                hasBrainSessions,
+                hasOrchestratorSessions,
+            }),
+        [
+            hasBrainSessions,
+            hasOrchestratorSessions,
+            props.ownerFilter,
+            viewOthersSessions,
+        ]
+    )
 
     // Filter sessions first, then build grouped/expandable list entries.
     const filteredSessions = useMemo(() => {
-        return filterSessions(props.sessions, props.archiveFilter, effectiveOwnerFilter)
+        return filterSessions(
+            props.sessions,
+            props.archiveFilter,
+            effectiveOwnerFilter
+        )
     }, [effectiveOwnerFilter, props.sessions, props.archiveFilter])
 
     const listEntries = useMemo(
-        () => buildSessionListEntries(filteredSessions, {
-            sortMode: effectiveOwnerFilter === 'brain' ? 'createdAtDesc' : 'activity',
-            includeArchived: props.archiveFilter === 'archive',
-        }),
+        () =>
+            buildSessionListEntries(filteredSessions, {
+                sortMode:
+                    effectiveOwnerFilter === 'brain' ||
+                    effectiveOwnerFilter === 'orchestrator'
+                        ? 'createdAtDesc'
+                        : 'activity',
+                includeArchived: props.archiveFilter === 'archive',
+            }),
         [effectiveOwnerFilter, filteredSessions, props.archiveFilter]
     )
     const expandedBrainSessionIdSet = useMemo(
@@ -553,20 +712,30 @@ export function SessionList(props: {
         [expandedBrainSessionIds]
     )
     const collapsedBrainChildCount = useMemo(
-        () => getCollapsedBrainChildCount(listEntries, expandedBrainSessionIdSet),
+        () =>
+            getCollapsedBrainChildCount(listEntries, expandedBrainSessionIdSet),
         [expandedBrainSessionIdSet, listEntries]
     )
 
     // Statistics
-    const visibleActiveCount = filteredSessions.filter((session) => isSessionVisibleInActiveList(session) && !isArchivedSession(session)).length
-    const reconnectingCount = filteredSessions.filter((session) => isSessionReconnecting(session) && !isArchivedSession(session)).length
-    const archiveFilterLabel = props.archiveFilter === 'active' ? 'Active' : 'Archive'
-    const nextArchiveFilter = props.archiveFilter === 'active' ? 'archive' : 'active'
-    const nextArchiveFilterLabel = nextArchiveFilter === 'active' ? 'Active' : 'Archive'
+    const visibleActiveCount = filteredSessions.filter(
+        (session) =>
+            isSessionVisibleInActiveList(session) && !isArchivedSession(session)
+    ).length
+    const reconnectingCount = filteredSessions.filter(
+        (session) =>
+            isSessionReconnecting(session) && !isArchivedSession(session)
+    ).length
+    const archiveFilterLabel =
+        props.archiveFilter === 'active' ? 'Active' : 'Archive'
+    const nextArchiveFilter =
+        props.archiveFilter === 'active' ? 'archive' : 'active'
+    const nextArchiveFilterLabel =
+        nextArchiveFilter === 'active' ? 'Active' : 'Archive'
     const toggleBrainSession = (sessionId: string) => {
-        setExpandedBrainSessionIds(previous => {
+        setExpandedBrainSessionIds((previous) => {
             const next = previous.includes(sessionId)
-                ? previous.filter(id => id !== sessionId)
+                ? previous.filter((id) => id !== sessionId)
                 : [...previous, sessionId]
             saveExpandedBrainSessionIds(next)
             return next
@@ -579,9 +748,12 @@ export function SessionList(props: {
                 <div className="flex items-center justify-between px-3 py-1">
                     <div className="text-xs text-[var(--app-hint)]">
                         {filteredSessions.length} sessions
-                        {visibleActiveCount > 0 && ` (${visibleActiveCount} visible)`}
-                        {reconnectingCount > 0 && ` · ${reconnectingCount} reconnecting`}
-                        {collapsedBrainChildCount > 0 && ` · ${collapsedBrainChildCount} collapsed`}
+                        {visibleActiveCount > 0 &&
+                            ` (${visibleActiveCount} visible)`}
+                        {reconnectingCount > 0 &&
+                            ` · ${reconnectingCount} reconnecting`}
+                        {collapsedBrainChildCount > 0 &&
+                            ` · ${collapsedBrainChildCount} collapsed`}
                     </div>
                     <button
                         type="button"
@@ -597,35 +769,47 @@ export function SessionList(props: {
             {/* Filters */}
             <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-[var(--app-divider)]">
                 <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-[11px] text-[var(--app-hint)] shrink-0">Filter</span>
+                    <span className="text-[11px] text-[var(--app-hint)] shrink-0">
+                        Filter
+                    </span>
                     <button
                         type="button"
-                        onClick={() => props.onArchiveFilterChange(nextArchiveFilter)}
+                        onClick={() =>
+                            props.onArchiveFilterChange(nextArchiveFilter)
+                        }
                         title={`Showing ${archiveFilterLabel}. Click to view ${nextArchiveFilterLabel}.`}
                         aria-label={`Showing ${archiveFilterLabel}. Click to view ${nextArchiveFilterLabel}.`}
                         className={`
                             px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap text-white shadow-sm
-                            ${props.archiveFilter === 'active'
-                                ? 'bg-gradient-to-r from-indigo-500 to-purple-600'
-                                : 'bg-gradient-to-r from-slate-500 to-slate-600'
+                            ${
+                                props.archiveFilter === 'active'
+                                    ? 'bg-gradient-to-r from-indigo-500 to-purple-600'
+                                    : 'bg-gradient-to-r from-slate-500 to-slate-600'
                             }
                         `}
                     >
                         {archiveFilterLabel}
                     </button>
                 </div>
-                {(viewOthersSessions || hasBrainSessions) && (
+                {(viewOthersSessions ||
+                    hasBrainSessions ||
+                    hasOrchestratorSessions) && (
                     <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                         <div className="flex flex-wrap items-center gap-1">
-                            {(viewOthersSessions || hasBrainSessions) && (
+                            {(viewOthersSessions ||
+                                hasBrainSessions ||
+                                hasOrchestratorSessions) && (
                                 <button
                                     type="button"
-                                    onClick={() => props.onOwnerFilterChange('mine')}
+                                    onClick={() =>
+                                        props.onOwnerFilterChange('mine')
+                                    }
                                     className={`
                                         px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
-                                        ${effectiveOwnerFilter === 'mine'
-                                            ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm'
-                                            : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
+                                        ${
+                                            effectiveOwnerFilter === 'mine'
+                                                ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm'
+                                                : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
                                         }
                                     `}
                                 >
@@ -635,27 +819,54 @@ export function SessionList(props: {
                             {hasBrainSessions && (
                                 <button
                                     type="button"
-                                    onClick={() => props.onOwnerFilterChange('brain')}
+                                    onClick={() =>
+                                        props.onOwnerFilterChange('brain')
+                                    }
                                     className={`
                                         px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
-                                        ${effectiveOwnerFilter === 'brain'
-                                            ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-sm'
-                                            : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
+                                        ${
+                                            effectiveOwnerFilter === 'brain'
+                                                ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-sm'
+                                                : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
                                         }
                                     `}
                                 >
                                     🧠 Brain
                                 </button>
                             )}
+                            {hasOrchestratorSessions && (
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        props.onOwnerFilterChange(
+                                            'orchestrator'
+                                        )
+                                    }
+                                    className={`
+                                        px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
+                                        ${
+                                            effectiveOwnerFilter ===
+                                            'orchestrator'
+                                                ? 'bg-gradient-to-r from-sky-500 to-cyan-600 text-white shadow-sm'
+                                                : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
+                                        }
+                                    `}
+                                >
+                                    🎛 Orchestrator
+                                </button>
+                            )}
                             {viewOthersSessions && (
                                 <button
                                     type="button"
-                                    onClick={() => props.onOwnerFilterChange('others')}
+                                    onClick={() =>
+                                        props.onOwnerFilterChange('others')
+                                    }
                                     className={`
                                         px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
-                                        ${effectiveOwnerFilter === 'others'
-                                            ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm'
-                                            : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
+                                        ${
+                                            effectiveOwnerFilter === 'others'
+                                                ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm'
+                                                : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
                                         }
                                     `}
                                 >
@@ -675,18 +886,30 @@ export function SessionList(props: {
                     </div>
                 ) : filteredSessions.length === 0 ? (
                     <div className="px-3 py-8 text-center text-sm text-[var(--app-hint)]">
-                        No matching sessions
+                        {getEmptyStateCopy(
+                            effectiveOwnerFilter,
+                            props.archiveFilter
+                        )}
                     </div>
                 ) : (
                     listEntries.map((entry) => {
                         if (entry.kind === 'session') {
-                            const modelLabel = getSessionModelLabel(entry.session)
-                            const machineName = getSessionMachineLabel(entry.session, machineMap)
+                            const modelLabel = getSessionModelLabel(
+                                entry.session
+                            )
+                            const machineName = getSessionMachineLabel(
+                                entry.session,
+                                machineMap
+                            )
                             return (
                                 <SessionItem
                                     key={entry.session.id}
                                     session={entry.session}
-                                    project={sessionProjectMap.get(entry.session.id) ?? null}
+                                    project={
+                                        sessionProjectMap.get(
+                                            entry.session.id
+                                        ) ?? null
+                                    }
                                     currentUserEmail={props.currentUserEmail}
                                     onSelect={props.onSelect}
                                     onDelete={props.onDelete}
@@ -696,15 +919,27 @@ export function SessionList(props: {
                             )
                         }
 
-                        const isExpanded = expandedBrainSessionIdSet.has(entry.session.id)
+                        const isExpanded = expandedBrainSessionIdSet.has(
+                            entry.session.id
+                        )
                         const modelLabel = getSessionModelLabel(entry.session)
-                        const machineName = getSessionMachineLabel(entry.session, machineMap)
+                        const machineName = getSessionMachineLabel(
+                            entry.session,
+                            machineMap
+                        )
 
                         return (
-                            <div key={entry.session.id} className="flex flex-col">
+                            <div
+                                key={entry.session.id}
+                                className="flex flex-col"
+                            >
                                 <SessionItem
                                     session={entry.session}
-                                    project={sessionProjectMap.get(entry.session.id) ?? null}
+                                    project={
+                                        sessionProjectMap.get(
+                                            entry.session.id
+                                        ) ?? null
+                                    }
                                     currentUserEmail={props.currentUserEmail}
                                     onSelect={props.onSelect}
                                     onDelete={props.onDelete}
@@ -712,33 +947,62 @@ export function SessionList(props: {
                                     machineName={machineName}
                                     childCount={entry.children.length}
                                     isExpanded={isExpanded}
-                                    onToggleExpand={() => toggleBrainSession(entry.session.id)}
+                                    onToggleExpand={() =>
+                                        toggleBrainSession(entry.session.id)
+                                    }
                                     statusSummary={entry.statusSummary}
                                 />
                                 {isExpanded && (
                                     <div className="border-t border-[var(--app-divider)] bg-[var(--app-subtle-bg)]">
                                         <div className="ml-6 border-l border-[var(--app-divider)]">
-                                            {entry.children.map((child, index) => {
-                                                const childModelLabel = getSessionModelLabel(child)
-                                                const childMachineName = getSessionMachineLabel(child, machineMap)
-                                                return (
-                                                    <div
-                                                        key={child.id}
-                                                        className={index > 0 ? 'border-t border-[var(--app-divider)]' : undefined}
-                                                    >
-                                                        <SessionItem
-                                                            session={child}
-                                                            project={sessionProjectMap.get(child.id) ?? null}
-                                                            currentUserEmail={props.currentUserEmail}
-                                                            onSelect={props.onSelect}
-                                                            onDelete={props.onDelete}
-                                                            modelLabel={childModelLabel}
-                                                            machineName={childMachineName}
-                                                            nested
-                                                        />
-                                                    </div>
-                                                )
-                                            })}
+                                            {entry.children.map(
+                                                (child, index) => {
+                                                    const childModelLabel =
+                                                        getSessionModelLabel(
+                                                            child
+                                                        )
+                                                    const childMachineName =
+                                                        getSessionMachineLabel(
+                                                            child,
+                                                            machineMap
+                                                        )
+                                                    return (
+                                                        <div
+                                                            key={child.id}
+                                                            className={
+                                                                index > 0
+                                                                    ? 'border-t border-[var(--app-divider)]'
+                                                                    : undefined
+                                                            }
+                                                        >
+                                                            <SessionItem
+                                                                session={child}
+                                                                project={
+                                                                    sessionProjectMap.get(
+                                                                        child.id
+                                                                    ) ?? null
+                                                                }
+                                                                currentUserEmail={
+                                                                    props.currentUserEmail
+                                                                }
+                                                                onSelect={
+                                                                    props.onSelect
+                                                                }
+                                                                onDelete={
+                                                                    props.onDelete
+                                                                }
+                                                                modelLabel={
+                                                                    childModelLabel
+                                                                }
+                                                                machineName={
+                                                                    childMachineName
+                                                                }
+                                                                nested
+                                                            />
+                                                        </div>
+                                                    )
+                                                }
+                                            )}
                                         </div>
                                     </div>
                                 )}

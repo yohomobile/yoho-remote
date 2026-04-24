@@ -44,16 +44,22 @@ const identityReasonBodySchema = z.object({
 
 const orgAdminRoles: OrgRole[] = ['owner', 'admin']
 
-async function requireIdentityAdmin(c: Context<WebAppEnv>, store: IStore, orgId: string | null): Promise<Response | null> {
+function requireIdentityOrgId(c: Context<WebAppEnv>): string | Response {
+    const orgId = c.req.query('orgId')?.trim()
+    if (!orgId) {
+        return c.json({ error: 'orgId is required' }, 400)
+    }
+    return orgId
+}
+
+async function requireIdentityAdmin(c: Context<WebAppEnv>, store: IStore, orgId: string): Promise<Response | null> {
     const email = c.get('email')
     if (!email) {
         return c.json({ error: 'Unauthorized' }, 401)
     }
 
-    if (!orgId) {
-        return c.get('role') === 'operator'
-            ? null
-            : c.json({ error: 'Insufficient permissions' }, 403)
+    if (c.get('role') === 'operator') {
+        return null
     }
 
     const role = await store.getUserOrgRole(orgId, email)
@@ -70,8 +76,9 @@ export function createIdentityRoutes(
     const app = new Hono<WebAppEnv>()
 
     app.get('/identity/candidates', async (c) => {
-        const namespace = c.get('namespace') || 'default'
-        const orgId = c.req.query('orgId') || null
+        const orgId = requireIdentityOrgId(c)
+        if (orgId instanceof Response) return orgId
+        const namespace = orgId
         const permissionError = await requireIdentityAdmin(c, store, orgId)
         if (permissionError) return permissionError
 
@@ -90,8 +97,9 @@ export function createIdentityRoutes(
     })
 
     app.get('/identity/persons', async (c) => {
-        const namespace = c.get('namespace') || 'default'
-        const orgId = c.req.query('orgId') || null
+        const orgId = requireIdentityOrgId(c)
+        if (orgId instanceof Response) return orgId
+        const namespace = orgId
         const permissionError = await requireIdentityAdmin(c, store, orgId)
         if (permissionError) return permissionError
 
@@ -106,8 +114,9 @@ export function createIdentityRoutes(
     })
 
     app.get('/identity/audits', async (c) => {
-        const namespace = c.get('namespace') || 'default'
-        const orgId = c.req.query('orgId') || null
+        const orgId = requireIdentityOrgId(c)
+        if (orgId instanceof Response) return orgId
+        const namespace = orgId
         const permissionError = await requireIdentityAdmin(c, store, orgId)
         if (permissionError) return permissionError
 
@@ -123,8 +132,9 @@ export function createIdentityRoutes(
     })
 
     app.post('/identity/candidates/:candidateId/decision', async (c) => {
-        const namespace = c.get('namespace') || 'default'
-        const orgId = c.req.query('orgId') || null
+        const orgId = requireIdentityOrgId(c)
+        if (orgId instanceof Response) return orgId
+        const namespace = orgId
         const permissionError = await requireIdentityAdmin(c, store, orgId)
         if (permissionError) return permissionError
 
@@ -158,8 +168,9 @@ export function createIdentityRoutes(
     })
 
     app.post('/identity/persons/:personId/merge', async (c) => {
-        const namespace = c.get('namespace') || 'default'
-        const orgId = c.req.query('orgId') || null
+        const orgId = requireIdentityOrgId(c)
+        if (orgId instanceof Response) return orgId
+        const namespace = orgId
         const permissionError = await requireIdentityAdmin(c, store, orgId)
         if (permissionError) return permissionError
 
@@ -188,8 +199,9 @@ export function createIdentityRoutes(
     })
 
     app.post('/identity/persons/:personId/unmerge', async (c) => {
-        const namespace = c.get('namespace') || 'default'
-        const orgId = c.req.query('orgId') || null
+        const orgId = requireIdentityOrgId(c)
+        if (orgId instanceof Response) return orgId
+        const namespace = orgId
         const permissionError = await requireIdentityAdmin(c, store, orgId)
         if (permissionError) return permissionError
 
@@ -217,8 +229,9 @@ export function createIdentityRoutes(
     })
 
     app.post('/identity/links/:linkId/detach', async (c) => {
-        const namespace = c.get('namespace') || 'default'
-        const orgId = c.req.query('orgId') || null
+        const orgId = requireIdentityOrgId(c)
+        if (orgId instanceof Response) return orgId
+        const namespace = orgId
         const permissionError = await requireIdentityAdmin(c, store, orgId)
         if (permissionError) return permissionError
 

@@ -3,7 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { Machine, Project, SessionSummary } from '@/types/api'
 import { SessionList } from './SessionList'
 
-function createSession(overrides: Partial<SessionSummary> = {}): SessionSummary {
+function createSession(
+    overrides: Partial<SessionSummary> = {}
+): SessionSummary {
     return {
         id: 'session-1',
         createdAt: 1,
@@ -121,5 +123,36 @@ describe('SessionList', () => {
         )
 
         expect(html).toContain('Self: K1 + memory')
+    })
+
+    test('renders an orchestrator-specific empty state when the orchestrator filter is selected', () => {
+        const html = renderToStaticMarkup(
+            <SessionList
+                sessions={[
+                    createSession({
+                        id: 'session-orchestrator-active',
+                        active: true,
+                        metadata: {
+                            path: '/tmp/orchestrator-active',
+                            source: 'orchestrator',
+                        },
+                    }),
+                ]}
+                projects={[] as Project[]}
+                currentUserEmail={null}
+                archiveFilter="archive"
+                ownerFilter="orchestrator"
+                onArchiveFilterChange={() => {}}
+                onOwnerFilterChange={() => {}}
+                onSelect={() => {}}
+                onNewSession={() => {}}
+                onRefresh={() => {}}
+                isLoading={false}
+                machines={[] as Machine[]}
+                renderHeader={false}
+            />
+        )
+
+        expect(html).toContain('No archived Orchestrator sessions')
     })
 })

@@ -110,7 +110,7 @@ bun install
 bun run dev:web
 ```
 
-If testing in Telegram, set:
+If testing with a public dev server, set:
 - `WEBAPP_URL` to the public HTTPS URL of the dev server.
 - `CORS_ORIGINS` to include the dev server origin.
 

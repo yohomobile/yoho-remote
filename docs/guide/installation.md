@@ -105,7 +105,7 @@ Browser and PWA access use Keycloak SSO. `CLI_API_TOKEN` is still required for C
 | `CLI_API_TOKEN` | Auto-generated | Shared secret for CLI and daemon authentication |
 | `YOHO_REMOTE_URL` | `http://localhost:3006` | Server URL for CLI and daemon |
 | `WEBAPP_PORT` | `3006` | HTTP server port |
-| `WEBAPP_URL` | - | Public HTTPS URL for the web app / Telegram Mini App |
+| `WEBAPP_URL` | - | Public HTTPS URL for the web app |
 | `WEB_URL` | - | Public web origin used in invitation emails |
 | `YOHO_REMOTE_HOME` | `~/.yoho-remote` | Config directory path |
 | `PG_HOST` / `PG_PORT` / `PG_USER` / `PG_PASSWORD` / `PG_DATABASE` | - | PostgreSQL connection settings |
@@ -185,22 +185,17 @@ ngrok:
 ngrok http 3006
 ```
 
-### Telegram setup
+### Public web access
 
-Enable Telegram notifications and Mini App access:
-
-1. Message [@BotFather](https://t.me/BotFather) and create a bot
-2. Set the bot token and public URL
-3. Start the server and bind your account
+Expose the web app on an HTTPS origin so other devices can open it:
 
 ```bash
-export TELEGRAM_BOT_TOKEN="your-bot-token"
 export WEBAPP_URL="https://your-public-url"
 
 hapi server
 ```
 
-Then message your bot with `/start`, open the app, and sign in through the configured Keycloak SSO.
+Then open `/app` in a browser and sign in through the configured Keycloak SSO.
 
 ### Daemon setup
 

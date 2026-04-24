@@ -18,7 +18,7 @@
 Web/IM/卡片动作
   -> BrainBridge.onMessage / onCardAction
   -> BrainBridge.flushIncomingMessages
-  -> SyncEngine.sendMessage(sessionId, { sentFrom: webapp|feishu|telegram..., meta })
+  -> SyncEngine.sendMessage(sessionId, { sentFrom: webapp|feishu..., meta })
   -> store.addMessage(sessionId, role=user, seq=next)
   -> socket update { t: "new-message" }
   -> ApiSessionClient.handleIncomingMessage
@@ -55,7 +55,7 @@ agent stdout / SDK event
   -> SyncEngine emit message-received
   -> BrainBridge.handleSyncEvent 累积 agentMessages
   -> thinking=false 时 BrainBridge.sendSummary
-  -> 发到 Feishu/Telegram/Web
+  -> 发到 Feishu/Web
 ```
 
 ## 现在的排序与消费语义

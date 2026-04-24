@@ -60,6 +60,48 @@ describe('startYohoRemoteServer tool registration', () => {
         }
     })
 
+    it('registers orchestration tools for top-level orchestrator sessions', async () => {
+        const server = await startYohoRemoteServer(createFakeClient('orchestrator'), {
+            sessionSource: 'orchestrator',
+            apiClient: {} as any,
+            machineId: 'machine-1',
+            yohoRemoteSessionId: 'session-1',
+            workingDirectory: '/tmp',
+        })
+
+        try {
+            expect(server.toolNames).toContain('chat_messages')
+            expect(server.toolNames).toContain('ask_user_question')
+            expect(server.toolNames).toContain('session_status')
+            expect(server.toolNames).toContain('session_tail')
+            expect(server.toolNames).toContain('session_send')
+            expect(server.toolNames).toContain('session_set_config')
+        } finally {
+            server.stop()
+        }
+    })
+
+    it('does not register raw orchestration tools for orchestrator-child sessions', async () => {
+        const server = await startYohoRemoteServer(createFakeClient('orchestrator-child'), {
+            sessionSource: 'orchestrator-child',
+            apiClient: {} as any,
+            machineId: 'machine-1',
+            yohoRemoteSessionId: 'session-1',
+            workingDirectory: '/tmp',
+        })
+
+        try {
+            expect(server.toolNames).toContain('chat_messages')
+            expect(server.toolNames).toContain('ask_user_question')
+            expect(server.toolNames).not.toContain('session_status')
+            expect(server.toolNames).not.toContain('session_tail')
+            expect(server.toolNames).not.toContain('session_send')
+            expect(server.toolNames).not.toContain('session_set_config')
+        } finally {
+            server.stop()
+        }
+    })
+
     it('does not register brain wrappers for ordinary sessions', async () => {
         const server = await startYohoRemoteServer(createFakeClient('webapp'), {
             sessionSource: 'webapp',
@@ -78,6 +120,24 @@ describe('startYohoRemoteServer tool registration', () => {
             expect(server.toolNames).not.toContain('session_tail')
             expect(server.toolNames).not.toContain('session_send')
             expect(server.toolNames).not.toContain('session_set_config')
+        } finally {
+            server.stop()
+        }
+    })
+
+    it('registers schedule tools for ordinary sessions', async () => {
+        const server = await startYohoRemoteServer(createFakeClient('webapp'), {
+            sessionSource: 'webapp',
+            apiClient: {} as any,
+            machineId: 'machine-1',
+            yohoRemoteSessionId: 'session-1',
+            workingDirectory: '/tmp',
+        })
+
+        try {
+            expect(server.toolNames).toContain('schedule_task')
+            expect(server.toolNames).toContain('list_schedules')
+            expect(server.toolNames).toContain('cancel_schedule')
         } finally {
             server.stop()
         }

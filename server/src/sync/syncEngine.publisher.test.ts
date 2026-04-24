@@ -11,6 +11,7 @@ function createSession(id: string): Session {
     return {
         id,
         namespace: 'default',
+        orgId: null,
         seq: 0,
         createdAt: 0,
         updatedAt: 0,

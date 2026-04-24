@@ -3,6 +3,12 @@ import { Hono } from 'hono'
 import type { WebAppEnv } from '../middleware/auth'
 import { createEventsRoutes } from './events'
 
+const TEST_ORGS = [{
+    id: 'org-a',
+    name: 'Org A',
+    role: 'owner' as const,
+}]
+
 describe('createEventsRoutes', () => {
     it('denies session subscriptions when share checks fail', async () => {
         let shareCheckCalls = 0
@@ -14,6 +20,7 @@ describe('createEventsRoutes', () => {
                 return {
                     id: 'session-1',
                     namespace: 'default',
+                    orgId: 'org-a',
                     createdBy: 'owner@example.com',
                     active: true
                 }
@@ -38,6 +45,7 @@ describe('createEventsRoutes', () => {
         app.use('*', async (c, next) => {
             c.set('namespace', 'default')
             c.set('email', 'user@example.com')
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createEventsRoutes(() => ({ subscribe: () => {}, unsubscribe: () => {} }) as any, () => fakeEngine as any, fakeStore as any))

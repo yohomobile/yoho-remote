@@ -13,6 +13,7 @@ import { Session } from "../session";
 import { deepEqual } from "@/utils/deepEqual";
 import { getToolName } from "./getToolName";
 import { EnhancedMode, PermissionMode } from "../loop";
+import { SUBAGENT_PROMPT_GUARD, SUBAGENT_PROMPT_GUARD_MARKER } from "./subagentPromptGuard";
 
 import { delay } from "@/utils/time";
 
@@ -61,13 +62,6 @@ function buildSubagentRootOnlyDenyMessage(toolName: string): string {
 }
 
 const ROOT_ONLY_TOOL_CALL_TIMEOUT_MS = 5_000;
-
-const SUBAGENT_PROMPT_GUARD_MARKER = '<yoho-remote-subagent-constraints>';
-const SUBAGENT_PROMPT_GUARD = `${SUBAGENT_PROMPT_GUARD_MARKER}
-You are a subagent running inside another Claude session.
-- Do NOT use Agent, Task, or ExitPlanMode in this context.
-- Only use tools that are actually available in this session.
-- Complete the task and return findings to the orchestrator instead of trying to exit plan mode or spawning more agents.`;
 
 /** Tools that must always go through user approval, regardless of permission mode */
 function requiresUserApproval(toolName: string): boolean {

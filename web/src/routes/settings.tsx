@@ -2,14 +2,13 @@ import { useCallback, useEffect, useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
-import { AIProfileSettings } from '@/components/AIProfileSettings'
 import { Spinner } from '@/components/Spinner'
 import { getClientId, getDeviceType } from '@/lib/client-identity'
 import { getCurrentUserSync, getExpiresAtSync } from '@/services/tokenStorage'
 import { useNotificationPermission, useWebPushSubscription } from '@/hooks/useNotification'
 import { useServerUrl } from '@/hooks/useServerUrl'
 import { getLogoutUrl, clearTokens } from '@/services/keycloak'
-import type { AIProfile, Project, Machine, OrgRole, OrgLicense, TokenSource, TokenSourceAgent, CreateInvitationResponse, OrgInvitation } from '@/types/api'
+import type { Project, Machine, OrgRole, OrgLicense, TokenSource, TokenSourceAgent, CreateInvitationResponse, OrgInvitation } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 import { deriveLicenseState, type LicenseDisplayStatus } from '@/lib/license'
 import { LOCAL_TOKEN_SOURCE } from '@/lib/tokenSources'
@@ -32,35 +31,6 @@ const ROLE_COLORS: Record<OrgRole, string> = {
     owner: 'from-amber-500 to-orange-600',
     admin: 'from-blue-500 to-indigo-600',
     member: 'from-gray-400 to-gray-500',
-}
-
-type BrainSelfSystemConfig = {
-    enabled: boolean
-    defaultProfileId: string | null
-    memoryProvider: 'yoho-memory' | 'none'
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object'
-}
-
-function extractSelfSystemConfig(extra: unknown): BrainSelfSystemConfig {
-    if (!isRecord(extra) || !isRecord(extra.selfSystem)) {
-        return {
-            enabled: false,
-            defaultProfileId: null,
-            memoryProvider: 'yoho-memory',
-        }
-    }
-
-    const selfSystem = extra.selfSystem
-    return {
-        enabled: selfSystem.enabled === true,
-        defaultProfileId: typeof selfSystem.defaultProfileId === 'string' && selfSystem.defaultProfileId.trim().length > 0
-            ? selfSystem.defaultProfileId
-            : null,
-        memoryProvider: selfSystem.memoryProvider === 'none' ? 'none' : 'yoho-memory',
-    }
 }
 
 function getProjectMachineLabel(machineId: string | null, machinesById: Map<string, Machine>): string | null {
@@ -862,8 +832,6 @@ export default function SettingsPage() {
     const { invitations: orgInvitations } = useOrgInvitations(api, currentOrgId ?? '', canManageMembers)
     const { revokeInvitation, isPending: isRevokingInvitation, error: revokeInvitationError } = useRevokeOrgInvitation(api, currentOrgId ?? '')
     const canManageTokenSources = canManageMembers
-    const canManageK1Brain = meData?.role === 'operator'
-
     const { data: tokenSourcesData, isLoading: tokenSourcesLoading } = useQuery({
         queryKey: queryKeys.tokenSources(currentOrgId ?? '', canManageTokenSources),
         queryFn: async () => {
@@ -876,61 +844,6 @@ export default function SettingsPage() {
         return Array.isArray(tokenSourcesData?.tokenSources) ? tokenSourcesData.tokenSources : []
     }, [tokenSourcesData])
     const localTokenSourceEnabled = tokenSourcesData?.localEnabled !== false
-
-    // K1 Brain Config
-    const { data: brainConfig, isLoading: brainConfigLoading } = useQuery({
-        queryKey: ['brain-config'],
-        queryFn: () => api.getBrainConfig(),
-    })
-    const { data: aiProfilesData, isLoading: aiProfilesLoading } = useQuery({
-        queryKey: queryKeys.aiProfiles(),
-        queryFn: async () => {
-            if (!api) throw new Error('API unavailable')
-            return await api.getAIProfiles()
-        },
-        enabled: Boolean(api),
-    })
-    const brainConfigMutation = useMutation({
-        mutationFn: (config: { agent: 'claude' | 'codex'; claudeModelMode?: string; codexModel?: string; extra?: Record<string, unknown> }) =>
-            api.updateBrainConfig(config),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['brain-config'] }),
-    })
-    const aiProfiles = useMemo(() => {
-        return Array.isArray(aiProfilesData?.profiles) ? aiProfilesData.profiles : []
-    }, [aiProfilesData])
-    const selfSystemConfig = useMemo(() => extractSelfSystemConfig(brainConfig?.extra), [brainConfig?.extra])
-    const mutateBrainConfig = useCallback((patch: {
-        agent?: 'claude' | 'codex'
-        claudeModelMode?: string
-        codexModel?: string
-        extra?: Record<string, unknown>
-    }) => {
-        brainConfigMutation.mutate({
-            agent: patch.agent ?? brainConfig?.agent ?? 'claude',
-            claudeModelMode: patch.claudeModelMode ?? brainConfig?.claudeModelMode ?? 'opus',
-            codexModel: patch.codexModel ?? brainConfig?.codexModel ?? 'gpt-5.4',
-            extra: patch.extra ?? (isRecord(brainConfig?.extra) ? brainConfig.extra : {}),
-        })
-    }, [brainConfig, brainConfigMutation, currentOrgId])
-    const updateSelfSystemConfig = useCallback((patch: Partial<BrainSelfSystemConfig>) => {
-        const current = extractSelfSystemConfig(brainConfig?.extra)
-        const next: BrainSelfSystemConfig = {
-            ...current,
-            ...patch,
-        }
-        const currentExtra = isRecord(brainConfig?.extra) ? brainConfig.extra : {}
-        mutateBrainConfig({
-            extra: {
-                ...currentExtra,
-                selfSystem: {
-                    enabled: next.enabled,
-                    defaultProfileId: next.defaultProfileId,
-                    memoryProvider: next.memoryProvider,
-                },
-            },
-        })
-    }, [brainConfig?.extra, mutateBrainConfig])
-
 
     const handleInvite = useCallback(async () => {
         if (!inviteEmail.trim()) return
@@ -1003,20 +916,6 @@ export default function SettingsPage() {
         enabled: Boolean(api)
     })
     const machines = machinesData?.machines ?? []
-    // Compute which agents are supported by at least one online machine
-    const supportedAgentSet = useMemo(() => {
-        const onlineMachines = machines.filter(m => m.active)
-        const supported = new Set<string>()
-        for (const m of onlineMachines) {
-            if (!m.supportedAgents || m.supportedAgents.length === 0) {
-                supported.add('claude')
-                supported.add('codex')
-            } else {
-                for (const a of m.supportedAgents) supported.add(a)
-            }
-        }
-        return supported
-    }, [machines])
     const displayMachines = useMemo(() => sortMachinesForStableDisplay(machines), [machines])
     const machinesById = useMemo(() => new Map(displayMachines.map((machine) => [machine.id, machine])), [displayMachines])
     const selectedLocalProjectMachine = useMemo(() => {
@@ -1535,161 +1434,6 @@ export default function SettingsPage() {
                                 </div>
                             </div>
                         )}
-                    </div>
-
-                    {/* ========== K1 BRAIN CONFIG ========== */}
-                    <div className="space-y-4">
-                        <h2 className="text-xs font-semibold text-[var(--app-hint)] uppercase tracking-wide px-1">K1 Brain</h2>
-                        <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
-                            <div className="px-3 py-2 border-b border-[var(--app-divider)]">
-                                <h3 className="text-sm font-medium">Session Agent</h3>
-                                <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
-                                    Shared default-namespace Brain config used across Keycloak users.
-                                </p>
-                            </div>
-                            {brainConfigLoading ? (
-                                <div className="px-3 py-4 flex justify-center"><Spinner /></div>
-                            ) : (
-                                <div className="divide-y divide-[var(--app-divider)]">
-                                    {/* Agent selector */}
-                                    <div className="px-3 py-2.5">
-                                        <div className="flex gap-2">
-                                            {([
-                                                { value: 'claude' as const, label: 'Claude Code', desc: 'Anthropic Claude' },
-                                                { value: 'codex' as const, label: 'Codex', desc: 'OpenAI Codex' },
-                                            ] as const).map((opt) => {
-                                                const isActive = (brainConfig?.agent ?? 'claude') === opt.value
-                                                const isSupported = supportedAgentSet.size === 0 || supportedAgentSet.has(opt.value)
-                                                return (
-                                                    <button
-                                                        key={opt.value}
-                                                        type="button"
-                                                        disabled={brainConfigMutation.isPending || !isSupported || !canManageK1Brain}
-                                                        title={!isSupported ? 'No online machine supports this agent' : !canManageK1Brain ? 'Only operators can edit the shared K1 Brain settings' : undefined}
-                                                        onClick={() => {
-                                                            mutateBrainConfig({ agent: opt.value })
-                                                        }}
-                                                        className={`flex-1 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
-                                                            isActive
-                                                                ? 'border-[var(--app-button)] bg-[var(--app-button)]/10 text-[var(--app-button)]'
-                                                                : 'border-[var(--app-border)] text-[var(--app-hint)] hover:border-[var(--app-fg)]/30'
-                                                        } disabled:opacity-50`}
-                                                    >
-                                                        <div>{opt.label}</div>
-                                                        <div className="text-[10px] font-normal mt-0.5 opacity-70">
-                                                            {!isSupported ? 'No machine available' : opt.desc}
-                                                        </div>
-                                                    </button>
-                                                )
-                                            })}
-                                        </div>
-                                    </div>
-                                    {/* Status */}
-                                    {brainConfigMutation.isError && (
-                                        <div className="px-3 py-2 text-xs text-red-500">
-                                            Failed to update: {(brainConfigMutation.error as Error)?.message || 'Unknown error'}
-                                        </div>
-                                    )}
-                                    {!canManageK1Brain && (
-                                        <div className="px-3 py-2 text-[11px] text-[var(--app-hint)] border-t border-[var(--app-divider)]">
-                                            Only platform operators can change this shared K1 Brain configuration.
-                                        </div>
-                                    )}
-                                    {brainConfig?.updatedAt ? (
-                                        <div className="px-3 py-2 text-[11px] text-[var(--app-hint)]">
-                                            Last updated: {new Date(brainConfig.updatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}
-                                            {brainConfig.updatedBy ? ` by ${brainConfig.updatedBy}` : ''}
-                                        </div>
-                                    ) : null}
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
-                            <div className="px-3 py-2 border-b border-[var(--app-divider)]">
-                                <h3 className="text-sm font-medium">Self System</h3>
-                                <p className="text-[11px] text-[var(--app-hint)] mt-0.5">
-                                    Bind a stable AI profile to Brain init, and optionally attach a short yoho-memory recall for the shared default namespace Brain.
-                                </p>
-                            </div>
-                            <div className="divide-y divide-[var(--app-divider)]">
-                                <div className="px-3 py-3 flex items-center justify-between gap-3">
-                                    <div>
-                                        <div className="text-sm font-medium">Enable self system</div>
-                                        <div className="text-[11px] text-[var(--app-hint)] mt-0.5">
-                                            Writes stable persona + memory hints into each Brain init prompt.
-                                        </div>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => updateSelfSystemConfig({ enabled: !selfSystemConfig.enabled })}
-                                        disabled={brainConfigMutation.isPending || !canManageK1Brain}
-                                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${
-                                            selfSystemConfig.enabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'
-                                        }`}
-                                        aria-pressed={selfSystemConfig.enabled}
-                                    >
-                                        <span
-                                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                                selfSystemConfig.enabled ? 'translate-x-5' : 'translate-x-0'
-                                            }`}
-                                        />
-                                    </button>
-                                </div>
-
-                                <div className="px-3 py-3 space-y-3">
-                                    <div className="space-y-1.5">
-                                        <label className="block text-xs font-medium text-[var(--app-hint)]">Default AI profile</label>
-                                        <select
-                                            value={selfSystemConfig.defaultProfileId ?? ''}
-                                            onChange={(event) => updateSelfSystemConfig({
-                                                defaultProfileId: event.target.value || null,
-                                            })}
-                                            disabled={brainConfigMutation.isPending || aiProfilesLoading || aiProfiles.length === 0 || !canManageK1Brain}
-                                            className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)] disabled:opacity-50"
-                                        >
-                                            <option value="">No profile selected</option>
-                                            {aiProfiles.map((profile: AIProfile) => (
-                                                <option key={profile.id} value={profile.id}>
-                                                    {profile.avatarEmoji} {profile.name} · {profile.role}
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <div className="text-[11px] text-[var(--app-hint)]">
-                                            {aiProfiles.length === 0
-                                                ? 'Create at least one AI profile below before enabling self system.'
-                                                : 'The selected profile becomes the default persona for new Brain sessions.'}
-                                        </div>
-                                    </div>
-
-                                    <div className="space-y-1.5">
-                                        <label className="block text-xs font-medium text-[var(--app-hint)]">Long-term memory provider</label>
-                                        <select
-                                            value={selfSystemConfig.memoryProvider}
-                                            onChange={(event) => updateSelfSystemConfig({
-                                                memoryProvider: event.target.value === 'none' ? 'none' : 'yoho-memory',
-                                            })}
-                                            disabled={brainConfigMutation.isPending || !canManageK1Brain}
-                                            className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)] disabled:opacity-50"
-                                        >
-                                            <option value="yoho-memory">yoho-memory</option>
-                                            <option value="none">Disabled</option>
-                                        </select>
-                                        <div className="text-[11px] text-[var(--app-hint)]">
-                                            K1 only pulls a short recall snippet here. Long-term memory ownership stays in yoho-memory.
-                                        </div>
-                                    </div>
-
-                                    {selfSystemConfig.enabled && !selfSystemConfig.defaultProfileId && (
-                                        <div className="text-xs text-amber-600 dark:text-amber-400">
-                                            Self system is enabled, but no default profile is selected yet.
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-
-                        <AIProfileSettings canManage={canManageK1Brain} />
                     </div>
 
                     {/* ========== ORGANIZATION SWITCHER ========== */}

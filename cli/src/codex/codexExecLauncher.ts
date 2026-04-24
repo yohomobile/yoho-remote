@@ -37,9 +37,12 @@ import {
     BRAIN_CHILD_SAFE_YOHO_REMOTE_TOOL_NAMES,
     buildCodexBrainChildRuntimeFunctionTools,
     buildCodexConfigOverrides,
-    buildCodexDeveloperInstructions,
     buildCodexRuntimeFunctionTools,
-} from './utils/codexDeveloperInstructions';
+} from './utils/codexRuntimeFunctionTools';
+import {
+    isSessionOrchestrationChildSource,
+    isSessionOrchestrationParentSource,
+} from '@/utils/sessionOrchestration';
 import type { CodexSession } from './session';
 import type { EnhancedMode, PermissionMode } from './loop';
 import { parseCompact } from '@/parsers/specialCommands';
@@ -250,14 +253,14 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
         )
     });
 
-    const isBrainSession = session.sessionSource === 'brain';
-    const isBrainChildSession = session.sessionSource === 'brain-child';
-    const runtimeFunctionTools = isBrainSession
+    const isOrchestrationParentSession = isSessionOrchestrationParentSource(session.sessionSource);
+    const isOrchestrationChildSession = isSessionOrchestrationChildSource(session.sessionSource);
+    const runtimeFunctionTools = isOrchestrationParentSession
         ? buildCodexRuntimeFunctionTools({
             yohoRemoteToolNames: yohoRemoteServer.toolNames,
             auxServerNames: Object.keys(mcpServers),
         })
-        : isBrainChildSession
+        : isOrchestrationChildSession
             ? buildCodexBrainChildRuntimeFunctionTools({
                 yohoRemoteToolNames: yohoRemoteServer.toolNames.filter((toolName) =>
                     BRAIN_CHILD_SAFE_YOHO_REMOTE_TOOL_NAMES.includes(toolName as typeof BRAIN_CHILD_SAFE_YOHO_REMOTE_TOOL_NAMES[number])
@@ -272,12 +275,6 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
         }));
     }
 
-    const developerInstructions = (isBrainSession || isBrainChildSession)
-        ? buildCodexDeveloperInstructions({
-            sessionSource: session.sessionSource,
-            runtimeFunctionTools,
-        })
-        : undefined;
     const configOverrides = buildCodexConfigOverrides({
         sessionSource: session.sessionSource,
     });
@@ -433,7 +430,6 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
                     first,
                     mcpServers,
                     cliOverrides: session.codexCliOverrides,
-                    developerInstructions,
                     includeTitleInstruction: false,
                     configOverrides,
                 });

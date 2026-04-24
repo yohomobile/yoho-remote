@@ -8,6 +8,7 @@ function authHeaders() {
     return {
         authorization: `Bearer ${configuration.cliApiToken}`,
         'content-type': 'application/json',
+        'x-org-id': 'default',
     }
 }
 
@@ -757,6 +758,82 @@ describe('createCliRoutes projects', () => {
             error: 'mainSessionId must reference a brain session',
         })
         expect(spawnSessionCalled).toBe(0)
+    })
+
+    it('spawns orchestrator-child sessions when mainSessionId points to an orchestrator session', async () => {
+        let spawnedOptions: Record<string, unknown> | undefined
+        let sendMessageCalled = 0
+        const session = {
+            id: 'orchestrator-child-session',
+            namespace: 'default',
+            active: true,
+            metadata: {
+                path: '/tmp/orchestrator-child-session',
+            },
+        }
+        const mainSession = {
+            id: 'orchestrator-main',
+            namespace: 'default',
+            metadata: {
+                source: 'orchestrator',
+                caller: 'webapp',
+            },
+        }
+
+        const engine = {
+            getMachineByNamespace: () => ({
+                id: 'machine-1',
+                active: true,
+                metadata: {},
+                namespace: 'default',
+            }),
+            getSessionByNamespace: (sessionId: string) => {
+                if (sessionId === mainSession.id) return mainSession
+                if (sessionId === session.id) return session
+                return null
+            },
+            getSession: (sessionId: string) => {
+                if (sessionId === mainSession.id) return mainSession
+                if (sessionId === session.id) return session
+                return null
+            },
+            spawnSession: async (_machineId: string, _directory: string, _agent: string, _yolo: boolean, options?: Record<string, unknown>) => {
+                spawnedOptions = options
+                return { type: 'success', sessionId: session.id }
+            },
+            subscribe: () => () => {},
+            waitForSocketInRoom: async () => true,
+            sendMessage: async () => {
+                sendMessageCalled += 1
+            },
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const response = await app.request('/cli/brain/spawn', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+                machineId: 'machine-1',
+                directory: '/tmp/task',
+                agent: 'claude',
+                source: 'orchestrator-child',
+                mainSessionId: 'orchestrator-main',
+            }),
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ type: 'success', sessionId: session.id })
+        expect(spawnedOptions).toEqual(expect.objectContaining({
+            source: 'orchestrator-child',
+            mainSessionId: 'orchestrator-main',
+            caller: 'webapp',
+        }))
+
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        expect(sendMessageCalled).toBe(1)
     })
 
     it('brain-child inherits Token Source from parent brainTokenSourceIds per child agent', async () => {
@@ -2429,12 +2506,78 @@ describe('createCliRoutes projects', () => {
 
         expect(sessionResponse.status).toBe(400)
         expect(await sessionResponse.json()).toEqual({
-            error: 'mainSessionId is required for brain-child sessions',
+            error: 'brain-child sessions require mainSessionId',
         })
         expect(messagesResponse.status).toBe(400)
         expect(await messagesResponse.json()).toEqual({
-            error: 'mainSessionId is required for brain-child sessions',
+            error: 'brain-child sessions require mainSessionId',
         })
+    })
+
+    it('scopes orchestrator child session read routes to the requested mainSessionId', async () => {
+        const mainSession = {
+            id: 'orchestrator-main',
+            namespace: 'default',
+            metadata: {
+                source: 'orchestrator',
+            },
+        }
+        const session = {
+            id: 'orchestrator-child-session',
+            namespace: 'default',
+            active: true,
+            metadata: {
+                source: 'orchestrator-child',
+                mainSessionId: 'orchestrator-main',
+                path: '/tmp/orchestrator-child-session',
+            },
+        }
+        const messages = [{
+            id: 'm-1',
+            seq: 1,
+            localId: null,
+            createdAt: 1_700_000_000_100,
+            content: {
+                role: 'user',
+                content: {
+                    type: 'text',
+                    text: 'hello orchestrator',
+                },
+            },
+        }]
+        const engine = {
+            getSessionByNamespace: (sessionId: string, namespace: string) =>
+                sessionId === session.id && namespace === session.namespace ? session
+                    : sessionId === mainSession.id && namespace === mainSession.namespace ? mainSession
+                        : null,
+            getSession: (sessionId: string) => sessionId === session.id ? session : sessionId === mainSession.id ? mainSession : null,
+            getMessagesAfter: async (_sessionId: string, _opts: { afterSeq: number; limit: number }) => messages,
+        }
+
+        const app = new Hono()
+        app.route('/cli', createCliRoutes(() => engine as any))
+
+        const missingMainResponse = await app.request('/cli/sessions/orchestrator-child-session', {
+            method: 'GET',
+            headers: authHeaders(),
+        })
+        const sessionResponse = await app.request('/cli/sessions/orchestrator-child-session?mainSessionId=orchestrator-main', {
+            method: 'GET',
+            headers: authHeaders(),
+        })
+        const messagesResponse = await app.request('/cli/sessions/orchestrator-child-session/messages?mainSessionId=orchestrator-main&limit=3', {
+            method: 'GET',
+            headers: authHeaders(),
+        })
+
+        expect(missingMainResponse.status).toBe(400)
+        expect(await missingMainResponse.json()).toEqual({
+            error: 'orchestrator-child sessions require mainSessionId',
+        })
+        expect(sessionResponse.status).toBe(200)
+        expect(await sessionResponse.json()).toEqual({ session })
+        expect(messagesResponse.status).toBe(200)
+        expect(await messagesResponse.json()).toEqual({ messages })
     })
 
     it('scopes brain child session read routes to the requested mainSessionId', async () => {
@@ -2624,7 +2767,7 @@ describe('createCliRoutes projects', () => {
 
             expect(response.status).toBe(400)
             expect(await response.json()).toEqual({
-                error: 'mainSessionId is required for brain-child sessions',
+                error: 'brain-child sessions require mainSessionId',
             })
         }
     })
@@ -2708,7 +2851,7 @@ describe('createCliRoutes projects', () => {
 
         expect(response.status).toBe(200)
         expect(searchArgs).toEqual({
-            namespace: 'default',
+            orgId: 'default',
             query: 'publisher worker',
             limit: 3,
             includeOffline: true,
@@ -2780,7 +2923,7 @@ describe('createCliRoutes projects', () => {
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
-            error: 'mainSessionId filter requires source=brain-child when source is provided',
+            error: 'mainSessionId filter requires an orchestration child source when source is provided',
         })
         expect(searchCalled).toBe(false)
     })

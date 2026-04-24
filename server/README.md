@@ -1,10 +1,9 @@
 # yoho-remote-server
 
-Telegram bot + HTTP API + realtime updates for yoho-remote.
+HTTP API + realtime updates for yoho-remote.
 
 ## What it does
 
-- Telegram bot for notifications and the Mini App entrypoint.
 - HTTP API for sessions, messages, permissions, machines, and files.
 - Server-Sent Events stream for live updates in the web app.
 - Socket.IO channel for CLI connections.
@@ -21,11 +20,6 @@ See `src/configuration.ts` for all options.
 - `PG_HOST`/`PG_PORT`/`PG_USER`/`PG_PASSWORD`/`PG_DATABASE`/`PG_BOSS_SCHEMA` - PostgreSQL connection settings and pg-boss schema. These must now be set explicitly; the server no longer falls back to localhost/postgres/yoho_remote/pgboss.
 - `KEYCLOAK_URL`/`KEYCLOAK_REALM`/`KEYCLOAK_CLIENT_ID`/`KEYCLOAK_CLIENT_SECRET` - Browser/PWA SSO settings.
 
-### Optional (Telegram)
-
-- `TELEGRAM_BOT_TOKEN` - Token from @BotFather.
-- `WEBAPP_URL` - Public HTTPS URL for Telegram Mini App access. Also used to derive default CORS origins for the web app.
-
 ### Optional (Feishu/Lark Speech-to-Text)
 
 - `FEISHU_APP_ID` - Feishu/Lark app ID (speech-to-text).
@@ -36,6 +30,7 @@ See `src/configuration.ts` for all options.
 
 - `WEBAPP_PORT` - HTTP port (default: 3006).
 - `CORS_ORIGINS` - Comma-separated origins, or `*`.
+- `WEBAPP_URL` - Public HTTPS URL for the web app. Also used to derive default CORS origins.
 - `YOHO_REMOTE_HOME` - Data directory (default: ~/.yoho-remote).
 - `KEYCLOAK_INTERNAL_URL` - Internal Keycloak URL for JWKS/token exchange.
 - `ADMIN_ORG_ID` - Organization ID that can manage licenses and is exempt from license checks.
@@ -47,7 +42,6 @@ See `src/configuration.ts` for all options.
 Binary (single executable):
 
 ```bash
-export TELEGRAM_BOT_TOKEN="..."
 export CLI_API_TOKEN="shared-secret"
 export WEBAPP_URL="https://your-domain.example"
 export PG_HOST="127.0.0.1"
@@ -64,9 +58,7 @@ export KEYCLOAK_CLIENT_SECRET="..."
 hapi server
 ```
 
-If you only need web + CLI, you can omit TELEGRAM_BOT_TOKEN.
-To enable Telegram, set TELEGRAM_BOT_TOKEN and WEBAPP_URL, start the server, open `/app`
-in the bot chat, and bind the Mini App with `CLI_API_TOKEN:<namespace>` when prompted.
+Set `WEBAPP_URL` when the server is exposed behind HTTPS or a public tunnel so browser clients can resolve the correct origin.
 
 From source:
 
@@ -164,23 +156,6 @@ Namespace: `/events`
 
 - `event` - Broadcast SyncEvent updates for the authenticated namespace.
 
-## Telegram Bot
-
-See `src/telegram/bot.ts` for bot implementation.
-
-### Commands
-
-- `/start` - Welcome message with Mini App link.
-- `/app` - Open Mini App.
-
-### Features
-
-- Permission request notifications with approve/deny buttons.
-- Session ready notifications.
-- Deep links to Mini App sessions.
-
-See `src/telegram/callbacks.ts` for button handlers.
-
 ## Core Logic
 
 See `src/sync/syncEngine.ts` for the main session/message manager:
@@ -189,7 +164,7 @@ See `src/sync/syncEngine.ts` for the main session/message manager:
 - Message pagination and retrieval.
 - Permission approval/denial.
 - RPC method routing via Socket.IO.
-- Event publishing to SSE and Telegram.
+- Event publishing to SSE and web subscribers.
 - Git operations and file search.
 - Activity tracking and timeouts.
 
@@ -201,7 +176,7 @@ See `src/store/index.ts` for PostgreSQL persistence:
 - Messages with pagination support.
 - Machines with daemon state.
 - Todo extraction from messages.
-- Users table for Telegram bindings (includes namespace).
+- Per-namespace metadata used by web, CLI, and background workers.
 
 ## Cleanup offline sessions
 
@@ -230,7 +205,6 @@ The script uses `CLI_API_TOKEN` (or `~/.yoho-remote/settings.json`) to authentic
 
 - `src/web/` - HTTP server and routes.
 - `src/socket/` - Socket.IO setup and handlers.
-- `src/telegram/` - Telegram bot.
 - `src/sync/` - Core session/message logic.
 - `src/store/` - PostgreSQL persistence.
 - `src/sse/` - Server-Sent Events.
@@ -256,7 +230,7 @@ The server build output is `server/dist/index.js`, and the web assets are in `we
 
 ## Networking notes
 
-- Telegram Mini Apps require HTTPS and a public URL. If the server has no public IP, use Cloudflare Tunnel or Tailscale and set `WEBAPP_URL` to the HTTPS endpoint.
+- Browser access outside localhost requires HTTPS and a public URL. If the server has no public IP, use Cloudflare Tunnel or Tailscale and set `WEBAPP_URL` to the HTTPS endpoint.
 - If the web app is hosted on a different origin, set `CORS_ORIGINS` (or `WEBAPP_URL`) to include that static host origin.
 
 ## Standalone web hosting

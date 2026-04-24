@@ -25,7 +25,7 @@
 
 如果后续补充原始 1-7 条，应以用户原文替换本映射，而不是把本映射视作原始需求。
 
-另：本轮要求先做 `skill_search`。当前运行时工具列表里没有暴露可直接调用的 `mcp__skill__search` / `functions.yoho_vault__skill_search` / `functions.yoho_memory__skill_search`，因此本报告按 no-match 路径继续执行，并明确记录这个限制。
+另：本轮要求先做 `skill_search`。当前运行时工具列表里没有暴露可直接调用的 skill search 工具，因此本报告按 no-match 路径继续执行，并明确记录这个限制。
 
 ## 2. 当前仓库现状
 

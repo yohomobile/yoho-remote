@@ -68,31 +68,110 @@ const brainConfigExtraSchema = z.object({
     selfSystem: brainSelfSystemSchema.optional(),
 }).passthrough()
 
+type BrainSelfSystemInput = z.infer<typeof brainSelfSystemSchema>
+
 function normalizeOptionalId(value: string | null | undefined): string | null {
     const trimmed = value?.trim()
     return trimmed ? trimmed : null
+}
+
+function extractStoredDefaultProfileId(value: unknown): string | null {
+    if (!value || typeof value !== 'object') {
+        return null
+    }
+    const extra = value as { selfSystem?: unknown }
+    if (!extra.selfSystem || typeof extra.selfSystem !== 'object') {
+        return null
+    }
+    const selfSystem = extra.selfSystem as { defaultProfileId?: unknown }
+    return normalizeOptionalId(typeof selfSystem.defaultProfileId === 'string' ? selfSystem.defaultProfileId : null)
+}
+
+function normalizeInvalidSelfSystemProfile(config: BrainSelfSystemInput): BrainSelfSystemInput {
+    return {
+        ...config,
+        enabled: false,
+        defaultProfileId: null,
+    }
 }
 
 function canManageOrgSettings(role: OrgRole | null): boolean {
     return role === 'owner' || role === 'admin'
 }
 
-async function requireSharedBrainSettingsWriteAccess(c: Context<WebAppEnv>): Promise<Response | null> {
-    const namespace = c.get('namespace') || 'default'
-    if (namespace !== 'default') {
-        return null
+function getRequestedOrgId(c: Context<WebAppEnv>): string | null {
+    return normalizeOptionalId(c.req.query('orgId'))
+}
+
+function hasOrgAccess(c: Context<WebAppEnv>, orgId: string): boolean {
+    const role = c.get('role')
+    if (role === 'operator') {
+        return true
     }
 
+    const orgs = c.get('orgs') || []
+    return orgs.some((org) => org.id === orgId)
+}
+
+function getCurrentOrgRole(c: Context<WebAppEnv>, orgId: string): OrgRole | null {
+    const orgs = c.get('orgs') || []
+    return orgs.find((org) => org.id === orgId)?.role ?? null
+}
+
+async function validateProjectMachineScope(
+    store: IStore,
+    machineId: string,
+    orgId: string
+): Promise<boolean> {
+    const machine = await store.getMachine(machineId)
+    return Boolean(machine && machine.orgId === orgId)
+}
+
+function filterProjectsForOrg(projects: Awaited<ReturnType<IStore['getProjects']>>, orgId: string) {
+    return projects.filter((project) => project.orgId === orgId)
+}
+
+function requireOperatorAccess(c: Context<WebAppEnv>): Response | null {
+    const role = c.get('role')
+    if (!role) {
+        return c.json({ error: 'Unauthorized' }, 401)
+    }
+    if (role !== 'operator') {
+        return c.json({ error: 'Insufficient permissions' }, 403)
+    }
+    return null
+}
+
+async function requireOrgAccess(c: Context<WebAppEnv>): Promise<{ orgId: string } | Response> {
     const role = c.get('role')
     if (!role) {
         return c.json({ error: 'Unauthorized' }, 401)
     }
 
-    if (role !== 'operator') {
+    const orgId = getRequestedOrgId(c)
+    if (!orgId) {
+        return c.json({ error: 'orgId is required' }, 400)
+    }
+    if (!hasOrgAccess(c, orgId)) {
         return c.json({ error: 'Insufficient permissions' }, 403)
     }
 
-    return null
+    return { orgId }
+}
+
+async function requireOrgManageAccess(c: Context<WebAppEnv>): Promise<{ orgId: string } | Response> {
+    const access = await requireOrgAccess(c)
+    if (access instanceof Response) {
+        return access
+    }
+
+    if (c.get('role') === 'operator') {
+        return access
+    }
+    if (!canManageOrgSettings(getCurrentOrgRole(c, access.orgId))) {
+        return c.json({ error: 'Insufficient permissions' }, 403)
+    }
+    return access
 }
 
 export function createSettingsRoutes(
@@ -120,14 +199,27 @@ export function createSettingsRoutes(
 
     // 获取项目列表：共享项目 + 当前机器的私有项目
     app.get('/settings/projects', async (c) => {
-        const orgId = c.req.query('orgId')
+        const access = await requireOrgAccess(c)
+        if (access instanceof Response) {
+            return access
+        }
         const machineId = c.req.query('machineId')
-        const projects = await store.getProjects(machineId, orgId)
-        return c.json({ projects })
+        if (machineId) {
+            const machineInScope = await validateProjectMachineScope(store, machineId, access.orgId)
+            if (!machineInScope) {
+                return c.json({ error: 'Machine not found' }, 404)
+            }
+        }
+        const projects = await store.getProjects(machineId, access.orgId)
+        return c.json({ projects: filterProjectsForOrg(projects, access.orgId) })
     })
 
     // 添加项目
     app.post('/settings/projects', async (c) => {
+        const access = await requireOrgAccess(c)
+        if (access instanceof Response) {
+            return access
+        }
         const json = await c.req.json().catch(() => null)
         const parsed = addProjectSchema.safeParse(json)
         if (!parsed.success) {
@@ -139,25 +231,33 @@ export function createSettingsRoutes(
             return c.json({ error: 'machineId is required' }, 400)
         }
 
-        const orgId = c.req.query('orgId')
+        const machineInScope = await validateProjectMachineScope(store, machineId, access.orgId)
+        if (!machineInScope) {
+            return c.json({ error: 'Machine not found' }, 404)
+        }
+
         const project = await store.addProject(
             parsed.data.name,
             parsed.data.path,
             parsed.data.description,
             machineId,
-            orgId,
+            access.orgId,
         )
         if (!project) {
             return c.json({ error: 'Failed to add project. Path may already exist.' }, 400)
         }
 
         const responseMachineId = machineId ?? undefined
-        const projects = await store.getProjects(responseMachineId, orgId)
-        return c.json({ ok: true, project, projects })
+        const projects = await store.getProjects(responseMachineId, access.orgId)
+        return c.json({ ok: true, project, projects: filterProjectsForOrg(projects, access.orgId) })
     })
 
     // 更新项目
     app.put('/settings/projects/:id', async (c) => {
+        const access = await requireOrgAccess(c)
+        if (access instanceof Response) {
+            return access
+        }
         const id = c.req.param('id')
         const json = await c.req.json().catch(() => null)
         const parsed = updateProjectSchema.safeParse(json)
@@ -165,10 +265,9 @@ export function createSettingsRoutes(
             return c.json({ error: 'Invalid project data' }, 400)
         }
 
-        const orgId = c.req.query('orgId')
         const existing = await store.getProject(id)
         if (!existing) return c.json({ error: 'Project not found or path already exists' }, 404)
-        if (existing.orgId !== null && existing.orgId !== orgId) {
+        if (existing.orgId !== access.orgId) {
             return c.json({ error: 'Project not found or path already exists' }, 404)
         }
 
@@ -176,29 +275,39 @@ export function createSettingsRoutes(
             ? normalizeOptionalId(parsed.data.machineId)
             : existing.machineId
 
+        if (effectiveMachineId) {
+            const machineInScope = await validateProjectMachineScope(store, effectiveMachineId, access.orgId)
+            if (!machineInScope) {
+                return c.json({ error: 'Machine not found' }, 404)
+            }
+        }
+
         const project = await store.updateProject(id, {
             name: parsed.data.name,
             path: parsed.data.path,
             description: parsed.data.description,
             machineId: parsed.data.machineId === undefined ? undefined : effectiveMachineId,
-            orgId,
+            orgId: access.orgId,
         })
         if (!project) {
             return c.json({ error: 'Project not found or path already exists' }, 404)
         }
 
         const responseMachineId = effectiveMachineId ?? undefined
-        const projects = await store.getProjects(responseMachineId, orgId)
-        return c.json({ ok: true, project, projects })
+        const projects = await store.getProjects(responseMachineId, access.orgId)
+        return c.json({ ok: true, project, projects: filterProjectsForOrg(projects, access.orgId) })
     })
 
     // 删除项目
     app.delete('/settings/projects/:id', async (c) => {
+        const access = await requireOrgAccess(c)
+        if (access instanceof Response) {
+            return access
+        }
         const id = c.req.param('id')
-        const orgId = c.req.query('orgId')
         const existing = await store.getProject(id)
         if (!existing) return c.json({ error: 'Project not found' }, 404)
-        if (existing.orgId !== null && existing.orgId !== orgId) {
+        if (existing.orgId !== access.orgId) {
             return c.json({ error: 'Project not found' }, 404)
         }
 
@@ -208,8 +317,8 @@ export function createSettingsRoutes(
         }
 
         const responseMachineId = existing.machineId ?? undefined
-        const projects = await store.getProjects(responseMachineId, orgId)
-        return c.json({ ok: true, projects })
+        const projects = await store.getProjects(responseMachineId, access.orgId)
+        return c.json({ ok: true, projects: filterProjectsForOrg(projects, access.orgId) })
     })
 
     // ==================== Token Source 管理 ====================
@@ -364,13 +473,21 @@ export function createSettingsRoutes(
     // ==================== 角色预设 Prompt ====================
 
     // 获取所有角色的预设 Prompt
-    app.get('/settings/role-prompts', async (_c) => {
+    app.get('/settings/role-prompts', async (c) => {
+        const authError = requireOperatorAccess(c)
+        if (authError) {
+            return authError
+        }
         const prompts = await store.getAllRolePrompts()
-        return _c.json({ prompts })
+        return c.json({ prompts })
     })
 
     // 获取指定角色的预设 Prompt
     app.get('/settings/role-prompts/:role', async (c) => {
+        const authError = requireOperatorAccess(c)
+        if (authError) {
+            return authError
+        }
         const role = c.req.param('role')
         if (role !== 'developer' && role !== 'operator') {
             return c.json({ error: 'Invalid role' }, 400)
@@ -381,6 +498,10 @@ export function createSettingsRoutes(
 
     // 设置角色的预设 Prompt
     app.put('/settings/role-prompts/:role', async (c) => {
+        const authError = requireOperatorAccess(c)
+        if (authError) {
+            return authError
+        }
         const role = c.req.param('role')
         if (role !== 'developer' && role !== 'operator') {
             return c.json({ error: 'Invalid role' }, 400)
@@ -403,6 +524,10 @@ export function createSettingsRoutes(
 
     // 删除角色的预设 Prompt
     app.delete('/settings/role-prompts/:role', async (c) => {
+        const authError = requireOperatorAccess(c)
+        if (authError) {
+            return authError
+        }
         const role = c.req.param('role')
         if (role !== 'developer' && role !== 'operator') {
             return c.json({ error: 'Invalid role' }, 400)
@@ -469,15 +594,18 @@ export function createSettingsRoutes(
     // ========== AI Profiles ==========
 
     app.get('/settings/ai-profiles', async (c) => {
-        const namespace = c.get('namespace') || 'default'
-        const profiles = await store.getAIProfiles(namespace)
+        const access = await requireOrgAccess(c)
+        if (access instanceof Response) {
+            return access
+        }
+        const profiles = await store.getAIProfilesByOrg(access.orgId)
         return c.json({ profiles })
     })
 
     app.post('/settings/ai-profiles', async (c) => {
-        const permissionError = await requireSharedBrainSettingsWriteAccess(c)
-        if (permissionError) {
-            return permissionError
+        const access = await requireOrgManageAccess(c)
+        if (access instanceof Response) {
+            return access
         }
 
         const body = await c.req.json().catch(() => null)
@@ -486,9 +614,13 @@ export function createSettingsRoutes(
             return c.json({ error: 'Invalid AI profile', details: parsed.error.issues }, 400)
         }
 
-        const namespace = c.get('namespace') || 'default'
+        const existingForRole = await store.getAIProfileByOrgAndRole(access.orgId, parsed.data.role)
+        if (existingForRole) {
+            return c.json({ error: 'AI profile role already exists for current org' }, 409)
+        }
         const profile = await store.createAIProfile({
-            namespace,
+            namespace: `org:${access.orgId}`,
+            orgId: access.orgId,
             ...parsed.data,
         })
         if (!profile) {
@@ -499,9 +631,9 @@ export function createSettingsRoutes(
     })
 
     app.put('/settings/ai-profiles/:id', async (c) => {
-        const permissionError = await requireSharedBrainSettingsWriteAccess(c)
-        if (permissionError) {
-            return permissionError
+        const access = await requireOrgManageAccess(c)
+        if (access instanceof Response) {
+            return access
         }
 
         const body = await c.req.json().catch(() => null)
@@ -510,10 +642,15 @@ export function createSettingsRoutes(
             return c.json({ error: 'Invalid AI profile', details: parsed.error.issues }, 400)
         }
 
-        const namespace = c.get('namespace') || 'default'
         const existing = await store.getAIProfile(c.req.param('id'))
-        if (!existing || existing.namespace !== namespace) {
+        if (!existing || existing.orgId !== access.orgId) {
             return c.json({ error: 'AI profile not found' }, 404)
+        }
+        if (parsed.data.role && parsed.data.role !== existing.role) {
+            const existingForRole = await store.getAIProfileByOrgAndRole(access.orgId, parsed.data.role)
+            if (existingForRole && existingForRole.id !== existing.id) {
+                return c.json({ error: 'AI profile role already exists for current org' }, 409)
+            }
         }
 
         const profile = await store.updateAIProfile(existing.id, parsed.data)
@@ -525,18 +662,26 @@ export function createSettingsRoutes(
     })
 
     app.delete('/settings/ai-profiles/:id', async (c) => {
-        const permissionError = await requireSharedBrainSettingsWriteAccess(c)
-        if (permissionError) {
-            return permissionError
+        const access = await requireOrgManageAccess(c)
+        if (access instanceof Response) {
+            return access
         }
 
-        const namespace = c.get('namespace') || 'default'
         const existing = await store.getAIProfile(c.req.param('id'))
-        if (!existing || existing.namespace !== namespace) {
+        if (!existing || existing.orgId !== access.orgId) {
             return c.json({ error: 'AI profile not found' }, 404)
         }
 
-        const deleted = await store.deleteAIProfile(existing.id)
+        const email = c.get('email') || null
+        const deleteAIProfileWithSelfSystemCleanup = (store as IStore & {
+            deleteAIProfileWithSelfSystemCleanup?: (orgId: string, profileId: string, updatedBy?: string | null) => Promise<boolean>
+        }).deleteAIProfileWithSelfSystemCleanup
+        const deleted = typeof deleteAIProfileWithSelfSystemCleanup === 'function'
+            ? await deleteAIProfileWithSelfSystemCleanup(access.orgId, existing.id, email)
+            : await (async () => {
+                await store.clearSelfSystemProfileReferences(access.orgId, existing.id, email)
+                return await store.deleteAIProfile(existing.id)
+            })()
         if (!deleted) {
             return c.json({ error: 'AI profile not found' }, 404)
         }
@@ -554,11 +699,15 @@ export function createSettingsRoutes(
     })
 
     app.get('/settings/brain-config', async (c) => {
-        const namespace = c.get('namespace') || 'default'
-        const config = await store.getBrainConfig(namespace)
+        const access = await requireOrgAccess(c)
+        if (access instanceof Response) {
+            return access
+        }
+        const config = await store.getBrainConfigByOrg(access.orgId)
         if (!config) {
             return c.json({
-                namespace,
+                namespace: `org:${access.orgId}`,
+                orgId: access.orgId,
                 agent: 'claude' as const,
                 claudeModelMode: 'opus',
                 codexModel: 'gpt-5.4',
@@ -571,9 +720,9 @@ export function createSettingsRoutes(
     })
 
     app.put('/settings/brain-config', async (c) => {
-        const permissionError = await requireSharedBrainSettingsWriteAccess(c)
-        if (permissionError) {
-            return permissionError
+        const access = await requireOrgManageAccess(c)
+        if (access instanceof Response) {
+            return access
         }
 
         const body = await c.req.json()
@@ -582,20 +731,92 @@ export function createSettingsRoutes(
             return c.json({ error: 'Invalid config', details: parsed.error.issues }, 400)
         }
 
-        const namespace = c.get('namespace') || 'default'
         const email = c.get('email') || null
-        const selfSystem = parsed.data.extra?.selfSystem
+        const currentConfig = await store.getBrainConfigByOrg(access.orgId)
+        let selfSystem = parsed.data.extra?.selfSystem
         if (selfSystem?.defaultProfileId) {
             const profile = await store.getAIProfile(selfSystem.defaultProfileId)
-            if (!profile || profile.namespace !== namespace) {
-                return c.json({ error: 'Invalid config', details: [{ path: ['extra', 'selfSystem', 'defaultProfileId'], message: 'AI profile not found in current namespace' }] }, 400)
+            if (!profile || profile.orgId !== access.orgId) {
+                const currentDefaultProfileId = extractStoredDefaultProfileId(currentConfig?.extra)
+                if (currentDefaultProfileId === selfSystem.defaultProfileId) {
+                    selfSystem = normalizeInvalidSelfSystemProfile(selfSystem)
+                } else {
+                    return c.json({ error: 'Invalid config', details: [{ path: ['extra', 'selfSystem', 'defaultProfileId'], message: 'AI profile not found in current org' }] }, 400)
+                }
             }
         }
-        const result = await store.setBrainConfig(namespace, {
+        const result = await store.setBrainConfigByOrg(access.orgId, {
             ...parsed.data,
+            extra: selfSystem
+                ? {
+                    ...(parsed.data.extra ?? {}),
+                    selfSystem,
+                }
+                : parsed.data.extra,
             updatedBy: email,
         })
         return c.json({ ok: true, config: result })
+    })
+
+    app.get('/settings/self-system', async (c) => {
+        const access = await requireOrgAccess(c)
+        if (access instanceof Response) {
+            return access
+        }
+        const email = c.get('email')
+        if (!email) {
+            return c.json({ error: 'Unauthorized' }, 401)
+        }
+        const config = await store.getUserSelfSystemConfig(access.orgId, email)
+        return c.json(config ?? {
+            orgId: access.orgId,
+            userEmail: email,
+            enabled: false,
+            defaultProfileId: null,
+            memoryProvider: 'yoho-memory' as const,
+            updatedAt: 0,
+            updatedBy: null,
+        })
+    })
+
+    app.put('/settings/self-system', async (c) => {
+        const access = await requireOrgAccess(c)
+        if (access instanceof Response) {
+            return access
+        }
+        const email = c.get('email')
+        if (!email) {
+            return c.json({ error: 'Unauthorized' }, 401)
+        }
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = brainSelfSystemSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid config', details: parsed.error.issues }, 400)
+        }
+        const currentConfig = await store.getUserSelfSystemConfig(access.orgId, email)
+        let nextConfig = parsed.data
+        if (nextConfig.defaultProfileId) {
+            const profile = await store.getAIProfile(nextConfig.defaultProfileId)
+            if (!profile || profile.orgId !== access.orgId) {
+                const currentDefaultProfileId = normalizeOptionalId(currentConfig?.defaultProfileId)
+                if (currentDefaultProfileId === nextConfig.defaultProfileId) {
+                    nextConfig = normalizeInvalidSelfSystemProfile(nextConfig)
+                } else {
+                    return c.json({ error: 'Invalid config', details: [{ path: ['defaultProfileId'], message: 'AI profile not found in current org' }] }, 400)
+                }
+            }
+        }
+
+        const config = await store.setUserSelfSystemConfig({
+            orgId: access.orgId,
+            userEmail: email,
+            enabled: nextConfig.enabled,
+            defaultProfileId: nextConfig.defaultProfileId ?? null,
+            memoryProvider: nextConfig.memoryProvider,
+            updatedBy: email,
+        })
+        return c.json({ ok: true, config })
     })
 
     return app

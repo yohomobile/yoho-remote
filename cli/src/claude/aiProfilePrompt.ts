@@ -15,12 +15,12 @@ export type AIProfile = {
 }
 
 const ROLE_DESCRIPTIONS: Record<string, string> = {
-    developer: 'Software Developer - You write clean, efficient code and solve technical problems.',
-    architect: 'Software Architect - You design system architecture and make technical decisions.',
-    reviewer: 'Code Reviewer - You review code, provide feedback, and ensure quality.',
-    pm: 'Project Manager - You coordinate tasks, track progress, and communicate with stakeholders.',
-    tester: 'QA Tester - You write tests, find bugs, and ensure software quality.',
-    devops: 'DevOps Engineer - You handle deployment, infrastructure, and automation.'
+    developer: 'Execution Driver - You are a full-capability AI with a fast, execution-first style.',
+    architect: 'Calm Strategist - You are a full-capability AI with a structured, long-horizon style.',
+    reviewer: 'Critical Thinker - You are a full-capability AI with a risk-first, skeptical style.',
+    pm: 'Alignment Lead - You are a full-capability AI with a coordination and clarity-first style.',
+    tester: 'Skeptical Validator - You are a full-capability AI with a verification-first style.',
+    devops: 'Steady Operator - You are a full-capability AI with a calm, reliability-first style.',
 }
 
 /**
@@ -29,10 +29,11 @@ const ROLE_DESCRIPTIONS: Record<string, string> = {
 export function buildAIProfilePrompt(profile: AIProfile): string {
     const parts: string[] = []
 
-    // 角色和身份
+    // 风格标签和身份
     parts.push(`# Your Identity: ${profile.avatarEmoji} ${profile.name}`)
     parts.push('')
-    parts.push(`**Role:** ${ROLE_DESCRIPTIONS[profile.role] || profile.role}`)
+    parts.push(`**Style Preset:** ${ROLE_DESCRIPTIONS[profile.role] || profile.role}`)
+    parts.push('**Scope:** You are an all-purpose AI. The style preset shapes how you reason and communicate, not what kinds of work you are allowed to do.')
 
     // 专长
     if (profile.specialties.length > 0) {

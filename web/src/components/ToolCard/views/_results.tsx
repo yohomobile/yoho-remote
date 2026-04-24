@@ -363,7 +363,6 @@ function isYohoMemoryToolName(toolName: string): boolean {
         'mcp__yoho-vault__',
         'mcp__yoho-credentials__',
         'mcp__yoho_remote__',
-        'mcp__skill__',
     ]
     return prefixes.some((prefix) => toolName.startsWith(prefix))
 }

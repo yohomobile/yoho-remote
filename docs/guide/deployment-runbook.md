@@ -35,7 +35,7 @@
 - [ ] Keycloak 可连通，client/realm 配置已确认
 - [ ] 如需邮件邀请，`SMTP_*` 已配置并可用
 - [ ] 如需 Web Push，`WEB_PUSH_VAPID_*` 已配置
-- [ ] 如需 Telegram / Feishu / Gemini，对应可选变量已配置
+- [ ] 如需 Feishu / Gemini，对应可选变量已配置
 - [ ] 当前线上二进制与 env 文件已备份，可在 10 分钟内回滚
 
 推荐先在仓库根目录执行一次：
@@ -99,7 +99,7 @@ bun run build:exe
 
 可选但建议单独确认：
 
-- `TELEGRAM_BOT_TOKEN`
+- `WEBAPP_URL`
 - `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_BASE_URL`
 - `FEISHU_BOT_APP_ID` / `FEISHU_BOT_APP_SECRET`
 - `GEMINI_API_KEY`

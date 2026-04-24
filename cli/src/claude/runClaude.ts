@@ -36,6 +36,10 @@ import { readClaudeSettingsMcpServers } from '@/claude/utils/claudeSettings';
 import { getDefaultClaudeCodePath } from '@/claude/sdk/utils';
 import { buildRuntimeMcpSystemPrompt } from '@/claude/utils/systemPrompt';
 import { loadOrCreateRuntimeSession } from '@/utils/runtimeSessionBootstrap';
+import {
+    isSessionOrchestrationChildSource,
+    isSessionOrchestrationParentSource,
+} from '@/utils/sessionOrchestration';
 
 const INIT_PROMPT_PREFIX = '#InitPrompt-';
 
@@ -302,28 +306,20 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
             'mcp__yoho-vault__skill_delete',
             'mcp__yoho-vault__skill_doctor',
             'mcp__yoho-vault__skill_discover',
-            'mcp__skill__search',
-            'mcp__skill__get',
-            'mcp__skill__list',
-            'mcp__skill__save',
-            'mcp__skill__update',
-            'mcp__skill__promote',
-            'mcp__skill__archive',
-            'mcp__skill__delete',
-            'mcp__skill__doctor',
-            'mcp__skill__discover',
         ];
     const brainChildAllowedTools = buildBrainChildClaudeAllowedTools({
         yohoRemoteToolNames: yohoRemoteServer.toolNames,
         sessionCaller,
         includeInteractionTools: true,
     });
-    let currentAllowedTools: string[] | undefined = sessionSource === 'brain'
+    const isOrchestrationParentSession = isSessionOrchestrationParentSource(sessionSource);
+    const isOrchestrationChildSession = isSessionOrchestrationChildSource(sessionSource);
+    let currentAllowedTools: string[] | undefined = isOrchestrationParentSession
         ? brainAllowedTools
-        : sessionSource === 'brain-child'
+        : isOrchestrationChildSession
             ? brainChildAllowedTools
             : undefined; // Track current allowed tools
-    let currentDisallowedTools: string[] | undefined = sessionSource === 'brain' ? ['AskUserQuestion'] : undefined;
+    let currentDisallowedTools: string[] | undefined = isOrchestrationParentSession ? ['AskUserQuestion'] : undefined;
 
     const syncSessionModes = () => {
         const sessionInstance = currentSessionRef.current;

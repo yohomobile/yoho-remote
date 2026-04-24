@@ -188,7 +188,7 @@ describe('BrainBridge', () => {
         await (bridge as any).flushIncomingMessages(chatId)
 
         expect(observations).toEqual([{
-            namespace: 'default',
+            namespace: 'org-1',
             orgId: 'org-1',
             channel: 'feishu',
             externalId: 'ou_user_1',
@@ -250,8 +250,10 @@ describe('BrainBridge', () => {
                 sendMessage: async () => ({ status: 'delivered' }),
             } as any,
             store: {
-                getBrainConfig: async () => ({
-                    namespace: 'default',
+                getSession: async () => ({ orgId: 'org-1' }),
+                getBrainConfigByOrg: async () => ({
+                    namespace: 'org:org-1',
+                    orgId: 'org-1',
                     agent: 'claude',
                     claudeModelMode: 'opus',
                     codexModel: 'gpt-5.4',
@@ -309,6 +311,103 @@ describe('BrainBridge', () => {
                 },
             },
         })
+    })
+
+    test('uses senderEmail fallback for self-system and createdBy when identity actor is missing', async () => {
+        const setCreatedByCalls: Array<[string, string, string]> = []
+        const sentMessages: Array<{ sessionId: string; text: string }> = []
+        const patchCalls: Array<Record<string, unknown>> = []
+
+        const bridge = new BrainBridge({
+            syncEngine: {
+                subscribe: () => () => {},
+                getSession: () => ({
+                    id: 'session-user-email',
+                    namespace: 'default',
+                    active: true,
+                    metadata: {
+                        path: '/tmp/brain',
+                        source: 'brain',
+                    },
+                }),
+                patchSessionMetadata: async (_sessionId: string, patch: Record<string, unknown>) => {
+                    patchCalls.push(patch)
+                    return { ok: true }
+                },
+                waitForSocketInRoom: async () => true,
+                sendMessage: async (sessionId: string, payload: { text: string }) => {
+                    sentMessages.push({ sessionId, text: payload.text })
+                },
+            } as any,
+            store: {
+                getSession: async () => ({ orgId: 'org-1' }),
+                setSessionCreatedBy: async (sessionId: string, email: string, namespace: string) => {
+                    setCreatedByCalls.push([sessionId, email, namespace])
+                },
+                getUserSelfSystemConfig: async () => ({
+                    orgId: 'org-1',
+                    userEmail: 'dev@example.com',
+                    enabled: true,
+                    defaultProfileId: 'profile-1',
+                    memoryProvider: 'none',
+                    updatedAt: 1,
+                    updatedBy: null,
+                }),
+                getAIProfile: async () => ({
+                    id: 'profile-1',
+                    orgId: 'org-1',
+                    namespace: 'org:org-1',
+                    name: 'K1',
+                    role: 'developer',
+                    specialties: ['TypeScript'],
+                    personality: '结构化',
+                    greetingTemplate: null,
+                    preferredProjects: [],
+                    workStyle: '先澄清再执行',
+                    avatarEmoji: '🤖',
+                    status: 'idle',
+                    stats: {
+                        tasksCompleted: 0,
+                        activeMinutes: 0,
+                        lastActiveAt: null,
+                    },
+                    createdAt: 1,
+                    updatedAt: 1,
+                }),
+            } as any,
+            adapter: {
+                platform: 'feishu',
+                start: async () => {},
+                stop: async () => {},
+                sendReply: async () => {},
+                buildSessionTitle: () => '飞书: 测试会话',
+                buildInitPrompt: async () => '#InitPrompt-Brain',
+            } as any,
+        })
+
+        await (bridge as any).initializeSession(
+            'session-user-email',
+            'chat-1',
+            'p2p',
+            undefined,
+            'Dev',
+            null,
+            'dev@example.com',
+        )
+
+        expect(setCreatedByCalls).toEqual([
+            ['session-user-email', 'dev@example.com', 'org-1'],
+        ])
+        expect(patchCalls[1]).toEqual({
+            selfSystemEnabled: true,
+            selfProfileId: 'profile-1',
+            selfProfileName: 'K1',
+            selfProfileResolved: true,
+            selfMemoryProvider: 'none',
+            selfMemoryAttached: false,
+            selfMemoryStatus: 'disabled',
+        })
+        expect(sentMessages[0]?.text).toContain('## K1 自我系统')
     })
 
     test('waits for late agent messages before sending final summary', async () => {
@@ -489,10 +588,12 @@ describe('BrainBridge', () => {
                     sendMessage: async (sessionId: string, payload: { text: string }) => {
                         sentMessages.push({ sessionId, text: payload.text })
                     },
-                } as any,
-                store: {
-                    getBrainConfig: async () => ({
-                        namespace: 'default',
+            } as any,
+            store: {
+                    getSession: async () => ({ orgId: 'org-1' }),
+                    getBrainConfigByOrg: async () => ({
+                        namespace: 'org:org-1',
+                        orgId: 'org-1',
                         agent: 'claude',
                         claudeModelMode: 'opus',
                         codexModel: 'gpt-5.4',
@@ -508,7 +609,8 @@ describe('BrainBridge', () => {
                     }),
                     getAIProfile: async () => ({
                         id: 'profile-1',
-                        namespace: 'default',
+                        orgId: 'org-1',
+                        namespace: 'org:org-1',
                         name: 'K1',
                         role: 'architect',
                         specialties: ['TypeScript'],
@@ -558,5 +660,378 @@ describe('BrainBridge', () => {
         } finally {
             globalThis.fetch = originalFetch
         }
+    })
+
+    test('does not apply legacy namespace self-system during IM initialization when session org is missing', async () => {
+        const sentMessages: Array<{ sessionId: string; text: string }> = []
+        const patchCalls: Array<Record<string, unknown>> = []
+
+        const bridge = new BrainBridge({
+            syncEngine: {
+                subscribe: () => () => {},
+                getSession: () => ({
+                    id: 'session-im-no-org',
+                    namespace: 'default',
+                    active: true,
+                    metadata: {
+                        path: '/tmp/brain',
+                        source: 'brain',
+                    },
+                }),
+                patchSessionMetadata: async (_sessionId: string, patch: Record<string, unknown>) => {
+                    patchCalls.push(patch)
+                    return { ok: true }
+                },
+                waitForSocketInRoom: async () => true,
+                sendMessage: async (sessionId: string, payload: { text: string }) => {
+                    sentMessages.push({ sessionId, text: payload.text })
+                },
+            } as any,
+            store: {
+                getSession: async () => ({ orgId: null }),
+                getBrainConfig: async () => ({
+                    namespace: 'default',
+                    agent: 'claude',
+                    claudeModelMode: 'opus',
+                    codexModel: 'gpt-5.4',
+                    extra: {
+                        selfSystem: {
+                            enabled: true,
+                            defaultProfileId: 'profile-legacy',
+                            memoryProvider: 'yoho-memory',
+                        },
+                    },
+                    updatedAt: 1,
+                    updatedBy: null,
+                }),
+                getAIProfile: async () => ({
+                    id: 'profile-legacy',
+                    namespace: 'default',
+                    name: 'Legacy',
+                    role: 'architect',
+                    specialties: [],
+                    personality: null,
+                    greetingTemplate: null,
+                    preferredProjects: [],
+                    workStyle: null,
+                    avatarEmoji: '🤖',
+                    status: 'idle',
+                    stats: {
+                        tasksCompleted: 0,
+                        activeMinutes: 0,
+                        lastActiveAt: null,
+                    },
+                    createdAt: 1,
+                    updatedAt: 1,
+                }),
+            } as any,
+            adapter: {
+                platform: 'feishu',
+                start: async () => {},
+                stop: async () => {},
+                sendReply: async () => {},
+                buildSessionTitle: () => '飞书: 测试会话',
+                buildInitPrompt: async () => '#InitPrompt-Brain',
+            } as any,
+        })
+
+        await (bridge as any).initializeSession('session-im-no-org', 'chat-1', 'p2p', undefined, 'Dev')
+
+        expect(patchCalls[1]).toEqual({
+            selfSystemEnabled: false,
+            selfProfileId: null,
+            selfProfileName: null,
+            selfProfileResolved: false,
+            selfMemoryProvider: 'yoho-memory',
+            selfMemoryAttached: false,
+            selfMemoryStatus: 'disabled',
+        })
+        expect(sentMessages[0]?.text).not.toContain('## K1 自我系统')
+    })
+
+    test('prefers the sender org when senderEmail belongs to exactly one organization', async () => {
+        const machineSelections: Array<{ namespace: string }> = []
+        const setSessionOrgIdCalls: Array<[string, string]> = []
+
+        const bridge = new BrainBridge({
+            syncEngine: {
+                subscribe: () => () => {},
+                getOnlineMachinesByNamespace: (namespace: string) => {
+                    machineSelections.push({ namespace })
+                    return [{
+                        id: 'machine-1',
+                        namespace,
+                        orgId: 'org-1',
+                        metadata: { homeDir: '/home/dev' },
+                        supportedAgents: ['claude', 'codex'],
+                    }]
+                },
+                spawnSession: async () => ({
+                    type: 'success',
+                    sessionId: 'session-org-preferred',
+                }),
+            } as any,
+            store: {
+                getOrganizationsForUser: async () => [{
+                    id: 'org-1',
+                    name: 'Org One',
+                    slug: 'org-one',
+                    createdBy: 'owner@example.com',
+                    createdAt: 1,
+                    updatedAt: 1,
+                    settings: {},
+                    myRole: 'member',
+                }],
+                createFeishuChatSession: async () => true,
+                setSessionOrgId: async (sessionId: string, orgId: string) => {
+                    setSessionOrgIdCalls.push([sessionId, orgId])
+                },
+                getBrainConfigByOrg: async () => null,
+            } as any,
+            adapter: {
+                platform: 'feishu',
+                start: async () => {},
+                stop: async () => {},
+                sendReply: async () => {},
+            } as any,
+        })
+        ;(bridge as any).initializeSession = async () => {}
+
+        const sessionId = await (bridge as any).createBrainSession('chat-org', 'p2p', undefined, {
+            text: '帮我查下问题',
+            messageId: 'msg-org',
+            senderName: 'Dev',
+            senderId: 'ou_user_1',
+            senderEmail: 'dev@example.com',
+            chatType: 'p2p',
+            addressed: true,
+        })
+
+        expect(sessionId).toBe('session-org-preferred')
+        expect(machineSelections).toEqual([
+            { namespace: 'org-1' },
+        ])
+        expect(setSessionOrgIdCalls).toEqual([
+            ['session-org-preferred', 'org-1'],
+        ])
+    })
+
+    test('resolves org through adapter email when senderEmail is missing', async () => {
+        const machineSelections: Array<{ namespace: string }> = []
+        const setSessionOrgIdCalls: Array<[string, string]> = []
+
+        const bridge = new BrainBridge({
+            syncEngine: {
+                subscribe: () => () => {},
+                getOnlineMachinesByNamespace: (namespace: string) => {
+                    machineSelections.push({ namespace })
+                    return [{
+                        id: 'machine-1',
+                        namespace,
+                        orgId: 'org-1',
+                        metadata: { homeDir: '/home/dev' },
+                        supportedAgents: ['claude', 'codex'],
+                    }]
+                },
+                spawnSession: async () => ({
+                    type: 'success',
+                    sessionId: 'session-org-from-adapter',
+                }),
+            } as any,
+            store: {
+                getOrganizationsForUser: async () => [{
+                    id: 'org-1',
+                    name: 'Org One',
+                    slug: 'org-one',
+                    createdBy: 'owner@example.com',
+                    createdAt: 1,
+                    updatedAt: 1,
+                    settings: {},
+                    myRole: 'member',
+                }],
+                createFeishuChatSession: async () => true,
+                setSessionOrgId: async (sessionId: string, orgId: string) => {
+                    setSessionOrgIdCalls.push([sessionId, orgId])
+                },
+                getBrainConfigByOrg: async () => null,
+            } as any,
+            adapter: {
+                platform: 'feishu',
+                start: async () => {},
+                stop: async () => {},
+                sendReply: async () => {},
+                resolveSenderInfo: async () => ({
+                    name: 'Dev',
+                    email: 'dev@example.com',
+                }),
+            } as any,
+        })
+        ;(bridge as any).initializeSession = async () => {}
+
+        const sessionId = await (bridge as any).createBrainSession('chat-org-adapter', 'p2p', undefined, {
+            text: '帮我查下问题',
+            messageId: 'msg-org-adapter',
+            senderName: 'Dev',
+            senderId: 'ou_user_1',
+            senderEmail: null,
+            chatType: 'p2p',
+            addressed: true,
+        })
+
+        expect(sessionId).toBe('session-org-from-adapter')
+        expect(machineSelections).toEqual([
+            { namespace: 'org-1' },
+        ])
+        expect(setSessionOrgIdCalls).toEqual([
+            ['session-org-from-adapter', 'org-1'],
+        ])
+    })
+
+    test('resolves org through identity email when senderEmail is missing', async () => {
+        const machineSelections: Array<{ namespace: string }> = []
+        const setSessionOrgIdCalls: Array<[string, string]> = []
+
+        const bridge = new BrainBridge({
+            syncEngine: {
+                subscribe: () => () => {},
+                getOnlineMachinesByNamespace: (namespace: string) => {
+                    machineSelections.push({ namespace })
+                    return [{
+                        id: 'machine-1',
+                        namespace,
+                        orgId: 'org-1',
+                        metadata: { homeDir: '/home/dev' },
+                        supportedAgents: ['claude', 'codex'],
+                    }]
+                },
+                spawnSession: async () => ({
+                    type: 'success',
+                    sessionId: 'session-org-from-identity',
+                }),
+            } as any,
+            store: {
+                findResolvedActorByChannelExternalId: async () => ({
+                    identityId: 'identity-feishu-1',
+                    personId: 'person-1',
+                    channel: 'feishu',
+                    resolution: 'admin_verified',
+                    displayName: 'Dev User',
+                    email: 'dev@example.com',
+                    externalId: 'ou_user_1',
+                    accountType: 'human',
+                }),
+                getOrganizationsForUser: async () => [{
+                    id: 'org-1',
+                    name: 'Org One',
+                    slug: 'org-one',
+                    createdBy: 'owner@example.com',
+                    createdAt: 1,
+                    updatedAt: 1,
+                    settings: {},
+                    myRole: 'member',
+                }],
+                createFeishuChatSession: async () => true,
+                setSessionOrgId: async (sessionId: string, orgId: string) => {
+                    setSessionOrgIdCalls.push([sessionId, orgId])
+                },
+                getBrainConfigByOrg: async () => null,
+            } as any,
+            adapter: {
+                platform: 'feishu',
+                start: async () => {},
+                stop: async () => {},
+                sendReply: async () => {},
+                resolveSenderInfo: async () => ({
+                    name: 'Dev',
+                    email: null,
+                }),
+            } as any,
+        })
+        ;(bridge as any).initializeSession = async () => {}
+
+        const sessionId = await (bridge as any).createBrainSession('chat-org-identity', 'p2p', undefined, {
+            text: '帮我查下问题',
+            messageId: 'msg-org-identity',
+            senderName: 'Dev',
+            senderId: 'ou_user_1',
+            senderEmail: null,
+            chatType: 'p2p',
+            addressed: true,
+        })
+
+        expect(sessionId).toBe('session-org-from-identity')
+        expect(machineSelections).toEqual([
+            { namespace: 'org-1' },
+        ])
+        expect(setSessionOrgIdCalls).toEqual([
+            ['session-org-from-identity', 'org-1'],
+        ])
+    })
+
+    test('does not create a Brain session when senderEmail matches multiple organizations', async () => {
+        const machineSelections: Array<{ namespace: string }> = []
+
+        const bridge = new BrainBridge({
+            syncEngine: {
+                subscribe: () => () => {},
+                getOnlineMachinesByNamespace: (namespace: string) => {
+                    machineSelections.push({ namespace })
+                    return [{
+                        id: 'machine-1',
+                        namespace,
+                        orgId: 'org-1',
+                        metadata: { homeDir: '/home/dev' },
+                        supportedAgents: ['claude', 'codex'],
+                    }]
+                },
+                spawnSession: async () => ({
+                    type: 'success',
+                    sessionId: 'session-should-not-exist',
+                }),
+            } as any,
+            store: {
+                getOrganizationsForUser: async () => ([
+                    {
+                        id: 'org-1',
+                        name: 'Org One',
+                        slug: 'org-one',
+                        createdBy: 'owner@example.com',
+                        createdAt: 1,
+                        updatedAt: 1,
+                        settings: {},
+                        myRole: 'member',
+                    },
+                    {
+                        id: 'org-2',
+                        name: 'Org Two',
+                        slug: 'org-two',
+                        createdBy: 'owner@example.com',
+                        createdAt: 1,
+                        updatedAt: 1,
+                        settings: {},
+                        myRole: 'member',
+                    },
+                ]),
+            } as any,
+            adapter: {
+                platform: 'feishu',
+                start: async () => {},
+                stop: async () => {},
+                sendReply: async () => {},
+            } as any,
+        })
+
+        const sessionId = await (bridge as any).createBrainSession('chat-org-ambiguous', 'p2p', undefined, {
+            text: '帮我查下问题',
+            messageId: 'msg-org-ambiguous',
+            senderName: 'Dev',
+            senderId: 'ou_user_1',
+            senderEmail: 'dev@example.com',
+            chatType: 'p2p',
+            addressed: true,
+        })
+
+        expect(sessionId).toBeNull()
+        expect(machineSelections).toEqual([])
     })
 })

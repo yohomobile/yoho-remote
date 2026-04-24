@@ -1,5 +1,6 @@
 import { deriveBrainMessageDelivery } from '@/chat/brainDelivery'
 import type { ChatBlock, ToolCallBlock, AgentEvent } from '@/chat/types'
+import { getSessionOrchestrationPresentation } from '@/lib/sessionOrchestration'
 import type { Session } from '@/types/api'
 
 export function formatUnixTimestamp(value: number): string {
@@ -24,19 +25,36 @@ function truncateEventText(text: string, maxLen = 120): string {
     return text
 }
 
-function isDisplayItemActive(block: ChatBlock, index: number, blocks: readonly ChatBlock[], session?: Session): boolean {
+function isDisplayItemActive(
+    block: ChatBlock,
+    index: number,
+    blocks: readonly ChatBlock[],
+    session?: Session
+): boolean {
     if (block.kind === 'user-text') {
         if (block.status === 'sending') {
             return true
         }
-        const delivery = deriveBrainMessageDelivery(block, index, blocks, session)
+        const delivery = deriveBrainMessageDelivery(
+            block,
+            index,
+            blocks,
+            session
+        )
         const phase = delivery?.phase ?? null
-        return phase === 'queued' || phase === 'pending_consume' || phase === 'consuming'
+        return (
+            phase === 'queued' ||
+            phase === 'pending_consume' ||
+            phase === 'consuming'
+        )
     }
 
     if (block.kind === 'tool-call') {
         const toolBlock = block as ToolCallBlock
-        return toolBlock.tool.state === 'pending' || toolBlock.tool.state === 'running'
+        return (
+            toolBlock.tool.state === 'pending' ||
+            toolBlock.tool.state === 'running'
+        )
     }
 
     if (block.kind === 'agent-text' || block.kind === 'agent-reasoning') {
@@ -65,7 +83,10 @@ export function activeItem(turn: DisplayTurn): DisplayItem | null {
     return turn.activeItem
 }
 
-export function buildDisplayTurns(blocks: readonly ChatBlock[], session?: Session): DisplayTurn[] {
+export function buildDisplayTurns(
+    blocks: readonly ChatBlock[],
+    session?: Session
+): DisplayTurn[] {
     const turns: DisplayTurn[] = []
     let currentItems: DisplayItem[] = []
 
@@ -120,6 +141,36 @@ export type EventPresentation = {
     text: string
 }
 
+function getBrainChildCallbackSource(
+    event: Extract<AgentEvent, { type: 'brain-child-callback' }>
+): string | null {
+    const callbackEvent = event as {
+        childSource?: string
+        parentSource?: string
+        envelope?: {
+            childSource?: string
+            parentSource?: string
+        }
+    }
+
+    return (
+        callbackEvent.childSource ??
+        callbackEvent.parentSource ??
+        callbackEvent.envelope?.childSource ??
+        callbackEvent.envelope?.parentSource ??
+        null
+    )
+}
+
+function isBrainChildCallbackEvent(
+    event: AgentEvent
+): event is Extract<AgentEvent, { type: 'brain-child-callback' }> {
+    return (
+        event.type === 'brain-child-callback' &&
+        Array.isArray((event as { details?: unknown }).details)
+    )
+}
+
 export function getEventPresentation(event: AgentEvent): EventPresentation {
     if (event.type === 'switch') {
         const mode = event.mode === 'local' ? 'local' : 'remote'
@@ -127,51 +178,92 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
     }
     if (event.type === 'title-changed') {
         const title = typeof event.title === 'string' ? event.title : ''
-        return { icon: null, text: title ? `Title changed to "${title}"` : 'Title changed' }
+        return {
+            icon: null,
+            text: title ? `Title changed to "${title}"` : 'Title changed',
+        }
     }
     if (event.type === 'limit-reached') {
         const endsAt = typeof event.endsAt === 'number' ? event.endsAt : null
-        return { icon: '⏳', text: endsAt ? `Usage limit reached until ${formatUnixTimestamp(endsAt)}` : 'Usage limit reached' }
+        return {
+            icon: '⏳',
+            text: endsAt
+                ? `Usage limit reached until ${formatUnixTimestamp(endsAt)}`
+                : 'Usage limit reached',
+        }
     }
     if (event.type === 'message') {
-        return { icon: null, text: typeof event.message === 'string' ? event.message : 'Message' }
+        return {
+            icon: null,
+            text: typeof event.message === 'string' ? event.message : 'Message',
+        }
     }
     if (event.type === 'turn-duration') {
         const e = event as Record<string, unknown>
         const ms = typeof e.durationMs === 'number' ? e.durationMs : 0
         const parts = [`Turn: ${formatDuration(ms)}`]
         if (typeof e.numTurns === 'number') parts.push(`${e.numTurns} turns`)
-        if (typeof e.cost === 'number') parts.push(`$${(e.cost as number).toFixed(4)}`)
+        if (typeof e.cost === 'number')
+            parts.push(`$${(e.cost as number).toFixed(4)}`)
         const isError = e.isError === true
-        const terminalReason = typeof e.terminalReason === 'string' ? e.terminalReason : null
+        const terminalReason =
+            typeof e.terminalReason === 'string' ? e.terminalReason : null
         if (isError && terminalReason) parts.push(terminalReason)
         return { icon: isError ? '❌' : '⏱️', text: parts.join(' · ') }
     }
 
     if (event.type === 'plan-mode') {
-        const path = typeof event.planFilePath === 'string' ? event.planFilePath : null
-        return { icon: '🧭', text: path ? `Plan mode active · ${path}` : 'Plan mode active' }
+        const path =
+            typeof event.planFilePath === 'string' ? event.planFilePath : null
+        return {
+            icon: '🧭',
+            text: path ? `Plan mode active · ${path}` : 'Plan mode active',
+        }
     }
 
     if (event.type === 'todo-reminder') {
-        const total = typeof event.itemCount === 'number'
-            ? event.itemCount
-            : Array.isArray(event.items)
-                ? event.items.length
-                : 0
-        const completed = typeof event.completedCount === 'number' ? event.completedCount : 0
-        return { icon: '📝', text: total > 0 ? `Plan progress ${completed}/${total}` : 'Plan progress' }
+        const total =
+            typeof event.itemCount === 'number'
+                ? event.itemCount
+                : Array.isArray(event.items)
+                  ? event.items.length
+                  : 0
+        const completed =
+            typeof event.completedCount === 'number' ? event.completedCount : 0
+        return {
+            icon: '📝',
+            text:
+                total > 0
+                    ? `Plan progress ${completed}/${total}`
+                    : 'Plan progress',
+        }
     }
 
     if (event.type === 'plan-file') {
-        const path = typeof event.planFilePath === 'string' ? event.planFilePath : null
-        return { icon: '📄', text: path ? `Saved plan · ${path}` : 'Saved plan' }
+        const path =
+            typeof event.planFilePath === 'string' ? event.planFilePath : null
+        return {
+            icon: '📄',
+            text: path ? `Saved plan · ${path}` : 'Saved plan',
+        }
     }
 
-    if (event.type === 'brain-child-callback') {
+    if (isBrainChildCallbackEvent(event)) {
         const title = typeof event.title === 'string' ? event.title : null
-        const sessionId = typeof event.sessionId === 'string' ? event.sessionId : null
-        return { icon: '🧠', text: title ? `子任务回传 · ${title}` : sessionId ? `子任务回传 · ${sessionId}` : '子任务回传' }
+        const sessionId =
+            typeof event.sessionId === 'string' ? event.sessionId : null
+        const presentation = getSessionOrchestrationPresentation(
+            getBrainChildCallbackSource(event)
+        )
+        const label = presentation?.callbackLabel ?? '子任务回传'
+        return {
+            icon: presentation?.eventIcon ?? '🧠',
+            text: title
+                ? `${label} · ${title}`
+                : sessionId
+                  ? `${label} · ${sessionId}`
+                  : label,
+        }
     }
 
     // --- New SDK event types ---
@@ -180,7 +272,10 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
         const status = (event as Record<string, unknown>).status
         const resetsAt = (event as Record<string, unknown>).resetsAt
         if (status === 'rejected' && typeof resetsAt === 'number') {
-            return { icon: '⏳', text: `Rate limited until ${formatUnixTimestamp(resetsAt)}` }
+            return {
+                icon: '⏳',
+                text: `Rate limited until ${formatUnixTimestamp(resetsAt)}`,
+            }
         }
         if (status === 'allowed_warning') {
             return { icon: '⚠️', text: 'Approaching rate limit' }
@@ -191,15 +286,22 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
     if (event.type === 'tool-progress') {
         const toolName = (event as Record<string, unknown>).toolName
         const elapsed = (event as Record<string, unknown>).elapsedSeconds
-        const name = typeof toolName === 'string' && toolName ? toolName : 'Tool'
-        const time = typeof elapsed === 'number' ? ` (${formatDuration(elapsed * 1000)})` : ''
+        const name =
+            typeof toolName === 'string' && toolName ? toolName : 'Tool'
+        const time =
+            typeof elapsed === 'number'
+                ? ` (${formatDuration(elapsed * 1000)})`
+                : ''
         return { icon: '⏳', text: `${name} running${time}` }
     }
 
     if (event.type === 'task-notification') {
         const summary = (event as Record<string, unknown>).summary
         const status = (event as Record<string, unknown>).status
-        const text = typeof summary === 'string' && summary ? truncateEventText(summary) : `Task ${status ?? 'completed'}`
+        const text =
+            typeof summary === 'string' && summary
+                ? truncateEventText(summary)
+                : `Task ${status ?? 'completed'}`
         return { icon: '📋', text }
     }
 
@@ -208,15 +310,21 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
         const desc = e.description
         const summary = e.summary
         const status = typeof e.status === 'string' ? e.status : null
-        const terminal = status === 'completed' || status === 'failed' || status === 'stopped' || status === 'killed'
-        const text = terminal && typeof summary === 'string' && summary
-            ? truncateEventText(summary)
-            : typeof desc === 'string' && desc
-                ? truncateEventText(desc)
-                : terminal
+        const terminal =
+            status === 'completed' ||
+            status === 'failed' ||
+            status === 'stopped' ||
+            status === 'killed'
+        const text =
+            terminal && typeof summary === 'string' && summary
+                ? truncateEventText(summary)
+                : typeof desc === 'string' && desc
+                  ? truncateEventText(desc)
+                  : terminal
                     ? `Task ${status}`
                     : 'Background task started'
-        const icon = status === 'completed' ? '✅' : status === 'failed' ? '❌' : '🚀'
+        const icon =
+            status === 'completed' ? '✅' : status === 'failed' ? '❌' : '🚀'
         return { icon, text }
     }
 
@@ -230,7 +338,8 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
 
     if (event.type === 'task-updated') {
         const status = (event as Record<string, unknown>).status
-        const icon = status === 'completed' ? '✅' : status === 'failed' ? '❌' : '📋'
+        const icon =
+            status === 'completed' ? '✅' : status === 'failed' ? '❌' : '📋'
         const text = `Task ${status ?? 'updated'}`
         return { icon, text }
     }
@@ -241,16 +350,23 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
 
     if (event.type === 'status') {
         const status = (event as Record<string, unknown>).status
-        if (status === 'compacting') return { icon: '📦', text: 'Compacting context...' }
-        return { icon: null, text: typeof status === 'string' ? status : 'Processing...' }
+        if (status === 'compacting')
+            return { icon: '📦', text: 'Compacting context...' }
+        return {
+            icon: null,
+            text: typeof status === 'string' ? status : 'Processing...',
+        }
     }
 
     if (event.type === 'hook-event') {
         const hookName = (event as Record<string, unknown>).hookName
         const subtype = (event as Record<string, unknown>).subtype
-        const name = typeof hookName === 'string' && hookName ? hookName : 'Hook'
-        if (subtype === 'hook_started') return { icon: '🔗', text: `${name} started` }
-        if (subtype === 'hook_response') return { icon: '🔗', text: `${name} completed` }
+        const name =
+            typeof hookName === 'string' && hookName ? hookName : 'Hook'
+        if (subtype === 'hook_started')
+            return { icon: '🔗', text: `${name} started` }
+        if (subtype === 'hook_response')
+            return { icon: '🔗', text: `${name} completed` }
         return { icon: '🔗', text: `${name} running` }
     }
 
@@ -260,7 +376,10 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
         const error = (event as Record<string, unknown>).error
         let text = 'API retry'
         if (typeof attempt === 'number') {
-            text += typeof maxRetries === 'number' ? ` (${attempt}/${maxRetries})` : ` (attempt ${attempt})`
+            text +=
+                typeof maxRetries === 'number'
+                    ? ` (${attempt}/${maxRetries})`
+                    : ` (attempt ${attempt})`
         }
         if (typeof error === 'string' && error) text += `: ${error}`
         return { icon: '🔄', text }
@@ -270,15 +389,24 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
         const e = event as Record<string, unknown>
         const parts: string[] = []
         if (typeof e.numTurns === 'number') parts.push(`${e.numTurns} turns`)
-        if (typeof e.cost === 'number') parts.push(`$${(e.cost as number).toFixed(4)}`)
-        if (typeof e.durationMs === 'number') parts.push(formatDuration(e.durationMs as number))
+        if (typeof e.cost === 'number')
+            parts.push(`$${(e.cost as number).toFixed(4)}`)
+        if (typeof e.durationMs === 'number')
+            parts.push(formatDuration(e.durationMs as number))
         const isError = e.isError === true
-        const terminalReason = typeof e.terminalReason === 'string' ? e.terminalReason : null
+        const terminalReason =
+            typeof e.terminalReason === 'string' ? e.terminalReason : null
         if (isError && terminalReason) {
             parts.push(terminalReason)
         }
         const icon = isError ? '❌' : '📊'
-        return { icon, text: parts.length > 0 ? `Session: ${parts.join(' · ')}` : 'Session completed' }
+        return {
+            icon,
+            text:
+                parts.length > 0
+                    ? `Session: ${parts.join(' · ')}`
+                    : 'Session completed',
+        }
     }
 
     try {

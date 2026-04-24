@@ -10,6 +10,31 @@ import type { SyncEvent } from '../sync/syncEngine'
 import type { SocketData, SocketServer } from './socketTypes'
 import { verifyKeycloakToken, extractUserFromToken } from '../web/keycloak'
 
+type EventSocketUser = {
+    email: string
+    role: 'developer' | 'operator'
+}
+
+export async function authorizeEventsSocketOrg(
+    store: IStore,
+    user: EventSocketUser,
+    requestedOrgId: string | null
+): Promise<string> {
+    const orgId = requestedOrgId?.trim() || null
+    if (!orgId) {
+        throw new Error('Missing orgId')
+    }
+    if (user.role === 'operator') {
+        return orgId
+    }
+
+    const organizations = await store.getOrganizationsForUser(user.email)
+    if (!organizations.some((org) => org.id === orgId)) {
+        throw new Error('Organization access denied')
+    }
+    return orgId
+}
+
 function resolveEnvNumber(name: string, fallback: number): number {
     const raw = process.env[name]
     if (!raw) {
@@ -21,7 +46,7 @@ function resolveEnvNumber(name: string, fallback: number): number {
 
 export type SocketServerDeps = {
     store: IStore
-    getSession?: (sessionId: string) => { active: boolean; namespace: string } | null | Promise<{ active: boolean; namespace: string } | null>
+    getSession?: (sessionId: string) => { active: boolean; orgId: string | null } | null | Promise<{ active: boolean; orgId: string | null } | null>
     onWebappEvent?: (event: SyncEvent) => void
     onSessionAlive?: (payload: { sid: string; time: number; thinking?: boolean; mode?: 'local' | 'remote' }) => void
     onSessionEnd?: (payload: { sid: string; time: number }) => void
@@ -72,11 +97,15 @@ export function createSocketServer(deps: SocketServerDeps): {
     cliNs.use((socket, next) => {
         const auth = socket.handshake.auth as Record<string, unknown> | undefined
         const token = typeof auth?.token === 'string' ? auth.token : null
+        const orgId = typeof auth?.orgId === 'string' && auth.orgId.trim() ? auth.orgId.trim() : null
         const parsedToken = token ? parseAccessToken(token) : null
         if (!parsedToken || !safeCompareStrings(parsedToken.baseToken, configuration.cliApiToken)) {
             return next(new Error('Invalid token'))
         }
-        socket.data.namespace = parsedToken.namespace
+        if (!orgId) {
+            return next(new Error('Missing orgId'))
+        }
+        socket.data.orgId = orgId
         next()
     })
     cliNs.on('connection', (socket) => registerCliHandlers(socket, {
@@ -95,6 +124,7 @@ export function createSocketServer(deps: SocketServerDeps): {
     eventsNs.use(async (socket, next) => {
         const auth = socket.handshake.auth as Record<string, unknown> | undefined
         const token = typeof auth?.token === 'string' ? auth.token : null
+        const requestedOrgId = typeof auth?.orgId === 'string' ? auth.orgId : null
         if (!token) {
             return next(new Error('Missing token'))
         }
@@ -103,19 +133,24 @@ export function createSocketServer(deps: SocketServerDeps): {
             // Verify Keycloak JWT token
             const payload = await verifyKeycloakToken(token)
             const user = extractUserFromToken(payload)
+            const authorizedOrgId = await authorizeEventsSocketOrg(deps.store, {
+                email: user.email,
+                role: user.role,
+            }, requestedOrgId)
             socket.data.userId = user.sub
-            socket.data.namespace = 'default'  // All Keycloak users share the same namespace
+            socket.data.orgId = authorizedOrgId
             next()
             return
-        } catch {
-            return next(new Error('Invalid token'))
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Invalid token'
+            return next(new Error(message))
         }
     })
 
     eventsNs.on('connection', (socket) => {
-        const namespace = socket.data.namespace
-        if (namespace) {
-            socket.join(`namespace:${namespace}`)
+        const orgId = socket.data.orgId
+        if (orgId) {
+            socket.join(`org:${orgId}`)
         }
     })
 

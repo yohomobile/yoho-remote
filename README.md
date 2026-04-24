@@ -2,7 +2,7 @@
 
 Yoho Remote means "哈皮," a Chinese transliteration of [Happy](https://github.com/slopus/happy). Great credit to the original project.
 
-Run Claude Code / Codex / Gemini sessions locally and control them remotely through a Web / PWA / Telegram Mini App.
+Run Claude Code / Codex / Gemini sessions locally and control them remotely through a Web / PWA app.
 
 > **Why Yoho Remote?** Yoho Remote is a local-first alternative to Happy. See [Why Not Happy?](docs/WHY_NOT_HAPPY.md) for the key differences.
 

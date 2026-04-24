@@ -2,10 +2,10 @@
 
 ## Project Overview
 
-Yoho Remote CLI (`hapi`) is a command-line tool that wraps Claude Code to enable remote control and session sharing via `yoho-remote-server` (Telegram Bot + Mini App). It's part of a two-component system:
+Yoho Remote CLI (`hapi`) is a command-line tool that wraps Claude Code to enable remote control and session sharing via `yoho-remote-server` (web UI + realtime sync). It's part of a two-component system:
 
 1. **yoho-remote** (this project) - CLI wrapper for Claude Code
-2. **yoho-remote-server** - Public server (Socket.IO + REST + PostgreSQL) + Telegram Mini App
+2. **yoho-remote-server** - Public server (Socket.IO + REST + PostgreSQL) + web app
 
 ## Code Style Preferences
 
@@ -102,7 +102,7 @@ User interface components.
    - Create/load session via `POST /cli/sessions` → Establish Socket.IO `/cli` connection
 
 3. **Message Flow**:
-   - Local mode: terminal/SDK → Yoho Remote CLI → yoho-remote-server → Telegram Mini App
+   - Local mode: terminal/SDK → Yoho Remote CLI → yoho-remote-server → web app
 
 4. **Permission Handling**:
    - Claude requests permission → Yoho Remote CLI exposes RPC handlers → Mini App calls REST → yoho-remote-server relays RPC to Yoho Remote CLI

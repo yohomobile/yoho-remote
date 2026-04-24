@@ -51,14 +51,14 @@
 │ │ sync/syncEngine.ts (SyncEngine)                              │   │
 │ │ - 统一会话管理（Claude + Codex）                             │   │
 │ │ - 生成 SyncEvent (统一事件抽象)                               │   │
-│ │ - 发布事件给订阅者（Web, SSE, Telegram 等）                   │   │
+│ │ - 发布事件给订阅者（Web, SSE, Brain 等）                      │   │
 │ └──────────────────────────────────────────────────────────────┘   │
 │         ↓                                                            │
 │ ┌──────────────────────────────────────────────────────────────┐   │
 │ │ 事件订阅者:                                                  │   │
 │ │ - SSEManager (→ 前端 /stream/sessions/:id)                  │   │
 │ │ - BrainBridge (→ Yoho Memory/AI Profile 系统)               │   │
-│ │ - Telegram Bot (→ 飞书/Telegram 消息)                       │   │
+│ │ - 外部通知通道 (→ 飞书/浏览器通知)                           │   │
 │ │ - Web API 路由 (→ REST 响应)                                │   │
 │ └──────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
@@ -310,11 +310,10 @@ export type Metadata = {
 1. **原始层** (Codex): ExecEvent JSONL 流 (thread_id)
 2. **转换层** (CLI): ExecEvent → CodexMessage → Socket.IO
 3. **统一层** (Server): DecryptedMessage (Claude 格式) + SyncEvent
-4. **发布层** (Server): SSE, Telegram, Brain, Web API
+4. **发布层** (Server): SSE, Brain, Web API, notifications
 
 **关键设计**：
 - 统一的 SyncEvent 抽象使 Claude 和 Codex 对上层透明
 - Flavor 和权限模式绑定
 - 乐观并发控制保证一致性
 - 完整元数据支持 session 恢复
-

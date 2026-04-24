@@ -4,6 +4,12 @@ import type { Machine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
 import { createMachinesRoutes } from './machines'
 
+const TEST_ORGS = [{
+    id: 'org-a',
+    name: 'Org A',
+    role: 'owner' as const,
+}]
+
 function createMachine(overrides: Partial<Machine>): Machine {
     return {
         id: 'machine-default',
@@ -23,7 +29,7 @@ function createMachine(overrides: Partial<Machine>): Machine {
             status: 'offline',
         },
         daemonStateVersion: 1,
-        orgId: null,
+        orgId: 'org-a',
         supportedAgents: null,
         ...overrides,
     }
@@ -67,14 +73,15 @@ describe('createMachinesRoutes', () => {
             getMachinesByNamespace: () => [offlineMachine, onlineMachine],
         }
 
-        const app = new Hono<{ Variables: { namespace: string } }>()
+        const app = new Hono<WebAppEnv>()
         app.use('*', async (c, next) => {
             c.set('namespace', 'default')
+            c.set('orgs', TEST_ORGS)
             await next()
         })
         app.route('/api', createMachinesRoutes(() => fakeEngine as any, {} as any))
 
-        const response = await app.request('/api/machines')
+        const response = await app.request('/api/machines?orgId=org-a')
         expect(response.status).toBe(200)
 
         const payload = await response.json() as { machines: Array<Record<string, any>> }
@@ -90,6 +97,25 @@ describe('createMachinesRoutes', () => {
             platform: 'darwin',
             arch: 'arm64',
         })
+    })
+
+    it('allows operator users to query machines for orgs they are not explicitly a member of', async () => {
+        const fakeEngine = {
+            getMachinesByNamespace: () => [createMachine({ id: 'machine-1', active: true })],
+        }
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            c.set('role', 'operator')
+            c.set('orgs', [])
+            await next()
+        })
+        app.route('/api', createMachinesRoutes(() => fakeEngine as any, {} as any))
+
+        const response = await app.request('/api/machines?orgId=org-a')
+
+        expect(response.status).toBe(200)
     })
 
     it('patches resolved identity context after machine spawn', async () => {
@@ -127,6 +153,15 @@ describe('createMachinesRoutes', () => {
         }
 
         const fakeStore = {
+            getOrganization: async () => ({
+                id: 'org-a',
+                name: 'Org A',
+                slug: 'org-a',
+                createdBy: 'owner@example.com',
+                createdAt: 1,
+                updatedAt: 1,
+                settings: {},
+            }),
             setSessionCreatedBy: async () => true,
             setSessionOrgId: async () => true,
         } as any
@@ -137,7 +172,7 @@ describe('createMachinesRoutes', () => {
             c.set('role', 'developer')
             c.set('email', 'dev@example.com')
             c.set('name', 'Dev')
-            c.set('orgs', [])
+            c.set('orgs', TEST_ORGS)
             c.set('identityActor', {
                 identityId: 'identity-1',
                 personId: 'person-1',
@@ -152,7 +187,7 @@ describe('createMachinesRoutes', () => {
         })
         app.route('/api', createMachinesRoutes(() => fakeEngine as any, fakeStore))
 
-        const response = await app.request('/api/machines/machine-1/spawn', {
+        const response = await app.request('/api/machines/machine-1/spawn?orgId=org-a', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
@@ -185,6 +220,47 @@ describe('createMachinesRoutes', () => {
                 },
             },
         })
+    })
+
+    it('rejects spawning on a machine that belongs to a different org than the request', async () => {
+        let spawnCalled = false
+        const machine = createMachine({
+            id: 'machine-1',
+            active: true,
+            orgId: 'org-b',
+        })
+        const fakeEngine = {
+            getMachine: () => machine,
+            spawnSession: async () => {
+                spawnCalled = true
+                return { type: 'success', sessionId: 'session-new' }
+            },
+        }
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'default')
+            c.set('role', 'developer')
+            c.set('email', 'dev@example.com')
+            c.set('orgs', [
+                { id: 'org-a', name: 'Org A', role: 'owner' as const },
+                { id: 'org-b', name: 'Org B', role: 'owner' as const },
+            ])
+            await next()
+        })
+        app.route('/api', createMachinesRoutes(() => fakeEngine as any, {} as any))
+
+        const response = await app.request('/api/machines/machine-1/spawn?orgId=org-a', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                directory: '/tmp/project',
+                agent: 'claude',
+            }),
+        })
+
+        expect(response.status).toBe(403)
+        expect(spawnCalled).toBe(false)
     })
 
 })

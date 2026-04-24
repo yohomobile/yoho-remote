@@ -518,4 +518,84 @@ describe('ApiClient.brainSpawnSession', () => {
             })
         )
     })
+
+    it('posts to the CLI worker schedule create endpoint', async () => {
+        const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({
+            data: { scheduleId: 'sched-1', nextFireAt: null, status: 'registered' },
+        } as any)
+
+        const client = Object.create(ApiClient.prototype) as ApiClient
+        ;(client as any).token = 'test-token'
+
+        const result = await client.scheduleTask('session-1', {
+            cronOrDelay: '0 9 * * 1',
+            prompt: 'run report',
+            directory: '/tmp/project',
+            recurring: true,
+            agent: 'claude',
+        })
+
+        expect(result).toEqual({ scheduleId: 'sched-1', nextFireAt: null, status: 'registered' })
+        expect(postSpy).toHaveBeenCalledWith(
+            expect.stringContaining('/cli/worker/schedules?sessionId=session-1'),
+            expect.objectContaining({
+                cronOrDelay: '0 9 * * 1',
+                prompt: 'run report',
+                directory: '/tmp/project',
+                recurring: true,
+                agent: 'claude',
+            }),
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer test-token',
+                    'Content-Type': 'application/json',
+                }),
+            })
+        )
+    })
+
+    it('gets the CLI worker schedule list endpoint', async () => {
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({
+            data: { schedules: [] },
+        } as any)
+
+        const client = Object.create(ApiClient.prototype) as ApiClient
+        ;(client as any).token = 'test-token'
+
+        const result = await client.listSchedules('session-1', { includeDisabled: true })
+
+        expect(result).toEqual({ schedules: [] })
+        expect(getSpy).toHaveBeenCalledWith(
+            expect.stringContaining('/cli/worker/schedules?sessionId=session-1&includeDisabled=true'),
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer test-token',
+                    'Content-Type': 'application/json',
+                }),
+            })
+        )
+    })
+
+    it('posts to the CLI worker schedule cancel endpoint', async () => {
+        const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({
+            data: { ok: true },
+        } as any)
+
+        const client = Object.create(ApiClient.prototype) as ApiClient
+        ;(client as any).token = 'test-token'
+
+        const result = await client.cancelSchedule('session-1', 'sched-1')
+
+        expect(result).toEqual({ ok: true })
+        expect(postSpy).toHaveBeenCalledWith(
+            expect.stringContaining('/cli/worker/schedules/sched-1/cancel?sessionId=session-1'),
+            {},
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer test-token',
+                    'Content-Type': 'application/json',
+                }),
+            })
+        )
+    })
 })

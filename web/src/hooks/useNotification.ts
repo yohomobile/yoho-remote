@@ -1,7 +1,6 @@
 import { createElement, useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { getPlatform } from './usePlatform'
-import { getTelegramWebApp } from './useTelegram'
 import { getClientId } from '@/lib/client-identity'
 import type { ApiClient } from '@/api/client'
 
@@ -449,18 +448,13 @@ export function useWebPushSubscription(apiClient: ApiClient | null) {
                 return false
             }
 
-            // 获取 Telegram chatId（如果有的话）
-            const tg = getTelegramWebApp()
-            const chatId = tg?.initDataUnsafe?.user?.id?.toString()
-
             const result = await apiClient.subscribePush({
                 endpoint: subscription.endpoint,
                 keys: {
                     p256dh: arrayBufferToBase64(p256dh),
                     auth: arrayBufferToBase64(auth)
                 },
-                clientId: getClientId(),
-                chatId  // 传入 chatId 用于关联 Web Push 和通知订阅
+                clientId: getClientId()
             })
 
             if (result.ok) {

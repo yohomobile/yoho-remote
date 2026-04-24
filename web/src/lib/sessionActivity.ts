@@ -1,11 +1,15 @@
 import type { Session, SessionSummary } from '@/types/api'
 import type { ArchiveFilter } from '@/lib/session-filters'
+import {
+    isSessionOrchestrationChildSource,
+    isSessionOrchestrationParentSource,
+} from '@/lib/sessionOrchestration'
 
 type SessionWithSource = Pick<Session, 'metadata'> | Pick<SessionSummary, 'metadata'>
 type SessionWithReconnectState = Pick<Session, 'active' | 'reconnecting' | 'metadata'> | Pick<SessionSummary, 'active' | 'reconnecting' | 'metadata'>
 
 export function isBrainChildSession(session: SessionWithSource): boolean {
-    return session.metadata?.source === 'brain-child'
+    return isSessionOrchestrationChildSource(session.metadata?.source)
 }
 
 export function isArchivedSession(session: SessionWithReconnectState): boolean {
@@ -32,7 +36,7 @@ export function matchesArchiveFilter(
 }
 
 export function canQueueMessagesWhenInactive(session: SessionWithSource): boolean {
-    return session.metadata?.source === 'brain'
+    return isSessionOrchestrationParentSource(session.metadata?.source)
 }
 
 export function shouldShowSessionComposer(session: SessionWithSource): boolean {

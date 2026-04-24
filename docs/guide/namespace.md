@@ -1,5 +1,12 @@
 # Namespace (Advanced)
 
+> **Deprecated as of 2026-04-24.** Multi-tenant isolation has moved from the
+> `CLI_API_TOKEN=base:namespace` suffix to the `YOHO_ORG_ID` env var (orgId).
+> New deployments should read [Release Notes — orgId 迁移](./release-notes.md)
+> and [Installation](./installation.md) instead; the server no longer strips
+> `:namespace` from tokens — it rejects them outright. This page is kept for
+> historical context only.
+
 Namespaces are intended for small teams sharing a single public Yoho Remote server. Each team member uses a different namespace to isolate their sessions and machines without running separate servers.
 
 This is not a default setup path for most users.
@@ -23,7 +30,7 @@ CLI_API_TOKEN="your-base-token"
 CLI_API_TOKEN="your-base-token:alice"
 ```
 
-3. Web login and Telegram binding should use the same `base:namespace` token.
+3. Web login and machine/CLI access should use the same `base:namespace` token.
 
 ## Limitations and gotchas
 

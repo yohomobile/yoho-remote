@@ -123,6 +123,18 @@ export async function getTokenSourcesForOrg(store: IStore, orgId: string): Promi
     return parseTokenSources(org.settings?.[TOKEN_SOURCE_SETTINGS_KEY])
 }
 
+export async function pickDefaultTokenSourceForAgent(
+    store: IStore,
+    orgId: string,
+    agent: TokenSourceAgent,
+): Promise<TokenSource | null> {
+    const tokenSources = await getTokenSourcesForOrg(store, orgId)
+    const compatible = tokenSources
+        .filter((tokenSource) => tokenSource.supportedAgents.includes(agent))
+        .sort((a, b) => b.createdAt - a.createdAt)
+    return compatible[0] ?? null
+}
+
 async function saveTokenSourcesForOrg(store: IStore, orgId: string, tokenSources: TokenSource[]): Promise<boolean> {
     const org = await store.getOrganization(orgId)
     if (!org) {

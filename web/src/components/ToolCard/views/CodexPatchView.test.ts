@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { isValidElement, type ReactNode } from 'react'
 
 import type { ToolViewProps } from './_all'
-import { CodexPatchView, shouldRenderCodexPatchEntryTitle } from './CodexPatchView'
+import { CodexPatchCompactView, CodexPatchView, shouldRenderCodexPatchEntryTitle } from './CodexPatchView'
 
 function createProps(result: unknown): ToolViewProps {
     return {
@@ -85,5 +85,52 @@ describe('CodexPatchView', () => {
 
         expect(text).toContain('app.ts')
         expect(text).toContain('utils.ts')
+    })
+
+    test('shows file names in compact preview for multi-file patches without inline diffs', () => {
+        const rendered = CodexPatchCompactView({
+            ...createProps(null),
+            block: {
+                ...createProps(null).block,
+                tool: {
+                    ...createProps(null).block.tool,
+                    input: {
+                        changes: {
+                            '/repo/src/app.ts': { kind: 'update' },
+                            '/repo/src/utils.ts': { kind: 'update' },
+                            '/repo/src/state.ts': { kind: 'update' },
+                            '/repo/src/view.ts': { kind: 'update' }
+                        }
+                    }
+                }
+            }
+        })
+        const text = collectRenderedText(rendered).join('\n')
+        const normalizedText = text.replace(/\s+/g, ' ')
+
+        expect(text).toContain('app.ts')
+        expect(text).toContain('utils.ts')
+        expect(text).toContain('state.ts')
+        expect(normalizedText).toContain('(+ 1 more files)')
+    })
+
+    test('shows the file name in compact preview for a single-file patch without inline diff', () => {
+        const rendered = CodexPatchCompactView({
+            ...createProps(null),
+            block: {
+                ...createProps(null).block,
+                tool: {
+                    ...createProps(null).block.tool,
+                    input: {
+                        changes: {
+                            '/repo/src/app.ts': { kind: 'update' }
+                        }
+                    }
+                }
+            }
+        })
+        const text = collectRenderedText(rendered).join('\n')
+
+        expect(text).toContain('app.ts')
     })
 })

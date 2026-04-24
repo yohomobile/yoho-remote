@@ -55,9 +55,14 @@ export function getNextClaudeModelMode(mode: ModelMode | undefined): typeof MODE
 
 export const CODEX_MODELS = [
     {
+        id: 'gpt-5.5',
+        label: 'gpt-5.5',
+        description: 'Latest frontier agentic coding model.'
+    },
+    {
         id: 'gpt-5.4',
         label: 'gpt-5.4',
-        description: 'Latest frontier agentic coding model.'
+        description: 'Frontier agentic coding model.'
     },
     {
         id: 'gpt-5.4-mini',

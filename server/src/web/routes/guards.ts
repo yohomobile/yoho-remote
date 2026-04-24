@@ -4,6 +4,39 @@ import type { WebAppEnv } from '../middleware/auth'
 import type { IStore } from '../../store'
 import { isMachineBlocked } from './blocklist'
 
+function getAuthorizedOrgIds(c: Context<WebAppEnv>): Set<string> {
+    return new Set((c.get('orgs') ?? []).map((org) => org.id))
+}
+
+function hasOrgAccess(c: Context<WebAppEnv>, orgId: string | null | undefined): orgId is string {
+    if (c.get('role') === 'operator' && typeof orgId === 'string' && orgId.length > 0) {
+        return true
+    }
+    return typeof orgId === 'string' && orgId.length > 0 && getAuthorizedOrgIds(c).has(orgId)
+}
+
+function hasResourceOrgAccess(c: Context<WebAppEnv>, orgId: string | null | undefined): boolean {
+    if (orgId === null || orgId === undefined) {
+        return false
+    }
+    return hasOrgAccess(c, orgId)
+}
+
+export function requireRequestedOrgId(
+    c: Context<WebAppEnv>,
+    options?: { queryName?: string }
+): string | Response {
+    const queryName = options?.queryName ?? 'orgId'
+    const orgId = c.req.query(queryName)?.trim()
+    if (!orgId) {
+        return c.json({ error: 'orgId is required' }, 400)
+    }
+    if (!hasOrgAccess(c, orgId)) {
+        return c.json({ error: 'Organization access denied' }, 403)
+    }
+    return orgId
+}
+
 export function requireSyncEngine(
     c: Context<WebAppEnv>,
     getSyncEngine: () => SyncEngine | null
@@ -21,12 +54,11 @@ export function requireSession(
     sessionId: string,
     options?: { requireActive?: boolean }
 ): Session | Response {
-    const namespace = c.get('namespace')
     const session = engine.getSession(sessionId)
     if (!session) {
         return c.json({ error: 'Session not found' }, 404)
     }
-    if (session.namespace !== namespace) {
+    if (!hasResourceOrgAccess(c, session.orgId)) {
         return c.json({ error: 'Session access denied' }, 403)
     }
     if (options?.requireActive && !session.active) {
@@ -49,7 +81,6 @@ export async function requireSessionWithShareCheck(
     sessionId: string,
     options?: { requireActive?: boolean }
 ): Promise<Session | Response> {
-    const namespace = c.get('namespace')
     const email = c.get('email')
     // Try memory first, then fallback to database (handles sessions not yet loaded into memory)
     const session = await engine.getOrRefreshSession(sessionId)
@@ -58,12 +89,12 @@ export async function requireSessionWithShareCheck(
         return c.json({ error: 'Session not found' }, 404)
     }
 
-    if (session.namespace !== namespace) {
+    if (!hasResourceOrgAccess(c, session.orgId)) {
         return c.json({ error: 'Session access denied' }, 403)
     }
 
-    // 对于 Keycloak 用户（namespace='default'），需要额外的权限检查
-    if (namespace === 'default' && email) {
+    // Web 用户还需要额外的共享权限检查
+    if (email) {
         const createdBy = session.createdBy
 
         // 如果是自己创建的 session 或没有 createdBy，允许访问
@@ -126,16 +157,31 @@ export function requireMachine(
     engine: SyncEngine,
     machineId: string
 ): Machine | Response {
-    const namespace = c.get('namespace')
     const machine = engine.getMachine(machineId)
     if (!machine) {
         return c.json({ error: 'Machine not found' }, 404)
     }
-    if (machine.namespace !== namespace) {
+    if (!hasResourceOrgAccess(c, machine.orgId)) {
         return c.json({ error: 'Machine access denied' }, 403)
     }
     if (isMachineBlocked(machine)) {
         return c.json({ error: 'Machine is temporarily unavailable' }, 403)
+    }
+    return machine
+}
+
+export function requireMachineInOrg(
+    c: Context<WebAppEnv>,
+    engine: SyncEngine,
+    machineId: string,
+    orgId: string
+): Machine | Response {
+    const machine = requireMachine(c, engine, machineId)
+    if (machine instanceof Response) {
+        return machine
+    }
+    if (machine.orgId !== orgId) {
+        return c.json({ error: 'Machine access denied' }, 403)
     }
     return machine
 }

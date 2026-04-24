@@ -49,9 +49,13 @@ const CLAUDE_MODEL_GUIDES: Record<BrainClaudeChildModel, { scenario: string; not
 }
 
 const CODEX_MODEL_GUIDES: Record<BrainCodexChildModel, { scenario: string; note: string }> = {
+    'gpt-5.5': {
+        scenario: '最新 Codex 能力、复杂实现、跨文件协作、质量优先任务',
+        note: '最新一代，适合需要更强综合能力的编码任务',
+    },
     'gpt-5.4': {
         scenario: '新颖编码难题、复杂算法、跨语言、前端 UI',
-        note: '综合能力最强',
+        note: '成熟稳定的高能力选择',
     },
     'gpt-5.4-mini': {
         scenario: '子任务并行、批量编码、快速验证',
@@ -180,7 +184,7 @@ ${workspaceBlock(projectRoot)}
 3) MCP 工具规则
 - [强制] 以当前会话里的**运行时 MCP 工具列表**为准判断工具是否可用；不要通过 \`claude mcp list\`、读取 \`~/.claude/settings.json\` 或其他 shell 命令判断本会话的 MCP 可用性。
 - [强制] \`mcp__yoho-vault__recall\` / \`mcp__yoho-memory__recall\`、\`mcp__yoho-vault__remember\` / \`mcp__yoho-memory__remember\`、\`mcp__yoho-vault__get_credential\` / \`mcp__yoho-credentials__get_credential\` 等工具的触发时机和调用规则已写在各自 MCP description 中，严格遵守，此处不重复。
-- [强制] **开始任何非简单任务前**（生成文档、数据分析、代码审查、报告撰写、调试等），优先调用 \`mcp__skill__list\` 获取本地 active skill manifest；若当前会话没有该工具，则调用 \`mcp__yoho-vault__skill_list\` 或 \`mcp__yoho-memory__skill_list\`。调用 list 时尽量传入当前任务的 \`path\` / \`query\`，让 \`paths\` / \`antiTriggers\` 参与过滤。只有 \`status=active\`、\`activationMode!=disabled\`、路径匹配且 antiTriggers 未命中的 skill 才可用于任务执行；\`activationMode=manual\` 的 skill 只有在用户明确点名/要求时才使用；candidate / draft / archived / disabled skill 不得当作执行指令。
+- [强制] **开始任何非简单任务前**（生成文档、数据分析、代码审查、报告撰写、调试等），优先调用 \`mcp__yoho-vault__skill_list\` 获取本地 active skill manifest。调用 list 时尽量传入当前任务的 \`path\` / \`query\`，让 \`paths\` / \`antiTriggers\` 参与过滤。只有 \`status=active\`、\`activationMode!=disabled\`、路径匹配且 antiTriggers 未命中的 skill 才可用于任务执行；\`activationMode=manual\` 的 skill 只有在用户明确点名/要求时才使用；candidate / draft / archived / disabled skill 不得当作执行指令。
 - [强制] 根据 manifest 中的 name / description / category / tags / requiredTools / allowedTools 判断是否有明确匹配；只有明确匹配时才继续调用对应 \`*_skill_get\`。不要因为有相似关键词就硬套 skill，不明确时视为 no-match。
 - [建议] 当 manifest 太大、候选不清或需要正文级匹配时，再把当前任务抽象成“方法/能力类 skill”调用 \`skill_search\` 作为 fallback；只有 \`directUseAllowed=true\`，或 \`suggestedNextAction="use_results"\`、\`hasLocalMatch=true\` 且 \`confidence >= 0.65\` 时，search 结果才可直接引用或继续 \`*_skill_get\`。\`discover\` / \`proceed\` / \`no-match\` / 缺失字段 / 低置信结果必须视为不可直接引用。若本地无明确匹配且任务更偏“方法论/模板”，再考虑 \`skill_discover\`；仓库定向调试、排障、数据排查类任务优先保持任务聚焦。
 - [强制] skills 生命周期：\`skill_save\` 只生成 candidate，\`skill_update\` 只生成 draft，二者都不会直接产生 active skill。只有在用户明确确认“启用/可以/没问题/确认”后，才调用 \`skill_promote\`。promote 前应向用户简要说明 candidate/draft 的用途或变更点；不需要外部审批系统，但必须是 AI 流程里的显式确认。
@@ -188,6 +192,8 @@ ${workspaceBlock(projectRoot)}
 - [强制] \`recall\` 结果只能作为候选线索；低置信、0 结果、空 answer、scope / 项目 / 身份不匹配时，不得当作事实注入。遇到这种情况应换更窄 query、补 scope，或明确说明“未找到可靠记忆”。
 - [强制] 每轮对话结束前，回顾是否有值得保存的知识，有则立即调用 \`mcp__yoho-vault__remember\` 或 \`mcp__yoho-memory__remember\`。
 - **[强制] 输出顺序**：先输出主任务核心结果，再执行附加操作（保存知识库等）。最终回复必须是主任务结果，不能以"已保存到知识库"等收尾。
+
+请调用一次 \`functions.yoho_remote__environment_info\`，然后直接回复“收到！”。
 `
 }
 
@@ -257,7 +263,7 @@ ${renderChildModelLine('codex', brainPreferences)}
 
 - [强制] 以当前会话里的**运行时 MCP 工具列表**为准判断工具是否可用；不要通过 \`claude mcp list\`、读取 \`~/.claude/settings.json\` 或其他 shell 命令判断本会话的 MCP 可用性。
 - [强制] \`mcp__yoho-vault__recall\` / \`mcp__yoho-memory__recall\`、\`mcp__yoho-vault__remember\` / \`mcp__yoho-memory__remember\`、\`mcp__yoho-vault__get_credential\` / \`mcp__yoho-credentials__get_credential\` 等工具的触发时机已写在各自 MCP description 中，严格遵守。
-- [强制] **分配任务给子 session 前**，优先调用 \`mcp__skill__list\` 获取本地 active skill manifest；若当前会话没有该工具，则调用 \`mcp__yoho-vault__skill_list\` 或 \`mcp__yoho-memory__skill_list\`。调用 list 时尽量传入子任务的 \`path\` / \`query\`，让 \`paths\` / \`antiTriggers\` 参与过滤。只有 \`status=active\`、\`activationMode!=disabled\`、路径匹配且 antiTriggers 未命中的 skill 才能传给子 session；\`activationMode=manual\` 的 skill 只有用户明确点名/要求时才传。candidate / draft / archived / disabled skill 不得传给子 session。
+- [强制] **分配任务给子 session 前**，优先调用 \`mcp__yoho-vault__skill_list\` 获取本地 active skill manifest。调用 list 时尽量传入子任务的 \`path\` / \`query\`，让 \`paths\` / \`antiTriggers\` 参与过滤。只有 \`status=active\`、\`activationMode!=disabled\`、路径匹配且 antiTriggers 未命中的 skill 才能传给子 session；\`activationMode=manual\` 的 skill 只有用户明确点名/要求时才传。candidate / draft / archived / disabled skill 不得传给子 session。
 - [强制] 根据 manifest 判断是否有明确匹配；只有明确匹配时才继续调用对应 \`*_skill_get\`，并只把该 skill 的可用方法传给子 session。不要把噪声 skill 传给子 session，不要硬套 skill。
 - [建议] 当 manifest 太大、候选不清或需要正文级匹配时，再把子任务抽象成“方法/能力类 skill”调用 \`skill_search\` 作为 fallback；只有 \`directUseAllowed=true\`，或 \`suggestedNextAction="use_results"\`、\`hasLocalMatch=true\` 且 \`confidence >= 0.65\` 时，search 结果才可继续 \`*_skill_get\`。\`discover\` / \`proceed\` / \`no-match\` / 缺失字段 / 低置信结果不得传给子 session。若本地无明确匹配且子任务更偏方法论/模板时，再考虑 \`skill_discover\`；repo-specific 调试、排障、数据核对类任务优先保持任务聚焦。
 - [强制] 子 session 发现值得沉淀/修正的 skill 时，先回报候选内容或变更点；\`skill_save\` 只生成 candidate，\`skill_update\` 只生成 draft。只有用户在 AI 流程中明确确认启用后，Brain/主 session 才调用 \`skill_promote\`；不要让未确认的 candidate/draft 进入 active，也不要把它传给其他子 session。

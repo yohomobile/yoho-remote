@@ -31,7 +31,7 @@ function buildPathEnv(homeDir: string): string {
 }
 
 /**
- * Returns the MCP server config for yoho-vault (unified memory + credentials, org-isolated).
+ * Returns the MCP server config for yoho-vault (unified memory + credentials + skills, org-isolated).
  *
  * Yoho Memory is intentionally pinned to /home/workspaces/tools/yoho-memory.
  */
@@ -50,7 +50,6 @@ export async function getYohoAuxMcpServers(flavor: 'claude' | 'codex', options?:
     const serverName = flavor === 'codex' ? 'yoho_vault' : 'yoho-vault';
 
     const vaultLocalPath = join(YOHO_MEMORY_REPO_ROOT, 'src/mcp/stdio.ts');
-    const skillLocalPath = join(YOHO_MEMORY_REPO_ROOT, 'src/mcp/skill-stdio.ts');
 
     const result: Record<string, YohoMcpServerConfig> = {};
 
@@ -61,14 +60,6 @@ export async function getYohoAuxMcpServers(flavor: 'claude' | 'codex', options?:
             cwd: YOHO_MEMORY_REPO_ROOT,
             env,
         };
-        if (existsSync(skillLocalPath)) {
-            result['skill'] = {
-                command: 'bun',
-                args: ['run', skillLocalPath],
-                cwd: YOHO_MEMORY_REPO_ROOT,
-                env,
-            };
-        }
     }
 
     return result;

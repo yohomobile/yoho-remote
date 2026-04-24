@@ -1,6 +1,10 @@
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import { renderEventLabel } from '@/chat/presentation'
 import type { NormalizedAgentContent, NormalizedMessage } from '@/chat/types'
+import {
+    getSessionOrchestrationLabels,
+    getSessionOrchestrationParentSessionId,
+} from '@/lib/sessionOrchestration'
 import type { DecryptedMessage, Session } from '@/types/api'
 
 export type BrainChildPageActionState = {
@@ -10,21 +14,25 @@ export type BrainChildPageActionState = {
 }
 
 export function getBrainChildPageInactiveHint(args: {
+    childSource?: string | null
     resumeError: boolean
     hasMainSessionId: boolean
     hasMessages: boolean
 }): string {
+    const labels = getSessionOrchestrationLabels(args.childSource)
+    const parentSessionLabel = labels?.parentSessionLabel ?? '主编排 Session'
+    const childSessionLabel = labels?.childSessionLabel ?? '子任务'
     const actionHint = args.hasMainSessionId
-        ? '此页不接受直接发消息；可使用上方操作条返回主 Brain、恢复或查看最近片段。'
+        ? `此页不接受直接发消息；可使用上方操作条返回${parentSessionLabel}、恢复或查看最近片段。`
         : '此页不接受直接发消息；可使用上方操作条恢复或查看最近片段。'
 
     if (args.resumeError) {
         return `恢复失败。${actionHint}`
     }
     if (!args.hasMessages) {
-        return `正在等待子任务启动。${actionHint}`
+        return `正在等待${childSessionLabel}启动。${actionHint}`
     }
-    return `子任务当前未运行。${actionHint}`
+    return `${childSessionLabel}当前未运行。${actionHint}`
 }
 
 export type BrainChildTailPreviewItem = {
@@ -200,9 +208,7 @@ function normalizedMessageToPreviewItems(message: NormalizedMessage): BrainChild
 export function deriveBrainChildPageActionState(
     session: Pick<Session, 'active' | 'thinking' | 'metadata'>,
 ): BrainChildPageActionState {
-    const mainSessionId = typeof session.metadata?.mainSessionId === 'string' && session.metadata.mainSessionId.trim().length > 0
-        ? session.metadata.mainSessionId
-        : null
+    const mainSessionId = getSessionOrchestrationParentSessionId(session.metadata) ?? null
 
     return {
         mainSessionId,

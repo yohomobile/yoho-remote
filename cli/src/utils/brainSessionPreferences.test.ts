@@ -29,7 +29,7 @@ describe('brainSessionPreferences', () => {
             machineSelection: { mode: 'auto', machineId: 'machine-2' },
             childModels: {
                 claude: { allowed: [], defaultModel: 'sonnet' },
-                codex: { allowed: ['gpt-5.4'], defaultModel: 'gpt-5.4' },
+                codex: { allowed: ['gpt-5.5'], defaultModel: 'gpt-5.5' },
             },
         })
 

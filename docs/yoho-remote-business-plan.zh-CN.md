@@ -466,7 +466,7 @@ Yoho Remote / K1 最有价值的方向，不是做一个更会聊天的 AI，而
 
 以下能力可从当前仓库中直接确认：
 
-- Yoho Remote 已支持本地运行 AI 会话，并通过 Web / PWA / Telegram 远程控制。
+- Yoho Remote 已支持本地运行 AI 会话，并通过 Web / PWA 远程控制。
 - 已支持 Claude Code、Codex、Gemini 等多后端。
 - 已具备 MCP bridge 能力。
 - 已有凭证系统接入和凭证目录/读取能力。

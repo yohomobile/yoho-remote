@@ -31,8 +31,8 @@ Yoho Remote consists of three interconnected components that work together to pr
 │         │                         ▼                         │              │
 │         │    ┌──────────────┐           ┌──────────────┐    │              │
 │         │    │              │           │              │    │              │
-│         │    │  Telegram    │           │    PWA /     │    │              │
-│         │    │  Mini App    │           │   Browser    │    │              │
+│         │    │  Web Push    │           │    PWA /     │    │              │
+│         │    │ / Background │           │   Browser    │    │              │
 │         │    │              │           │              │    │              │
 │         │    └──────────────┘           └──────────────┘    │              │
 │         │                                                   │              │
@@ -68,7 +68,7 @@ The server is the central hub that connects everything:
 - **Socket.IO** - Real-time bidirectional communication with CLI
 - **SSE (Server-Sent Events)** - Live updates pushed to web clients
 - **PostgreSQL Database** - Persistent storage for sessions and messages
-- **Telegram Bot** - Notifications and Mini App integration
+- **Web Push** - Optional browser notification delivery
 
 ### Web App
 
@@ -112,13 +112,13 @@ A React-based PWA that provides the mobile interface:
 2. CLI sends permission request to server
          │
          ▼
-3. Server stores request and notifies via SSE + Telegram
+3. Server stores request and notifies via SSE + Web Push
          │
          ▼
 4. User receives notification on phone
          │
          ▼
-5. User approves/denies in web app or Telegram
+5. User approves/denies in the web app
          │
          ▼
 6. Server relays decision to CLI via Socket.IO

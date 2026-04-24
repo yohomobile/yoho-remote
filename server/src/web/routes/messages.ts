@@ -5,6 +5,7 @@ import type { IStore } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
 import { requireSessionFromParamWithShareCheck, requireSyncEngine } from './guards'
 import { mergeMessageMeta } from '../identityContext'
+import { isSessionOrchestrationParentSource } from '../../sessionOrchestrationPolicy'
 
 const querySchema = z.object({
     limit: z.coerce.number().int().min(1).max(200).optional(),
@@ -72,7 +73,7 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null, sto
         }
 
         const sentFrom = parsed.data.sentFrom || 'webapp'
-        const isBrainSession = session.metadata?.source === 'brain'
+        const isBrainSession = isSessionOrchestrationParentSource(session.metadata?.source)
         if (!session.active && !isBrainSession) {
             return c.json({ error: 'Session is inactive' }, 409)
         }
@@ -90,7 +91,7 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null, sto
         const outcome = await engine.sendMessage(sessionId, {
             text: parsed.data.text,
             localId: parsed.data.localId,
-            sentFrom: sentFrom as 'webapp' | 'telegram-bot',
+            sentFrom: sentFrom as 'webapp',
             meta: mergeMessageMeta(c.get('identityActor'), baseMeta),
         })
 
