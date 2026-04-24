@@ -320,9 +320,9 @@ export async function resolveSessionSelfSystemContext(
 ): Promise<BrainSelfSystemContext> {
     const fetchImpl = options.fetchImpl ?? fetch
     const yohoMemoryUrl = options.yohoMemoryUrl ?? DEFAULT_YOHO_MEMORY_URL
-    const getAIProfile = (options.store as IStore & { getAIProfile?: IStore['getAIProfile'] }).getAIProfile
+    const storeWithProfile = options.store as IStore & { getAIProfile?: IStore['getAIProfile'] }
 
-    if (typeof getAIProfile !== 'function') {
+    if (typeof storeWithProfile.getAIProfile !== 'function') {
         return buildContextWithConfig(DEFAULT_SELF_SYSTEM_CONFIG, 'disabled')
     }
 
@@ -333,7 +333,7 @@ export async function resolveSessionSelfSystemContext(
     }
 
     const orgId = cleanOptionalString(options.orgId)
-    const profile = await getAIProfile(config.defaultProfileId)
+    const profile = await storeWithProfile.getAIProfile(config.defaultProfileId)
     if (!profile || !matchesProfileScope(profile, orgId)) {
         return emptyContext
     }

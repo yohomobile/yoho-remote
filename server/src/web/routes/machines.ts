@@ -61,14 +61,18 @@ async function sendInitPrompt(
         let prompt = await buildInitPrompt(role, { projectRoot, userName, worktree })
 
         if (session) {
-            const selfSystem = await resolveSessionSelfSystemContext({
-                store,
-                orgId: orgId ?? null,
-                userEmail: userEmail ?? null,
-            })
-            prompt = appendSelfSystemPrompt(prompt, selfSystem.prompt)
-            if (typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
-                await engine.patchSessionMetadata(sessionId, selfSystem.metadataPatch)
+            try {
+                const selfSystem = await resolveSessionSelfSystemContext({
+                    store,
+                    orgId: orgId ?? null,
+                    userEmail: userEmail ?? null,
+                })
+                prompt = appendSelfSystemPrompt(prompt, selfSystem.prompt)
+                if (typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
+                    await engine.patchSessionMetadata(sessionId, selfSystem.metadataPatch)
+                }
+            } catch (selfErr) {
+                console.error(`[machines/sendInitPrompt] Self-system resolution failed for session ${sessionId}, continuing with base prompt:`, selfErr)
             }
         }
 

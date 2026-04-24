@@ -173,12 +173,13 @@ function makeMockStore(p: Pool) {
                 machineId: TEST_MACHINE_ID,
                 path: TEST_DIRECTORY,
                 name: 'TestProject',
-                orgId: null,
+                orgId: TEST_NAMESPACE,
             },
         ],
         getMachine: async (_id: string) => ({
             id: TEST_MACHINE_ID,
             namespace: TEST_NAMESPACE,
+            orgId: TEST_NAMESPACE,
         }),
         // cast target for (store as PostgresStore).getPool()
         getPool: () => p,

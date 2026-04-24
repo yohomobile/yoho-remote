@@ -445,8 +445,75 @@ export function SessionHeader(props: {
         return null
     }
 
+    const isAutomationSession = props.session.metadata?.source === 'worker-ai-task'
+    const takeoverBy = props.session.metadata?.takeoverBy
+    const automationSystemPrompt = props.session.metadata?.automationSystemPrompt
+    const scheduleLabel = props.session.metadata?.label
+    const scheduleOwner = props.session.metadata?.ownerEmail
+
+    const takeoverMutation = useMutation({
+        mutationFn: async (end: boolean) => {
+            return await api.takeoverSession(props.session.id, end ? { end: true } : undefined)
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+            queryClient.invalidateQueries({ queryKey: ['session', props.session.id] })
+        },
+    })
+
     return (
         <div className="bg-[var(--app-bg)] border-b border-[var(--app-divider)] pt-[env(safe-area-inset-top)]">
+            {isAutomationSession && (
+                <div className="mx-auto w-full max-w-content px-3 py-2 bg-purple-500/5 border-b border-purple-500/20 text-[11px]">
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-purple-700">🤖 Automation Session</span>
+                        {scheduleLabel && (
+                            <span className="text-[var(--app-fg)]">{scheduleLabel}</span>
+                        )}
+                        {scheduleOwner && (
+                            <span className="text-[var(--app-hint)]">owner: {scheduleOwner}</span>
+                        )}
+                        <button
+                            type="button"
+                            onClick={() => navigate({ to: '/automation' })}
+                            className="ml-auto text-purple-700 underline hover:text-purple-800"
+                        >
+                            View Schedule →
+                        </button>
+                        {takeoverBy ? (
+                            <button
+                                type="button"
+                                onClick={() => takeoverMutation.mutate(true)}
+                                disabled={takeoverMutation.isPending}
+                                className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-700 hover:bg-amber-500/25"
+                                title={`Taken over by ${takeoverBy}`}
+                            >
+                                End Takeover
+                            </button>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => takeoverMutation.mutate(false)}
+                                disabled={takeoverMutation.isPending}
+                                className="px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-700 hover:bg-indigo-500/25"
+                                title="Pause automation flow and chat interactively"
+                            >
+                                Takeover & Chat
+                            </button>
+                        )}
+                    </div>
+                    {automationSystemPrompt && (
+                        <div className="mt-1 text-[var(--app-hint)] italic truncate">
+                            system: {automationSystemPrompt}
+                        </div>
+                    )}
+                    {takeoverBy && (
+                        <div className="mt-1 text-amber-700">
+                            Chatting as {takeoverBy} — Composer is unlocked.
+                        </div>
+                    )}
+                </div>
+            )}
             <div className="mx-auto w-full max-w-content px-3 py-2 flex items-center justify-between gap-2 sm:py-1.5">
                 {/* Left side: Back button + Title + Agent */}
                 <div className="flex min-w-0 flex-1 items-center gap-2">

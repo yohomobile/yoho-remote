@@ -199,7 +199,8 @@ describe('handleAiTask', () => {
         expect(body.agent).toBe('claude')
         expect(body.modelMode).toBe('sonnet')
         expect(body.codexModel).toBeUndefined()
-        expect(body.permissionMode).toBeUndefined()
+        // Worker sessions default to safe-yolo because they run unattended.
+        expect(body.permissionMode).toBe('safe-yolo')
     })
 
     it('codex agent sends correct codexModel and permissionMode in find-or-create body', async () => {
