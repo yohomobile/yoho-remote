@@ -366,7 +366,7 @@ export type PushSubscriptionState = 'unsupported' | 'not-subscribed' | 'subscrib
  * Hook for managing Web Push subscriptions
  * This enables true background push notifications on iOS (16.4+) and other platforms
  */
-export function useWebPushSubscription(apiClient: ApiClient | null) {
+export function useWebPushSubscription(apiClient: ApiClient | null, orgId: string | null | undefined) {
     const [state, setState] = useState<PushSubscriptionState>('unsupported')
     const [isSubscribing, setIsSubscribing] = useState(false)
     const subscribeAttemptedRef = useRef(false)
@@ -395,6 +395,7 @@ export function useWebPushSubscription(apiClient: ApiClient | null) {
     // Auto-subscribe when permission is granted
     useEffect(() => {
         if (!apiClient) return
+        if (!orgId) return
         if (state !== 'not-subscribed') return
         if (subscribeAttemptedRef.current) return
         if (Notification.permission !== 'granted') return
@@ -403,10 +404,14 @@ export function useWebPushSubscription(apiClient: ApiClient | null) {
         subscribeAttemptedRef.current = true
         void subscribe()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [apiClient, state])
+    }, [apiClient, orgId, state])
 
     const subscribe = useCallback(async (): Promise<boolean> => {
         if (!apiClient) return false
+        if (!orgId) {
+            console.log('[webpush] skip subscribe: orgId unavailable')
+            return false
+        }
         if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
             console.log('[webpush] not supported')
             return false

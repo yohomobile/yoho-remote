@@ -171,6 +171,18 @@ function ProfileForm({
             </div>
 
             <div>
+                <label className="block text-xs text-[var(--app-hint)] mb-1">行为准则（每行一条）</label>
+                <textarea
+                    value={formData.behaviorAnchors}
+                    onChange={(e) => setFormData({ ...formData, behaviorAnchors: e.target.value })}
+                    placeholder={"给方案前先列 2-3 个候选路径，标注各自 tradeoff\n不确定时直接说「我不确定」\n遇到「想当然」的前提，先问「这步真的必要吗」"}
+                    className="w-full px-2 py-1.5 text-sm rounded border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] placeholder:text-[var(--app-hint)] focus:outline-none focus:ring-1 focus:ring-[var(--app-button)] resize-none font-mono"
+                    rows={4}
+                    disabled={isPending || readOnly}
+                />
+            </div>
+
+            <div>
                 <label className="block text-xs text-[var(--app-hint)] mb-1">Greeting Template</label>
                 <input
                     type="text"
@@ -271,6 +283,21 @@ function ProfileCard({
                             "{profile.personality}"
                         </div>
                     )}
+                    {profile.behaviorAnchors.length > 0 && (
+                        <div className="mt-1.5 space-y-0.5">
+                            {profile.behaviorAnchors.slice(0, 2).map((anchor, i) => (
+                                <div key={i} className="text-[11px] text-[var(--app-hint)] flex gap-1">
+                                    <span className="shrink-0 opacity-50">·</span>
+                                    <span className="truncate">{anchor}</span>
+                                </div>
+                            ))}
+                            {profile.behaviorAnchors.length > 2 && (
+                                <div className="text-[10px] text-[var(--app-hint)] opacity-50">
+                                    +{profile.behaviorAnchors.length - 2} more
+                                </div>
+                            )}
+                        </div>
+                    )}
                     <div className="flex items-center gap-3 mt-1.5 text-[10px] text-[var(--app-hint)]">
                         <span>{profile.stats.tasksCompleted} tasks</span>
                         <span>{Math.floor(profile.stats.activeMinutes / 60)}h active</span>
@@ -340,6 +367,7 @@ export function AIProfileSettings(props: {
                 name: formData.name,
                 role: formData.role,
                 specialties: formData.specialties.split(',').map(s => s.trim()).filter(Boolean),
+                behaviorAnchors: formData.behaviorAnchors.split('\n').map(s => s.trim()).filter(Boolean),
                 personality: formData.personality || null,
                 greetingTemplate: formData.greetingTemplate || null,
                 preferredProjects: formData.preferredProjects.split(',').map(s => s.trim()).filter(Boolean),
@@ -364,6 +392,7 @@ export function AIProfileSettings(props: {
                 name: formData.name,
                 role: formData.role,
                 specialties: formData.specialties.split(',').map(s => s.trim()).filter(Boolean),
+                behaviorAnchors: formData.behaviorAnchors.split('\n').map(s => s.trim()).filter(Boolean),
                 personality: formData.personality || null,
                 greetingTemplate: formData.greetingTemplate || null,
                 preferredProjects: formData.preferredProjects.split(',').map(s => s.trim()).filter(Boolean),
@@ -424,6 +453,7 @@ export function AIProfileSettings(props: {
         name: profile.name,
         role: profile.role,
         specialties: profile.specialties.join(', '),
+        behaviorAnchors: profile.behaviorAnchors.join('\n'),
         personality: profile.personality ?? '',
         greetingTemplate: profile.greetingTemplate ?? '',
         preferredProjects: profile.preferredProjects.join(', '),
