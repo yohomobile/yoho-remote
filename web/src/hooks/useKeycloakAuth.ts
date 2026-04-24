@@ -133,66 +133,39 @@ export function useKeycloakAuth(baseUrl: string): UseKeycloakAuthResult {
         }
     }, [baseUrl])
 
-    // Auto-refresh token before expiry
+    // Sync local token state with whatever is currently in tokenStorage.
+    //
+    // The Provider (KeycloakAuthProvider) owns proactive refresh scheduling;
+    // we deliberately do NOT schedule refreshes here. Instead we watch the
+    // sync cache via visibilitychange/focus and pull the latest access token
+    // if it has changed underneath us. The `onUnauthorized` path still handles
+    // 401 recovery at request time.
     useEffect(() => {
         if (!token) return
 
-        const expiresAt = keycloak.getExpiresAtSync()
-        if (!expiresAt) return
-
-        let isCancelled = false
-        let timeout: ReturnType<typeof setTimeout> | null = null
-
-        const scheduleRefresh = () => {
-            const now = Date.now()
-            const timeUntilExpiry = expiresAt - now
-            // Refresh 60 seconds before expiry
-            const refreshIn = Math.max(0, timeUntilExpiry - 60_000)
-
-            timeout = setTimeout(async () => {
-                if (isCancelled) return
-                await refreshAuth()
-                // Schedule next refresh if still valid
-                if (!isCancelled && tokenRef.current) {
-                    scheduleRefresh()
-                }
-            }, refreshIn)
-        }
-
-        scheduleRefresh()
-
-        return () => {
-            isCancelled = true
-            if (timeout) clearTimeout(timeout)
-        }
-    }, [token, refreshAuth])
-
-    // Refresh on visibility change (tab becomes visible)
-    useEffect(() => {
-        if (!token) return
-
-        const handleVisibilityChange = async () => {
-            if (document.visibilityState === 'visible') {
-                // Check if token is expired or close to expiry
-                if (keycloak.isTokenExpiredSync()) {
-                    void refreshAuth()
-                } else {
-                    const expiresAt = keycloak.getExpiresAtSync()
-                    if (expiresAt && Date.now() >= expiresAt - 5 * 60 * 1000) {
-                        void refreshAuth()
-                    }
-                }
+        const syncFromCache = () => {
+            const latest = keycloak.getAccessTokenSync()
+            if (latest && latest !== tokenRef.current) {
+                tokenRef.current = latest
+                setToken(latest)
+                setUser(keycloak.getCurrentUserSync())
             }
         }
 
-        window.addEventListener('focus', handleVisibilityChange)
+        const handleVisibilityChange = () => {
+            if (document.visibilityState !== 'visible') return
+            syncFromCache()
+        }
+        const handleFocus = () => syncFromCache()
+
+        window.addEventListener('focus', handleFocus)
         document.addEventListener('visibilitychange', handleVisibilityChange)
 
         return () => {
-            window.removeEventListener('focus', handleVisibilityChange)
+            window.removeEventListener('focus', handleFocus)
             document.removeEventListener('visibilitychange', handleVisibilityChange)
         }
-    }, [token, refreshAuth])
+    }, [token])
 
     // Create API client with auto-refresh capability
     const api = useMemo(() => {

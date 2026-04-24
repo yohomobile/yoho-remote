@@ -159,14 +159,19 @@ export {
 
 /**
  * Ensure we have a valid token, refresh if needed
+ *
+ * `tokenStorage.saveTokens` already subtracts a 60s buffer from the real Keycloak
+ * exp, so `expiresAt` here is already "real_exp - 60s". We only pre-refresh when
+ * we're within the final 30s of that stored expiry (i.e. ~30s before the real
+ * Keycloak exp). Any earlier window would refresh immediately after every
+ * refresh for Keycloak's default 5-minute access token lifespan.
  */
 export async function ensureValidToken(baseUrl: string): Promise<string | null> {
     const token = await tokenStorage.getAccessToken()
     if (!token) return null
 
-    // If token is expired or will expire within 5 minutes, refresh it
     const expiresAt = await tokenStorage.getExpiresAt()
-    if (expiresAt && Date.now() >= expiresAt - 5 * 60 * 1000) {
+    if (expiresAt && Date.now() >= expiresAt - 30 * 1000) {
         const result = await refreshToken(baseUrl)
         if (result) {
             return result.accessToken

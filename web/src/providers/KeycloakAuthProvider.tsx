@@ -71,42 +71,67 @@ export function KeycloakAuthProvider({ children, baseUrl }: KeycloakAuthProvider
         }
     }, [baseUrl])
 
-    // Auto-refresh token before expiry
+    // Auto-refresh token before expiry.
+    //
+    // Schedules a single timer targeting ~30s before the stored expiresAt
+    // (which already accounts for the 60s buffer in tokenStorage.saveTokens).
+    // After a successful refresh, we re-schedule from the new expiresAt.
+    //
+    // visibilitychange only triggers a refresh if the stored token is actually
+    // expired — otherwise it would fire on every tab focus.
     useEffect(() => {
         if (!user) return
 
-        const checkAndRefresh = async () => {
-            if (await keycloak.isTokenExpired()) {
-                try {
-                    const token = await keycloak.ensureValidToken(baseUrl)
-                    if (token) {
-                        tokenRef.current = token
-                        const currentUser = await keycloak.getCurrentUser()
-                        setUser(currentUser)
-                    } else {
-                        await keycloak.clearTokens()
-                        setUser(null)
-                    }
-                } catch (e) {
-                    // Network error — don't clear tokens, will retry next interval
-                    console.warn('[KeycloakAuth] Token refresh failed (network), will retry:', e)
+        let isCancelled = false
+        let timer: ReturnType<typeof setTimeout> | null = null
+
+        const runRefresh = async () => {
+            try {
+                const token = await keycloak.ensureValidToken(baseUrl)
+                if (isCancelled) return
+                if (token) {
+                    tokenRef.current = token
+                    const currentUser = await keycloak.getCurrentUser()
+                    if (!isCancelled) setUser(currentUser)
+                } else {
+                    await keycloak.clearTokens()
+                    if (!isCancelled) setUser(null)
                 }
+            } catch (e) {
+                // Network error — don't clear tokens, next schedule/visibility will retry
+                console.warn('[KeycloakAuth] Token refresh failed (network), will retry:', e)
             }
         }
 
-        // Check every minute
-        const interval = setInterval(checkAndRefresh, 60 * 1000)
+        const schedule = () => {
+            if (isCancelled) return
+            const expiresAt = keycloak.getExpiresAtSync()
+            if (!expiresAt) return
+            const delay = Math.max(0, expiresAt - Date.now() - 30_000)
+            timer = setTimeout(async () => {
+                if (isCancelled) return
+                await runRefresh()
+                schedule()
+            }, delay)
+        }
 
-        // Also check on visibility change
-        const handleVisibilityChange = () => {
-            if (document.visibilityState === 'visible') {
-                checkAndRefresh()
+        schedule()
+
+        const handleVisibilityChange = async () => {
+            if (document.visibilityState !== 'visible') return
+            if (!keycloak.isTokenExpiredSync()) return
+            if (timer) {
+                clearTimeout(timer)
+                timer = null
             }
+            await runRefresh()
+            schedule()
         }
         document.addEventListener('visibilitychange', handleVisibilityChange)
 
         return () => {
-            clearInterval(interval)
+            isCancelled = true
+            if (timer) clearTimeout(timer)
             document.removeEventListener('visibilitychange', handleVisibilityChange)
         }
     }, [baseUrl, user])
