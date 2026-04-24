@@ -194,7 +194,7 @@ function SessionsPage() {
         : DEFAULT_SESSION_LIST_SEARCH.owner
     const { sessions, isLoading, error, refetch } = useSessions(api, currentOrgId)
     const { machines, error: machinesError } = useMachines(api, true, currentOrgId)
-    const { users: onlineUsers } = useOnlineUsers(api)
+    const { users: onlineUsers } = useOnlineUsers(api, currentOrgId)
     const { orgs } = useMyOrgs(api)
     const [isRefreshing, setIsRefreshing] = useState(false)
     const currentOrg = orgs.find(o => o.id === currentOrgId) ?? orgs[0] ?? null
@@ -412,7 +412,7 @@ function SessionPage() {
     const goBack = useAppGoBack()
     const navigate = useNavigate()
     const { sessionId } = useParams({ from: '/sessions/$sessionId' })
-    const viewers = useSessionViewers(api, sessionId)
+    const viewers = useSessionViewers(api, currentOrgId, sessionId)
     const {
         session,
         notFound,

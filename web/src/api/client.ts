@@ -783,8 +783,8 @@ export class ApiClient {
         })
     }
 
-    async getOnlineUsers(): Promise<OnlineUsersResponse> {
-        return await this.request<OnlineUsersResponse>('/api/online-users')
+    async getOnlineUsers(orgId: string): Promise<OnlineUsersResponse> {
+        return await this.request<OnlineUsersResponse>(`/api/online-users?orgId=${encodeURIComponent(orgId)}`)
     }
 
     async sendTyping(sessionId: string, text: string): Promise<void> {

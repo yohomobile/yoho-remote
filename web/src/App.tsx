@@ -366,7 +366,9 @@ export function App() {
 
     const handleSseEvent = useCallback((event: SyncEvent) => {
         if (event.type === 'online-users-changed') {
-            queryClient.setQueryData(queryKeys.onlineUsers, { users: event.users })
+            if (event.orgId) {
+                queryClient.setQueryData(queryKeys.onlineUsers(event.orgId), { users: event.users })
+            }
             void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
             return
         }

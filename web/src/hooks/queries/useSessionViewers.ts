@@ -4,17 +4,24 @@ import type { ApiClient } from '@/api/client'
 import type { SessionViewer } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 
-export function useSessionViewers(api: ApiClient | null, sessionId: string | null): SessionViewer[] {
+export function useSessionViewers(
+    api: ApiClient | null,
+    orgId: string | null | undefined,
+    sessionId: string | null,
+): SessionViewer[] {
     // Query online users - uses same key as useOnlineUsers so data is shared
     const { data } = useQuery({
-        queryKey: queryKeys.onlineUsers,
+        queryKey: queryKeys.onlineUsers(orgId ?? ''),
         queryFn: async () => {
             if (!api) {
                 throw new Error('API unavailable')
             }
-            return await api.getOnlineUsers()
+            if (!orgId) {
+                throw new Error('orgId unavailable')
+            }
+            return await api.getOnlineUsers(orgId)
         },
-        enabled: Boolean(api),
+        enabled: Boolean(api && orgId),
         staleTime: Infinity,
     })
 

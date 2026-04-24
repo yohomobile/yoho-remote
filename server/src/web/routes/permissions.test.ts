@@ -12,6 +12,7 @@ describe('createPermissionsRoutes', () => {
             getOrRefreshSession: async (sessionId: string) => ({
                 id: sessionId,
                 namespace: 'ns-test',
+                orgId: 'test-org',
                 active: true,
                 agentState: {
                     requests: {}
@@ -20,6 +21,7 @@ describe('createPermissionsRoutes', () => {
             getSession: () => ({
                 id: 'session-1',
                 namespace: 'ns-test',
+                orgId: 'test-org',
                 active: true,
                 agentState: {
                     requests: {}
@@ -32,6 +34,7 @@ describe('createPermissionsRoutes', () => {
         const app = new Hono<WebAppEnv>()
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
+            c.set('orgs', [{ id: 'test-org' }])
             await next()
         })
         app.route('/api', createPermissionsRoutes(() => fakeEngine as any, {} as any))
@@ -55,6 +58,7 @@ describe('createPermissionsRoutes', () => {
             getOrRefreshSession: async (sessionId: string) => ({
                 id: sessionId,
                 namespace: 'ns-test',
+                orgId: 'test-org',
                 active: true,
                 agentState: {
                     requests: {}
@@ -63,6 +67,7 @@ describe('createPermissionsRoutes', () => {
             getSession: () => ({
                 id: 'session-1',
                 namespace: 'ns-test',
+                orgId: 'test-org',
                 active: true,
                 agentState: {
                     requests: {}
@@ -74,6 +79,7 @@ describe('createPermissionsRoutes', () => {
         const app = new Hono<WebAppEnv>()
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
+            c.set('orgs', [{ id: 'test-org' }])
             await next()
         })
         app.route('/api', createPermissionsRoutes(() => fakeEngine as any, {} as any))
@@ -97,6 +103,7 @@ describe('createPermissionsRoutes', () => {
             getOrRefreshSession: async () => ({
                 id: 'session-1',
                 namespace: 'default',
+                orgId: 'test-org',
                 createdBy: 'owner@example.com',
                 active: true,
                 agentState: {
@@ -116,6 +123,7 @@ describe('createPermissionsRoutes', () => {
         app.use('*', async (c, next) => {
             c.set('namespace', 'default')
             c.set('email', 'other@example.com')
+            c.set('orgs', [{ id: 'test-org' }])
             await next()
         })
         app.route('/api', createPermissionsRoutes(() => fakeEngine as any, fakeStore as any))
@@ -140,6 +148,7 @@ describe('createPermissionsRoutes', () => {
             getOrRefreshSession: async (sessionId: string) => ({
                 id: sessionId,
                 namespace: 'ns-test',
+                orgId: 'test-org',
                 active: true,
                 metadata: {
                     flavor: 'codex',
@@ -151,6 +160,7 @@ describe('createPermissionsRoutes', () => {
             getSession: () => ({
                 id: 'session-1',
                 namespace: 'ns-test',
+                orgId: 'test-org',
                 active: true,
                 metadata: {
                     flavor: 'codex',
@@ -166,6 +176,7 @@ describe('createPermissionsRoutes', () => {
         const app = new Hono<WebAppEnv>()
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
+            c.set('orgs', [{ id: 'test-org' }])
             await next()
         })
         app.route('/api', createPermissionsRoutes(() => fakeEngine as any, {} as any))
@@ -193,6 +204,7 @@ describe('createPermissionsRoutes', () => {
             getOrRefreshSession: async (sessionId: string) => ({
                 id: sessionId,
                 namespace: 'ns-test',
+                orgId: 'test-org',
                 active: true,
                 metadata: {
                     flavor: 'claude',
@@ -204,6 +216,7 @@ describe('createPermissionsRoutes', () => {
             getSession: () => ({
                 id: 'session-1',
                 namespace: 'ns-test',
+                orgId: 'test-org',
                 active: true,
                 metadata: {
                     flavor: 'claude',
@@ -219,6 +232,7 @@ describe('createPermissionsRoutes', () => {
         const app = new Hono<WebAppEnv>()
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
+            c.set('orgs', [{ id: 'test-org' }])
             await next()
         })
         app.route('/api', createPermissionsRoutes(() => fakeEngine as any, {} as any))
@@ -246,6 +260,7 @@ describe('createPermissionsRoutes', () => {
             getOrRefreshSession: async (sessionId: string) => ({
                 id: sessionId,
                 namespace: 'ns-test',
+                orgId: 'test-org',
                 active: true,
                 metadata: {
                     flavor: 'claude',
@@ -257,6 +272,7 @@ describe('createPermissionsRoutes', () => {
             getSession: () => ({
                 id: 'session-1',
                 namespace: 'ns-test',
+                orgId: 'test-org',
                 active: true,
                 metadata: {
                     flavor: 'claude',
@@ -272,6 +288,7 @@ describe('createPermissionsRoutes', () => {
         const app = new Hono<WebAppEnv>()
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
+            c.set('orgs', [{ id: 'test-org' }])
             await next()
         })
         app.route('/api', createPermissionsRoutes(() => fakeEngine as any, {} as any))

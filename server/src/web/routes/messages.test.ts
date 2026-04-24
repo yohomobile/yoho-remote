@@ -7,6 +7,7 @@ function createSession(overrides: Record<string, unknown> = {}): Record<string, 
     return {
         id: 'session-1',
         namespace: 'ns-test',
+        orgId: 'test-org',
         active: true,
         createdAt: 1_700_000_000_000,
         updatedAt: 1_700_000_000_100,
@@ -43,6 +44,7 @@ describe('createMessagesRoutes', () => {
         const app = new Hono<WebAppEnv>()
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
+            c.set('orgs', [{ id: 'test-org' }])
             await next()
         })
         app.route('/api', createMessagesRoutes(() => fakeEngine as any, {} as any))
@@ -78,6 +80,7 @@ describe('createMessagesRoutes', () => {
         const app = new Hono<WebAppEnv>()
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
+            c.set('orgs', [{ id: 'test-org' }])
             await next()
         })
         app.route('/api', createMessagesRoutes(() => fakeEngine as any, {} as any))
@@ -132,6 +135,7 @@ describe('createMessagesRoutes', () => {
         const app = new Hono<WebAppEnv>()
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
+            c.set('orgs', [{ id: 'test-org' }])
             await next()
         })
         app.route('/api', createMessagesRoutes(() => fakeEngine as any, {} as any))
@@ -189,6 +193,7 @@ describe('createMessagesRoutes', () => {
         const app = new Hono<WebAppEnv>()
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
+            c.set('orgs', [{ id: 'test-org' }])
             c.set('identityActor', {
                 identityId: 'identity-1',
                 personId: 'person-1',
@@ -251,6 +256,7 @@ describe('createMessagesRoutes', () => {
         const app = new Hono<WebAppEnv>()
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
+            c.set('orgs', [{ id: 'test-org' }])
             await next()
         })
         app.route('/api', createMessagesRoutes(() => fakeEngine as any, {} as any))
@@ -289,6 +295,7 @@ describe('createMessagesRoutes', () => {
         const app = new Hono<WebAppEnv>()
         app.use('*', async (c, next) => {
             c.set('namespace', 'ns-test')
+            c.set('orgs', [{ id: 'test-org' }])
             await next()
         })
         app.route('/api', createMessagesRoutes(() => fakeEngine as any, {} as any))

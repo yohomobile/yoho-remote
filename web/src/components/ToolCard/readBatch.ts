@@ -1,6 +1,7 @@
 import type { ToolCallBlock } from '@/chat/types'
 import type { SessionMetadataSummary } from '@/types/api'
 import { basename, resolveDisplayPath } from '@/components/ToolCard/path'
+import { extractReadLikeToolPath, isSedAddress } from '@/lib/readLikeTool'
 
 export type ReadBatchItem = {
     file: string
@@ -12,8 +13,6 @@ export type ReadBatchItem = {
 }
 
 const READ_LIKE_COMMANDS = new Set(['cat', 'head', 'tail', 'nl', 'sed', 'less', 'more', 'bat', 'awk'])
-const SED_ADDRESS_RE = /^(?:\$|\d+)(?:,(?:\$|\d+))?[acdilpqswy=]?$/i
-const SED_ADDRESS_GROUP_RE = /^(?:\$|\d+)(?:,(?:\$|\d+))?[acdilpqswy=]?(?:;(?:\$|\d+)(?:,(?:\$|\d+))?[acdilpqswy=]?)*$/i
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object'
@@ -69,86 +68,6 @@ function tokenizeShellCommand(command: string): string[] {
     return matches
         .map((token) => token.replace(/^['"]|['"]$/g, ''))
         .filter((token) => token.length > 0)
-}
-
-export function isSedAddress(value: string): boolean {
-    const trimmed = value.trim()
-    if (!trimmed) {
-        return false
-    }
-    return SED_ADDRESS_RE.test(trimmed) || SED_ADDRESS_GROUP_RE.test(trimmed)
-}
-
-function extractReadPathFromParsedCommand(input: unknown): string | null {
-    if (!isObject(input) || !Array.isArray(input.parsed_cmd)) {
-        return null
-    }
-
-    for (const entry of input.parsed_cmd) {
-        if (!isObject(entry)) continue
-        if (entry.type === 'read' && typeof entry.name === 'string') {
-            const name = entry.name.trim()
-            if (name.length > 0 && !isSedAddress(name)) {
-                return name
-            }
-        }
-    }
-
-    return null
-}
-
-function extractReadPathFromCommand(command: string): string | null {
-    const tokens = tokenizeShellCommand(unwrapShellCommand(command))
-    if (tokens.length === 0) return null
-
-    let commandIndex = 0
-    while (commandIndex < tokens.length) {
-        const token = tokens[commandIndex]!
-        if (token === 'env' || token.includes('=')) {
-            commandIndex += 1
-            continue
-        }
-        break
-    }
-
-    const commandName = tokens[commandIndex]
-    if (!commandName || !READ_LIKE_COMMANDS.has(commandName)) {
-        return null
-    }
-
-    for (let index = tokens.length - 1; index > commandIndex; index -= 1) {
-        const candidate = tokens[index]!
-        if (candidate === '&&' || candidate === '|' || candidate === ';' || candidate === '--') continue
-        if (candidate.startsWith('-')) continue
-        if (candidate === commandName) continue
-        if (isSedAddress(candidate)) continue
-        if (READ_LIKE_COMMANDS.has(candidate)) continue
-        return candidate
-    }
-
-    return null
-}
-
-function extractReadPathFromTool(tool: ToolCallBlock['tool']): string | null {
-    if (tool.name === 'Read') {
-        return getInputStringAny(tool.input, ['file_path', 'path', 'file'])
-    }
-
-    if (tool.name === 'NotebookRead') {
-        return getInputStringAny(tool.input, ['notebook_path', 'path', 'file'])
-    }
-
-    if (tool.name === 'Bash' || tool.name === 'CodexBash') {
-        const parsedPath = extractReadPathFromParsedCommand(tool.input)
-        if (parsedPath) {
-            return parsedPath
-        }
-
-        const command = getCommandString(tool.input)
-        return command ? extractReadPathFromCommand(command) : null
-    }
-
-    return null
 }
 
 function getInputFiles(input: unknown): string[] {
@@ -238,7 +157,7 @@ export function getReadBatchItems(block: ToolCallBlock, metadata: SessionMetadat
         const child = childTools[index]
         const inputFile = inputFiles[index]
         const inputPath = typeof inputFile === 'string' && !isSedAddress(inputFile) ? inputFile : null
-        const childPath = child ? extractReadPathFromTool(child.tool) : null
+        const childPath = child ? extractReadLikeToolPath(child.tool) : null
         const file = childPath ?? inputPath ?? `Read command ${index + 1}`
         const display = getDisplayParts(file, metadata)
 

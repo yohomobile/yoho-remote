@@ -12,6 +12,7 @@ describe('createGitRoutes', () => {
             getOrRefreshSession: async () => ({
                 id: 'session-1',
                 namespace: 'default',
+                orgId: 'test-org',
                 createdBy: 'owner@example.com',
                 active: true,
                 metadata: {
@@ -38,6 +39,7 @@ describe('createGitRoutes', () => {
         app.use('*', async (c, next) => {
             c.set('namespace', 'default')
             c.set('email', 'viewer@example.com')
+            c.set('orgs', [{ id: 'test-org' }])
             await next()
         })
         app.route('/api', createGitRoutes(() => fakeEngine as any, fakeStore as any))
