@@ -9,6 +9,10 @@ export const aiTaskScheduleCreateSchema = z.object({
     label: z.string().max(200).optional(),
     agent: z.enum(['claude', 'codex']),
     mode: z.string().min(1).max(200).optional(),
+    systemPrompt: z.string().max(8000).optional(),
+    tags: z.array(z.string().max(64)).max(20).optional(),
+    ownerEmail: z.string().email().optional(),
+    permissionMode: z.string().max(64).optional(),
 })
 
 export const aiTaskScheduleCreateWithMachineSchema = aiTaskScheduleCreateSchema.extend({
@@ -110,5 +114,10 @@ export function serializeAiTaskScheduleRow(row: Record<string, unknown>) {
         nextFireAt: toIsoOrNull(row.next_fire_at),
         lastRunAt: toIsoOrNull(row.last_fire_at),
         lastRunStatus: asOptionalString(row.last_run_status),
+        systemPrompt: asOptionalString(row.system_prompt),
+        tags: Array.isArray(row.tags) ? (row.tags as unknown[]).map(String) : null,
+        ownerEmail: asOptionalString(row.owner_email),
+        permissionMode: asOptionalString(row.permission_mode),
+        createdBySessionId: asOptionalString(row.created_by_session_id),
     }
 }

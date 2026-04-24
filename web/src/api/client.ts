@@ -1196,4 +1196,70 @@ export class ApiClient {
         return { data }
     }
 
+    // ========== AI Task Schedules ==========
+
+    async listAiTaskSchedules(opts?: {
+        machineId?: string
+        includeDisabled?: boolean
+        mine?: boolean
+        tag?: string
+    }): Promise<import('@/types/api').AiTaskSchedulesResponse> {
+        const params = new URLSearchParams()
+        if (opts?.machineId) params.set('machineId', opts.machineId)
+        if (opts?.includeDisabled) params.set('includeDisabled', 'true')
+        if (opts?.mine) params.set('mine', 'true')
+        if (opts?.tag) params.set('tag', opts.tag)
+        const qs = params.toString() ? `?${params.toString()}` : ''
+        return await this.request<import('@/types/api').AiTaskSchedulesResponse>(
+            `/api/ai-task-schedules${qs}`
+        )
+    }
+
+    async getAiTaskSchedule(id: string): Promise<import('@/types/api').AiTaskScheduleResponse> {
+        return await this.request<import('@/types/api').AiTaskScheduleResponse>(
+            `/api/ai-task-schedules/${encodeURIComponent(id)}`
+        )
+    }
+
+    async createAiTaskSchedule(
+        input: import('@/types/api').CreateAiTaskScheduleInput
+    ): Promise<import('@/types/api').AiTaskScheduleMutationResponse> {
+        return await this.request<import('@/types/api').AiTaskScheduleMutationResponse>(
+            `/api/ai-task-schedules`,
+            { method: 'POST', body: JSON.stringify(input) }
+        )
+    }
+
+    async updateAiTaskSchedule(
+        id: string,
+        patch: import('@/types/api').UpdateAiTaskScheduleInput
+    ): Promise<import('@/types/api').AiTaskScheduleMutationResponse> {
+        return await this.request<import('@/types/api').AiTaskScheduleMutationResponse>(
+            `/api/ai-task-schedules/${encodeURIComponent(id)}`,
+            { method: 'PATCH', body: JSON.stringify(patch) }
+        )
+    }
+
+    async deleteAiTaskSchedule(
+        id: string
+    ): Promise<import('@/types/api').AiTaskScheduleDeleteResponse> {
+        return await this.request<import('@/types/api').AiTaskScheduleDeleteResponse>(
+            `/api/ai-task-schedules/${encodeURIComponent(id)}`,
+            { method: 'DELETE' }
+        )
+    }
+
+    async takeoverSession(
+        sessionId: string,
+        opts?: { end?: boolean }
+    ): Promise<{ ok: boolean; takeoverBy: string | null }> {
+        return await this.request<{ ok: boolean; takeoverBy: string | null }>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/takeover`,
+            {
+                method: 'POST',
+                body: JSON.stringify(opts?.end ? { end: true } : {}),
+            }
+        )
+    }
+
 }

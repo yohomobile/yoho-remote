@@ -105,6 +105,11 @@ export async function handleAiTaskDispatcher(
                 machineId: schedule.machineId,
                 mainSessionId: schedule.createdBySessionId ?? null,
                 recurring: schedule.recurring,
+                systemPrompt: schedule.systemPrompt ?? null,
+                label: schedule.label ?? null,
+                tags: schedule.tags ?? null,
+                ownerEmail: schedule.ownerEmail ?? null,
+                permissionMode: schedule.permissionMode ?? null,
             }
 
             const sentJobId = await sendAiTaskRun(

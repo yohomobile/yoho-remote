@@ -22,6 +22,10 @@ export type AiTaskSchedule = {
     nextFireAt: number | null
     lastRunStatus: string | null
     consecutiveFailures: number
+    systemPrompt: string | null
+    tags: string[] | null
+    ownerEmail: string | null
+    permissionMode: string | null
 }
 
 export type AiTaskRun = {
@@ -51,6 +55,10 @@ export type CreateScheduleInput = {
     recurring: boolean
     createdBySessionId?: string | null
     nextFireAt?: number | null
+    systemPrompt?: string | null
+    tags?: string[] | null
+    ownerEmail?: string | null
+    permissionMode?: string | null
 }
 
 export type InsertRunInput = {
@@ -92,6 +100,10 @@ function rowToSchedule(row: Record<string, unknown>): AiTaskSchedule {
         nextFireAt: row.next_fire_at != null ? Number(row.next_fire_at) : null,
         lastRunStatus: row.last_run_status != null ? String(row.last_run_status) : null,
         consecutiveFailures: Number(row.consecutive_failures ?? 0),
+        systemPrompt: row.system_prompt != null ? String(row.system_prompt) : null,
+        tags: Array.isArray(row.tags) ? (row.tags as unknown[]).map(String) : null,
+        ownerEmail: row.owner_email != null ? String(row.owner_email) : null,
+        permissionMode: row.permission_mode != null ? String(row.permission_mode) : null,
     }
 }
 
@@ -144,8 +156,9 @@ export class AiTaskStore {
             `INSERT INTO ai_task_schedules (
                 id, namespace, machine_id, label, cron_expr, payload_prompt,
                 directory, agent, mode, model, recurring, enabled,
-                created_at, created_by_session_id, next_fire_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+                created_at, created_by_session_id, next_fire_at,
+                system_prompt, tags, owner_email, permission_mode
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
             RETURNING *`,
             [
                 id,
@@ -163,6 +176,10 @@ export class AiTaskStore {
                 now,
                 input.createdBySessionId ?? null,
                 input.nextFireAt ?? null,
+                input.systemPrompt ?? null,
+                input.tags ?? null,
+                input.ownerEmail ?? null,
+                input.permissionMode ?? null,
             ]
         )
         return rowToSchedule(result.rows[0] as Record<string, unknown>)

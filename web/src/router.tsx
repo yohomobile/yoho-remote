@@ -44,6 +44,7 @@ import {
 import { isSessionVisibleInActiveList } from '@/lib/sessionActivity'
 import SettingsPage from '@/routes/settings'
 import SelfSystemPage from '@/routes/self-system'
+import AutomationPage from '@/routes/automation'
 import AcceptInvitationPage from '@/routes/invitations/accept'
 import { LoginPage } from '@/routes/login'
 import { AuthCallbackPage } from '@/routes/auth/callback'
@@ -189,6 +190,7 @@ function SessionsPage() {
         : DEFAULT_SESSION_LIST_SEARCH.archive
     const ownerFilter: OwnerFilter = search.owner === 'brain'
         || search.owner === 'orchestrator'
+        || search.owner === 'automation'
         || search.owner === 'others'
         ? search.owner
         : DEFAULT_SESSION_LIST_SEARCH.owner
@@ -337,6 +339,14 @@ function SessionsPage() {
                             title="New Orchestrator Session"
                         >
                             <OrchestratorIcon className="h-4 w-4" />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => navigate({ to: '/automation' })}
+                            className="flex items-center justify-center h-7 w-7 rounded-lg bg-gradient-to-br from-purple-500 to-fuchsia-600 text-white shadow-sm hover:shadow-md transition-all hover:scale-105"
+                            title="Automation Schedules"
+                        >
+                            <span className="text-sm">🤖</span>
                         </button>
                         <button
                             type="button"
@@ -698,6 +708,12 @@ const selfSystemRoute = createRoute({
     component: SelfSystemPage,
 })
 
+const automationRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/automation',
+    component: AutomationPage,
+})
+
 // Auth routes (public - no authentication required)
 const loginRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -726,6 +742,7 @@ export const routeTree = rootRoute.addChildren([
     newSessionRoute,
     selfSystemRoute,
     settingsRoute,
+    automationRoute,
     acceptInvitationRoute,
 ])
 

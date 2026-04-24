@@ -21,6 +21,11 @@ const findOrCreateSchema = z.object({
     mainSessionId: z.string().min(1).optional(),
     source: z.string().min(1).optional(),
     callbackOnFailureOnly: z.boolean().optional(),
+    scheduleId: z.string().min(1).optional(),
+    label: z.string().max(200).optional(),
+    automationSystemPrompt: z.string().max(8000).optional(),
+    tags: z.array(z.string().max(64)).max(20).optional(),
+    ownerEmail: z.string().email().optional(),
 })
 
 const listSchedulesInternalSchema = z.object({
@@ -37,6 +42,7 @@ const sessionSendSchema = z.object({
     sessionId: z.string().min(1),
     message: z.string().min(1),
     localId: z.string().min(1).optional(),
+    appendSystemPrompt: z.string().max(8000).optional(),
 })
 
 const sessionIdSchema = z.object({
@@ -79,6 +85,10 @@ export function createWorkerMcpRoutes(
             mode,
             machineId,
             createdBySessionId,
+            systemPrompt,
+            tags,
+            ownerEmail,
+            permissionMode,
         } = parsed.data
 
         const cronResult = parseCronOrDelay(cronOrDelay)
@@ -123,13 +133,15 @@ export function createWorkerMcpRoutes(
         const now = Date.now()
         await pool.query(
             `INSERT INTO ai_task_schedules
-                (id, namespace, machine_id, label, cron_expr, payload_prompt, directory, agent, mode, recurring, enabled, created_at, next_fire_at, created_by_session_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+                (id, namespace, machine_id, label, cron_expr, payload_prompt, directory, agent, mode, recurring, enabled, created_at, next_fire_at, created_by_session_id,
+                 system_prompt, tags, owner_email, permission_mode)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
             [
                 id, orgId, resolvedMachineId, label ?? null,
                 cronResult.normalizedCron, prompt, directory, agent, mode ?? null,
                 recurring, true, now, cronResult.nextFireAt ?? null,
                 createdBySessionId ?? null,
+                systemPrompt ?? null, tags ?? null, ownerEmail ?? null, permissionMode ?? null,
             ]
         )
 
@@ -154,7 +166,8 @@ export function createWorkerMcpRoutes(
 
         const where = `WHERE ${conditions.join(' AND ')}`
         const result = await pool.query(
-            `SELECT id, machine_id, label, cron_expr, payload_prompt, recurring, directory, agent, mode, enabled, created_at, next_fire_at, last_fire_at, last_run_status
+            `SELECT id, machine_id, label, cron_expr, payload_prompt, recurring, directory, agent, mode, enabled, created_at, next_fire_at, last_fire_at, last_run_status,
+                    system_prompt, tags, owner_email, permission_mode, created_by_session_id
              FROM ai_task_schedules ${where} ORDER BY created_at DESC`,
             params
         )
@@ -196,6 +209,11 @@ export function createWorkerMcpRoutes(
             mainSessionId,
             source,
             callbackOnFailureOnly,
+            scheduleId,
+            label,
+            automationSystemPrompt,
+            tags,
+            ownerEmail,
         } = parsed.data
 
         const machines = engine.getMachines()
@@ -229,16 +247,34 @@ export function createWorkerMcpRoutes(
             }
             return true
         })
-        if (existing) {
-            // Keep the suppression flag in sync for reused sessions; recurring schedules
-            // may toggle this independently of whether the session needed spawning.
-            if (callbackOnFailureOnly !== undefined) {
-                await store.patchSessionMetadata(existing.id, { callbackOnFailureOnly }, machine.orgId).catch((error: unknown) => {
-                    console.warn(`[worker-mcp] Failed to patch callbackOnFailureOnly on reused session ${existing.id}:`, error)
-                })
-                const meta = (existing.metadata as Record<string, unknown> | null) ?? {}
-                existing.metadata = { ...meta, callbackOnFailureOnly } as unknown as typeof existing.metadata
+        const automationMetadataPatch: Record<string, unknown> = {}
+        if (scheduleId) automationMetadataPatch.scheduleId = scheduleId
+        if (label) automationMetadataPatch.label = label
+        if (automationSystemPrompt) automationMetadataPatch.automationSystemPrompt = automationSystemPrompt
+        if (tags && tags.length > 0) automationMetadataPatch.tags = tags
+        if (ownerEmail) automationMetadataPatch.ownerEmail = ownerEmail
+
+        async function applyMetadataPatch(sessionId: string, patch: Record<string, unknown>) {
+            if (Object.keys(patch).length === 0) return
+            await store.patchSessionMetadata(sessionId, patch, machine!.orgId!).catch((error: unknown) => {
+                console.warn(`[worker-mcp] Failed to patch session metadata on ${sessionId}:`, error)
+            })
+            const sess = engine!.getSession(sessionId)
+            if (sess) {
+                const meta = (sess.metadata as Record<string, unknown> | null) ?? {}
+                sess.metadata = { ...meta, ...patch } as unknown as typeof sess.metadata
             }
+        }
+
+        if (existing) {
+            // Keep the suppression flag + automation fields in sync for reused sessions;
+            // recurring schedules may toggle these independently of whether the session
+            // needed spawning.
+            const patch: Record<string, unknown> = { ...automationMetadataPatch }
+            if (callbackOnFailureOnly !== undefined) {
+                patch.callbackOnFailureOnly = callbackOnFailureOnly
+            }
+            await applyMetadataPatch(existing.id, patch)
             return c.json({ sessionId: existing.id })
         }
 
@@ -251,18 +287,13 @@ export function createWorkerMcpRoutes(
         })
         if (spawnResult.type === 'error') return c.json({ error: spawnResult.message }, 502)
 
-        // Persist callbackOnFailureOnly after spawn completes so the syncEngine sees it
-        // before the first task-complete event for the new session.
+        // Persist callbackOnFailureOnly + automation fields after spawn completes so the
+        // syncEngine sees them before the first task-complete event for the new session.
+        const spawnPatch: Record<string, unknown> = { ...automationMetadataPatch }
         if (callbackOnFailureOnly !== undefined) {
-            await store.patchSessionMetadata(spawnResult.sessionId, { callbackOnFailureOnly }, machine.orgId).catch((error: unknown) => {
-                console.warn(`[worker-mcp] Failed to patch callbackOnFailureOnly on new session ${spawnResult.sessionId}:`, error)
-            })
-            const spawned = engine.getSession(spawnResult.sessionId)
-            if (spawned) {
-                const meta = (spawned.metadata as Record<string, unknown> | null) ?? {}
-                spawned.metadata = { ...meta, callbackOnFailureOnly } as unknown as typeof spawned.metadata
-            }
+            spawnPatch.callbackOnFailureOnly = callbackOnFailureOnly
         }
+        await applyMetadataPatch(spawnResult.sessionId, spawnPatch)
 
         return c.json({ sessionId: spawnResult.sessionId })
     })
@@ -306,10 +337,16 @@ export function createWorkerMcpRoutes(
             return c.json({ ok: true, deduped: true, status: 'delivered' })
         }
 
+        const sendMeta: Record<string, unknown> = {}
+        if (parsed.data.appendSystemPrompt) {
+            sendMeta.appendSystemPrompt = parsed.data.appendSystemPrompt
+        }
+
         await engine.sendMessage(parsed.data.sessionId, {
             text: parsed.data.message,
             localId: requestLocalId,
             sentFrom: 'worker-ai-task',
+            meta: Object.keys(sendMeta).length > 0 ? sendMeta : undefined,
         })
         return c.json({ ok: true })
     })

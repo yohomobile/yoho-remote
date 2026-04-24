@@ -71,14 +71,19 @@ function filterSessions(
         const isOrchestratorSession =
             session.metadata?.source === 'orchestrator' ||
             session.metadata?.source === 'orchestrator-child'
+        const isAutomationSession =
+            session.metadata?.source === 'worker-ai-task'
         if (ownerFilter === 'mine') {
             if (session.ownerEmail) return false
             if (isBrainSession) return false
             if (isOrchestratorSession) return false
+            if (isAutomationSession) return false
         } else if (ownerFilter === 'brain') {
             if (!isBrainSession) return false
         } else if (ownerFilter === 'orchestrator') {
             if (!isOrchestratorSession) return false
+        } else if (ownerFilter === 'automation') {
+            if (!isAutomationSession) return false
         } else if (ownerFilter === 'others') {
             if (!session.ownerEmail) return false
         }
@@ -98,6 +103,9 @@ function getEmptyStateCopy(
         if (ownerFilter === 'orchestrator') {
             return 'No archived Orchestrator sessions'
         }
+        if (ownerFilter === 'automation') {
+            return 'No archived Automation sessions'
+        }
         if (ownerFilter === 'others') {
             return 'No archived shared sessions'
         }
@@ -109,6 +117,9 @@ function getEmptyStateCopy(
     }
     if (ownerFilter === 'orchestrator') {
         return 'No Orchestrator sessions yet'
+    }
+    if (ownerFilter === 'automation') {
+        return 'No Automation sessions yet'
     }
     if (ownerFilter === 'others') {
         return 'No shared sessions from others'
@@ -195,6 +206,9 @@ function getSourceTag(
     }
     if (source === 'external-api') {
         return { label: '🔌 API', color: 'bg-blue-500/15 text-blue-600' }
+    }
+    if (source === 'worker-ai-task') {
+        return { label: '🤖 Automation', color: 'bg-purple-500/15 text-purple-600' }
     }
     if (
         source.startsWith('automation:') ||
@@ -670,6 +684,13 @@ export function SessionList(props: {
             ),
         [props.sessions]
     )
+    const hasAutomationSessions = useMemo(
+        () =>
+            props.sessions.some(
+                (s) => s.metadata?.source === 'worker-ai-task'
+            ),
+        [props.sessions]
+    )
 
     const effectiveOwnerFilter = useMemo(
         () =>
@@ -677,10 +698,12 @@ export function SessionList(props: {
                 viewOthersSessions,
                 hasBrainSessions,
                 hasOrchestratorSessions,
+                hasAutomationSessions,
             }),
         [
             hasBrainSessions,
             hasOrchestratorSessions,
+            hasAutomationSessions,
             props.ownerFilter,
             viewOthersSessions,
         ]
@@ -700,7 +723,8 @@ export function SessionList(props: {
             buildSessionListEntries(filteredSessions, {
                 sortMode:
                     effectiveOwnerFilter === 'brain' ||
-                    effectiveOwnerFilter === 'orchestrator'
+                    effectiveOwnerFilter === 'orchestrator' ||
+                    effectiveOwnerFilter === 'automation'
                         ? 'createdAtDesc'
                         : 'activity',
                 includeArchived: props.archiveFilter === 'archive',
@@ -793,12 +817,14 @@ export function SessionList(props: {
                 </div>
                 {(viewOthersSessions ||
                     hasBrainSessions ||
-                    hasOrchestratorSessions) && (
+                    hasOrchestratorSessions ||
+                    hasAutomationSessions) && (
                     <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                         <div className="flex flex-wrap items-center gap-1">
                             {(viewOthersSessions ||
                                 hasBrainSessions ||
-                                hasOrchestratorSessions) && (
+                                hasOrchestratorSessions ||
+                                hasAutomationSessions) && (
                                 <button
                                     type="button"
                                     onClick={() =>
@@ -853,6 +879,25 @@ export function SessionList(props: {
                                     `}
                                 >
                                     🎛 Orchestrator
+                                </button>
+                            )}
+                            {hasAutomationSessions && (
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        props.onOwnerFilterChange('automation')
+                                    }
+                                    className={`
+                                        px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
+                                        ${
+                                            effectiveOwnerFilter ===
+                                            'automation'
+                                                ? 'bg-gradient-to-r from-purple-500 to-fuchsia-600 text-white shadow-sm'
+                                                : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
+                                        }
+                                    `}
+                                >
+                                    🤖 Automation
                                 </button>
                             )}
                             {viewOthersSessions && (

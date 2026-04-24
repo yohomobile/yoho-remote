@@ -1428,8 +1428,17 @@ export function createSessionsRoutes(
         }
         const orgId = requestedOrgId
 
+        const sourceFilter = c.req.query('source')?.trim() || null
+
         // Get sessions from database
         let storedSessions: StoredSession[] = await getStoredSessionsByOrg(orgId)
+
+        if (sourceFilter) {
+            storedSessions = storedSessions.filter((s) => {
+                const meta = s.metadata as { source?: string } | null
+                return meta?.source === sourceFilter
+            })
+        }
 
         // Filter by created_by for Keycloak users
         // 用于标记 session 来自哪个用户（如果来自开启了 shareAllSessions 的其他用户）
@@ -1671,6 +1680,29 @@ export function createSessionsRoutes(
 
         await engine.abortSession(sessionResult.sessionId)
         return c.json({ ok: true })
+    })
+
+    app.post('/sessions/:id/takeover', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+
+        const email = c.get('email')
+        if (!email) return c.json({ error: 'Unauthorized' }, 401)
+
+        const sessionResult = await requireSessionFromParamWithShareCheck(c, engine, store)
+        if (sessionResult instanceof Response) return sessionResult
+
+        const body = await c.req.json().catch(() => ({}))
+        const end = body?.end === true
+
+        const patch = end
+            ? { takeoverBy: null, takeoverAt: null }
+            : { takeoverBy: email, takeoverAt: Date.now() }
+
+        if (typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
+            await engine.patchSessionMetadata(sessionResult.sessionId, patch)
+        }
+        return c.json({ ok: true, takeoverBy: end ? null : email })
     })
 
     app.post('/sessions/:id/switch', async (c) => {

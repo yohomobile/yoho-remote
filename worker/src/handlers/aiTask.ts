@@ -24,6 +24,11 @@ export const aiTaskPayloadSchema = z.object({
     // recurring: suppresses auto-callback on success — only failures fire the callback
     // so the brain doesn't react to every normal cron tick.
     recurring: z.boolean().optional(),
+    systemPrompt: z.string().max(8000).nullish(),
+    label: z.string().max(200).nullish(),
+    tags: z.array(z.string().max(64)).max(20).nullish(),
+    ownerEmail: z.string().email().nullish(),
+    permissionMode: z.string().nullish(),
 })
 
 export type AiTaskPayload = z.infer<typeof aiTaskPayloadSchema>
@@ -61,7 +66,20 @@ function buildMessageLocalId(runId: string): string {
 }
 
 function buildFindOrCreateBody(payload: AiTaskPayload): Record<string, unknown> {
-    const { directory, agent, mode, machineId, mainSessionId, recurring } = payload
+    const {
+        directory,
+        agent,
+        mode,
+        machineId,
+        mainSessionId,
+        recurring,
+        scheduleId,
+        systemPrompt,
+        label,
+        tags,
+        ownerEmail,
+        permissionMode,
+    } = payload
 
     // Only attach orchestrator-child fields when we have a creator session — legacy
     // payloads (no mainSessionId) keep the neutral 'worker-ai-task' tag path.
@@ -74,13 +92,23 @@ function buildFindOrCreateBody(payload: AiTaskPayload): Record<string, unknown> 
         orchestrationExtras.callbackOnFailureOnly = recurring === true
     }
 
+    const automationExtras: Record<string, unknown> = {
+        scheduleId,
+    }
+    if (label) automationExtras.label = label
+    if (systemPrompt) automationExtras.automationSystemPrompt = systemPrompt
+    if (tags && tags.length > 0) automationExtras.tags = tags
+    if (ownerEmail) automationExtras.ownerEmail = ownerEmail
+
     if (agent === 'claude') {
         return {
             directory,
             agent,
             machineId,
             modelMode: mode ?? 'sonnet',
+            permissionMode: permissionMode ?? 'safe-yolo',
             ...orchestrationExtras,
+            ...automationExtras,
         }
     }
 
@@ -89,8 +117,9 @@ function buildFindOrCreateBody(payload: AiTaskPayload): Record<string, unknown> 
         agent,
         machineId,
         codexModel: mode ?? 'gpt-5.4',
-        permissionMode: 'safe-yolo',
+        permissionMode: permissionMode ?? 'safe-yolo',
         ...orchestrationExtras,
+        ...automationExtras,
     }
 }
 
@@ -234,6 +263,7 @@ export async function handleAiTask(
                 sessionId,
                 message: payload.prompt,
                 localId: messageLocalId,
+                appendSystemPrompt: payload.systemPrompt ?? undefined,
             })
 
             if (!sendRes.ok) {

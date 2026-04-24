@@ -232,6 +232,10 @@ export function SessionChat(props: {
     const controlsDisabled =
         connectionState !== 'active' && !canQueueWhileInactive
     const showComposer = shouldShowSessionComposer(props.session)
+    const isAutomationSession =
+        props.session.metadata?.source === 'worker-ai-task'
+    const automationReadOnly =
+        isAutomationSession && !props.session.metadata?.takeoverBy
     const brainChildActionState = useMemo(
         () => deriveBrainChildPageActionState(props.session),
         [props.session]
@@ -1073,7 +1077,8 @@ export function SessionChat(props: {
                                 disabled={
                                     props.isSending ||
                                     isResuming ||
-                                    controlsDisabled
+                                    controlsDisabled ||
+                                    automationReadOnly
                                 }
                                 modelMode={resolvedModelMode}
                                 modelReasoningEffort={resolvedReasoningEffort}

@@ -41,6 +41,13 @@ export type SessionMetadataSummary = {
     lifecycleStateSince?: number
     archivedBy?: string
     archiveReason?: string
+    scheduleId?: string
+    label?: string
+    automationSystemPrompt?: string
+    tags?: string[]
+    ownerEmail?: string
+    takeoverBy?: string | null
+    takeoverAt?: number | null
 }
 
 export type AgentStateRequest = {
@@ -145,6 +152,13 @@ export type SessionSummaryMetadata = {
     lifecycleStateSince?: number
     archivedBy?: string
     archiveReason?: string
+    scheduleId?: string
+    label?: string
+    automationSystemPrompt?: string
+    tags?: string[]
+    ownerEmail?: string
+    takeoverBy?: string | null
+    takeoverAt?: number | null
 }
 
 export type SessionViewer = {
@@ -397,6 +411,70 @@ export type AuthResponse = {
 export type SessionsResponse = { sessions: SessionSummary[] }
 export type SessionResponse = { session: Session }
 export type DeleteSessionResponse = { ok: true }
+
+// AI Task Schedule types
+export type AiTaskSchedule = {
+    scheduleId: string
+    machineId: string | null
+    label: string | null
+    cron: string
+    prompt: string | null
+    recurring: boolean
+    directory: string
+    agent: string
+    mode: string | null
+    enabled: boolean
+    createdAt: string | null
+    nextFireAt: string | null
+    lastRunAt: string | null
+    lastRunStatus: string | null
+    systemPrompt: string | null
+    tags: string[] | null
+    ownerEmail: string | null
+    permissionMode: string | null
+    createdBySessionId: string | null
+}
+
+export type AiTaskRun = {
+    runId: string
+    scheduleId: string | null
+    sessionId: string | null
+    subsessionId: string | null
+    machineId: string
+    status: string
+    startedAt: string | null
+    finishedAt: string | null
+    error: string | null
+}
+
+export type AiTaskSchedulesResponse = { schedules: AiTaskSchedule[] }
+export type AiTaskScheduleResponse = { schedule: AiTaskSchedule; runs?: AiTaskRun[] }
+export type AiTaskScheduleMutationResponse = { schedule: AiTaskSchedule }
+export type AiTaskScheduleDeleteResponse = { ok: true }
+
+export type CreateAiTaskScheduleInput = {
+    cronOrDelay: string
+    prompt: string
+    directory: string
+    recurring: boolean
+    machineId: string
+    label?: string
+    agent: 'claude' | 'codex'
+    mode?: string
+    systemPrompt?: string
+    tags?: string[]
+    permissionMode?: string
+    createdBySessionId?: string
+}
+
+export type UpdateAiTaskScheduleInput = {
+    label?: string | null
+    prompt?: string
+    systemPrompt?: string | null
+    tags?: string[] | null
+    permissionMode?: string | null
+    enabled?: boolean
+}
 
 // 当前用户信息
 export type MeResponse = {

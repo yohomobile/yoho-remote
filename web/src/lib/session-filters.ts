@@ -1,5 +1,5 @@
 export type ArchiveFilter = 'active' | 'archive'
-export type OwnerFilter = 'mine' | 'brain' | 'orchestrator' | 'others'
+export type OwnerFilter = 'mine' | 'brain' | 'orchestrator' | 'automation' | 'others'
 
 export type SessionListSearch = {
     archive?: ArchiveFilter
@@ -16,6 +16,7 @@ export type OwnerFilterAvailability = {
     viewOthersSessions?: boolean
     hasBrainSessions: boolean
     hasOrchestratorSessions: boolean
+    hasAutomationSessions: boolean
 }
 
 export const DEFAULT_SESSION_LIST_SEARCH: Readonly<{
@@ -28,7 +29,7 @@ export const DEFAULT_SESSION_LIST_SEARCH: Readonly<{
 
 export function validateSessionListSearch(search: Record<string, unknown>): SessionListSearch {
     const archive = search.archive === 'archive' ? 'archive' : undefined
-    const owner = typeof search.owner === 'string' && ['mine', 'brain', 'orchestrator', 'others'].includes(search.owner)
+    const owner = typeof search.owner === 'string' && ['mine', 'brain', 'orchestrator', 'automation', 'others'].includes(search.owner)
         ? search.owner as OwnerFilter
         : undefined
 
@@ -58,6 +59,9 @@ export function normalizeOwnerFilter(owner: OwnerFilter, availability: OwnerFilt
         return DEFAULT_SESSION_LIST_SEARCH.owner
     }
     if (owner === 'orchestrator' && !availability.hasOrchestratorSessions) {
+        return DEFAULT_SESSION_LIST_SEARCH.owner
+    }
+    if (owner === 'automation' && !availability.hasAutomationSessions) {
         return DEFAULT_SESSION_LIST_SEARCH.owner
     }
     return owner

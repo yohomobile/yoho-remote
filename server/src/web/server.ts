@@ -28,6 +28,7 @@ import { createCodexOpenAIRoutes } from './routes/codex-openai'
 import { createDownloadCliRoutes, createDownloadApiRoutes } from './routes/downloads'
 import { createControlPlaneRoutes } from './routes/control-plane'
 import { createWorkerMcpRoutes } from './routes/worker-mcp'
+import { createAiTaskSchedulesRoutes } from './routes/aiTaskSchedules'
 import { createIdentityRoutes } from './routes/identity'
 import { internalAuthMiddleware } from './middleware/internal-auth'
 import type { SSEManager } from '../sse/sseManager'
@@ -136,6 +137,7 @@ function createWebApp(options: {
     app.route('/api', createDownloadApiRoutes(options.store))
     app.route('/api', createControlPlaneRoutes(options.store))
     app.route('/api', createIdentityRoutes(options.store, options.getSseManager))
+    app.route('/api', createAiTaskSchedulesRoutes(options.getSyncEngine, options.store))
 
     if (options.embeddedAssetMap) {
         const embeddedAssetMap = options.embeddedAssetMap

@@ -49,7 +49,7 @@ type FakeSession = {
     orgId?: string | null
     active: boolean
     thinking: boolean
-    metadata?: { machineId?: string; path?: string; runtimeAgent?: string } | null
+    metadata?: { machineId?: string; path?: string; runtimeAgent?: string; source?: string; mainSessionId?: string } | null
 }
 
 type SendOutcome = { status: 'delivered' | 'queued'; queue?: string; queueDepth?: number }
