@@ -37,15 +37,31 @@ function ScheduleRow({
     machineLabel,
     onToggle,
     onDelete,
+    onOpen,
+    opening,
 }: {
     schedule: AiTaskSchedule
     machineLabel: string | null
     onToggle: (id: string, enabled: boolean) => void
     onDelete: (id: string) => void
+    onOpen: (id: string) => void
+    opening: boolean
 }) {
     const tags = schedule.tags ?? []
+    const stop = (e: React.MouseEvent) => e.stopPropagation()
     return (
-        <div className="border-b border-[var(--app-divider)] px-3 py-2.5">
+        <div
+            className="border-b border-[var(--app-divider)] px-3 py-2.5 cursor-pointer hover:bg-[var(--app-subtle-bg)]"
+            role="button"
+            tabIndex={0}
+            onClick={() => onOpen(schedule.scheduleId)}
+            onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onOpen(schedule.scheduleId)
+                }
+            }}
+        >
             <div className="flex items-center gap-2">
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -86,20 +102,23 @@ function ScheduleRow({
                 <div className="flex flex-col gap-1 shrink-0">
                     <button
                         type="button"
-                        onClick={() => onToggle(schedule.scheduleId, !schedule.enabled)}
+                        onClick={(e) => { stop(e); onToggle(schedule.scheduleId, !schedule.enabled) }}
                         className="px-2 py-1 text-[11px] rounded bg-[var(--app-subtle-bg)] hover:bg-[var(--app-secondary-bg)]"
                     >
                         {schedule.enabled ? 'Pause' : 'Resume'}
                     </button>
                     <button
                         type="button"
-                        onClick={() => onDelete(schedule.scheduleId)}
+                        onClick={(e) => { stop(e); onDelete(schedule.scheduleId) }}
                         className="px-2 py-1 text-[11px] rounded bg-red-500/15 text-red-600 hover:bg-red-500/25"
                     >
                         Delete
                     </button>
                 </div>
             </div>
+            {opening && (
+                <div className="mt-1 text-[10px] text-[var(--app-hint)]">Opening session…</div>
+            )}
         </div>
     )
 }
@@ -312,6 +331,7 @@ export function AutomationPage() {
     const queryClient = useQueryClient()
     const [showForm, setShowForm] = useState(false)
     const [submitting, setSubmitting] = useState(false)
+    const [openingId, setOpeningId] = useState<string | null>(null)
 
     const { machines } = useMachines(api, true, currentOrgId)
     const machineMap = useMemo(() => new Map(machines.map(m => [m.id, m])), [machines])
@@ -344,6 +364,25 @@ export function AutomationPage() {
             console.error('Failed to toggle schedule', err)
         }
     }, [api, queryClient])
+
+    const handleOpen = useCallback(async (id: string) => {
+        setOpeningId(id)
+        try {
+            const { runs } = await api.getAiTaskSchedule(id)
+            const latest = (runs ?? []).find(r => r.subsessionId || r.sessionId)
+            const target = latest?.subsessionId || latest?.sessionId
+            if (target) {
+                navigate({ to: '/sessions/$sessionId', params: { sessionId: target } })
+                return
+            }
+            alert('This schedule has not fired yet. Come back after its next run.')
+        } catch (err) {
+            console.error('Failed to open schedule session', err)
+            alert(`Failed to open session: ${err instanceof Error ? err.message : String(err)}`)
+        } finally {
+            setOpeningId(null)
+        }
+    }, [api, navigate])
 
     const handleDelete = useCallback(async (id: string) => {
         if (!confirm('Delete this schedule? It will be paused permanently.')) return
@@ -411,6 +450,8 @@ export function AutomationPage() {
                                 machineLabel={s.machineId ? getMachineTitle(machineMap.get(s.machineId) ?? { id: s.machineId } as never) : null}
                                 onToggle={handleToggle}
                                 onDelete={handleDelete}
+                                onOpen={handleOpen}
+                                opening={openingId === s.scheduleId}
                             />
                         ))
                     )}
