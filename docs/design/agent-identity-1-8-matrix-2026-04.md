@@ -5,12 +5,15 @@
 关联研究报告：
 
 - [Agent Identity / Persona Memory / Affective Personalization / Social Agents 调研](./agent-identity-persona-memory-research-2026-04.md)
+- [K1 Phase 3: Actor-Aware Brain](./k1-phase3-actor-aware-brain.md)
 
 ## 1. 说明
 
 这一版不再使用我上轮抽象出来的 7 个议题，而是**严格对照用户补充的原始 1-8 条**逐条收束。
 
 另外，本轮仍需说明一个执行边界：当前运行时工具列表里没有暴露可直接调用的 skill search 工具，因此本轮按 no-match 路径继续，但保留了这个限制记录。
+
+2026-04-24 补充：本文的 Phase 0-3 是早期研究矩阵分期，其中“Phase 3：建立完整评测闭环”对应新版 [K1 Phase 3: Actor-Aware Brain](./k1-phase3-actor-aware-brain.md) 里的 D. Eval Harness 子能力。产品实施层面的 Phase 3 以 Actor-Aware Brain 文档为准。
 
 ## 2. 增强 / 改进 / 质疑矩阵
 
@@ -116,6 +119,8 @@
 
 - 不靠“感觉更像人”来验收
 - 直接验证是否提升协作质量、跨会话一致性和安全边界
+
+说明：此处是研究矩阵里的评测阶段，不代表产品 Phase 3 的完整范围；新版产品 Phase 3 还包括 communicationPlan、team memory、conflict review、session affect 和 observation hypothesis pool。
 
 建议范围：
 

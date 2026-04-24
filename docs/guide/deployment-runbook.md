@@ -154,6 +154,12 @@ KEYCLOAK_CLIENT_SECRET=replace-me
 | `WORKER_CONCURRENCY` | `1` | 单机并发消费数 |
 | `WORKER_HEALTH_HOST` / `WORKER_HEALTH_PORT` | `127.0.0.1` / 未启用 | 配置端口后暴露 `/healthz`、`/readyz`、`/stats` |
 | `SUMMARIZATION_RUN_RETENTION_DAYS` | `30` | `summarization_runs` 清理窗口 |
+| `YOHO_MEMORY_URL` | `http://127.0.0.1:3100` | worker 摘要写入 yoho-memory 的 HTTP 地址 |
+| `YOHO_MEMORY_HTTP_AUTH_TOKEN` | 空 | yoho-memory HTTP token；启用写入时必须与 memory 服务一致 |
+| `YOHO_MEMORY_INTEGRATION_ENABLED` | `true` | 总开关；关闭后 worker 不构造 memory client |
+| `YOHO_MEMORY_WRITE_L1` / `YOHO_MEMORY_WRITE_L2` / `YOHO_MEMORY_WRITE_L3` | `true` | 分层控制 L1/L2/L3 摘要是否写入 memory inbox |
+| `YOHO_SKILL_SAVE_FROM_L2` / `YOHO_SKILL_SAVE_FROM_L3` | `true` | 控制是否从有价值的 L2/L3 摘要生成 manual candidate skill |
+| `YOHO_MEMORY_REQUEST_TIMEOUT_MS` | `5000` | worker 调 yoho-memory 的单次 HTTP 超时 |
 
 示例：
 
@@ -172,6 +178,10 @@ DEEPSEEK_MODEL=deepseek-chat
 DEEPSEEK_TIMEOUT_MS=60000
 WORKER_CONCURRENCY=1
 SUMMARIZATION_RUN_RETENTION_DAYS=30
+
+YOHO_MEMORY_URL=http://127.0.0.1:3100
+YOHO_MEMORY_HTTP_AUTH_TOKEN=replace-me
+YOHO_MEMORY_INTEGRATION_ENABLED=true
 ```
 
 ### 2.3 daemon 必备
@@ -352,6 +362,7 @@ bun run smoke:fake-deepseek
 
 - `worker`：发布前至少执行一次 `bun run smoke:fake-deepseek`
 - `memory`：如果本次包含 `memory` 变更，必须执行它当前已有的定向 smoke、迁移校验或健康检查
+- `worker -> memory`：确认 `/etc/yoho-remote/worker.env` 中的 `YOHO_MEMORY_URL` 和 `YOHO_MEMORY_HTTP_AUTH_TOKEN` 与 yoho-memory 服务一致；摘要写入失败只打 warn，不会阻塞 worker 主流程
 - 没有 `worker/memory` 定向验证结果，不要进入 `daemon` 发布步骤
 
 ### 4.4 真实 DeepSeek 抽检

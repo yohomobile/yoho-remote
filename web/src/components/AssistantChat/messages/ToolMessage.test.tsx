@@ -339,7 +339,7 @@ describe('ReadBatch card rendering', () => {
         expect(html).toContain('消息数: 5')
     })
 
-    test('renders orchestrator callback cards with source-aware copy', () => {
+    test('renders orchestrator callback cards with generic child callback copy', () => {
         const event: Extract<AgentEvent, { type: 'brain-child-callback' }> = {
             type: 'brain-child-callback',
             title: '编排子任务完成',
@@ -352,7 +352,7 @@ describe('ReadBatch card rendering', () => {
             <BrainChildCallbackCard api={{} as never} event={event} />
         )
 
-        expect(html).toContain('编排子任务回传')
+        expect(html).toContain('子任务回传')
         expect(html).toContain('编排子任务完成')
     })
 })

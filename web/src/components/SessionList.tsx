@@ -69,20 +69,14 @@ function filterSessions(
         const isBrainSession =
             session.metadata?.source === 'brain' ||
             session.metadata?.source === 'brain-child'
-        const isOrchestratorSession =
-            session.metadata?.source === 'orchestrator' ||
-            session.metadata?.source === 'orchestrator-child'
         const isAutomationSession =
             session.metadata?.source === 'worker-ai-task'
         if (ownerFilter === 'mine') {
             if (session.ownerEmail) return false
             if (isBrainSession) return false
-            if (isOrchestratorSession) return false
             if (isAutomationSession) return false
         } else if (ownerFilter === 'brain') {
             if (!isBrainSession) return false
-        } else if (ownerFilter === 'orchestrator') {
-            if (!isOrchestratorSession) return false
         } else if (ownerFilter === 'automation') {
             if (!isAutomationSession) return false
         } else if (ownerFilter === 'others') {
@@ -101,9 +95,6 @@ function getEmptyStateCopy(
         if (ownerFilter === 'brain') {
             return 'No archived Brain sessions'
         }
-        if (ownerFilter === 'orchestrator') {
-            return 'No archived Orchestrator sessions'
-        }
         if (ownerFilter === 'automation') {
             return 'No archived Automation sessions'
         }
@@ -115,9 +106,6 @@ function getEmptyStateCopy(
 
     if (ownerFilter === 'brain') {
         return 'No Brain sessions yet'
-    }
-    if (ownerFilter === 'orchestrator') {
-        return 'No Orchestrator sessions yet'
     }
     if (ownerFilter === 'automation') {
         return 'No Automation sessions yet'
@@ -198,12 +186,6 @@ function getSourceTag(
     }
     if (source === 'brain-child') {
         return { label: '🧠 子任务', color: 'bg-amber-500/15 text-amber-500' }
-    }
-    if (source === 'orchestrator') {
-        return { label: '🎛 Orchestrator', color: 'bg-sky-500/15 text-sky-600' }
-    }
-    if (source === 'orchestrator-child') {
-        return { label: '🎛 编排子任务', color: 'bg-sky-500/15 text-sky-500' }
     }
     if (source === 'external-api') {
         return { label: '🔌 API', color: 'bg-blue-500/15 text-blue-600' }
@@ -669,22 +651,13 @@ export function SessionList(props: {
         return map
     }, [machines])
 
-    // Check if there are any brain/orchestrator parent or child sessions
+    // Check if there are any sessions that should get a dedicated list filter.
     const hasBrainSessions = useMemo(
         () =>
             props.sessions.some(
                 (s) =>
                     s.metadata?.source === 'brain' ||
                     s.metadata?.source === 'brain-child'
-            ),
-        [props.sessions]
-    )
-    const hasOrchestratorSessions = useMemo(
-        () =>
-            props.sessions.some(
-                (s) =>
-                    s.metadata?.source === 'orchestrator' ||
-                    s.metadata?.source === 'orchestrator-child'
             ),
         [props.sessions]
     )
@@ -701,12 +674,10 @@ export function SessionList(props: {
             normalizeOwnerFilter(props.ownerFilter, {
                 viewOthersSessions,
                 hasBrainSessions,
-                hasOrchestratorSessions,
                 hasAutomationSessions,
             }),
         [
             hasBrainSessions,
-            hasOrchestratorSessions,
             hasAutomationSessions,
             props.ownerFilter,
             viewOthersSessions,
@@ -727,7 +698,6 @@ export function SessionList(props: {
             buildSessionListEntries(filteredSessions, {
                 sortMode:
                     effectiveOwnerFilter === 'brain' ||
-                    effectiveOwnerFilter === 'orchestrator' ||
                     effectiveOwnerFilter === 'automation'
                         ? 'createdAtDesc'
                         : 'activity',
@@ -821,13 +791,11 @@ export function SessionList(props: {
                 </div>
                 {(viewOthersSessions ||
                     hasBrainSessions ||
-                    hasOrchestratorSessions ||
                     hasAutomationSessions) && (
                     <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                         <div className="flex flex-wrap items-center gap-1">
                             {(viewOthersSessions ||
                                 hasBrainSessions ||
-                                hasOrchestratorSessions ||
                                 hasAutomationSessions) && (
                                 <button
                                     type="button"
@@ -862,27 +830,6 @@ export function SessionList(props: {
                                     `}
                                 >
                                     🧠 Brain
-                                </button>
-                            )}
-                            {hasOrchestratorSessions && (
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        props.onOwnerFilterChange(
-                                            'orchestrator'
-                                        )
-                                    }
-                                    className={`
-                                        px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap
-                                        ${
-                                            effectiveOwnerFilter ===
-                                            'orchestrator'
-                                                ? 'bg-gradient-to-r from-sky-500 to-cyan-600 text-white shadow-sm'
-                                                : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
-                                        }
-                                    `}
-                                >
-                                    🎛 Orchestrator
                                 </button>
                             )}
                             {hasAutomationSessions && (

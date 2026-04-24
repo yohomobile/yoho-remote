@@ -2,6 +2,11 @@ import { QUEUE, type SummarizeSessionPayload } from '../boss'
 import { PermanentLLMError, safeLLMCall } from '../llm/errors'
 import { extractJobErrorCode, PermanentJobError } from '../jobs/errors'
 import type { WorkerJobMetadata } from '../jobs/core'
+import {
+    buildSkillTags,
+    composeMemoryProposalInput,
+    isValuableForL3Skill,
+} from '../infra/yohoMemory'
 import type { StoredL1Summary, StoredL2Summary } from '../types'
 import type { WorkerContext } from '../types'
 
@@ -176,6 +181,8 @@ export async function handleSummarizeSession(
             provider: llmResult.provider.provider,
             provider_model: llmResult.provider.model,
             provider_status: llmResult.provider.statusCode,
+            memory_proposal_action: llmResult.memory.action,
+            skill_proposal_action: llmResult.skill.action,
         }
 
         try {
@@ -185,6 +192,58 @@ export async function handleSummarizeSession(
                 summary: llmResult.summary,
                 metadata: summaryMetadata,
             })
+            const sourceIds = sourceSummaries.map(s => s.id)
+            if (
+                ctx.memoryClient
+                && ctx.config.yohoMemory?.writeL3
+                && llmResult.memory.action === 'remember'
+                && llmResult.memory.text != null
+            ) {
+                void ctx.memoryClient.remember({
+                    input: composeMemoryProposalInput({
+                        sourceLevel: 'L3',
+                        sessionId: payload.sessionId,
+                        namespace: sessionNamespace,
+                        topic: llmResult.topic,
+                        text: llmResult.memory.text,
+                        tools: llmResult.tools,
+                        entities: llmResult.entities,
+                        sourceIds,
+                    }),
+                    source: 'automation',
+                    approvedForLongTerm: false,
+                    idempotencyKey: `yoho-remote:memory:L3:${upserted.id}`,
+                }).catch(() => {})
+            }
+            const skillProposal = llmResult.skill
+            if (
+                ctx.memoryClient
+                && ctx.config.yohoMemory?.saveSkillFromL3
+                && skillProposal.action === 'save'
+                && skillProposal.name != null
+                && skillProposal.content != null
+                && isValuableForL3Skill({
+                    topic: llmResult.topic,
+                    tools: llmResult.tools,
+                    sourceCount: sourceSummaries.length,
+                })
+            ) {
+                void ctx.memoryClient.saveSkill({
+                    name: skillProposal.name,
+                    category: '工程',
+                    description: skillProposal.description ?? skillProposal.name,
+                    content: skillProposal.content,
+                    tags: skillProposal.tags.length > 0
+                        ? skillProposal.tags
+                        : buildSkillTags(llmResult.tools, llmResult.entities),
+                    requiredTools: skillProposal.requiredTools.length > 0
+                        ? skillProposal.requiredTools
+                        : llmResult.tools,
+                    antiTriggers: skillProposal.antiTriggers,
+                    activationMode: 'manual',
+                    idempotencyKey: `yoho-remote:skill:L3:${upserted.id}`,
+                }).catch(() => {})
+            }
 
             await recordRun({
                 status: 'success',

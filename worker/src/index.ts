@@ -12,6 +12,7 @@ import { enqueueSegmentIfNeeded } from './handlers/summarizeSegment'
 import { handleAiTask, aiTaskPayloadSchema } from './handlers/aiTask'
 import { handleAiTaskDispatcher } from './handlers/aiTaskDispatcher'
 import { startWorkerHealthServer, type WorkerHealthSnapshot } from './health'
+import { YohoMemoryClient } from './infra/yohoMemory'
 import { registerWorkerJobs } from './jobs/core'
 import { workerJobDefinitions } from './jobs/summarizeTurn'
 import { DeepSeekClient } from './llm/deepseek'
@@ -172,6 +173,13 @@ async function main(): Promise<void> {
         summaryStore: new SummaryStore(pool),
         runStore: new RunStore(pool),
         deepseekClient: new DeepSeekClient(config.deepseek),
+        memoryClient: config.yohoMemory.enabled
+            ? new YohoMemoryClient({
+                baseUrl: config.yohoMemory.url,
+                token: config.yohoMemory.token,
+                timeoutMs: config.yohoMemory.requestTimeoutMs,
+            })
+            : null,
     }
     const allQueueNames = [
         ...workerJobDefinitions.map(d => d.queueName),

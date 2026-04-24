@@ -5,7 +5,7 @@ import { useAppContext } from '@/lib/app-context'
 import { queryKeys } from '@/lib/query-keys'
 import type { StoredPersonIdentityAudit } from '@/types/api'
 
-const KNOWN_ACTIONS = [
+export const KNOWN_AUDIT_ACTIONS = [
     'all',
     'merge_persons',
     'unmerge_persons',
@@ -16,7 +16,7 @@ const KNOWN_ACTIONS = [
     'reject_candidate',
 ] as const
 
-type ActionFilter = typeof KNOWN_ACTIONS[number]
+export type AuditActionFilter = typeof KNOWN_AUDIT_ACTIONS[number]
 
 function formatTimestamp(ts: number): string {
     return new Date(ts).toLocaleString('en-US', {
@@ -27,21 +27,17 @@ function formatTimestamp(ts: number): string {
     })
 }
 
-export function IdentityAuditPanel(props: { orgId: string | null }) {
-    const { api } = useAppContext()
-    const [action, setAction] = useState<ActionFilter>('all')
+type IdentityAuditContentProps = {
+    action: AuditActionFilter
+    audits: StoredPersonIdentityAudit[]
+    isLoading: boolean
+    isFetching: boolean
+    error: string | null
+    onActionChange: (action: AuditActionFilter) => void
+}
 
-    const auditQuery = useQuery({
-        queryKey: queryKeys.identityAudits(props.orgId, null, null),
-        queryFn: async () => await api.getIdentityAuditLog({ orgId: props.orgId, limit: 50 }),
-        enabled: Boolean(api && props.orgId),
-    })
-    const allAudits: StoredPersonIdentityAudit[] = auditQuery.data?.audits ?? []
-
-    const filtered = useMemo(() => {
-        if (action === 'all') return allAudits
-        return allAudits.filter((audit) => audit.action === action)
-    }, [allAudits, action])
+export function IdentityAuditContent(props: IdentityAuditContentProps) {
+    const { action, audits, isLoading, isFetching, error, onActionChange } = props
 
     return (
         <div id="section-identity-audits" className="rounded-lg bg-[var(--app-subtle-bg)] overflow-hidden">
@@ -52,36 +48,32 @@ export function IdentityAuditPanel(props: { orgId: string | null }) {
                         Latest governance events across candidates, merges and detaches.
                     </p>
                 </div>
-                {auditQuery.isFetching && <Spinner size="sm" label="Loading audits" />}
+                {isFetching && <Spinner size="sm" label="Loading audits" />}
             </div>
 
             <div className="p-3 space-y-3">
                 <select
                     value={action}
-                    onChange={(event) => setAction(event.target.value as ActionFilter)}
+                    onChange={(event) => onActionChange(event.target.value as AuditActionFilter)}
                     className="w-full rounded-md border border-[var(--app-divider)] bg-[var(--app-bg)] px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--app-button)]"
                     aria-label="Filter by action"
                 >
-                    {KNOWN_ACTIONS.map((a) => (
+                    {KNOWN_AUDIT_ACTIONS.map((a) => (
                         <option key={a} value={a}>
                             {a === 'all' ? 'All actions' : a}
                         </option>
                     ))}
                 </select>
 
-                {auditQuery.error && (
-                    <div className="text-xs text-red-500">
-                        {(auditQuery.error as Error)?.message || 'Failed to load audits'}
-                    </div>
-                )}
+                {error && <div className="text-xs text-red-500">{error}</div>}
 
-                {filtered.length === 0 && !auditQuery.isLoading ? (
+                {audits.length === 0 && !isLoading ? (
                     <div className="text-xs text-[var(--app-hint)]">
                         {action === 'all' ? 'No audit events yet.' : `No ${action} events.`}
                     </div>
                 ) : (
                     <ul className="divide-y divide-[var(--app-divider)] rounded-md border border-[var(--app-divider)] bg-[var(--app-bg)]">
-                        {filtered.map((audit) => (
+                        {audits.map((audit) => (
                             <li key={audit.id} className="px-3 py-2 text-[11px]" data-testid={`audit-row-${audit.id}`}>
                                 <div className="flex items-center justify-between gap-2">
                                     <span className="font-semibold">{audit.action}</span>
@@ -105,5 +97,33 @@ export function IdentityAuditPanel(props: { orgId: string | null }) {
                 )}
             </div>
         </div>
+    )
+}
+
+export function IdentityAuditPanel(props: { orgId: string | null }) {
+    const { api } = useAppContext()
+    const [action, setAction] = useState<AuditActionFilter>('all')
+
+    const auditQuery = useQuery({
+        queryKey: queryKeys.identityAudits(props.orgId, null, null),
+        queryFn: async () => await api.getIdentityAuditLog({ orgId: props.orgId, limit: 50 }),
+        enabled: Boolean(api && props.orgId),
+    })
+    const allAudits: StoredPersonIdentityAudit[] = auditQuery.data?.audits ?? []
+
+    const filtered = useMemo(() => {
+        if (action === 'all') return allAudits
+        return allAudits.filter((audit) => audit.action === action)
+    }, [allAudits, action])
+
+    return (
+        <IdentityAuditContent
+            action={action}
+            audits={filtered}
+            isLoading={auditQuery.isLoading}
+            isFetching={auditQuery.isFetching}
+            error={auditQuery.error instanceof Error ? auditQuery.error.message : null}
+            onActionChange={setAction}
+        />
     )
 }

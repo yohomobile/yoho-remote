@@ -27,6 +27,12 @@ import { extractActions, actionsToExtras } from './feishu/actionExtractor'
 import { lookupKeycloakUserByEmail, type KeycloakUserInfo } from './keycloakLookup'
 import { getLicenseService } from '../license/licenseService'
 import { appendSelfSystemPrompt, resolveSessionSelfSystemContext } from '../brain/selfSystem'
+import { appendCommunicationPlanPrompt, resolveSessionCommunicationPlanContext } from '../brain/communicationPlan'
+import {
+    appendSessionAffectPrompt,
+    extractSessionAffectFromMetadata,
+    resolveSessionAffectContext,
+} from '../brain/sessionAffect'
 import { evaluateRecallConsumption } from '../agent/memoryResultGate'
 import { mergeMessageMeta, toWebActorMeta } from '../web/identityContext'
 
@@ -1124,13 +1130,44 @@ export class BrainBridge implements IMBridgeCallbacks {
                     yohoMemoryUrl: this.YOHO_MEMORY_URL,
                 })
                 : null
-            const prompt = appendSelfSystemPrompt(
+            const communicationPlan = session
+                ? await resolveSessionCommunicationPlanContext({
+                    store: this.store,
+                    orgId: sessionOrgId,
+                    personId: initialActor?.personId ?? null,
+                })
+                : null
+            const sessionAffect = session
+                ? resolveSessionAffectContext({
+                    affect: extractSessionAffectFromMetadata(
+                        (session?.metadata as Record<string, unknown> | null | undefined) ?? null
+                    ),
+                    now: Date.now(),
+                })
+                : null
+            let prompt = appendSelfSystemPrompt(
                 await this.adapter.buildInitPrompt(chatType, chatName, senderName, brainPreferences),
                 selfSystem?.prompt,
             )
+            prompt = appendCommunicationPlanPrompt(prompt, communicationPlan?.prompt)
+            prompt = appendSessionAffectPrompt(prompt, sessionAffect?.prompt)
 
             if (selfSystem) {
                 await this.syncEngine.patchSessionMetadata(sessionId, selfSystem.metadataPatch)
+            }
+            if (communicationPlan) {
+                await this.syncEngine.patchSessionMetadata(sessionId, communicationPlan.metadataPatch)
+                if (communicationPlan.metadataPatch.communicationPlanStatus === 'attached') {
+                    console.log(
+                        `${this.logPrefix} communication plan attached session=${sessionId.slice(0, 8)}` +
+                        ` personId=${communicationPlan.metadataPatch.communicationPlanPersonId}` +
+                        ` planId=${communicationPlan.metadataPatch.communicationPlanId}` +
+                        ` version=${communicationPlan.metadataPatch.communicationPlanVersion}`
+                    )
+                }
+            }
+            if (sessionAffect) {
+                await this.syncEngine.patchSessionMetadata(sessionId, sessionAffect.metadataPatch)
             }
 
             await this.syncEngine.sendMessage(sessionId, {

@@ -92,12 +92,17 @@ DEEPSEEK_MODEL=deepseek-chat
 DEEPSEEK_TIMEOUT_MS=60000
 WORKER_CONCURRENCY=1
 SUMMARIZATION_RUN_RETENTION_DAYS=30
+
+YOHO_MEMORY_URL=http://127.0.0.1:3100
+YOHO_MEMORY_HTTP_AUTH_TOKEN=replace-me
+YOHO_MEMORY_INTEGRATION_ENABLED=true
 ```
 
 Notes:
 
 - `DEEPSEEK_API_KEY` is required; without it the worker exits during startup.
 - `PG_BOSS_SCHEMA` must match `server.env` exactly.
+- `YOHO_MEMORY_HTTP_AUTH_TOKEN` must match the yoho-memory HTTP server token when summary-to-memory integration is enabled.
 
 ## Server systemd
 

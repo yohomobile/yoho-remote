@@ -14,6 +14,16 @@ describe('extractUserFromToken', () => {
         expect(extractUserFromToken(payload).email).toBe('user.name@example.com')
     })
 
+    it('rejects tokens without email instead of throwing a TypeError', () => {
+        const payload: KeycloakTokenPayload = {
+            sub: 'user-1',
+            exp: 0,
+            iat: 0,
+        }
+
+        expect(() => extractUserFromToken(payload)).toThrow('Token payload missing email')
+    })
+
     it('treats realm operator as operator', () => {
         const payload: KeycloakTokenPayload = {
             sub: 'user-1',

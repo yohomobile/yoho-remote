@@ -38,9 +38,11 @@ function createContext(options?: {
     sessionSnapshot?: { id: string; namespace: string; thinking: boolean } | null
     turnMessages?: DbMessage[]
     cachedResult?: L1SummaryRecord | null
+    memoryClientEnabled?: boolean
 }) {
     const insertedRuns: InsertRunInput[] = []
     const insertedSummaries: InsertL1SummaryInput[] = []
+    const remembered: Array<Record<string, unknown>> = []
     let llmCalls = 0
     let summaryInsertCalls = 0
 
@@ -49,6 +51,17 @@ function createContext(options?: {
             bossSchema: 'yr_boss',
             deepseek: {
                 model: 'deepseek-chat',
+            },
+            yohoMemory: {
+                enabled: true,
+                url: 'http://127.0.0.1:3100',
+                token: 'token',
+                writeL1: true,
+                writeL2: true,
+                writeL3: true,
+                saveSkillFromL2: true,
+                saveSkillFromL3: true,
+                requestTimeoutMs: 5000,
             },
         } as WorkerContext['config'],
         worker: {
@@ -95,6 +108,21 @@ function createContext(options?: {
                     topic: '测试',
                     tools: ['Bash'],
                     entities: ['bun test'],
+                    memory: {
+                        action: 'remember',
+                        text: 'worker 摘要管线已验证：L1 摘要插入成功，相关测试通过。',
+                        reason: '包含可复用的验证结果',
+                    },
+                    skill: {
+                        action: 'skip',
+                        name: null,
+                        description: null,
+                        content: null,
+                        tags: [],
+                        requiredTools: [],
+                        antiTriggers: [],
+                        reason: 'L1 不生成 skill',
+                    },
                     tokensIn: 10,
                     tokensOut: 5,
                     rawResponse: '{"summary":"完成摘要"}',
@@ -109,12 +137,21 @@ function createContext(options?: {
                 }
             },
         },
+        memoryClient: options?.memoryClientEnabled
+            ? {
+                remember: async (body: Record<string, unknown>) => {
+                    remembered.push(body)
+                },
+                saveSkill: async () => {},
+            }
+            : null,
     } as unknown as WorkerContext
 
     return {
         ctx,
         insertedRuns,
         insertedSummaries,
+        remembered,
         getLlmCalls: () => llmCalls,
         getSummaryInsertCalls: () => summaryInsertCalls,
     }
@@ -330,6 +367,45 @@ describe('handleSummarizeTurn', () => {
         })
     })
 
+    it('writes fresh L1 summaries to yoho-memory without blocking the main path', async () => {
+        const { ctx, remembered } = createContext({
+            memoryClientEnabled: true,
+            turnMessages: [
+                message(10, {
+                    role: 'user',
+                    content: { type: 'text', text: '检查 worker 摘要管线' },
+                }),
+                message(11, {
+                    role: 'agent',
+                    content: {
+                        type: 'output',
+                        data: {
+                            type: 'assistant',
+                            message: {
+                                content: [
+                                    { type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file_path: '/tmp/worker.ts' } },
+                                    { type: 'text', text: '摘要管线已检查，L1 写入正常。' },
+                                ],
+                            },
+                        },
+                    },
+                }),
+            ],
+        })
+
+        await handleSummarizeTurn(payload, createJob({ id: 'job-memory' }), ctx)
+
+        expect(remembered).toHaveLength(1)
+        expect(remembered[0]).toMatchObject({
+            source: 'automation',
+            approvedForLongTerm: false,
+            idempotencyKey: 'yoho-remote:memory:L1:session-1:10',
+        })
+        expect(String(remembered[0]?.input)).toContain('[yoho-remote memory proposal L1]')
+        expect(String(remembered[0]?.input)).toContain('Topic: 测试')
+        expect(String(remembered[0]?.input)).toContain('worker 摘要管线已验证')
+    })
+
     it('replays cached results without calling llm again', async () => {
         const { ctx, insertedRuns, insertedSummaries, getLlmCalls, getSummaryInsertCalls } = createContext({
             cachedResult: {
@@ -393,5 +469,43 @@ describe('handleSummarizeTurn', () => {
             provider_skipped_reason: 'cache_hit',
             provider_request_id: 'req-cache-1',
         })
+    })
+
+    it('does not write L1 summaries to yoho-memory on cache replay', async () => {
+        const { ctx, remembered } = createContext({
+            memoryClientEnabled: true,
+            cachedResult: {
+                summary: '缓存摘要',
+                topic: '缓存主题',
+                tools: ['Read'],
+                entities: ['deepseek.ts'],
+                provider: null,
+            },
+            turnMessages: [
+                message(10, {
+                    role: 'user',
+                    content: { type: 'text', text: '重放上次摘要结果' },
+                }),
+                message(11, {
+                    role: 'agent',
+                    content: {
+                        type: 'output',
+                        data: {
+                            type: 'assistant',
+                            message: {
+                                content: [
+                                    { type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file_path: '/tmp/deepseek.ts' } },
+                                    { type: 'text', text: '缓存摘要已经足够用于本轮。' },
+                                ],
+                            },
+                        },
+                    },
+                }),
+            ],
+        })
+
+        await handleSummarizeTurn(payload, createJob({ id: 'job-cache-memory' }), ctx)
+
+        expect(remembered).toHaveLength(0)
     })
 })

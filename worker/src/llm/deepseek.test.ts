@@ -55,6 +55,7 @@ describe('DeepSeekClient.summarizeTurn', () => {
 
         expect(requestBody).toMatchObject({
             model: 'deepseek-chat',
+            max_tokens: 10_000,
             response_format: { type: 'json_object' },
         })
         expect(result).toEqual({
@@ -62,6 +63,21 @@ describe('DeepSeekClient.summarizeTurn', () => {
             topic: '配置检查',
             tools: ['Read'],
             entities: ['deepseek-chat', 'response_format'],
+            memory: {
+                action: 'skip',
+                text: null,
+                reason: null,
+            },
+            skill: {
+                action: 'skip',
+                name: null,
+                description: null,
+                content: null,
+                tags: [],
+                requiredTools: [],
+                antiTriggers: [],
+                reason: null,
+            },
             tokensIn: 123,
             tokensOut: 45,
             rawResponse: JSON.stringify({
@@ -135,18 +151,24 @@ describe('DeepSeekClient.summarizeTurn', () => {
             return messages.find((message) => message.role === 'system')?.content ?? ''
         })
 
+        expect(requestBodies.map((body) => body.max_tokens)).toEqual([10_000, 10_000, 10_000])
+
         expect(systemPrompts[0]).toContain('失败/修正路径')
         expect(systemPrompts[0]).toContain('不要把失败过程抹平成')
         expect(systemPrompts[0]).toContain('成功依据')
         expect(systemPrompts[0]).toContain('不要复述 secret 值')
+        expect(systemPrompts[0]).toContain('memory 提案规则')
+        expect(systemPrompts[0]).toContain('L1 的 skill.action 必须返回 skip')
 
         expect(systemPrompts[1]).toContain('operational segment')
         expect(systemPrompts[1]).toContain('被废弃方案')
         expect(systemPrompts[1]).toContain('成功结论必须带依据')
+        expect(systemPrompts[1]).toContain('skill 提案规则')
 
         expect(systemPrompts[2]).toContain('长期 operational memory')
         expect(systemPrompts[2]).toContain('不要把过程抹平成')
         expect(systemPrompts[2]).toContain('orphan L1')
         expect(systemPrompts[2]).toContain('未验证项')
+        expect(systemPrompts[2]).toContain('memory 提案规则')
     })
 })

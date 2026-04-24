@@ -7,6 +7,7 @@ import type { WebAppEnv } from '../middleware/auth'
 import { resolvePersonalWorktreeSpawnOptions } from '../personalWorktree'
 import { buildInitPrompt } from '../prompts/initPrompt'
 import { resolveSessionSelfSystemContext, appendSelfSystemPrompt } from '../../brain/selfSystem'
+import { resolveSessionCommunicationPlanContext, appendCommunicationPlanPrompt } from '../../brain/communicationPlan'
 import { getLocalTokenSourceEnabledForOrg, resolveTokenSourceForAgent } from '../tokenSources'
 import { requireMachine, requireMachineInOrg, requireRequestedOrgId } from './guards'
 import { isMachineBlocked } from './blocklist'
@@ -49,6 +50,7 @@ async function sendInitPrompt(
     userEmail?: string | null,
     orgId?: string | null,
     machineId?: string,
+    personId?: string | null,
 ): Promise<void> {
     try {
         const session = engine.getSession(sessionId)
@@ -73,6 +75,28 @@ async function sendInitPrompt(
                 }
             } catch (selfErr) {
                 console.error(`[machines/sendInitPrompt] Self-system resolution failed for session ${sessionId}, continuing with base prompt:`, selfErr)
+            }
+
+            try {
+                const communicationPlan = await resolveSessionCommunicationPlanContext({
+                    store,
+                    orgId: orgId ?? null,
+                    personId: personId ?? null,
+                })
+                prompt = appendCommunicationPlanPrompt(prompt, communicationPlan.prompt)
+                if (typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
+                    await engine.patchSessionMetadata(sessionId, communicationPlan.metadataPatch)
+                }
+                if (communicationPlan.metadataPatch.communicationPlanStatus === 'attached') {
+                    console.log(
+                        `[machines/sendInitPrompt] communication plan attached session=${sessionId}` +
+                        ` personId=${communicationPlan.metadataPatch.communicationPlanPersonId}` +
+                        ` planId=${communicationPlan.metadataPatch.communicationPlanId}` +
+                        ` version=${communicationPlan.metadataPatch.communicationPlanVersion}`
+                    )
+                }
+            } catch (planErr) {
+                console.error(`[machines/sendInitPrompt] Communication plan resolution failed for session ${sessionId}, continuing:`, planErr)
             }
         }
 
@@ -295,7 +319,7 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null, sto
                 if (identityPatch && typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
                     await engine.patchSessionMetadata(result.sessionId, identityPatch)
                 }
-                await sendInitPrompt(engine, store, result.sessionId, role, userName, email, requestedOrgId, machineId)
+                await sendInitPrompt(engine, store, result.sessionId, role, userName, email, requestedOrgId, machineId, c.get('identityActor')?.personId ?? null)
             })().catch((err: unknown) => {
                 console.error(`[machines/spawn] Post-spawn setup failed for session ${result.sessionId}:`, err)
             })

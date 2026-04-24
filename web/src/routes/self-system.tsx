@@ -6,9 +6,12 @@ import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { isFlutterApp } from '@/hooks/useFlutterApp'
 import { Spinner } from '@/components/Spinner'
 import { AIProfileSettings } from '@/components/AIProfileSettings'
+import { CommunicationPlanPanel } from '@/components/CommunicationPlanPanel'
 import { IdentityReviewPanel } from '@/components/IdentityReviewPanel'
 import { IdentityPersonsPanel } from '@/components/IdentityPersonsPanel'
 import { IdentityAuditPanel } from '@/components/IdentityAuditPanel'
+import { TeamMemoryReviewPanel } from '@/components/TeamMemoryReviewPanel'
+import { ObservationReviewPanel } from '@/components/ObservationReviewPanel'
 import { queryKeys } from '@/lib/query-keys'
 import type { AIProfile, Machine } from '@/types/api'
 import {
@@ -492,6 +495,8 @@ export default function SelfSystemPage() {
 
                             <AIProfileSettings orgId={currentOrgId} canManage={canManageOrgProfiles} />
 
+                            <CommunicationPlanPanel orgId={currentOrgId} />
+
                             {canManageOrgProfiles && currentOrgId && (
                                 <>
                                     <IdentityReviewPanel orgId={currentOrgId} canManage={canManageOrgProfiles} />
@@ -507,6 +512,8 @@ export default function SelfSystemPage() {
                                         }}
                                     />
                                     <IdentityAuditPanel orgId={currentOrgId} />
+                                    <TeamMemoryReviewPanel orgId={currentOrgId} canManage={canManageOrgProfiles} />
+                                    <ObservationReviewPanel orgId={currentOrgId} canManage={canManageOrgProfiles} />
                                 </>
                             )}
                         </div>

@@ -48,6 +48,7 @@ import {
 } from '../../resumeSpawnMetadata'
 import { getSessionSourceFromMetadata } from '../../sessionSourcePolicy'
 import { appendSelfSystemPrompt, resolveSessionSelfSystemContext } from '../../brain/selfSystem'
+import { appendCommunicationPlanPrompt, resolveSessionCommunicationPlanContext } from '../../brain/communicationPlan'
 import { buildSessionIdentityContextPatch, type WebActorMeta } from '../identityContext'
 import {
     getSessionOrchestrationParentSessionId,
@@ -578,6 +579,7 @@ async function sendInitPrompt(
     userName?: string | null,
     userEmail?: string | null,
     orgId?: string | null,
+    personId?: string | null,
 ): Promise<void> {
     const session = engine.getSession(sessionId)
     const storedSession = typeof store.getSession === 'function'
@@ -604,6 +606,27 @@ async function sendInitPrompt(
             if (!patchResult.ok) {
                 console.warn(`[sendInitPrompt] Failed to patch self system metadata for session ${sessionId}: ${patchResult.error}`)
             }
+        }
+
+        const communicationPlan = await resolveSessionCommunicationPlanContext({
+            store,
+            orgId: orgId ?? storedSession?.orgId ?? null,
+            personId: personId ?? null,
+        })
+        prompt = appendCommunicationPlanPrompt(prompt, communicationPlan.prompt)
+        if (typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
+            const patchResult = await engine.patchSessionMetadata(sessionId, communicationPlan.metadataPatch)
+            if (!patchResult.ok) {
+                console.warn(`[sendInitPrompt] Failed to patch communication plan metadata for session ${sessionId}: ${patchResult.error}`)
+            }
+        }
+        if (communicationPlan.metadataPatch.communicationPlanStatus === 'attached') {
+            console.log(
+                `[sendInitPrompt] communication plan attached session=${sessionId}` +
+                ` personId=${communicationPlan.metadataPatch.communicationPlanPersonId}` +
+                ` planId=${communicationPlan.metadataPatch.communicationPlanId}` +
+                ` version=${communicationPlan.metadataPatch.communicationPlanVersion}`
+            )
         }
     }
 
@@ -643,12 +666,13 @@ async function sendInitPromptAfterOnline(
     userName?: string | null,
     userEmail?: string | null,
     orgId?: string | null,
+    personId?: string | null,
 ): Promise<void> {
     const isOnline = await waitForSessionOnline(engine, sessionId, 60_000)
     if (!isOnline) {
         return
     }
-    await sendInitPrompt(engine, store, sessionId, role, userName, userEmail, orgId)
+    await sendInitPrompt(engine, store, sessionId, role, userName, userEmail, orgId, personId)
 }
 
 export async function resolveSpawnTarget(
@@ -1188,7 +1212,7 @@ export function createSessionsRoutes(
                 if (identityPatch && typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
                     await engine.patchSessionMetadata(result.sessionId, identityPatch)
                 }
-                await sendInitPrompt(engine, store, result.sessionId, role, userName, email, orgId)
+                await sendInitPrompt(engine, store, result.sessionId, role, userName, email, orgId, c.get('identityActor')?.personId ?? null)
             })()
         }
 
@@ -1406,7 +1430,7 @@ export function createSessionsRoutes(
                 if (identityPatch && typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {
                     await engine.patchSessionMetadata(result.sessionId, identityPatch)
                 }
-                await sendInitPrompt(engine, store, result.sessionId, role, userName, email, orgId)
+                await sendInitPrompt(engine, store, result.sessionId, role, userName, email, orgId, c.get('identityActor')?.personId ?? null)
             })()
         }
 
@@ -1926,7 +1950,7 @@ export function createSessionsRoutes(
 
         const role = c.get('role')  // Role from Keycloak token
         const userName = c.get('name')
-        await sendInitPrompt(engine, store, newSessionId, role, userName, c.get('email'), originalStored?.orgId ?? null)
+        await sendInitPrompt(engine, store, newSessionId, role, userName, c.get('email'), originalStored?.orgId ?? null, c.get('identityActor')?.personId ?? null)
 
         if (!resumeSessionId) {
             const page = await engine.getMessagesPage(sessionId, { limit: RESUME_CONTEXT_MAX_LINES * 2, beforeSeq: null })
@@ -2095,7 +2119,7 @@ export function createSessionsRoutes(
         if (!resumeSessionId || !resumeVerified) {
             const role = c.get('role')
             const userName = c.get('name')
-            await sendInitPrompt(engine, store, sessionId, role, userName, email, storedForRefresh?.orgId ?? null)
+            await sendInitPrompt(engine, store, sessionId, role, userName, email, storedForRefresh?.orgId ?? null, c.get('identityActor')?.personId ?? null)
 
             const page = await engine.getMessagesPage(sessionId, { limit: RESUME_CONTEXT_MAX_LINES * 2, beforeSeq: null })
             const contextMessage = buildResumeContextMessage(session, page.messages)

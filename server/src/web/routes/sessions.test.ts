@@ -1694,6 +1694,16 @@ describe('createSessionsRoutes', () => {
                     selfMemoryStatus: 'disabled',
                 },
             },
+            {
+                sessionId: 'brain-main-new',
+                patch: {
+                    communicationPlanAttached: false,
+                    communicationPlanId: null,
+                    communicationPlanPersonId: null,
+                    communicationPlanStatus: 'disabled-no-person',
+                    communicationPlanVersion: null,
+                },
+            },
         ])
     })
 

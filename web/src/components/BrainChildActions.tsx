@@ -142,7 +142,7 @@ export function BrainChildPageActionBar(props: {
     const [resumePending, setResumePending] = useState(false)
     const tailDialog = useTailDialog(props.api, props.sessionId, props.initialMessages)
     const labels = getSessionOrchestrationLabels(props.childSource)
-    const parentSessionLabel = labels?.parentSessionLabel ?? '主编排 Session'
+    const parentSessionLabel = labels?.parentSessionLabel ?? '主 session'
     const childSessionLabel = labels?.childSessionLabel ?? '子任务'
 
     const handleStop = useCallback(async () => {

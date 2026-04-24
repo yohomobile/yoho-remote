@@ -20,7 +20,7 @@ export function getBrainChildPageInactiveHint(args: {
     hasMessages: boolean
 }): string {
     const labels = getSessionOrchestrationLabels(args.childSource)
-    const parentSessionLabel = labels?.parentSessionLabel ?? '主编排 Session'
+    const parentSessionLabel = labels?.parentSessionLabel ?? '主 session'
     const childSessionLabel = labels?.childSessionLabel ?? '子任务'
     const actionHint = args.hasMainSessionId
         ? `此页不接受直接发消息；可使用上方操作条返回${parentSessionLabel}、恢复或查看最近片段。`

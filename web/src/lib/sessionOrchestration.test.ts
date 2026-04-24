@@ -42,19 +42,17 @@ describe('sessionOrchestration', () => {
         ).toBeUndefined()
     })
 
-    test('returns UI labels for supported orchestration sources', () => {
+    test('returns UI labels only for Brain orchestration sources', () => {
         expect(getSessionOrchestrationLabels('brain-child')).toEqual({
             parentSessionLabel: '主 Brain',
             childSessionLabel: '子任务',
         })
 
-        expect(getSessionOrchestrationLabels('orchestrator')).toEqual({
-            parentSessionLabel: '主编排 Session',
-            childSessionLabel: '编排子任务',
-        })
+        expect(getSessionOrchestrationLabels('orchestrator')).toBeNull()
+        expect(getSessionOrchestrationLabels('orchestrator-child')).toBeNull()
     })
 
-    test('returns presentation metadata for callback cards and header badges', () => {
+    test('returns presentation metadata only for Brain callback cards and header badges', () => {
         expect(getSessionOrchestrationPresentation('brain-child')).toEqual({
             parentDisplayName: 'Brain',
             badgeLabel: '🧠 子任务',
@@ -63,32 +61,18 @@ describe('sessionOrchestration', () => {
             accentTone: 'amber',
         })
 
-        expect(getSessionOrchestrationPresentation('orchestrator')).toEqual({
-            parentDisplayName: 'Orchestrator',
-            badgeLabel: '🎛 Orchestrator',
-            callbackLabel: '编排子任务回传',
-            eventIcon: '🎛',
-            accentTone: 'sky',
-        })
+        expect(getSessionOrchestrationPresentation('orchestrator')).toBeNull()
+        expect(getSessionOrchestrationPresentation('orchestrator-child')).toBeNull()
     })
 
-    test('returns source-aware queue and ready copy', () => {
+    test('returns queue and ready copy only for Brain UI', () => {
         expect(getSessionOrchestrationReadyPhaseCopy('brain', 'ready')).toBe(
             '可开始使用：Brain 已准备就绪，现在可以开始派发任务。'
         )
-        expect(
-            getSessionOrchestrationReadyPhaseCopy(
-                'orchestrator',
-                'initializing'
-            )
-        ).toBe(
-            '初始化中：Orchestrator 已上线，正在加载编排工具和运行上下文，暂时不要把“创建成功”误当成“已经完全可用”。'
-        )
+        expect(getSessionOrchestrationReadyPhaseCopy('orchestrator', 'ready')).toBeNull()
         expect(getSessionOrchestrationInactiveQueueCopy('brain')).toBe(
             'Brain 当前未运行。新消息会先入队，等恢复后再消费。'
         )
-        expect(getSessionOrchestrationInactiveQueueCopy('orchestrator')).toBe(
-            'Orchestrator 当前未运行。新消息会先入队，等恢复后再消费。'
-        )
+        expect(getSessionOrchestrationInactiveQueueCopy('orchestrator')).toBeNull()
     })
 })

@@ -4,6 +4,7 @@ import { enqueueSegmentIfNeeded } from './summarizeSegment'
 import { PermanentLLMError, safeLLMCall } from '../llm/errors'
 import { extractJobErrorCode, PermanentJobError, TransientJobError } from '../jobs/errors'
 import type { WorkerJobMetadata } from '../jobs/core'
+import { composeMemoryProposalInput } from '../infra/yohoMemory'
 import type { DbMessage, L1SummaryRecord, ProviderTelemetry, WorkerContext } from '../types'
 
 const TRIVIAL_ASSISTANT_CHAR_THRESHOLD = 200
@@ -409,6 +410,17 @@ export async function handleSummarizeTurn(
                     finishReason: null,
                     errorCode: null,
                 },
+                memory: cachedResult.memory ?? { action: 'skip', text: null, reason: 'cache_hit' },
+                skill: cachedResult.skill ?? {
+                    action: 'skip',
+                    name: null,
+                    description: null,
+                    content: null,
+                    tags: [],
+                    requiredTools: [],
+                    antiTriggers: [],
+                    reason: 'cache_hit',
+                },
             }
             : await safeLLMCall(() => ctx.deepseekClient.summarizeTurn({
                 userText: truncate(extracted.userText, MAX_USER_TEXT_CHARS),
@@ -417,6 +429,17 @@ export async function handleSummarizeTurn(
                 files: extracted.files,
             }))
         provider = llmResult.provider
+        const memoryProposal = llmResult.memory ?? { action: 'skip' as const, text: null, reason: null }
+        const skillProposal = llmResult.skill ?? {
+            action: 'skip' as const,
+            name: null,
+            description: null,
+            content: null,
+            tags: [],
+            requiredTools: [],
+            antiTriggers: [],
+            reason: null,
+        }
 
         const summaryMetadata: Record<string, unknown> = {
             topic: llmResult.topic,
@@ -434,6 +457,8 @@ export async function handleSummarizeTurn(
             provider_status: llmResult.provider.statusCode,
             provider_request_id: llmResult.provider.requestId,
             provider_finish_reason: llmResult.provider.finishReason,
+            memory_proposal_action: memoryProposal.action,
+            skill_proposal_action: skillProposal.action,
         }
         if (cacheHit) {
             summaryMetadata.provider_replayed_from_cache = true
@@ -448,6 +473,30 @@ export async function handleSummarizeTurn(
                 summary: llmResult.summary,
                 metadata: summaryMetadata,
             })
+            if (
+                ctx.memoryClient
+                && ctx.config.yohoMemory?.writeL1
+                && inserted.inserted
+                && cacheHit !== true
+                && memoryProposal.action === 'remember'
+                && memoryProposal.text != null
+            ) {
+                void ctx.memoryClient.remember({
+                    input: composeMemoryProposalInput({
+                        sourceLevel: 'L1',
+                        sessionId: payload.sessionId,
+                        namespace: sessionNamespace,
+                        topic: llmResult.topic,
+                        text: memoryProposal.text,
+                        tools: llmResult.tools,
+                        entities: llmResult.entities,
+                        files: extracted.files,
+                    }),
+                    source: 'automation',
+                    approvedForLongTerm: false,
+                    idempotencyKey: `yoho-remote:memory:L1:${payload.sessionId}:${payload.userSeq}`,
+                }).catch(() => {})
+            }
 
             await recordRun(buildRunInput({
                 status: 'success',

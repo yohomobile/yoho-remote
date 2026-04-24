@@ -47,6 +47,9 @@ function createHarness(opts: {
         queueReplacementThreadId: (id: string) => {
             pendingReplacementThreadId = id;
         },
+        discardPendingThreadId: () => {
+            pendingReplacementThreadId = null;
+        },
         commitPendingReplacementThreadId: () => {
             if (!pendingReplacementThreadId) {
                 return null;
@@ -315,7 +318,9 @@ describe('codexExecLauncher event bridge', () => {
     });
 
     it('dedupes identical stream errors from turn.failed and surfaces cached usage', () => {
-        const { ctx, sent, onThreadId, onSessionFound } = createHarness();
+        const { ctx, sent, onThreadId, onSessionFound } = createHarness({
+            currentThreadId: 'thread-123',
+        });
 
         __testOnly.handleExecEvent({ type: 'thread.started', thread_id: 'thread-123' }, ctx);
         __testOnly.handleExecEvent({ type: 'error', message: 'transport error' }, ctx);
@@ -346,6 +351,31 @@ describe('codexExecLauncher event bridge', () => {
                 },
             }),
         ]);
+    });
+
+    it('defers a new thread id until the first turn succeeds', () => {
+        const { ctx, onThreadId, onSessionFound } = createHarness();
+
+        __testOnly.handleExecEvent({ type: 'thread.started', thread_id: 'thread-new' }, ctx);
+
+        expect(onThreadId).not.toHaveBeenCalled();
+        expect(onSessionFound).not.toHaveBeenCalled();
+
+        __testOnly.handleExecEvent({ type: 'turn.completed' }, ctx);
+
+        expect(onThreadId).toHaveBeenCalledWith('thread-new');
+        expect(onSessionFound).toHaveBeenCalledWith('thread-new');
+    });
+
+    it('does not promote a new thread id when the first turn fails', () => {
+        const { ctx, onThreadId, onSessionFound } = createHarness();
+
+        __testOnly.handleExecEvent({ type: 'thread.started', thread_id: 'thread-new' }, ctx);
+        __testOnly.handleExecEvent({ type: 'turn.failed', error: { message: 'resume failed' } }, ctx);
+        __testOnly.handleExecEvent({ type: 'turn.completed' }, ctx);
+
+        expect(onThreadId).not.toHaveBeenCalled();
+        expect(onSessionFound).not.toHaveBeenCalled();
     });
 
     it('defers replacement thread id until the resumed turn succeeds', () => {
@@ -387,9 +417,28 @@ describe('codexExecLauncher event bridge', () => {
 
         __testOnly.handleExecEvent({ type: 'thread.started', thread_id: 'thread-new' }, ctx);
         __testOnly.handleExecEvent({ type: 'turn.failed', error: { message: 'resume failed' } }, ctx);
+        __testOnly.handleExecEvent({ type: 'turn.completed' }, ctx);
 
         expect(onThreadId).not.toHaveBeenCalled();
         expect(onSessionFound).not.toHaveBeenCalled();
+    });
+
+    it('classifies only local Codex resume corruption as unrecoverable', () => {
+        expect(__testOnly.isUnrecoverableCodexResumeError(
+            'codex exec exited with code 1: Error: thread/resume: thread/resume failed: no rollout found for thread id 019dc176'
+        )).toBe(true);
+        expect(__testOnly.isUnrecoverableCodexResumeError(
+            'codex exec exited with code 1: Error: thread/resume: thread/resume failed: failed to load rollout `/tmp/rollout.jsonl`: stream did not contain valid UTF-8'
+        )).toBe(true);
+        expect(__testOnly.isUnrecoverableCodexResumeError(
+            'codex exec exited with code 1: unexpected status 503 Service Unavailable'
+        )).toBe(false);
+    });
+
+    it('formats signal exits as failures instead of successful null exit codes', () => {
+        expect(__testOnly.formatProcessExit(1, null)).toBe('code 1');
+        expect(__testOnly.formatProcessExit(null, 'SIGTERM')).toBe('signal SIGTERM');
+        expect(__testOnly.formatProcessExit(null, null)).toBe('unknown exit status');
     });
 
     it('bridges error items as non-fatal notices', () => {

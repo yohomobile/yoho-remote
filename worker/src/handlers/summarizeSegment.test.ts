@@ -34,8 +34,13 @@ function createContext(options?: {
     unassignedL1s?: StoredL1Summary[]
     insertL2AndMarkL1sError?: Error
     llmError?: Error
+    llmTopic?: string
+    llmTools?: string[]
+    memoryClientEnabled?: boolean
 }) {
     const insertedRuns: InsertRunInput[] = []
+    const remembered: Array<Record<string, unknown>> = []
+    const savedSkills: Array<Record<string, unknown>> = []
     let llmCalls = 0
     let l2AndMarkCalls = 0
     let capturedL1Ids: string[] = []
@@ -48,6 +53,17 @@ function createContext(options?: {
             bossSchema: 'yr_boss',
             l2SegmentThreshold: 5,
             deepseek: { model: 'deepseek-chat' },
+            yohoMemory: {
+                enabled: true,
+                url: 'http://127.0.0.1:3100',
+                token: 'token',
+                writeL1: true,
+                writeL2: true,
+                writeL3: true,
+                saveSkillFromL2: true,
+                saveSkillFromL3: true,
+                requestTimeoutMs: 5000,
+            },
         } as WorkerContext['config'],
         worker: { host: 'worker-a', version: '0.1.0-test' },
         pool: {} as WorkerContext['pool'],
@@ -79,9 +95,36 @@ function createContext(options?: {
                 if (options?.llmError) throw options.llmError
                 return {
                     summary: 'Segment summary text',
-                    topic: 'Segment topic',
-                    tools: ['Bash'],
+                    topic: options?.llmTopic ?? 'Segment topic',
+                    tools: options?.llmTools ?? ['Bash'],
                     entities: ['config.ts'],
+                    memory: {
+                        action: 'remember',
+                        text: 'Segment 记录了 worker 摘要片段的关键配置、测试依据和残留风险。',
+                        reason: '片段包含可复用工程事实',
+                    },
+                    skill: {
+                        action: 'save',
+                        name: 'Worker 摘要片段排查',
+                        description: '排查 worker 摘要片段生成与写入链路。',
+                        content: [
+                            '# Worker 摘要片段排查',
+                            '',
+                            '## 适用场景',
+                            '- summarize-segment 写入或 skill 候选异常。',
+                            '',
+                            '## 步骤',
+                            '1. 检查 L1 数量。',
+                            '2. 运行相关测试。',
+                            '',
+                            '## 验证',
+                            '- worker summarizeSegment tests 通过。',
+                        ].join('\n'),
+                        tags: ['worker', 'summary'],
+                        requiredTools: ['Bash'],
+                        antiTriggers: ['一次性进度摘要'],
+                        reason: '具备触发场景、步骤和验证方式',
+                    },
                     tokensIn: 100,
                     tokensOut: 50,
                     rawResponse: '{}',
@@ -96,11 +139,23 @@ function createContext(options?: {
                 }
             },
         },
+        memoryClient: options?.memoryClientEnabled
+            ? {
+                remember: async (body: Record<string, unknown>) => {
+                    remembered.push(body)
+                },
+                saveSkill: async (body: Record<string, unknown>) => {
+                    savedSkills.push(body)
+                },
+            }
+            : null,
     } as unknown as WorkerContext
 
     return {
         ctx,
         insertedRuns,
+        remembered,
+        savedSkills,
         getLlmCalls: () => llmCalls,
         getL2AndMarkCalls: () => l2AndMarkCalls,
         getCapturedL1Ids: () => capturedL1Ids,
@@ -122,6 +177,49 @@ describe('handleSummarizeSegment', () => {
         expect(insertedRuns).toHaveLength(1)
         expect(insertedRuns[0]).toMatchObject({ status: 'success', level: 2 })
         expect(insertedRuns[0]?.metadata).toMatchObject({ l2_id: 'l2-inserted', l1_count: 3 })
+    })
+
+    it('writes L2 memory and candidate skill for valuable segments', async () => {
+        const l1s = [makeL1('l1-a', 10), makeL1('l1-b', 20), makeL1('l1-c', 30)]
+        const { ctx, remembered, savedSkills } = createContext({
+            unassignedL1s: l1s,
+            memoryClientEnabled: true,
+        })
+
+        await handleSummarizeSegment(payload, createJob(), ctx)
+
+        expect(remembered).toHaveLength(1)
+        expect(remembered[0]).toMatchObject({
+            source: 'automation',
+            approvedForLongTerm: false,
+            idempotencyKey: 'yoho-remote:memory:L2:l2-inserted',
+        })
+        expect(String(remembered[0]?.input)).toContain('[yoho-remote memory proposal L2]')
+        expect(String(remembered[0]?.input)).toContain('Segment 记录了 worker 摘要片段')
+        expect(savedSkills).toHaveLength(1)
+        expect(savedSkills[0]).toMatchObject({
+            name: 'Worker 摘要片段排查',
+            category: '工程',
+            description: '排查 worker 摘要片段生成与写入链路。',
+            activationMode: 'manual',
+            idempotencyKey: 'yoho-remote:skill:L2:l2-inserted',
+            requiredTools: ['Bash'],
+            antiTriggers: ['一次性进度摘要'],
+        })
+        expect(savedSkills[0]?.tags).toEqual(['worker', 'summary'])
+        expect(String(savedSkills[0]?.content)).toContain('## 适用场景')
+    })
+
+    it('skips L2 skill candidate when the segment topic is generic', async () => {
+        const { ctx, remembered, savedSkills } = createContext({
+            memoryClientEnabled: true,
+            llmTopic: 'General discussion',
+        })
+
+        await handleSummarizeSegment(payload, createJob(), ctx)
+
+        expect(remembered).toHaveLength(1)
+        expect(savedSkills).toHaveLength(0)
     })
 
     it('skips when fewer than MIN_L1_TO_SEGMENT unassigned L1s', async () => {

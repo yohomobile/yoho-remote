@@ -1,10 +1,5 @@
 import type { SessionSummary } from '@/types/api'
 import { isArchivedSession, isSessionReconnecting, isSessionVisibleInActiveList } from '@/lib/sessionActivity'
-import {
-    getSessionOrchestrationChildSourceForParentSource,
-    isSessionOrchestrationChildSource,
-    isSessionOrchestrationParentSource,
-} from '@/lib/sessionOrchestration'
 
 export type BrainGroupStatusSummary = {
     active: boolean
@@ -41,11 +36,11 @@ export type SessionListVisibleRow = {
 type SessionListSortMode = 'activity' | 'createdAtDesc'
 
 function isBrainSession(session: SessionSummary): boolean {
-    return isSessionOrchestrationParentSource(session.metadata?.source)
+    return session.metadata?.source === 'brain'
 }
 
 function isBrainChildSession(session: SessionSummary): boolean {
-    return isSessionOrchestrationChildSource(session.metadata?.source)
+    return session.metadata?.source === 'brain-child'
 }
 
 function getSessionTimestamp(session: SessionSummary): number {
@@ -162,8 +157,7 @@ export function buildSessionListEntries(
         if (!parentId) return
         const parent = visibleBrainParents.get(parentId)
         if (!parent) return
-        const expectedChildSource = getSessionOrchestrationChildSourceForParentSource(parent.metadata?.source)
-        if (!expectedChildSource || session.metadata?.source !== expectedChildSource) return
+        if (parent.metadata?.source !== 'brain' || session.metadata?.source !== 'brain-child') return
         const bucket = childrenByParent.get(parentId)
         if (bucket) {
             bucket.push(session)
@@ -177,8 +171,7 @@ export function buildSessionListEntries(
         if (isBrainChildSession(session)) {
             const parentId = session.metadata?.mainSessionId
             const parent = parentId ? visibleBrainParents.get(parentId) : undefined
-            const expectedChildSource = getSessionOrchestrationChildSourceForParentSource(parent?.metadata?.source)
-            if (parent && expectedChildSource && session.metadata?.source === expectedChildSource) {
+            if (parent?.metadata?.source === 'brain' && session.metadata?.source === 'brain-child') {
                 return
             }
         }

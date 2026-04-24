@@ -3,40 +3,36 @@ import type { Session } from '@/types/api'
 type SessionOrchestrationProfile = {
     parentSource: string
     childSource: string
-    parentSessionLabel: string
-    childSessionLabel: string
-    parentDisplayName: string
-    parentBadgeLabel: string
-    childBadgeLabel: string
-    callbackLabel: string
-    eventIcon: string
-    accentTone: 'amber' | 'sky'
+    ui?: {
+        parentSessionLabel: string
+        childSessionLabel: string
+        parentDisplayName: string
+        parentBadgeLabel: string
+        childBadgeLabel: string
+        callbackLabel: string
+        eventIcon: string
+        accentTone: 'amber' | 'sky'
+    }
 }
 
 const SESSION_ORCHESTRATION_PROFILES: readonly SessionOrchestrationProfile[] = [
     {
         parentSource: 'brain',
         childSource: 'brain-child',
-        parentSessionLabel: '主 Brain',
-        childSessionLabel: '子任务',
-        parentDisplayName: 'Brain',
-        parentBadgeLabel: '🧠 Brain',
-        childBadgeLabel: '🧠 子任务',
-        callbackLabel: '子任务回传',
-        eventIcon: '🧠',
-        accentTone: 'amber',
+        ui: {
+            parentSessionLabel: '主 Brain',
+            childSessionLabel: '子任务',
+            parentDisplayName: 'Brain',
+            parentBadgeLabel: '🧠 Brain',
+            childBadgeLabel: '🧠 子任务',
+            callbackLabel: '子任务回传',
+            eventIcon: '🧠',
+            accentTone: 'amber',
+        },
     },
     {
         parentSource: 'orchestrator',
         childSource: 'orchestrator-child',
-        parentSessionLabel: '主编排 Session',
-        childSessionLabel: '编排子任务',
-        parentDisplayName: 'Orchestrator',
-        parentBadgeLabel: '🎛 Orchestrator',
-        childBadgeLabel: '🎛 编排子任务',
-        callbackLabel: '编排子任务回传',
-        eventIcon: '🎛',
-        accentTone: 'sky',
     },
 ] as const
 
@@ -115,13 +111,13 @@ export function getSessionOrchestrationLabels(
     childSessionLabel: string
 } | null {
     const profile = getSessionOrchestrationProfileBySource(source)
-    if (!profile) {
+    if (!profile?.ui) {
         return null
     }
 
     return {
-        parentSessionLabel: profile.parentSessionLabel,
-        childSessionLabel: profile.childSessionLabel,
+        parentSessionLabel: profile.ui.parentSessionLabel,
+        childSessionLabel: profile.ui.childSessionLabel,
     }
 }
 
@@ -135,20 +131,20 @@ export function getSessionOrchestrationPresentation(
     accentTone: 'amber' | 'sky'
 } | null {
     const profile = getSessionOrchestrationProfileBySource(source)
-    if (!profile) {
+    if (!profile?.ui) {
         return null
     }
 
     const normalized = normalizeSource(source)
     return {
-        parentDisplayName: profile.parentDisplayName,
+        parentDisplayName: profile.ui.parentDisplayName,
         badgeLabel:
             normalized === profile.childSource
-                ? profile.childBadgeLabel
-                : profile.parentBadgeLabel,
-        callbackLabel: profile.callbackLabel,
-        eventIcon: profile.eventIcon,
-        accentTone: profile.accentTone,
+                ? profile.ui.childBadgeLabel
+                : profile.ui.parentBadgeLabel,
+        callbackLabel: profile.ui.callbackLabel,
+        eventIcon: profile.ui.eventIcon,
+        accentTone: profile.ui.accentTone,
     }
 }
 
@@ -159,16 +155,6 @@ export function getSessionOrchestrationReadyPhaseCopy(
     const presentation = getSessionOrchestrationPresentation(source)
     if (!presentation) {
         return null
-    }
-
-    if (presentation.parentDisplayName === 'Orchestrator') {
-        if (phase === 'created') {
-            return '已创建：Orchestrator 会话已创建成功，正在等待 runtime 上线。现在发送的消息会先入队。'
-        }
-        if (phase === 'initializing') {
-            return '初始化中：Orchestrator 已上线，正在加载编排工具和运行上下文，暂时不要把“创建成功”误当成“已经完全可用”。'
-        }
-        return '可开始使用：Orchestrator 已准备就绪，现在可以开始协调子 session。'
     }
 
     if (phase === 'created') {

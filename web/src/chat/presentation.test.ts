@@ -335,8 +335,8 @@ describe('getEventPresentation', () => {
                 details: [],
             } as AgentEvent)
         ).toEqual({
-            icon: '🎛',
-            text: '编排子任务回传 · 编排子任务完成',
+            icon: '🧠',
+            text: '子任务回传 · 编排子任务完成',
         })
 
         const fallback = getEventPresentation({

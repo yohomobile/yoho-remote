@@ -135,6 +135,7 @@ function makeCtx(boss: PgBoss, yohoRemoteInternalUrl = 'http://localhost:9999'):
         summaryStore: null as unknown as WorkerContext['summaryStore'],
         runStore: null as unknown as WorkerContext['runStore'],
         deepseekClient: null as unknown as WorkerContext['deepseekClient'],
+        memoryClient: null,
     }
 }
 

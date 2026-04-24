@@ -38,8 +38,13 @@ function createContext(options?: {
     orphanL1s?: StoredL1Summary[]
     llmError?: Error
     upsertError?: Error
+    llmTopic?: string
+    llmTools?: string[]
+    memoryClientEnabled?: boolean
 }) {
     const insertedRuns: InsertRunInput[] = []
+    const remembered: Array<Record<string, unknown>> = []
+    const savedSkills: Array<Record<string, unknown>> = []
     let llmCalls = 0
     let upsertCalls = 0
     let bossSendCalls = 0
@@ -48,6 +53,17 @@ function createContext(options?: {
         config: {
             bossSchema: 'yr_boss',
             deepseek: { model: 'deepseek-chat' },
+            yohoMemory: {
+                enabled: true,
+                url: 'http://127.0.0.1:3100',
+                token: 'token',
+                writeL1: true,
+                writeL2: true,
+                writeL3: true,
+                saveSkillFromL2: true,
+                saveSkillFromL3: true,
+                requestTimeoutMs: 5000,
+            },
         } as WorkerContext['config'],
         worker: { host: 'worker-a', version: '0.1.0-test' },
         pool: {} as WorkerContext['pool'],
@@ -79,9 +95,37 @@ function createContext(options?: {
                 if (options?.llmError) throw options.llmError
                 return {
                     summary: 'Session summary',
-                    topic: 'Session topic',
-                    tools: ['Bash', 'Read'],
+                    topic: options?.llmTopic ?? 'Session topic',
+                    tools: options?.llmTools ?? ['Bash', 'Read'],
                     entities: ['server/src/index.ts'],
+                    memory: {
+                        action: 'remember',
+                        text: 'Session 完成 worker 摘要链路验证，保留关键配置、测试依据和残留风险。',
+                        reason: 'session 级结论可供后续继续工作',
+                    },
+                    skill: {
+                        action: 'save',
+                        name: 'Worker 摘要链路排查',
+                        description: '排查 worker session 摘要生成、记忆写入和候选 skill 生成。',
+                        content: [
+                            '# Worker 摘要链路排查',
+                            '',
+                            '## 适用场景',
+                            '- worker L3 摘要或记忆候选生成异常。',
+                            '',
+                            '## 步骤',
+                            '1. 检查 L1/L2 来源。',
+                            '2. 检查 L3 upsert。',
+                            '3. 验证 remember/skill_save 调用。',
+                            '',
+                            '## 验证',
+                            '- summarizeSession tests 通过。',
+                        ].join('\n'),
+                        tags: ['worker', 'memory'],
+                        requiredTools: ['Bash', 'Read'],
+                        antiTriggers: ['一次性实现结果'],
+                        reason: '具备触发场景、步骤和验证方式',
+                    },
                     tokensIn: 200,
                     tokensOut: 80,
                     rawResponse: '{}',
@@ -96,11 +140,23 @@ function createContext(options?: {
                 }
             },
         },
+        memoryClient: options?.memoryClientEnabled
+            ? {
+                remember: async (body: Record<string, unknown>) => {
+                    remembered.push(body)
+                },
+                saveSkill: async (body: Record<string, unknown>) => {
+                    savedSkills.push(body)
+                },
+            }
+            : null,
     } as unknown as WorkerContext
 
     return {
         ctx,
         insertedRuns,
+        remembered,
+        savedSkills,
         getLlmCalls: () => llmCalls,
         getUpsertCalls: () => upsertCalls,
         getBossSendCalls: () => bossSendCalls,
@@ -119,6 +175,35 @@ describe('handleSummarizeSession', () => {
         expect(insertedRuns).toHaveLength(1)
         expect(insertedRuns[0]).toMatchObject({ status: 'success', level: 3 })
         expect(insertedRuns[0]?.metadata).toMatchObject({ source_level: 2, source_count: 2 })
+    })
+
+    it('writes L3 memory and candidate skill for focused sessions', async () => {
+        const l2s = [makeL2('l2-1', 10), makeL2('l2-2', 60)]
+        const { ctx, remembered, savedSkills } = createContext({
+            l2Summaries: l2s,
+            memoryClientEnabled: true,
+        })
+
+        await handleSummarizeSession(payload, createJob(), ctx)
+
+        expect(remembered).toHaveLength(1)
+        expect(remembered[0]).toMatchObject({
+            source: 'automation',
+            approvedForLongTerm: false,
+            idempotencyKey: 'yoho-remote:memory:L3:l3-id',
+        })
+        expect(String(remembered[0]?.input)).toContain('[yoho-remote memory proposal L3]')
+        expect(String(remembered[0]?.input)).toContain('Session 完成 worker 摘要链路验证')
+        expect(savedSkills).toHaveLength(1)
+        expect(savedSkills[0]).toMatchObject({
+            name: 'Worker 摘要链路排查',
+            category: '工程',
+            activationMode: 'manual',
+            idempotencyKey: 'yoho-remote:skill:L3:l3-id',
+            requiredTools: ['Bash', 'Read'],
+            antiTriggers: ['一次性实现结果'],
+        })
+        expect(String(savedSkills[0]?.content)).toContain('## 适用场景')
     })
 
     it('includes orphan L1s when L2s exist', async () => {
@@ -159,6 +244,20 @@ describe('handleSummarizeSession', () => {
         expect(insertedRuns).toHaveLength(1)
         expect(insertedRuns[0]).toMatchObject({ status: 'success', level: 3 })
         expect(insertedRuns[0]?.metadata).toMatchObject({ trivial: true, source_level: 1, source_count: 3 })
+    })
+
+    it('does not write trivial L3 sessions to memory or skill candidates', async () => {
+        const l1s = [makeL1('l1-a', 10), makeL1('l1-b', 20), makeL1('l1-c', 30)]
+        const { ctx, remembered, savedSkills } = createContext({
+            l2Summaries: [],
+            l1Summaries: l1s,
+            memoryClientEnabled: true,
+        })
+
+        await handleSummarizeSession(payload, createJob(), ctx)
+
+        expect(remembered).toHaveLength(0)
+        expect(savedSkills).toHaveLength(0)
     })
 
     it('defers L3 and records skipped when session is still thinking', async () => {

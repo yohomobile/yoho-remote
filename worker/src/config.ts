@@ -82,6 +82,15 @@ const envSchema = z.object({
     SUMMARIZE_SESSION_RETRY_DELAY_MAX_SECONDS: z.string().optional(),
     L2_SEGMENT_THRESHOLD: z.string().optional(),
     CATCHUP_INTERVAL_MS: z.string().optional(),
+    YOHO_MEMORY_URL: z.string().default('http://127.0.0.1:3100'),
+    YOHO_MEMORY_HTTP_AUTH_TOKEN: z.string().optional(),
+    YOHO_MEMORY_INTEGRATION_ENABLED: z.string().optional(),
+    YOHO_MEMORY_WRITE_L1: z.string().optional(),
+    YOHO_MEMORY_WRITE_L2: z.string().optional(),
+    YOHO_MEMORY_WRITE_L3: z.string().optional(),
+    YOHO_SKILL_SAVE_FROM_L2: z.string().optional(),
+    YOHO_SKILL_SAVE_FROM_L3: z.string().optional(),
+    YOHO_MEMORY_REQUEST_TIMEOUT_MS: z.string().optional(),
 })
 
 type QueueConfig = {
@@ -122,6 +131,17 @@ export type WorkerConfig = {
         host: string
         port: number
     }
+    yohoMemory: {
+        enabled: boolean
+        url: string
+        token: string
+        writeL1: boolean
+        writeL2: boolean
+        writeL3: boolean
+        saveSkillFromL2: boolean
+        saveSkillFromL3: boolean
+        requestTimeoutMs: number
+    }
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
@@ -161,6 +181,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     const catchupIntervalMs = Math.max(60_000, parseNumber(parsed.CATCHUP_INTERVAL_MS, 3_600_000, 'CATCHUP_INTERVAL_MS'))
     const aiTaskTimeoutMs = Math.max(60_000, parseNumber(parsed.AI_TASK_TIMEOUT_MS, 30 * 60 * 1_000, 'AI_TASK_TIMEOUT_MS'))
     const workerHealthPort = Math.max(0, parseNumber(parsed.WORKER_HEALTH_PORT, 0, 'WORKER_HEALTH_PORT'))
+    const yohoMemoryRequestTimeoutMs = Math.max(
+        1_000,
+        parseNumber(parsed.YOHO_MEMORY_REQUEST_TIMEOUT_MS, 5_000, 'YOHO_MEMORY_REQUEST_TIMEOUT_MS')
+    )
 
     const pg = {
         host: pgHost,
@@ -191,6 +215,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
         health: {
             host: parsed.WORKER_HEALTH_HOST,
             port: workerHealthPort,
+        },
+        yohoMemory: {
+            enabled: parseBoolean(parsed.YOHO_MEMORY_INTEGRATION_ENABLED, true),
+            url: stripTrailingSlash(parsed.YOHO_MEMORY_URL),
+            token: parsed.YOHO_MEMORY_HTTP_AUTH_TOKEN?.trim() ?? '',
+            writeL1: parseBoolean(parsed.YOHO_MEMORY_WRITE_L1, true),
+            writeL2: parseBoolean(parsed.YOHO_MEMORY_WRITE_L2, true),
+            writeL3: parseBoolean(parsed.YOHO_MEMORY_WRITE_L3, true),
+            saveSkillFromL2: parseBoolean(parsed.YOHO_SKILL_SAVE_FROM_L2, true),
+            saveSkillFromL3: parseBoolean(parsed.YOHO_SKILL_SAVE_FROM_L3, true),
+            requestTimeoutMs: yohoMemoryRequestTimeoutMs,
         },
         summarizeTurnQueue: {
             retryLimit: summarizeTurnRetryLimit,

@@ -3,6 +3,11 @@ import { QUEUE } from '../boss'
 import { PermanentLLMError, safeLLMCall } from '../llm/errors'
 import { extractJobErrorCode, PermanentJobError, TransientJobError } from '../jobs/errors'
 import type { WorkerJobMetadata } from '../jobs/core'
+import {
+    buildSkillTags,
+    composeMemoryProposalInput,
+    isValuableForL2Skill,
+} from '../infra/yohoMemory'
 import type { WorkerContext } from '../types'
 
 const MIN_L1_TO_SEGMENT = 2
@@ -91,9 +96,12 @@ export async function handleSummarizeSegment(
             provider: llmResult.provider.provider,
             provider_model: llmResult.provider.model,
             provider_status: llmResult.provider.statusCode,
+            memory_proposal_action: llmResult.memory.action,
+            skill_proposal_action: llmResult.skill.action,
         }
 
         try {
+            const l1Ids = l1Summaries.map(s => s.id)
             const { id: l2Id } = await ctx.summaryStore.insertL2AndMarkL1s(
                 {
                     sessionId: payload.sessionId,
@@ -103,8 +111,59 @@ export async function handleSummarizeSegment(
                     summary: llmResult.summary,
                     metadata: summaryMetadata,
                 },
-                l1Summaries.map(s => s.id)
+                l1Ids
             )
+            if (
+                ctx.memoryClient
+                && ctx.config.yohoMemory?.writeL2
+                && llmResult.memory.action === 'remember'
+                && llmResult.memory.text != null
+            ) {
+                void ctx.memoryClient.remember({
+                    input: composeMemoryProposalInput({
+                        sourceLevel: 'L2',
+                        sessionId: payload.sessionId,
+                        namespace: sessionNamespace,
+                        topic: llmResult.topic,
+                        text: llmResult.memory.text,
+                        tools: llmResult.tools,
+                        entities: llmResult.entities,
+                        sourceIds: l1Ids,
+                    }),
+                    source: 'automation',
+                    approvedForLongTerm: false,
+                    idempotencyKey: `yoho-remote:memory:L2:${l2Id}`,
+                }).catch(() => {})
+            }
+            const skillProposal = llmResult.skill
+            if (
+                ctx.memoryClient
+                && ctx.config.yohoMemory?.saveSkillFromL2
+                && skillProposal.action === 'save'
+                && skillProposal.name != null
+                && skillProposal.content != null
+                && isValuableForL2Skill({
+                    topic: llmResult.topic,
+                    tools: llmResult.tools,
+                    l1Count: l1Summaries.length,
+                })
+            ) {
+                void ctx.memoryClient.saveSkill({
+                    name: skillProposal.name,
+                    category: '工程',
+                    description: skillProposal.description ?? skillProposal.name,
+                    content: skillProposal.content,
+                    tags: skillProposal.tags.length > 0
+                        ? skillProposal.tags
+                        : buildSkillTags(llmResult.tools, llmResult.entities),
+                    requiredTools: skillProposal.requiredTools.length > 0
+                        ? skillProposal.requiredTools
+                        : llmResult.tools,
+                    antiTriggers: skillProposal.antiTriggers,
+                    activationMode: 'manual',
+                    idempotencyKey: `yoho-remote:skill:L2:${l2Id}`,
+                }).catch(() => {})
+            }
 
             await recordRun({
                 status: 'success',

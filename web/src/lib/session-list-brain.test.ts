@@ -106,7 +106,7 @@ describe('session-list-brain', () => {
         })
     })
 
-    test('groups orchestrator children under their matching orchestrator parent', () => {
+    test('keeps orchestrator sessions as regular top-level rows', () => {
         const orchestrator = createSession('orch-1', {
             updatedAt: 100,
             metadata: {
@@ -125,11 +125,14 @@ describe('session-list-brain', () => {
 
         const entries = buildSessionListEntries([child, orchestrator])
 
-        expect(entries).toHaveLength(1)
+        expect(entries).toHaveLength(2)
         expect(entries[0]).toMatchObject({
-            kind: 'brain-group',
+            kind: 'session',
+            session: { id: 'orch-child-1' },
+        })
+        expect(entries[1]).toMatchObject({
+            kind: 'session',
             session: { id: 'orch-1' },
-            children: [{ id: 'orch-child-1' }],
         })
     })
 

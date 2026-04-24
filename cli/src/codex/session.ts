@@ -103,4 +103,12 @@ export class CodexSession extends AgentSessionBase<EnhancedMode> {
     sendSessionEvent = (event: Parameters<ApiSessionClient['sendSessionEvent']>[0]): void => {
         this.client.sendSessionEvent(event);
     };
+
+    clearCodexSessionId = (): void => {
+        this.sessionId = null;
+        this.client.updateMetadata((metadata) => {
+            const { codexSessionId: _codexSessionId, ...rest } = metadata;
+            return rest;
+        });
+    };
 }

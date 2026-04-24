@@ -30,6 +30,11 @@ import { createControlPlaneRoutes } from './routes/control-plane'
 import { createWorkerMcpRoutes } from './routes/worker-mcp'
 import { createAiTaskSchedulesRoutes } from './routes/aiTaskSchedules'
 import { createIdentityRoutes } from './routes/identity'
+import { createCommunicationPlanRoutes } from './routes/communication-plan'
+import { createMemoryConflictRoutes } from './routes/memory-conflicts'
+import { createTeamMemoryRoutes } from './routes/team-memory'
+import { createObservationRoutes } from './routes/observation'
+import { createSessionAffectRoutes } from './routes/session-affect'
 import { internalAuthMiddleware } from './middleware/internal-auth'
 import type { SSEManager } from '../sse/sseManager'
 import type { Server as BunServer } from 'bun'
@@ -137,6 +142,11 @@ function createWebApp(options: {
     app.route('/api', createDownloadApiRoutes(options.store))
     app.route('/api', createControlPlaneRoutes(options.store))
     app.route('/api', createIdentityRoutes(options.store, options.getSseManager))
+    app.route('/api', createCommunicationPlanRoutes(options.store))
+    app.route('/api', createMemoryConflictRoutes(options.store))
+    app.route('/api', createTeamMemoryRoutes(options.store))
+    app.route('/api', createObservationRoutes(options.store))
+    app.route('/api', createSessionAffectRoutes(options.getSyncEngine, options.store))
     app.route('/api', createAiTaskSchedulesRoutes(options.getSyncEngine, options.store))
 
     if (options.embeddedAssetMap) {

@@ -5,6 +5,7 @@ import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
 import type {
     DecryptedMessage,
+    IdentityActorMeta,
     ModelMode,
     ModelReasoningEffort,
     Session,
@@ -20,6 +21,9 @@ import { collectActiveMonitors } from '@/chat/activeMonitors'
 import { YohoRemoteComposer } from '@/components/AssistantChat/YohoRemoteComposer'
 import { YohoRemoteThread } from '@/components/AssistantChat/YohoRemoteThread'
 import { BrainChildPageActionBar } from '@/components/BrainChildActions'
+import { ActorFilterDropdown } from '@/components/ActorFilterDropdown'
+import { useActorFilter } from '@/chat/useActorFilter'
+import { parseIdentityActorMeta } from '@/chat/identityAttribution'
 import { useYohoRemoteRuntime } from '@/lib/assistant-runtime'
 import { SessionHeader } from '@/components/SessionHeader'
 import {
@@ -42,7 +46,6 @@ import {
 import {
     getSessionOrchestrationInactiveQueueCopy,
     getSessionOrchestrationReadyPhaseCopy,
-    isSessionOrchestrationChildSource,
 } from '@/lib/sessionOrchestration'
 import {
     clearBrainSessionReadyMarker,
@@ -241,8 +244,7 @@ export function SessionChat(props: {
         [props.session]
     )
     const childSessionSource = props.session.metadata?.source ?? null
-    const isOrchestrationChildSession =
-        isSessionOrchestrationChildSource(childSessionSource)
+    const isBrainChildSession = childSessionSource === 'brain-child'
 
     // Only the session owner can read privacy mode (backend returns 403 for
     // non-owners). Skip the query for viewers/sharers to avoid noisy 403s.
@@ -284,7 +286,7 @@ export function SessionChat(props: {
     )
     const brainChildInactiveHint = useMemo(
         () =>
-            isOrchestrationChildSession
+            isBrainChildSession
                 ? getBrainChildPageInactiveHint({
                       childSource: childSessionSource,
                       resumeError: Boolean(resumeError),
@@ -297,7 +299,7 @@ export function SessionChat(props: {
         [
             brainChildActionState.mainSessionId,
             childSessionSource,
-            isOrchestrationChildSession,
+            isBrainChildSession,
             props.messages.length,
             resumeError,
         ]
@@ -334,7 +336,9 @@ export function SessionChat(props: {
         }
     }, [props.session.metadata?.name])
 
-    const normalizedMessages: NormalizedMessage[] = useMemo(() => {
+    const actorFilter = useActorFilter()
+
+    const normalizedMessagesAll: NormalizedMessage[] = useMemo(() => {
         const cache = normalizedCacheRef.current
         const normalized: NormalizedMessage[] = []
         const seen = new Set<string>()
@@ -368,6 +372,29 @@ export function SessionChat(props: {
         }
         return normalized
     }, [props.messages])
+
+    const participantsFromMessages = useMemo<IdentityActorMeta[]>(() => {
+        const byId = new Map<string, IdentityActorMeta>()
+        for (const normalized of normalizedMessagesAll) {
+            const meta = normalized.meta
+            if (!meta || typeof meta !== 'object') continue
+            const record = meta as { actor?: unknown; actors?: unknown }
+            const primary = parseIdentityActorMeta(record.actor)
+            if (primary && !byId.has(primary.identityId)) byId.set(primary.identityId, primary)
+            if (Array.isArray(record.actors)) {
+                for (const raw of record.actors) {
+                    const parsed = parseIdentityActorMeta(raw)
+                    if (parsed && !byId.has(parsed.identityId)) byId.set(parsed.identityId, parsed)
+                }
+            }
+        }
+        return Array.from(byId.values())
+    }, [normalizedMessagesAll])
+
+    const normalizedMessages: NormalizedMessage[] = useMemo(() => {
+        if (!actorFilter.selectedIdentityId) return normalizedMessagesAll
+        return normalizedMessagesAll.filter((m) => actorFilter.matches(m.meta))
+    }, [normalizedMessagesAll, actorFilter])
 
     const reduced = useMemo(
         () => reduceChatBlocks(normalizedMessages, props.session.agentState),
@@ -969,7 +996,7 @@ export function SessionChat(props: {
                     </DialogContent>
                 </Dialog>
 
-                {isOrchestrationChildSession ? (
+                {isBrainChildSession ? (
                     <BrainChildPageActionBar
                         api={props.api}
                         sessionId={props.session.id}
@@ -1047,6 +1074,18 @@ export function SessionChat(props: {
                             >
                                 立即恢复
                             </button>
+                        </div>
+                    </div>
+                ) : null}
+
+                {participantsFromMessages.length >= 2 ? (
+                    <div className="px-3 pt-2">
+                        <div className="mx-auto flex w-full max-w-content items-center justify-end">
+                            <ActorFilterDropdown
+                                actors={participantsFromMessages}
+                                selectedIdentityId={actorFilter.selectedIdentityId}
+                                onSelect={actorFilter.setSelectedIdentityId}
+                            />
                         </div>
                     </div>
                 ) : null}

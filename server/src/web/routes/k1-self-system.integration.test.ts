@@ -88,6 +88,7 @@ describe('K1 self system phase 1 flow', () => {
                 name: 'K1',
                 role: 'architect',
                 specialties: ['TypeScript', '系统编排'],
+                behaviorAnchors: ['先问清目标和边界'],
                 personality: '结构化',
                 greetingTemplate: '先把目标和边界说清楚。',
                 preferredProjects: ['yoho-remote', 'yoho-memory'],

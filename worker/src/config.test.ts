@@ -39,6 +39,17 @@ describe('loadConfig', () => {
             host: '127.0.0.1',
             port: 0,
         })
+        expect(config.yohoMemory).toEqual({
+            enabled: true,
+            url: 'http://127.0.0.1:3100',
+            token: '',
+            writeL1: true,
+            writeL2: true,
+            writeL3: true,
+            saveSkillFromL2: true,
+            saveSkillFromL3: true,
+            requestTimeoutMs: 5000,
+        })
         expect(config.summarizeTurnQueue).toEqual({
             retryLimit: 4,
             retryDelaySeconds: 15,
@@ -74,6 +85,33 @@ describe('loadConfig', () => {
         expect(config.health).toEqual({
             host: '0.0.0.0',
             port: 3102,
+        })
+    })
+
+    test('allows tuning yoho-memory integration', () => {
+        const config = loadConfig({
+            ...baseEnv,
+            YOHO_MEMORY_URL: 'http://127.0.0.1:3100/',
+            YOHO_MEMORY_HTTP_AUTH_TOKEN: ' memory-token ',
+            YOHO_MEMORY_INTEGRATION_ENABLED: 'false',
+            YOHO_MEMORY_WRITE_L1: 'false',
+            YOHO_MEMORY_WRITE_L2: 'true',
+            YOHO_MEMORY_WRITE_L3: '0',
+            YOHO_SKILL_SAVE_FROM_L2: 'yes',
+            YOHO_SKILL_SAVE_FROM_L3: 'off',
+            YOHO_MEMORY_REQUEST_TIMEOUT_MS: '2500',
+        })
+
+        expect(config.yohoMemory).toEqual({
+            enabled: false,
+            url: 'http://127.0.0.1:3100',
+            token: 'memory-token',
+            writeL1: false,
+            writeL2: true,
+            writeL3: false,
+            saveSkillFromL2: true,
+            saveSkillFromL3: false,
+            requestTimeoutMs: 2500,
         })
     })
 })

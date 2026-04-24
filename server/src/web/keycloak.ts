@@ -36,8 +36,8 @@ function getJwksClient(): jose.JWTVerifyGetKey {
 
 export interface KeycloakTokenPayload {
     sub: string;
-    email: string;
-    email_verified: boolean;
+    email?: string;
+    email_verified?: boolean;
     name?: string;
     preferred_username?: string;
     given_name?: string;
@@ -228,9 +228,14 @@ export function extractUserFromToken(payload: KeycloakTokenPayload): {
     sub: string;
     role: 'developer' | 'operator';
 } {
+    const email = payload.email?.trim().toLowerCase();
+    if (!email) {
+        throw new Error('Token payload missing email');
+    }
+
     return {
-        email: payload.email.trim().toLowerCase(),
-        name: payload.name || payload.preferred_username || null,
+        email,
+        name: payload.name?.trim() || payload.preferred_username?.trim() || null,
         sub: payload.sub,
         role: extractUserRole(payload),
     };

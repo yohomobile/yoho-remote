@@ -90,13 +90,13 @@ describe('brainChildActions', () => {
         })).toBe('恢复失败。此页不接受直接发消息；可使用上方操作条恢复或查看最近片段。')
     })
 
-    test('uses orchestration-specific labels for orchestrator child pages', () => {
+    test('uses generic labels for orchestrator child pages', () => {
         expect(getBrainChildPageInactiveHint({
             childSource: 'orchestrator-child',
             resumeError: false,
             hasMainSessionId: true,
             hasMessages: false,
-        })).toBe('正在等待编排子任务启动。此页不接受直接发消息；可使用上方操作条返回主编排 Session、恢复或查看最近片段。')
+        })).toBe('正在等待子任务启动。此页不接受直接发消息；可使用上方操作条返回主 session、恢复或查看最近片段。')
     })
 
     test('extracts recent tail preview items from normalized messages', () => {

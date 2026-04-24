@@ -820,6 +820,170 @@ export type IdentityMergeResponse = { ok: true; person: StoredPerson }
 export type IdentityUnmergeResponse = { ok: true; person: StoredPerson }
 export type IdentityDetachResponse = { ok: true; link: StoredPersonIdentityLink }
 
+// === Communication Plan (Phase 3A) ===
+export type CommunicationPlanLength = 'concise' | 'detailed' | 'default'
+export type CommunicationPlanExplanationDepth = 'minimal' | 'moderate' | 'thorough'
+export type CommunicationPlanFormality = 'casual' | 'neutral' | 'formal'
+export type CommunicationPlanAuditAction = 'created' | 'updated' | 'disabled' | 'enabled'
+
+export type CommunicationPlanPreferences = {
+    tone?: string | null
+    length?: CommunicationPlanLength | null
+    explanationDepth?: CommunicationPlanExplanationDepth | null
+    formality?: CommunicationPlanFormality | null
+    customInstructions?: string | null
+}
+
+export type StoredCommunicationPlan = {
+    id: string
+    namespace: string
+    orgId: string | null
+    personId: string
+    preferences: CommunicationPlanPreferences
+    enabled: boolean
+    version: number
+    createdAt: number
+    updatedAt: number
+    updatedBy: string | null
+}
+
+export type StoredCommunicationPlanAudit = {
+    id: string
+    namespace: string
+    orgId: string | null
+    planId: string
+    personId: string
+    action: CommunicationPlanAuditAction
+    priorPreferences: CommunicationPlanPreferences | null
+    newPreferences: CommunicationPlanPreferences | null
+    priorEnabled: boolean | null
+    newEnabled: boolean | null
+    actorEmail: string | null
+    reason: string | null
+    createdAt: number
+}
+
+export type CommunicationPlanResponse = { plan: StoredCommunicationPlan | null }
+export type CommunicationPlanUpdateResponse = { ok: true; plan: StoredCommunicationPlan }
+export type CommunicationPlanAuditsResponse = { audits: StoredCommunicationPlanAudit[] }
+
+// === Team Memory (Phase 3B) ===
+export type TeamMemoryScope = 'team'
+export type TeamMemoryCandidateStatus = 'pending' | 'approved' | 'rejected' | 'superseded' | 'expired'
+export type TeamMemoryAuditAction =
+    | 'proposed'
+    | 'approved'
+    | 'rejected'
+    | 'superseded'
+    | 'expired'
+
+export type StoredTeamMemoryCandidate = {
+    id: string
+    namespace: string
+    orgId: string
+    proposedByPersonId: string | null
+    proposedByEmail: string | null
+    scope: TeamMemoryScope
+    content: string
+    source: string | null
+    sessionId: string | null
+    status: TeamMemoryCandidateStatus
+    decidedBy: string | null
+    decidedAt: number | null
+    decisionReason: string | null
+    memoryRef: string | null
+    createdAt: number
+    updatedAt: number
+}
+
+export type StoredTeamMemoryAudit = {
+    id: string
+    namespace: string
+    orgId: string
+    candidateId: string
+    action: TeamMemoryAuditAction
+    priorStatus: TeamMemoryCandidateStatus | null
+    newStatus: TeamMemoryCandidateStatus
+    actorEmail: string | null
+    reason: string | null
+    memoryRef: string | null
+    createdAt: number
+}
+
+export type TeamMemoryCandidatesResponse = { candidates: StoredTeamMemoryCandidate[] }
+export type TeamMemoryCandidateResponse = { candidate: StoredTeamMemoryCandidate }
+export type TeamMemoryCandidateDecision =
+    | { action: 'approve'; memoryRef?: string | null; reason?: string | null }
+    | { action: 'reject'; reason?: string | null }
+    | { action: 'supersede'; memoryRef?: string | null; reason?: string | null }
+    | { action: 'expire'; reason?: string | null }
+export type TeamMemoryDecisionResponse = { ok: true; candidate: StoredTeamMemoryCandidate }
+export type TeamMemoryAuditsResponse = { audits: StoredTeamMemoryAudit[] }
+
+// === Observation Hypothesis (Phase 3F) ===
+export type ObservationCandidateStatus = 'pending' | 'confirmed' | 'rejected' | 'dismissed' | 'expired'
+export type ObservationAuditAction =
+    | 'generated'
+    | 'confirmed'
+    | 'rejected'
+    | 'dismissed'
+    | 'expired'
+
+export type ObservationSignal = {
+    kind: string
+    summary?: string | null
+    sampleSessionId?: string | null
+    occurredAt?: number | null
+    weight?: number | null
+}
+
+export type StoredObservationCandidate = {
+    id: string
+    namespace: string
+    orgId: string
+    subjectPersonId: string | null
+    subjectEmail: string | null
+    hypothesisKey: string
+    summary: string
+    detail: string | null
+    detectorVersion: string
+    confidence: number
+    signals: ObservationSignal[]
+    suggestedPatch: Record<string, unknown> | null
+    status: ObservationCandidateStatus
+    decidedBy: string | null
+    decidedAt: number | null
+    decisionReason: string | null
+    promotedCommunicationPlanId: string | null
+    expiresAt: number | null
+    createdAt: number
+    updatedAt: number
+}
+
+export type StoredObservationAudit = {
+    id: string
+    namespace: string
+    orgId: string
+    candidateId: string
+    action: ObservationAuditAction
+    priorStatus: ObservationCandidateStatus | null
+    newStatus: ObservationCandidateStatus
+    actorEmail: string | null
+    reason: string | null
+    payload: Record<string, unknown> | null
+    createdAt: number
+}
+
+export type ObservationCandidatesResponse = { candidates: StoredObservationCandidate[] }
+export type ObservationCandidateResponse = { candidate: StoredObservationCandidate }
+export type ObservationDecision =
+    | { action: 'confirm'; promotedCommunicationPlanId?: string | null; reason?: string | null }
+    | { action: 'reject'; reason?: string | null }
+    | { action: 'dismiss'; reason?: string | null }
+    | { action: 'expire'; reason?: string | null }
+export type ObservationDecisionResponse = { ok: true; candidate: StoredObservationCandidate }
+export type ObservationAuditsResponse = { audits: StoredObservationAudit[] }
+
 // Organization 类型
 export type OrgRole = 'owner' | 'admin' | 'member'
 

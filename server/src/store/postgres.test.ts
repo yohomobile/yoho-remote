@@ -189,6 +189,41 @@ function createPersonIdentityAuditRow(overrides: Record<string, unknown> = {}): 
     }
 }
 
+function createCommunicationPlanRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        id: 'plan-1',
+        namespace: 'default',
+        org_id: 'org-1',
+        person_id: 'person-1',
+        preferences: { tone: 'direct', length: 'concise' },
+        enabled: true,
+        version: 1,
+        created_at: '1700000000000',
+        updated_at: '1700000000000',
+        updated_by: 'admin@example.com',
+        ...overrides,
+    }
+}
+
+function createCommunicationPlanAuditRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        id: 'plan-audit-1',
+        namespace: 'default',
+        org_id: 'org-1',
+        plan_id: 'plan-1',
+        person_id: 'person-1',
+        action: 'created',
+        prior_preferences: null,
+        new_preferences: { tone: 'direct', length: 'concise' },
+        prior_enabled: null,
+        new_enabled: true,
+        actor_email: 'admin@example.com',
+        reason: null,
+        created_at: '1700000000000',
+        ...overrides,
+    }
+}
+
 describe('PostgresStore schema migrations', () => {
     it('adds project scope columns before creating dependent indexes', () => {
         const addMachineId = source.indexOf('ALTER TABLE projects ADD COLUMN IF NOT EXISTS machine_id TEXT;')
@@ -241,6 +276,15 @@ describe('PostgresStore schema migrations', () => {
         expect(source).toContain('CREATE INDEX IF NOT EXISTS idx_person_identity_candidates_open')
         expect(source).toContain('CREATE INDEX IF NOT EXISTS idx_person_identity_audits_scope')
         expect(source).toContain('decision_reason TEXT')
+    })
+
+    it('declares communication plan tables and indexes in schema bootstrap', () => {
+        expect(source).toContain('CREATE TABLE IF NOT EXISTS communication_plans')
+        expect(source).toContain('CREATE TABLE IF NOT EXISTS communication_plan_audits')
+        expect(source).toContain('CREATE UNIQUE INDEX IF NOT EXISTS idx_communication_plans_person')
+        expect(source).toContain('CREATE INDEX IF NOT EXISTS idx_communication_plan_audits_plan')
+        expect(source).toContain('CREATE INDEX IF NOT EXISTS idx_communication_plan_audits_person')
+        expect(source).toContain('person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE')
     })
 })
 
@@ -519,6 +563,981 @@ describe('PostgresStore identity graph governance', () => {
         expect(result).not.toBeNull()
         expect(result!.identities).toEqual([])
         expect(queries.some((q) => q.includes('FROM person_identities WHERE id = ANY'))).toBe(false)
+    })
+})
+
+describe('PostgresStore communication plan persistence', () => {
+    it('upsertCommunicationPlan inserts a new plan and writes a created audit in one transaction', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('SELECT * FROM communication_plans') && sql.includes('FOR UPDATE')) {
+                return { rows: [] }
+            }
+            if (sql.includes('INSERT INTO communication_plans')) {
+                return { rows: [createCommunicationPlanRow()] }
+            }
+            if (sql.includes('INSERT INTO communication_plan_audits')) {
+                return { rows: [createCommunicationPlanAuditRow()] }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const originalNow = Date.now
+        Date.now = () => 1_700_000_000_000
+        try {
+            const plan = await store.upsertCommunicationPlan({
+                namespace: 'default',
+                orgId: 'org-1',
+                personId: 'person-1',
+                preferences: { tone: 'direct', length: 'concise' },
+                editedBy: 'admin@example.com',
+            })
+            expect(plan).toMatchObject({
+                id: 'plan-1',
+                personId: 'person-1',
+                preferences: { tone: 'direct', length: 'concise' },
+                enabled: true,
+                version: 1,
+            })
+        } finally {
+            Date.now = originalNow
+        }
+
+        expect(calls.map((call) => call.sql)).toContain('BEGIN')
+        expect(calls.map((call) => call.sql)).toContain('COMMIT')
+        const insertCall = calls.find((call) => call.sql.includes('INSERT INTO communication_plans'))
+        expect(insertCall?.params?.slice(1, 10)).toEqual([
+            'default',
+            'org-1',
+            'person-1',
+            JSON.stringify({ tone: 'direct', length: 'concise' }),
+            true,
+            1,
+            1_700_000_000_000,
+            1_700_000_000_000,
+            'admin@example.com',
+        ])
+        const auditCall = calls.find((call) => call.sql.includes('INSERT INTO communication_plan_audits'))
+        expect(auditCall?.params?.slice(5, 13)).toEqual([
+            'created',
+            null,
+            JSON.stringify({ tone: 'direct', length: 'concise' }),
+            null,
+            true,
+            'admin@example.com',
+            null,
+            1_700_000_000_000,
+        ])
+    })
+
+    it('upsertCommunicationPlan updates an existing plan and writes an updated audit', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('SELECT * FROM communication_plans') && sql.includes('FOR UPDATE')) {
+                return {
+                    rows: [createCommunicationPlanRow({
+                        preferences: { tone: 'warm' },
+                        version: 2,
+                    })],
+                }
+            }
+            if (sql.includes('UPDATE communication_plans')) {
+                return {
+                    rows: [createCommunicationPlanRow({
+                        preferences: { tone: 'direct' },
+                        version: 3,
+                        updated_at: '1700000000500',
+                    })],
+                }
+            }
+            if (sql.includes('INSERT INTO communication_plan_audits')) {
+                return { rows: [createCommunicationPlanAuditRow({ action: 'updated' })] }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const originalNow = Date.now
+        Date.now = () => 1_700_000_000_500
+        try {
+            const plan = await store.upsertCommunicationPlan({
+                namespace: 'default',
+                orgId: 'org-1',
+                personId: 'person-1',
+                preferences: { tone: 'direct' },
+                editedBy: 'admin@example.com',
+                reason: 'user preference update',
+            })
+            expect(plan.version).toBe(3)
+            expect(plan.preferences).toEqual({ tone: 'direct' })
+        } finally {
+            Date.now = originalNow
+        }
+
+        const updateCall = calls.find((call) => call.sql.includes('UPDATE communication_plans'))
+        expect(updateCall?.params).toEqual([
+            JSON.stringify({ tone: 'direct' }),
+            true,
+            1_700_000_000_500,
+            'admin@example.com',
+            'plan-1',
+        ])
+        const auditCall = calls.find((call) => call.sql.includes('INSERT INTO communication_plan_audits'))
+        expect(auditCall?.params?.[5]).toBe('updated')
+        expect(auditCall?.params?.[6]).toBe(JSON.stringify({ tone: 'warm' }))
+        expect(auditCall?.params?.[7]).toBe(JSON.stringify({ tone: 'direct' }))
+        expect(auditCall?.params?.[11]).toBe('user preference update')
+    })
+
+    it('setCommunicationPlanEnabled returns null when the plan does not exist', async () => {
+        const store = createStore(async (sql) => {
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('SELECT * FROM communication_plans')) {
+                return { rows: [] }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const result = await store.setCommunicationPlanEnabled({
+            namespace: 'default',
+            orgId: 'org-1',
+            personId: 'person-missing',
+            enabled: false,
+        })
+        expect(result).toBeNull()
+    })
+
+    it('setCommunicationPlanEnabled toggles the enabled flag and writes a disabled audit', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('SELECT * FROM communication_plans') && sql.includes('FOR UPDATE')) {
+                return { rows: [createCommunicationPlanRow({ enabled: true })] }
+            }
+            if (sql.includes('UPDATE communication_plans')) {
+                return { rows: [createCommunicationPlanRow({ enabled: false, version: 2 })] }
+            }
+            if (sql.includes('INSERT INTO communication_plan_audits')) {
+                return { rows: [createCommunicationPlanAuditRow({ action: 'disabled', new_enabled: false })] }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const originalNow = Date.now
+        Date.now = () => 1_700_000_000_700
+        try {
+            const plan = await store.setCommunicationPlanEnabled({
+                namespace: 'default',
+                orgId: 'org-1',
+                personId: 'person-1',
+                enabled: false,
+                editedBy: 'admin@example.com',
+                reason: 'opt-out',
+            })
+            expect(plan?.enabled).toBe(false)
+        } finally {
+            Date.now = originalNow
+        }
+
+        const auditCall = calls.find((call) => call.sql.includes('INSERT INTO communication_plan_audits'))
+        expect(auditCall?.params?.[5]).toBe('disabled')
+        expect(auditCall?.params?.[8]).toBe(true)
+        expect(auditCall?.params?.[9]).toBe(false)
+        expect(auditCall?.params?.[11]).toBe('opt-out')
+    })
+
+    it('getCommunicationPlanByPerson returns null when row is missing', async () => {
+        const store = createStore(async () => ({ rows: [] }))
+        const plan = await store.getCommunicationPlanByPerson({
+            namespace: 'default',
+            orgId: 'org-1',
+            personId: 'person-missing',
+        })
+        expect(plan).toBeNull()
+    })
+
+    it('listCommunicationPlanAudits applies filters and limit', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            return { rows: [createCommunicationPlanAuditRow()] }
+        })
+
+        await store.listCommunicationPlanAudits({
+            namespace: 'default',
+            orgId: 'org-1',
+            personId: 'person-1',
+            planId: 'plan-1',
+            limit: 25,
+        })
+
+        expect(calls.length).toBe(1)
+        expect(calls[0].sql).toContain('FROM communication_plan_audits')
+        expect(calls[0].sql).toContain('ORDER BY created_at DESC')
+        expect(calls[0].params).toEqual(['default', 'org-1', 'person-1', 'plan-1', 25])
+    })
+})
+
+function createMemoryConflictCandidateRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        id: 'conflict-1',
+        namespace: 'default',
+        org_id: 'org-1',
+        scope: 'team',
+        subject_key: 'sgprod.db.port',
+        summary: 'port value differs across memories',
+        entries: [
+            { source: 'yoho-memory/team/abc', content: 'port 5432', actor: 'guang@example.com' },
+            { source: 'yoho-memory/team/xyz', content: 'port 5433', actor: 'ops@example.com' },
+        ],
+        evidence: { matcher: 'numeric-diff' },
+        detector_version: 'v1',
+        status: 'open',
+        resolution: null,
+        decided_by: null,
+        decided_at: null,
+        decision_reason: null,
+        created_at: '1700000000000',
+        updated_at: '1700000000000',
+        ...overrides,
+    }
+}
+
+function createMemoryConflictAuditRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        id: 'conflict-audit-1',
+        namespace: 'default',
+        org_id: 'org-1',
+        candidate_id: 'conflict-1',
+        action: 'generated',
+        prior_status: null,
+        new_status: 'open',
+        resolution: null,
+        actor_email: null,
+        reason: null,
+        payload: null,
+        created_at: '1700000000000',
+        ...overrides,
+    }
+}
+
+describe('PostgresStore memory conflict candidates (Phase 3C)', () => {
+    it('createMemoryConflictCandidate inserts candidate + generated audit in one transaction', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('INSERT INTO memory_conflict_candidates')) {
+                return { rows: [createMemoryConflictCandidateRow()] }
+            }
+            if (sql.includes('INSERT INTO memory_conflict_audits')) {
+                return { rows: [createMemoryConflictAuditRow()] }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const originalNow = Date.now
+        Date.now = () => 1_700_000_000_000
+        try {
+            const candidate = await store.createMemoryConflictCandidate({
+                namespace: 'default',
+                orgId: 'org-1',
+                scope: 'team',
+                subjectKey: 'sgprod.db.port',
+                summary: 'port value differs across memories',
+                entries: [
+                    { source: 'yoho-memory/team/abc', content: 'port 5432', actor: 'guang@example.com' },
+                    { source: 'yoho-memory/team/xyz', content: 'port 5433', actor: 'ops@example.com' },
+                ],
+                evidence: { matcher: 'numeric-diff' },
+                detectorVersion: 'v1',
+            })
+            expect(candidate).toMatchObject({
+                id: 'conflict-1',
+                scope: 'team',
+                subjectKey: 'sgprod.db.port',
+                status: 'open',
+                resolution: null,
+            })
+            expect(candidate.entries).toHaveLength(2)
+        } finally {
+            Date.now = originalNow
+        }
+
+        expect(calls.map((call) => call.sql)).toContain('BEGIN')
+        expect(calls.map((call) => call.sql)).toContain('COMMIT')
+        const insertCall = calls.find((call) => call.sql.includes('INSERT INTO memory_conflict_candidates'))
+        expect(insertCall?.params?.slice(1, 5)).toEqual(['default', 'org-1', 'team', 'sgprod.db.port'])
+        const auditCall = calls.find((call) => call.sql.includes('INSERT INTO memory_conflict_audits'))
+        expect(auditCall?.sql).toContain("'generated'")
+    })
+
+    it('listMemoryConflictCandidates applies status and scope filters', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            return { rows: [createMemoryConflictCandidateRow()] }
+        })
+
+        await store.listMemoryConflictCandidates({
+            namespace: 'default',
+            orgId: 'org-1',
+            scope: 'team',
+            status: 'open',
+            limit: 30,
+        })
+
+        expect(calls.length).toBe(1)
+        expect(calls[0].sql).toContain('FROM memory_conflict_candidates')
+        expect(calls[0].sql).toContain('AND scope =')
+        expect(calls[0].sql).toContain('AND status =')
+        expect(calls[0].params).toEqual(['default', 'org-1', 'team', 'open', 30])
+    })
+
+    it('getMemoryConflictCandidate returns null when not found', async () => {
+        const store = createStore(async () => ({ rows: [], rowCount: 0 }))
+        const result = await store.getMemoryConflictCandidate({
+            namespace: 'default',
+            orgId: 'org-1',
+            id: 'missing',
+        })
+        expect(result).toBeNull()
+    })
+
+    it('decideMemoryConflictCandidate action=resolve writes resolved status and resolution', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] }
+            if (sql.includes('SELECT * FROM memory_conflict_candidates') && sql.includes('FOR UPDATE')) {
+                return { rows: [createMemoryConflictCandidateRow({ status: 'open' })] }
+            }
+            if (sql.includes('UPDATE memory_conflict_candidates')) {
+                return {
+                    rows: [createMemoryConflictCandidateRow({
+                        status: 'resolved',
+                        resolution: 'keep_a',
+                        decided_by: 'admin@example.com',
+                        decided_at: '1700000000500',
+                        decision_reason: 'port 5432 is canonical',
+                    })],
+                }
+            }
+            if (sql.includes('INSERT INTO memory_conflict_audits')) {
+                return { rows: [createMemoryConflictAuditRow({ action: 'resolved', new_status: 'resolved' })] }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const originalNow = Date.now
+        Date.now = () => 1_700_000_000_500
+        try {
+            const updated = await store.decideMemoryConflictCandidate({
+                namespace: 'default',
+                orgId: 'org-1',
+                id: 'conflict-1',
+                action: 'resolve',
+                resolution: 'keep_a',
+                actorEmail: 'admin@example.com',
+                reason: 'port 5432 is canonical',
+            })
+            expect(updated).toMatchObject({
+                status: 'resolved',
+                resolution: 'keep_a',
+                decidedBy: 'admin@example.com',
+                decisionReason: 'port 5432 is canonical',
+            })
+        } finally {
+            Date.now = originalNow
+        }
+
+        const updateCall = calls.find((call) => call.sql.includes('UPDATE memory_conflict_candidates'))
+        expect(updateCall?.params?.slice(0, 3)).toEqual(['resolved', 'keep_a', 'admin@example.com'])
+    })
+
+    it('decideMemoryConflictCandidate action=dismiss leaves resolution null', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql) => {
+            calls.push({ sql, params: undefined })
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] }
+            if (sql.includes('SELECT * FROM memory_conflict_candidates') && sql.includes('FOR UPDATE')) {
+                return { rows: [createMemoryConflictCandidateRow()] }
+            }
+            if (sql.includes('UPDATE memory_conflict_candidates')) {
+                return {
+                    rows: [createMemoryConflictCandidateRow({
+                        status: 'dismissed',
+                        resolution: null,
+                    })],
+                }
+            }
+            if (sql.includes('INSERT INTO memory_conflict_audits')) {
+                return { rows: [createMemoryConflictAuditRow({ action: 'dismissed', new_status: 'dismissed' })] }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const updated = await store.decideMemoryConflictCandidate({
+            namespace: 'default',
+            orgId: 'org-1',
+            id: 'conflict-1',
+            action: 'dismiss',
+            actorEmail: 'admin@example.com',
+        })
+        expect(updated?.status).toBe('dismissed')
+        expect(updated?.resolution).toBeNull()
+    })
+
+    it('decideMemoryConflictCandidate returns null when candidate missing', async () => {
+        const store = createStore(async (sql) => {
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] }
+            if (sql.includes('SELECT * FROM memory_conflict_candidates') && sql.includes('FOR UPDATE')) {
+                return { rows: [], rowCount: 0 }
+            }
+            return { rows: [] }
+        })
+
+        const result = await store.decideMemoryConflictCandidate({
+            namespace: 'default',
+            orgId: 'org-1',
+            id: 'missing',
+            action: 'resolve',
+            resolution: 'keep_a',
+        })
+        expect(result).toBeNull()
+    })
+
+    it('listMemoryConflictAudits filters by candidateId and applies LIMIT', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            return { rows: [createMemoryConflictAuditRow()] }
+        })
+
+        await store.listMemoryConflictAudits({
+            namespace: 'default',
+            orgId: 'org-1',
+            candidateId: 'conflict-1',
+            limit: 20,
+        })
+
+        expect(calls.length).toBe(1)
+        expect(calls[0].sql).toContain('FROM memory_conflict_audits')
+        expect(calls[0].sql).toContain('AND candidate_id =')
+        expect(calls[0].sql).toContain('ORDER BY created_at DESC')
+        expect(calls[0].params).toEqual(['default', 'org-1', 'conflict-1', 20])
+    })
+})
+
+function createTeamMemoryCandidateRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        id: 'team-mem-1',
+        namespace: 'default',
+        org_id: 'org-1',
+        proposed_by_person_id: 'person-1',
+        proposed_by_email: 'guang@example.com',
+        scope: 'team',
+        content: 'sgprod 主库端口是 5432',
+        source: 'chat',
+        session_id: 'sess-1',
+        status: 'pending',
+        decided_by: null,
+        decided_at: null,
+        decision_reason: null,
+        memory_ref: null,
+        created_at: '1700000000000',
+        updated_at: '1700000000000',
+        ...overrides,
+    }
+}
+
+function createTeamMemoryAuditRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        id: 'team-audit-1',
+        namespace: 'default',
+        org_id: 'org-1',
+        candidate_id: 'team-mem-1',
+        action: 'proposed',
+        prior_status: null,
+        new_status: 'pending',
+        actor_email: 'guang@example.com',
+        reason: null,
+        memory_ref: null,
+        payload: null,
+        created_at: '1700000000000',
+        ...overrides,
+    }
+}
+
+describe('PostgresStore team memory candidates (Phase 3B)', () => {
+    it('proposeTeamMemoryCandidate inserts candidate + proposed audit in one transaction', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('INSERT INTO team_memory_candidates')) {
+                return { rows: [createTeamMemoryCandidateRow()] }
+            }
+            if (sql.includes('INSERT INTO team_memory_audits')) {
+                return { rows: [createTeamMemoryAuditRow()] }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const candidate = await store.proposeTeamMemoryCandidate({
+            namespace: 'default',
+            orgId: 'org-1',
+            proposedByPersonId: 'person-1',
+            proposedByEmail: 'guang@example.com',
+            content: 'sgprod 主库端口是 5432',
+            source: 'chat',
+            sessionId: 'sess-1',
+        })
+
+        expect(candidate.status).toBe('pending')
+        expect(candidate.scope).toBe('team')
+        expect(candidate.content).toBe('sgprod 主库端口是 5432')
+
+        expect(calls.map((c) => c.sql.split('\n')[0].trim()).filter(Boolean).slice(0, 1)).toEqual(['BEGIN'])
+        expect(calls.at(-1)?.sql).toBe('COMMIT')
+        const insertCand = calls.find((c) => c.sql.includes('INSERT INTO team_memory_candidates'))
+        expect(insertCand).toBeDefined()
+        const insertAudit = calls.find((c) => c.sql.includes('INSERT INTO team_memory_audits'))
+        expect(insertAudit).toBeDefined()
+    })
+
+    it('listTeamMemoryCandidates applies status filter', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            return { rows: [createTeamMemoryCandidateRow()] }
+        })
+
+        await store.listTeamMemoryCandidates({
+            namespace: 'default',
+            orgId: 'org-1',
+            status: 'pending',
+            limit: 25,
+        })
+
+        expect(calls.length).toBe(1)
+        expect(calls[0].sql).toContain('FROM team_memory_candidates')
+        expect(calls[0].sql).toContain('AND status =')
+        expect(calls[0].params).toEqual(['default', 'org-1', 'pending', 25])
+    })
+
+    it('getTeamMemoryCandidate returns null when not found', async () => {
+        const store = createStore(async () => ({ rows: [], rowCount: 0 }))
+        const result = await store.getTeamMemoryCandidate({
+            namespace: 'default',
+            orgId: 'org-1',
+            id: 'missing',
+        })
+        expect(result).toBeNull()
+    })
+
+    it('decideTeamMemoryCandidate action=approve transitions status to approved with memoryRef', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('SELECT * FROM team_memory_candidates') && sql.includes('FOR UPDATE')) {
+                return { rows: [createTeamMemoryCandidateRow({ status: 'pending' })] }
+            }
+            if (sql.includes('UPDATE team_memory_candidates')) {
+                return {
+                    rows: [createTeamMemoryCandidateRow({
+                        status: 'approved',
+                        decided_by: 'admin@example.com',
+                        decided_at: '1700000000500',
+                        decision_reason: '同意并写入 team memory',
+                        memory_ref: 'team/xyz',
+                    })],
+                }
+            }
+            if (sql.includes('INSERT INTO team_memory_audits')) {
+                return { rows: [createTeamMemoryAuditRow({ action: 'approved', new_status: 'approved' })] }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const updated = await store.decideTeamMemoryCandidate({
+            namespace: 'default',
+            orgId: 'org-1',
+            id: 'team-mem-1',
+            action: 'approve',
+            actorEmail: 'admin@example.com',
+            reason: '同意并写入 team memory',
+            memoryRef: 'team/xyz',
+        })
+
+        expect(updated?.status).toBe('approved')
+        expect(updated?.memoryRef).toBe('team/xyz')
+
+        const updateCall = calls.find((c) => c.sql.includes('UPDATE team_memory_candidates'))
+        expect(updateCall?.params?.[0]).toBe('approved')
+        expect(updateCall?.params?.[4]).toBe('team/xyz')
+    })
+
+    it('decideTeamMemoryCandidate action=reject transitions to rejected without memoryRef', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql) => {
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('SELECT * FROM team_memory_candidates') && sql.includes('FOR UPDATE')) {
+                return { rows: [createTeamMemoryCandidateRow()] }
+            }
+            if (sql.includes('UPDATE team_memory_candidates')) {
+                return {
+                    rows: [createTeamMemoryCandidateRow({
+                        status: 'rejected',
+                        decided_by: 'admin@example.com',
+                        decided_at: '1700000000500',
+                    })],
+                }
+            }
+            if (sql.includes('INSERT INTO team_memory_audits')) {
+                return { rows: [createTeamMemoryAuditRow({ action: 'rejected', new_status: 'rejected' })] }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const updated = await store.decideTeamMemoryCandidate({
+            namespace: 'default',
+            orgId: 'org-1',
+            id: 'team-mem-1',
+            action: 'reject',
+            actorEmail: 'admin@example.com',
+            reason: 'not relevant',
+        })
+        expect(updated?.status).toBe('rejected')
+        expect(updated?.memoryRef).toBeNull()
+    })
+
+    it('decideTeamMemoryCandidate returns null when candidate missing', async () => {
+        const store = createStore(async (sql) => {
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('FOR UPDATE')) return { rows: [], rowCount: 0 }
+            throw new Error(`unexpected: ${sql}`)
+        })
+        const result = await store.decideTeamMemoryCandidate({
+            namespace: 'default',
+            orgId: 'org-1',
+            id: 'missing',
+            action: 'approve',
+        })
+        expect(result).toBeNull()
+    })
+
+    it('listTeamMemoryAudits filters by candidateId', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            return { rows: [createTeamMemoryAuditRow()] }
+        })
+
+        await store.listTeamMemoryAudits({
+            namespace: 'default',
+            orgId: 'org-1',
+            candidateId: 'team-mem-1',
+            limit: 10,
+        })
+
+        expect(calls.length).toBe(1)
+        expect(calls[0].sql).toContain('FROM team_memory_audits')
+        expect(calls[0].sql).toContain('AND candidate_id =')
+        expect(calls[0].params).toEqual(['default', 'org-1', 'team-mem-1', 10])
+    })
+})
+
+function createObservationCandidateRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        id: 'obs-1',
+        namespace: 'default',
+        org_id: 'org-1',
+        subject_person_id: 'person-1',
+        subject_email: 'guang@example.com',
+        hypothesis_key: 'reply.conciseness.preference',
+        summary: '最近多次要求更短回复',
+        detail: null,
+        detector_version: 'obs-v1',
+        confidence: 0.72,
+        signals: [{ detector: 'reply-length-drop', capturedAt: 1700000000000 }],
+        suggested_patch: { communicationPlan: { prefersConcise: true } },
+        status: 'pending',
+        decided_by: null,
+        decided_at: null,
+        decision_reason: null,
+        promoted_communication_plan_id: null,
+        expires_at: null,
+        created_at: '1700000000000',
+        updated_at: '1700000000000',
+        ...overrides,
+    }
+}
+
+function createObservationAuditRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        id: 'obs-audit-1',
+        namespace: 'default',
+        org_id: 'org-1',
+        candidate_id: 'obs-1',
+        action: 'generated',
+        prior_status: null,
+        new_status: 'pending',
+        actor_email: null,
+        reason: null,
+        payload: null,
+        created_at: '1700000000000',
+        ...overrides,
+    }
+}
+
+describe('PostgresStore observation candidates (Phase 3F)', () => {
+    it('createObservationCandidate inserts candidate + generated audit in transaction', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('INSERT INTO observation_candidates')) {
+                return { rows: [createObservationCandidateRow()] }
+            }
+            if (sql.includes('INSERT INTO observation_audits')) {
+                return { rows: [createObservationAuditRow()] }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const candidate = await store.createObservationCandidate({
+            namespace: 'default',
+            orgId: 'org-1',
+            subjectPersonId: 'person-1',
+            subjectEmail: 'guang@example.com',
+            hypothesisKey: 'reply.conciseness.preference',
+            summary: '最近多次要求更短回复',
+            detectorVersion: 'obs-v1',
+            confidence: 0.72,
+            signals: [{ detector: 'reply-length-drop', capturedAt: 1700000000000 }],
+            suggestedPatch: { communicationPlan: { prefersConcise: true } },
+        })
+
+        expect(candidate.status).toBe('pending')
+        expect(candidate.confidence).toBe(0.72)
+        expect(candidate.hypothesisKey).toBe('reply.conciseness.preference')
+
+        expect(calls[0].sql).toBe('BEGIN')
+        expect(calls.at(-1)?.sql).toBe('COMMIT')
+    })
+
+    it('listObservationCandidates applies subjectPersonId + status filters', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            return { rows: [createObservationCandidateRow()] }
+        })
+
+        await store.listObservationCandidates({
+            namespace: 'default',
+            orgId: 'org-1',
+            subjectPersonId: 'person-1',
+            status: 'pending',
+            limit: 20,
+        })
+
+        expect(calls.length).toBe(1)
+        expect(calls[0].sql).toContain('FROM observation_candidates')
+        expect(calls[0].sql).toContain('AND subject_person_id =')
+        expect(calls[0].sql).toContain('AND status =')
+        expect(calls[0].params).toEqual(['default', 'org-1', 'person-1', 'pending', 20])
+    })
+
+    it('getObservationCandidate returns null when missing', async () => {
+        const store = createStore(async () => ({ rows: [], rowCount: 0 }))
+        const result = await store.getObservationCandidate({
+            namespace: 'default',
+            orgId: 'org-1',
+            id: 'missing',
+        })
+        expect(result).toBeNull()
+    })
+
+    it('decideObservationCandidate action=confirm stores promoted plan id', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('SELECT * FROM observation_candidates') && sql.includes('FOR UPDATE')) {
+                return { rows: [createObservationCandidateRow({ status: 'pending' })] }
+            }
+            if (sql.includes('UPDATE observation_candidates')) {
+                return {
+                    rows: [createObservationCandidateRow({
+                        status: 'confirmed',
+                        decided_by: 'guang@example.com',
+                        decided_at: '1700000000500',
+                        promoted_communication_plan_id: 'plan-1',
+                    })],
+                }
+            }
+            if (sql.includes('INSERT INTO observation_audits')) {
+                return { rows: [createObservationAuditRow({ action: 'confirmed', new_status: 'confirmed' })] }
+            }
+            throw new Error(`unexpected query: ${sql}`)
+        })
+
+        const updated = await store.decideObservationCandidate({
+            namespace: 'default',
+            orgId: 'org-1',
+            id: 'obs-1',
+            action: 'confirm',
+            actorEmail: 'guang@example.com',
+            reason: '确认，升级为偏好',
+            promotedCommunicationPlanId: 'plan-1',
+        })
+
+        expect(updated?.status).toBe('confirmed')
+        expect(updated?.promotedCommunicationPlanId).toBe('plan-1')
+        const updateCall = calls.find((c) => c.sql.includes('UPDATE observation_candidates'))
+        expect(updateCall?.params?.[0]).toBe('confirmed')
+        expect(updateCall?.params?.[4]).toBe('plan-1')
+    })
+
+    it('decideObservationCandidate action=reject leaves plan id null', async () => {
+        const store = createStore(async (sql) => {
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('SELECT * FROM observation_candidates') && sql.includes('FOR UPDATE')) {
+                return { rows: [createObservationCandidateRow()] }
+            }
+            if (sql.includes('UPDATE observation_candidates')) {
+                return { rows: [createObservationCandidateRow({ status: 'rejected' })] }
+            }
+            if (sql.includes('INSERT INTO observation_audits')) {
+                return { rows: [createObservationAuditRow({ action: 'rejected', new_status: 'rejected' })] }
+            }
+            throw new Error(`unexpected: ${sql}`)
+        })
+
+        const updated = await store.decideObservationCandidate({
+            namespace: 'default',
+            orgId: 'org-1',
+            id: 'obs-1',
+            action: 'reject',
+            reason: 'not accurate',
+        })
+        expect(updated?.status).toBe('rejected')
+        expect(updated?.promotedCommunicationPlanId).toBeNull()
+    })
+
+    it('decideObservationCandidate returns null when candidate missing', async () => {
+        const store = createStore(async (sql) => {
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+                return { rows: [] }
+            }
+            if (sql.includes('FOR UPDATE')) return { rows: [], rowCount: 0 }
+            throw new Error(`unexpected: ${sql}`)
+        })
+        const result = await store.decideObservationCandidate({
+            namespace: 'default',
+            orgId: 'org-1',
+            id: 'missing',
+            action: 'dismiss',
+        })
+        expect(result).toBeNull()
+    })
+
+    it('listObservationAudits filters by candidateId', async () => {
+        const calls: MockQueryCall[] = []
+        const store = createStore(async (sql, params) => {
+            calls.push({
+                sql,
+                params: Array.isArray(params) ? params : undefined,
+            })
+            return { rows: [createObservationAuditRow()] }
+        })
+
+        await store.listObservationAudits({
+            namespace: 'default',
+            orgId: 'org-1',
+            candidateId: 'obs-1',
+            limit: 15,
+        })
+
+        expect(calls.length).toBe(1)
+        expect(calls[0].sql).toContain('FROM observation_audits')
+        expect(calls[0].sql).toContain('AND candidate_id =')
+        expect(calls[0].params).toEqual(['default', 'org-1', 'obs-1', 15])
     })
 })
 
@@ -1389,6 +2408,28 @@ describe('PostgresStore.getTurnBoundary', () => {
                 rows: [
                     { seq: 10, content: createUserTextMessage('继续') },
                     { seq: 11, content: createAgentEventMessage() }
+                ]
+            }
+        })
+
+        await expect(store.getTurnBoundary('session-1')).resolves.toBeNull()
+    })
+
+    it('returns null when only pseudo-user tool results follow the user turn start', async () => {
+        let queryCount = 0
+        const store = createStore(async () => {
+            queryCount += 1
+            if (queryCount === 1) {
+                return {
+                    rows: [
+                        { seq: 1, content: createUserTextMessage('帮我查一下') }
+                    ]
+                }
+            }
+            return {
+                rows: [
+                    { seq: 1, content: createUserTextMessage('帮我查一下') },
+                    { seq: 2, content: createUserToolResultMessage() }
                 ]
             }
         })

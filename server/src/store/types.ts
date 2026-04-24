@@ -276,10 +276,229 @@ export type StoredPersonIdentityAudit = {
     createdAt: number
 }
 
+// === Communication Plan (Phase 3A) ===
+// 按 Person 存储的表达偏好。只影响回复语气/长度/详略，不参与工具调用、权限或事实判断。
+// 设计稿：docs/design/k1-phase3-actor-aware-brain.md §4.A
+export type CommunicationPlanLength = 'concise' | 'detailed' | 'default'
+export type CommunicationPlanExplanationDepth = 'minimal' | 'moderate' | 'thorough'
+export type CommunicationPlanFormality = 'casual' | 'neutral' | 'formal'
+export type CommunicationPlanAuditAction = 'created' | 'updated' | 'disabled' | 'enabled'
+
+export type CommunicationPlanPreferences = {
+    tone?: string | null
+    length?: CommunicationPlanLength | null
+    explanationDepth?: CommunicationPlanExplanationDepth | null
+    formality?: CommunicationPlanFormality | null
+    customInstructions?: string | null
+}
+
+export type StoredCommunicationPlan = {
+    id: string
+    namespace: string
+    orgId: string | null
+    personId: string
+    preferences: CommunicationPlanPreferences
+    enabled: boolean
+    version: number
+    createdAt: number
+    updatedAt: number
+    updatedBy: string | null
+}
+
+export type StoredCommunicationPlanAudit = {
+    id: string
+    namespace: string
+    orgId: string | null
+    planId: string
+    personId: string
+    action: CommunicationPlanAuditAction
+    priorPreferences: CommunicationPlanPreferences | null
+    newPreferences: CommunicationPlanPreferences | null
+    priorEnabled: boolean | null
+    newEnabled: boolean | null
+    actorEmail: string | null
+    reason: string | null
+    createdAt: number
+}
+
 export type StoredAdminOrgLicense = StoredOrgLicense & {
     orgName: string
     orgSlug: string
     memberCount: number
+}
+
+// 记忆冲突候选（Phase 3C）。后台扫描生成候选 pair，管理员审阅后决定保留/废弃/合并/过期。
+// 设计稿：docs/design/k1-phase3-actor-aware-brain.md §4.C
+export type MemoryConflictScope = 'personal' | 'team'
+export type MemoryConflictStatus = 'open' | 'resolved' | 'dismissed' | 'expired'
+export type MemoryConflictResolution = 'keep_a' | 'keep_b' | 'supersede' | 'discard_all' | 'mark_expired'
+export type MemoryConflictAuditAction =
+    | 'generated'
+    | 'resolved'
+    | 'dismissed'
+    | 'reopened'
+    | 'expired'
+
+export type MemoryConflictEntry = {
+    source: string
+    content: string
+    actor?: string | null
+    capturedAt?: number | null
+    memoryId?: string | null
+}
+
+export type StoredMemoryConflictCandidate = {
+    id: string
+    namespace: string
+    orgId: string | null
+    scope: MemoryConflictScope
+    subjectKey: string
+    summary: string
+    entries: MemoryConflictEntry[]
+    evidence: Record<string, unknown> | null
+    detectorVersion: string
+    status: MemoryConflictStatus
+    resolution: MemoryConflictResolution | null
+    decidedBy: string | null
+    decidedAt: number | null
+    decisionReason: string | null
+    createdAt: number
+    updatedAt: number
+}
+
+export type StoredMemoryConflictAudit = {
+    id: string
+    namespace: string
+    orgId: string | null
+    candidateId: string
+    action: MemoryConflictAuditAction
+    priorStatus: MemoryConflictStatus | null
+    newStatus: MemoryConflictStatus | null
+    resolution: MemoryConflictResolution | null
+    actorEmail: string | null
+    reason: string | null
+    payload: Record<string, unknown> | null
+    createdAt: number
+}
+
+// Observation Hypothesis Pool (Phase 3F)：系统对用户偏好的观察假设，默认不进 prompt。
+// 设计稿：docs/design/k1-phase3-actor-aware-brain.md §4.F
+// 硬边界：
+// - 默认不进 prompt，不进工具判定。
+// - 用户确认后才升级为 communicationPlan。
+// - 不写“人格标签”或“心理标签”作为事实。
+// - 高敏感观察需要 TTL，过期自动隐藏或降权。
+export type ObservationCandidateStatus =
+    | 'pending'
+    | 'confirmed'
+    | 'rejected'
+    | 'dismissed'
+    | 'expired'
+
+export type ObservationAuditAction =
+    | 'generated'
+    | 'confirmed'
+    | 'rejected'
+    | 'dismissed'
+    | 'expired'
+
+export type ObservationSignal = {
+    sessionId?: string | null
+    messageId?: string | null
+    detector: string
+    note?: string | null
+    capturedAt?: number | null
+}
+
+export type StoredObservationCandidate = {
+    id: string
+    namespace: string
+    orgId: string | null
+    subjectPersonId: string | null
+    subjectEmail: string | null
+    hypothesisKey: string
+    summary: string
+    detail: string | null
+    detectorVersion: string
+    confidence: number | null
+    signals: ObservationSignal[]
+    suggestedPatch: Record<string, unknown> | null
+    status: ObservationCandidateStatus
+    decidedBy: string | null
+    decidedAt: number | null
+    decisionReason: string | null
+    promotedCommunicationPlanId: string | null
+    expiresAt: number | null
+    createdAt: number
+    updatedAt: number
+}
+
+export type StoredObservationAudit = {
+    id: string
+    namespace: string
+    orgId: string | null
+    candidateId: string
+    action: ObservationAuditAction
+    priorStatus: ObservationCandidateStatus | null
+    newStatus: ObservationCandidateStatus | null
+    actorEmail: string | null
+    reason: string | null
+    payload: Record<string, unknown> | null
+    createdAt: number
+}
+
+// Team Memory Candidates (Phase 3B)：团队共享记忆必须先进候选池，由管理员审批。
+// 设计稿：docs/design/k1-phase3-actor-aware-brain.md §4.B
+// 硬边界：
+// - team 写入必须由管理员批准。
+// - team candidate 不允许自动晋升。
+// - 每条 team 记忆必须有 actor、来源、时间、审批记录。
+export type TeamMemoryScope = 'team'
+export type TeamMemoryCandidateStatus =
+    | 'pending'
+    | 'approved'
+    | 'rejected'
+    | 'superseded'
+    | 'expired'
+export type TeamMemoryAuditAction =
+    | 'proposed'
+    | 'approved'
+    | 'rejected'
+    | 'superseded'
+    | 'expired'
+
+export type StoredTeamMemoryCandidate = {
+    id: string
+    namespace: string
+    orgId: string | null
+    proposedByPersonId: string | null
+    proposedByEmail: string | null
+    scope: TeamMemoryScope
+    content: string
+    source: string | null
+    sessionId: string | null
+    status: TeamMemoryCandidateStatus
+    decidedBy: string | null
+    decidedAt: number | null
+    decisionReason: string | null
+    memoryRef: string | null
+    createdAt: number
+    updatedAt: number
+}
+
+export type StoredTeamMemoryAudit = {
+    id: string
+    namespace: string
+    orgId: string | null
+    candidateId: string
+    action: TeamMemoryAuditAction
+    priorStatus: TeamMemoryCandidateStatus | null
+    newStatus: TeamMemoryCandidateStatus | null
+    actorEmail: string | null
+    reason: string | null
+    memoryRef: string | null
+    payload: Record<string, unknown> | null
+    createdAt: number
 }
 
 export type StoredPushSubscription = {

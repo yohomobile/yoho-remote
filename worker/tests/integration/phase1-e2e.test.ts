@@ -231,6 +231,7 @@ function makeCtx(
         summaryStore,
         runStore,
         deepseekClient: makeMockLLM() as unknown as WorkerContext['deepseekClient'],
+        memoryClient: null,
     }
 }
 

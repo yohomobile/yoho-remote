@@ -77,7 +77,7 @@ describe('YohoRemoteSystemEvent', () => {
         expect(html).toContain('运行信息 (1)')
     })
 
-    test('renders orchestrator callback cards with the orchestrator label', () => {
+    test('renders orchestrator callback cards with generic child callback copy', () => {
         const event = {
             type: 'brain-child-callback',
             title: '编排子任务完成',
@@ -93,7 +93,7 @@ describe('YohoRemoteSystemEvent', () => {
             />
         )
 
-        expect(html).toContain('编排子任务回传')
+        expect(html).toContain('子任务回传')
         expect(html).toContain('编排子任务完成')
     })
 })

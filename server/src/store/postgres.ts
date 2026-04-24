@@ -45,6 +45,27 @@ import type {
     StoredPersonIdentityCandidate,
     StoredPersonIdentityAudit,
     PersonIdentityAuditAction,
+    StoredCommunicationPlan,
+    StoredCommunicationPlanAudit,
+    CommunicationPlanPreferences,
+    CommunicationPlanAuditAction,
+    StoredMemoryConflictCandidate,
+    StoredMemoryConflictAudit,
+    MemoryConflictEntry,
+    MemoryConflictScope,
+    MemoryConflictStatus,
+    MemoryConflictResolution,
+    MemoryConflictAuditAction,
+    StoredTeamMemoryCandidate,
+    StoredTeamMemoryAudit,
+    TeamMemoryScope,
+    TeamMemoryCandidateStatus,
+    TeamMemoryAuditAction,
+    StoredObservationCandidate,
+    StoredObservationAudit,
+    ObservationCandidateStatus,
+    ObservationAuditAction,
+    ObservationSignal,
     IdentityObservation,
     ResolvedActorContext,
     IdentityCandidateSummary,
@@ -76,7 +97,7 @@ import type {
 } from './types'
 import { normalizeSessionSource } from '../sessionSourcePolicy'
 import { getAllSessionOrchestrationChildSources } from '../sessionOrchestrationPolicy'
-import { isRealActivityMessage, isTurnStartUserMessage } from './messageUtils'
+import { isAssistantOrAgentReplyMessage, isRealActivityMessage, isTurnStartUserMessage } from './messageUtils'
 
 function parseTimestampCandidate(value: unknown): number | null {
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -829,6 +850,176 @@ export class PostgresStore implements IStore {
             CREATE INDEX IF NOT EXISTS idx_person_identity_audits_identity
                 ON person_identity_audits(identity_id);
 
+            -- Communication Plan (Phase 3A): per-person reply preferences
+            CREATE TABLE IF NOT EXISTS communication_plans (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+                preferences JSONB NOT NULL DEFAULT '{}',
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                version INTEGER NOT NULL DEFAULT 1,
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL,
+                updated_by TEXT
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_communication_plans_person
+                ON communication_plans(namespace, COALESCE(org_id, ''), person_id);
+            CREATE INDEX IF NOT EXISTS idx_communication_plans_scope
+                ON communication_plans(namespace, org_id);
+
+            CREATE TABLE IF NOT EXISTS communication_plan_audits (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                plan_id TEXT NOT NULL REFERENCES communication_plans(id) ON DELETE CASCADE,
+                person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+                action TEXT NOT NULL,
+                prior_preferences JSONB,
+                new_preferences JSONB,
+                prior_enabled BOOLEAN,
+                new_enabled BOOLEAN,
+                actor_email TEXT,
+                reason TEXT,
+                created_at BIGINT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_communication_plan_audits_plan
+                ON communication_plan_audits(plan_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_communication_plan_audits_person
+                ON communication_plan_audits(person_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_communication_plan_audits_scope
+                ON communication_plan_audits(namespace, org_id, created_at DESC);
+
+            -- Memory Conflict Candidates (Phase 3C)
+            CREATE TABLE IF NOT EXISTS memory_conflict_candidates (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                scope TEXT NOT NULL,
+                subject_key TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                entries JSONB NOT NULL DEFAULT '[]',
+                evidence JSONB,
+                detector_version TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',
+                resolution TEXT,
+                decided_by TEXT,
+                decided_at BIGINT,
+                decision_reason TEXT,
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_conflict_candidates_scope
+                ON memory_conflict_candidates(namespace, org_id, status, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_memory_conflict_candidates_subject
+                ON memory_conflict_candidates(namespace, COALESCE(org_id, ''), scope, subject_key);
+
+            CREATE TABLE IF NOT EXISTS memory_conflict_audits (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                candidate_id TEXT NOT NULL REFERENCES memory_conflict_candidates(id) ON DELETE CASCADE,
+                action TEXT NOT NULL,
+                prior_status TEXT,
+                new_status TEXT,
+                resolution TEXT,
+                actor_email TEXT,
+                reason TEXT,
+                payload JSONB,
+                created_at BIGINT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_conflict_audits_candidate
+                ON memory_conflict_audits(candidate_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_memory_conflict_audits_scope
+                ON memory_conflict_audits(namespace, org_id, created_at DESC);
+
+            -- Team Shared Memory Candidates (Phase 3B)
+            CREATE TABLE IF NOT EXISTS team_memory_candidates (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                proposed_by_person_id TEXT,
+                proposed_by_email TEXT,
+                scope TEXT NOT NULL,
+                content TEXT NOT NULL,
+                source TEXT,
+                session_id TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                decided_by TEXT,
+                decided_at BIGINT,
+                decision_reason TEXT,
+                memory_ref TEXT,
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_team_memory_candidates_scope
+                ON team_memory_candidates(namespace, org_id, status, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS team_memory_audits (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                candidate_id TEXT NOT NULL REFERENCES team_memory_candidates(id) ON DELETE CASCADE,
+                action TEXT NOT NULL,
+                prior_status TEXT,
+                new_status TEXT,
+                actor_email TEXT,
+                reason TEXT,
+                memory_ref TEXT,
+                payload JSONB,
+                created_at BIGINT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_team_memory_audits_candidate
+                ON team_memory_audits(candidate_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_team_memory_audits_scope
+                ON team_memory_audits(namespace, org_id, created_at DESC);
+
+            -- Observation Hypothesis Pool (Phase 3F)
+            CREATE TABLE IF NOT EXISTS observation_candidates (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                subject_person_id TEXT,
+                subject_email TEXT,
+                hypothesis_key TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                detail TEXT,
+                detector_version TEXT NOT NULL,
+                confidence DOUBLE PRECISION,
+                signals JSONB NOT NULL DEFAULT '[]',
+                suggested_patch JSONB,
+                status TEXT NOT NULL DEFAULT 'pending',
+                decided_by TEXT,
+                decided_at BIGINT,
+                decision_reason TEXT,
+                promoted_communication_plan_id TEXT,
+                expires_at BIGINT,
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_observation_candidates_subject
+                ON observation_candidates(namespace, org_id, subject_person_id, status, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_observation_candidates_status
+                ON observation_candidates(namespace, org_id, status, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS observation_audits (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                candidate_id TEXT NOT NULL REFERENCES observation_candidates(id) ON DELETE CASCADE,
+                action TEXT NOT NULL,
+                prior_status TEXT,
+                new_status TEXT,
+                actor_email TEXT,
+                reason TEXT,
+                payload JSONB,
+                created_at BIGINT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_observation_audits_candidate
+                ON observation_audits(candidate_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_observation_audits_scope
+                ON observation_audits(namespace, org_id, created_at DESC);
+
             -- Control Plane: Approval Requests
             CREATE TABLE IF NOT EXISTS approval_requests (
                 id TEXT PRIMARY KEY,
@@ -1243,14 +1434,18 @@ export class PostgresStore implements IStore {
         `, [sessionId, turnStartSeq])
 
         let turnEndSeq = Number(turnStartSeq)
+        let hasAssistantOrAgentReply = false
         for (const row of tailResult.rows) {
+            if (isAssistantOrAgentReplyMessage(row.content)) {
+                hasAssistantOrAgentReply = true
+            }
             if (!isRealActivityMessage(row.content)) {
                 continue
             }
             turnEndSeq = Number(row.seq)
         }
 
-        if (turnEndSeq <= Number(turnStartSeq)) {
+        if (!hasAssistantOrAgentReply || turnEndSeq <= Number(turnStartSeq)) {
             return null
         }
 
@@ -5502,6 +5697,156 @@ export class PostgresStore implements IStore {
         }
     }
 
+    private toStoredCommunicationPlan(row: any): StoredCommunicationPlan {
+        return {
+            id: row.id,
+            namespace: row.namespace,
+            orgId: row.org_id ?? null,
+            personId: row.person_id,
+            preferences: (row.preferences ?? {}) as CommunicationPlanPreferences,
+            enabled: row.enabled === true,
+            version: Number(row.version ?? 1),
+            createdAt: Number(row.created_at),
+            updatedAt: Number(row.updated_at),
+            updatedBy: row.updated_by ?? null,
+        }
+    }
+
+    private toStoredCommunicationPlanAudit(row: any): StoredCommunicationPlanAudit {
+        return {
+            id: row.id,
+            namespace: row.namespace,
+            orgId: row.org_id ?? null,
+            planId: row.plan_id,
+            personId: row.person_id,
+            action: row.action as CommunicationPlanAuditAction,
+            priorPreferences: (row.prior_preferences ?? null) as CommunicationPlanPreferences | null,
+            newPreferences: (row.new_preferences ?? null) as CommunicationPlanPreferences | null,
+            priorEnabled: row.prior_enabled === null || row.prior_enabled === undefined ? null : row.prior_enabled === true,
+            newEnabled: row.new_enabled === null || row.new_enabled === undefined ? null : row.new_enabled === true,
+            actorEmail: row.actor_email ?? null,
+            reason: row.reason ?? null,
+            createdAt: Number(row.created_at),
+        }
+    }
+
+    private toStoredMemoryConflictCandidate(row: any): StoredMemoryConflictCandidate {
+        return {
+            id: row.id,
+            namespace: row.namespace,
+            orgId: row.org_id ?? null,
+            scope: row.scope as MemoryConflictScope,
+            subjectKey: row.subject_key,
+            summary: row.summary,
+            entries: (row.entries ?? []) as MemoryConflictEntry[],
+            evidence: (row.evidence ?? null) as Record<string, unknown> | null,
+            detectorVersion: row.detector_version,
+            status: row.status as MemoryConflictStatus,
+            resolution: (row.resolution ?? null) as MemoryConflictResolution | null,
+            decidedBy: row.decided_by ?? null,
+            decidedAt: row.decided_at === null || row.decided_at === undefined ? null : Number(row.decided_at),
+            decisionReason: row.decision_reason ?? null,
+            createdAt: Number(row.created_at),
+            updatedAt: Number(row.updated_at),
+        }
+    }
+
+    private toStoredMemoryConflictAudit(row: any): StoredMemoryConflictAudit {
+        return {
+            id: row.id,
+            namespace: row.namespace,
+            orgId: row.org_id ?? null,
+            candidateId: row.candidate_id,
+            action: row.action as MemoryConflictAuditAction,
+            priorStatus: (row.prior_status ?? null) as MemoryConflictStatus | null,
+            newStatus: (row.new_status ?? null) as MemoryConflictStatus | null,
+            resolution: (row.resolution ?? null) as MemoryConflictResolution | null,
+            actorEmail: row.actor_email ?? null,
+            reason: row.reason ?? null,
+            payload: (row.payload ?? null) as Record<string, unknown> | null,
+            createdAt: Number(row.created_at),
+        }
+    }
+
+    private toStoredTeamMemoryCandidate(row: any): StoredTeamMemoryCandidate {
+        return {
+            id: row.id,
+            namespace: row.namespace,
+            orgId: row.org_id ?? null,
+            proposedByPersonId: row.proposed_by_person_id ?? null,
+            proposedByEmail: row.proposed_by_email ?? null,
+            scope: row.scope as TeamMemoryScope,
+            content: row.content,
+            source: row.source ?? null,
+            sessionId: row.session_id ?? null,
+            status: row.status as TeamMemoryCandidateStatus,
+            decidedBy: row.decided_by ?? null,
+            decidedAt: row.decided_at === null || row.decided_at === undefined ? null : Number(row.decided_at),
+            decisionReason: row.decision_reason ?? null,
+            memoryRef: row.memory_ref ?? null,
+            createdAt: Number(row.created_at),
+            updatedAt: Number(row.updated_at),
+        }
+    }
+
+    private toStoredTeamMemoryAudit(row: any): StoredTeamMemoryAudit {
+        return {
+            id: row.id,
+            namespace: row.namespace,
+            orgId: row.org_id ?? null,
+            candidateId: row.candidate_id,
+            action: row.action as TeamMemoryAuditAction,
+            priorStatus: (row.prior_status ?? null) as TeamMemoryCandidateStatus | null,
+            newStatus: (row.new_status ?? null) as TeamMemoryCandidateStatus | null,
+            actorEmail: row.actor_email ?? null,
+            reason: row.reason ?? null,
+            memoryRef: row.memory_ref ?? null,
+            payload: (row.payload ?? null) as Record<string, unknown> | null,
+            createdAt: Number(row.created_at),
+        }
+    }
+
+    private toStoredObservationCandidate(row: any): StoredObservationCandidate {
+        return {
+            id: row.id,
+            namespace: row.namespace,
+            orgId: row.org_id ?? null,
+            subjectPersonId: row.subject_person_id ?? null,
+            subjectEmail: row.subject_email ?? null,
+            hypothesisKey: row.hypothesis_key,
+            summary: row.summary,
+            detail: row.detail ?? null,
+            detectorVersion: row.detector_version,
+            confidence: row.confidence === null || row.confidence === undefined ? null : Number(row.confidence),
+            signals: (row.signals ?? []) as ObservationSignal[],
+            suggestedPatch: (row.suggested_patch ?? null) as Record<string, unknown> | null,
+            status: row.status as ObservationCandidateStatus,
+            decidedBy: row.decided_by ?? null,
+            decidedAt: row.decided_at === null || row.decided_at === undefined ? null : Number(row.decided_at),
+            decisionReason: row.decision_reason ?? null,
+            promotedCommunicationPlanId: row.promoted_communication_plan_id ?? null,
+            expiresAt: row.expires_at === null || row.expires_at === undefined ? null : Number(row.expires_at),
+            createdAt: Number(row.created_at),
+            updatedAt: Number(row.updated_at),
+        }
+    }
+
+    private toStoredObservationAudit(row: any): StoredObservationAudit {
+        return {
+            id: row.id,
+            namespace: row.namespace,
+            orgId: row.org_id ?? null,
+            candidateId: row.candidate_id,
+            action: row.action as ObservationAuditAction,
+            priorStatus: (row.prior_status ?? null) as ObservationCandidateStatus | null,
+            newStatus: (row.new_status ?? null) as ObservationCandidateStatus | null,
+            actorEmail: row.actor_email ?? null,
+            reason: row.reason ?? null,
+            payload: (row.payload ?? null) as Record<string, unknown> | null,
+            createdAt: Number(row.created_at),
+        }
+    }
+
     private buildResolvedActor(
         identity: StoredPersonIdentity,
         person: StoredPerson | null,
@@ -6475,6 +6820,932 @@ export class PostgresStore implements IStore {
         sql += ` ORDER BY created_at DESC LIMIT $${params.length}`
         const result = await this.pool.query(sql, params)
         return result.rows.map((row) => this.toStoredPersonIdentityAudit(row))
+    }
+
+    private async insertCommunicationPlanAudit(
+        queryable: Queryable,
+        data: {
+            namespace: string
+            orgId?: string | null
+            planId: string
+            personId: string
+            action: CommunicationPlanAuditAction
+            priorPreferences?: CommunicationPlanPreferences | null
+            newPreferences?: CommunicationPlanPreferences | null
+            priorEnabled?: boolean | null
+            newEnabled?: boolean | null
+            actorEmail?: string | null
+            reason?: string | null
+            createdAt?: number
+        },
+    ): Promise<StoredCommunicationPlanAudit> {
+        const createdAt = data.createdAt ?? Date.now()
+        const result = await queryable.query(
+            `INSERT INTO communication_plan_audits (
+                id, namespace, org_id, plan_id, person_id, action,
+                prior_preferences, new_preferences, prior_enabled, new_enabled,
+                actor_email, reason, created_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             RETURNING *`,
+            [
+                randomUUID(),
+                data.namespace,
+                data.orgId ?? null,
+                data.planId,
+                data.personId,
+                data.action,
+                data.priorPreferences === undefined || data.priorPreferences === null
+                    ? null
+                    : JSON.stringify(data.priorPreferences),
+                data.newPreferences === undefined || data.newPreferences === null
+                    ? null
+                    : JSON.stringify(data.newPreferences),
+                data.priorEnabled ?? null,
+                data.newEnabled ?? null,
+                data.actorEmail ?? null,
+                data.reason ?? null,
+                createdAt,
+            ],
+        )
+        return this.toStoredCommunicationPlanAudit(result.rows[0])
+    }
+
+    async getCommunicationPlanByPerson(options: {
+        namespace: string
+        orgId?: string | null
+        personId: string
+    }): Promise<StoredCommunicationPlan | null> {
+        const result = await this.pool.query(
+            `SELECT * FROM communication_plans
+             WHERE namespace = $1
+               AND org_id IS NOT DISTINCT FROM $2
+               AND person_id = $3
+             LIMIT 1`,
+            [options.namespace, options.orgId ?? null, options.personId],
+        )
+        if (result.rows.length === 0) return null
+        return this.toStoredCommunicationPlan(result.rows[0])
+    }
+
+    async upsertCommunicationPlan(input: {
+        namespace: string
+        orgId?: string | null
+        personId: string
+        preferences: CommunicationPlanPreferences
+        enabled?: boolean
+        editedBy?: string | null
+        reason?: string | null
+    }): Promise<StoredCommunicationPlan> {
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
+            const existingResult = await client.query(
+                `SELECT * FROM communication_plans
+                 WHERE namespace = $1
+                   AND org_id IS NOT DISTINCT FROM $2
+                   AND person_id = $3
+                 FOR UPDATE`,
+                [input.namespace, input.orgId ?? null, input.personId],
+            )
+            const now = Date.now()
+            const enabled = input.enabled ?? (existingResult.rows[0]?.enabled ?? true)
+            let plan: StoredCommunicationPlan
+            let action: CommunicationPlanAuditAction
+            let priorPlan: StoredCommunicationPlan | null = null
+
+            if (existingResult.rows.length === 0) {
+                const inserted = await client.query(
+                    `INSERT INTO communication_plans (
+                        id, namespace, org_id, person_id, preferences, enabled,
+                        version, created_at, updated_at, updated_by
+                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                     RETURNING *`,
+                    [
+                        randomUUID(),
+                        input.namespace,
+                        input.orgId ?? null,
+                        input.personId,
+                        JSON.stringify(input.preferences),
+                        enabled,
+                        1,
+                        now,
+                        now,
+                        input.editedBy ?? null,
+                    ],
+                )
+                plan = this.toStoredCommunicationPlan(inserted.rows[0])
+                action = 'created'
+            } else {
+                priorPlan = this.toStoredCommunicationPlan(existingResult.rows[0])
+                const updated = await client.query(
+                    `UPDATE communication_plans
+                     SET preferences = $1,
+                         enabled = $2,
+                         version = version + 1,
+                         updated_at = $3,
+                         updated_by = $4
+                     WHERE id = $5
+                     RETURNING *`,
+                    [
+                        JSON.stringify(input.preferences),
+                        enabled,
+                        now,
+                        input.editedBy ?? null,
+                        priorPlan.id,
+                    ],
+                )
+                plan = this.toStoredCommunicationPlan(updated.rows[0])
+                action = 'updated'
+            }
+
+            await this.insertCommunicationPlanAudit(client, {
+                namespace: plan.namespace,
+                orgId: plan.orgId,
+                planId: plan.id,
+                personId: plan.personId,
+                action,
+                priorPreferences: priorPlan?.preferences ?? null,
+                newPreferences: plan.preferences,
+                priorEnabled: priorPlan?.enabled ?? null,
+                newEnabled: plan.enabled,
+                actorEmail: input.editedBy ?? null,
+                reason: input.reason ?? null,
+                createdAt: now,
+            })
+            await client.query('COMMIT')
+            return plan
+        } catch (error) {
+            try { await client.query('ROLLBACK') } catch {}
+            throw error
+        } finally {
+            client.release()
+        }
+    }
+
+    async setCommunicationPlanEnabled(input: {
+        namespace: string
+        orgId?: string | null
+        personId: string
+        enabled: boolean
+        editedBy?: string | null
+        reason?: string | null
+    }): Promise<StoredCommunicationPlan | null> {
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
+            const existingResult = await client.query(
+                `SELECT * FROM communication_plans
+                 WHERE namespace = $1
+                   AND org_id IS NOT DISTINCT FROM $2
+                   AND person_id = $3
+                 FOR UPDATE`,
+                [input.namespace, input.orgId ?? null, input.personId],
+            )
+            if (existingResult.rows.length === 0) {
+                await client.query('ROLLBACK')
+                return null
+            }
+            const priorPlan = this.toStoredCommunicationPlan(existingResult.rows[0])
+            if (priorPlan.enabled === input.enabled) {
+                await client.query('COMMIT')
+                return priorPlan
+            }
+            const now = Date.now()
+            const updated = await client.query(
+                `UPDATE communication_plans
+                 SET enabled = $1,
+                     version = version + 1,
+                     updated_at = $2,
+                     updated_by = $3
+                 WHERE id = $4
+                 RETURNING *`,
+                [input.enabled, now, input.editedBy ?? null, priorPlan.id],
+            )
+            const plan = this.toStoredCommunicationPlan(updated.rows[0])
+            await this.insertCommunicationPlanAudit(client, {
+                namespace: plan.namespace,
+                orgId: plan.orgId,
+                planId: plan.id,
+                personId: plan.personId,
+                action: input.enabled ? 'enabled' : 'disabled',
+                priorPreferences: priorPlan.preferences,
+                newPreferences: plan.preferences,
+                priorEnabled: priorPlan.enabled,
+                newEnabled: plan.enabled,
+                actorEmail: input.editedBy ?? null,
+                reason: input.reason ?? null,
+                createdAt: now,
+            })
+            await client.query('COMMIT')
+            return plan
+        } catch (error) {
+            try { await client.query('ROLLBACK') } catch {}
+            throw error
+        } finally {
+            client.release()
+        }
+    }
+
+    async listCommunicationPlanAudits(options: {
+        namespace: string
+        orgId?: string | null
+        personId?: string | null
+        planId?: string | null
+        limit?: number
+    }): Promise<StoredCommunicationPlanAudit[]> {
+        const params: unknown[] = [options.namespace, options.orgId ?? null]
+        let sql = `
+            SELECT * FROM communication_plan_audits
+            WHERE namespace = $1
+              AND org_id IS NOT DISTINCT FROM $2
+        `
+        if (options.personId) {
+            params.push(options.personId)
+            sql += ` AND person_id = $${params.length}`
+        }
+        if (options.planId) {
+            params.push(options.planId)
+            sql += ` AND plan_id = $${params.length}`
+        }
+        const limit = Math.min(Math.max(options.limit ?? 50, 1), 100)
+        params.push(limit)
+        sql += ` ORDER BY created_at DESC LIMIT $${params.length}`
+        const result = await this.pool.query(sql, params)
+        return result.rows.map((row) => this.toStoredCommunicationPlanAudit(row))
+    }
+
+    async createMemoryConflictCandidate(input: {
+        namespace: string
+        orgId?: string | null
+        scope: MemoryConflictScope
+        subjectKey: string
+        summary: string
+        entries: MemoryConflictEntry[]
+        evidence?: Record<string, unknown> | null
+        detectorVersion: string
+    }): Promise<StoredMemoryConflictCandidate> {
+        const now = Date.now()
+        const id = randomUUID()
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
+            const inserted = await client.query(
+                `INSERT INTO memory_conflict_candidates (
+                    id, namespace, org_id, scope, subject_key, summary, entries, evidence,
+                    detector_version, status, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, 'open', $10, $10)
+                RETURNING *`,
+                [
+                    id,
+                    input.namespace,
+                    input.orgId ?? null,
+                    input.scope,
+                    input.subjectKey,
+                    input.summary,
+                    JSON.stringify(input.entries ?? []),
+                    input.evidence ? JSON.stringify(input.evidence) : null,
+                    input.detectorVersion,
+                    now,
+                ],
+            )
+            await client.query(
+                `INSERT INTO memory_conflict_audits (
+                    id, namespace, org_id, candidate_id, action, prior_status, new_status,
+                    resolution, actor_email, reason, payload, created_at
+                ) VALUES ($1, $2, $3, $4, 'generated', NULL, 'open', NULL, NULL, NULL, $5::jsonb, $6)`,
+                [
+                    randomUUID(),
+                    input.namespace,
+                    input.orgId ?? null,
+                    id,
+                    input.evidence ? JSON.stringify(input.evidence) : null,
+                    now,
+                ],
+            )
+            await client.query('COMMIT')
+            return this.toStoredMemoryConflictCandidate(inserted.rows[0])
+        } catch (error) {
+            try { await client.query('ROLLBACK') } catch {}
+            throw error
+        } finally {
+            client.release()
+        }
+    }
+
+    async listMemoryConflictCandidates(options: {
+        namespace: string
+        orgId?: string | null
+        scope?: MemoryConflictScope | null
+        status?: MemoryConflictStatus | null
+        limit?: number
+    }): Promise<StoredMemoryConflictCandidate[]> {
+        const params: unknown[] = [options.namespace, options.orgId ?? null]
+        let sql = `
+            SELECT * FROM memory_conflict_candidates
+            WHERE namespace = $1
+              AND org_id IS NOT DISTINCT FROM $2
+        `
+        if (options.scope) {
+            params.push(options.scope)
+            sql += ` AND scope = $${params.length}`
+        }
+        if (options.status) {
+            params.push(options.status)
+            sql += ` AND status = $${params.length}`
+        }
+        const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
+        params.push(limit)
+        sql += ` ORDER BY created_at DESC LIMIT $${params.length}`
+        const result = await this.pool.query(sql, params)
+        return result.rows.map((row) => this.toStoredMemoryConflictCandidate(row))
+    }
+
+    async getMemoryConflictCandidate(options: {
+        namespace: string
+        orgId?: string | null
+        id: string
+    }): Promise<StoredMemoryConflictCandidate | null> {
+        const result = await this.pool.query(
+            `SELECT * FROM memory_conflict_candidates
+             WHERE namespace = $1 AND org_id IS NOT DISTINCT FROM $2 AND id = $3`,
+            [options.namespace, options.orgId ?? null, options.id],
+        )
+        if (result.rowCount === 0) return null
+        return this.toStoredMemoryConflictCandidate(result.rows[0])
+    }
+
+    async decideMemoryConflictCandidate(input: {
+        namespace: string
+        orgId?: string | null
+        id: string
+        action: 'resolve' | 'dismiss' | 'reopen' | 'expire'
+        resolution?: MemoryConflictResolution | null
+        actorEmail?: string | null
+        reason?: string | null
+        payload?: Record<string, unknown> | null
+    }): Promise<StoredMemoryConflictCandidate | null> {
+        const now = Date.now()
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
+            const existing = await client.query(
+                `SELECT * FROM memory_conflict_candidates
+                 WHERE namespace = $1 AND org_id IS NOT DISTINCT FROM $2 AND id = $3
+                 FOR UPDATE`,
+                [input.namespace, input.orgId ?? null, input.id],
+            )
+            if (existing.rowCount === 0) {
+                await client.query('ROLLBACK')
+                return null
+            }
+            const priorStatus = existing.rows[0].status as MemoryConflictStatus
+
+            let newStatus: MemoryConflictStatus
+            let auditAction: MemoryConflictAuditAction
+            let resolution: MemoryConflictResolution | null = null
+            switch (input.action) {
+                case 'resolve':
+                    newStatus = 'resolved'
+                    auditAction = 'resolved'
+                    resolution = input.resolution ?? null
+                    break
+                case 'dismiss':
+                    newStatus = 'dismissed'
+                    auditAction = 'dismissed'
+                    break
+                case 'reopen':
+                    newStatus = 'open'
+                    auditAction = 'reopened'
+                    break
+                case 'expire':
+                    newStatus = 'expired'
+                    auditAction = 'expired'
+                    break
+            }
+
+            const updated = await client.query(
+                `UPDATE memory_conflict_candidates
+                 SET status = $1,
+                     resolution = $2,
+                     decided_by = $3,
+                     decided_at = $4,
+                     decision_reason = $5,
+                     updated_at = $4
+                 WHERE id = $6
+                 RETURNING *`,
+                [
+                    newStatus,
+                    resolution,
+                    input.actorEmail ?? null,
+                    now,
+                    input.reason ?? null,
+                    input.id,
+                ],
+            )
+
+            await client.query(
+                `INSERT INTO memory_conflict_audits (
+                    id, namespace, org_id, candidate_id, action, prior_status, new_status,
+                    resolution, actor_email, reason, payload, created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)`,
+                [
+                    randomUUID(),
+                    input.namespace,
+                    input.orgId ?? null,
+                    input.id,
+                    auditAction,
+                    priorStatus,
+                    newStatus,
+                    resolution,
+                    input.actorEmail ?? null,
+                    input.reason ?? null,
+                    input.payload ? JSON.stringify(input.payload) : null,
+                    now,
+                ],
+            )
+
+            await client.query('COMMIT')
+            return this.toStoredMemoryConflictCandidate(updated.rows[0])
+        } catch (error) {
+            try { await client.query('ROLLBACK') } catch {}
+            throw error
+        } finally {
+            client.release()
+        }
+    }
+
+    async listMemoryConflictAudits(options: {
+        namespace: string
+        orgId?: string | null
+        candidateId?: string | null
+        limit?: number
+    }): Promise<StoredMemoryConflictAudit[]> {
+        const params: unknown[] = [options.namespace, options.orgId ?? null]
+        let sql = `
+            SELECT * FROM memory_conflict_audits
+            WHERE namespace = $1
+              AND org_id IS NOT DISTINCT FROM $2
+        `
+        if (options.candidateId) {
+            params.push(options.candidateId)
+            sql += ` AND candidate_id = $${params.length}`
+        }
+        const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
+        params.push(limit)
+        sql += ` ORDER BY created_at DESC LIMIT $${params.length}`
+        const result = await this.pool.query(sql, params)
+        return result.rows.map((row) => this.toStoredMemoryConflictAudit(row))
+    }
+
+    // === Team Memory Candidates (Phase 3B) ===
+    async proposeTeamMemoryCandidate(input: {
+        namespace: string
+        orgId?: string | null
+        proposedByPersonId?: string | null
+        proposedByEmail?: string | null
+        content: string
+        source?: string | null
+        sessionId?: string | null
+    }): Promise<StoredTeamMemoryCandidate> {
+        const now = Date.now()
+        const id = randomUUID()
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
+            const inserted = await client.query(
+                `INSERT INTO team_memory_candidates (
+                    id, namespace, org_id, proposed_by_person_id, proposed_by_email,
+                    scope, content, source, session_id, status, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, 'team', $6, $7, $8, 'pending', $9, $9)
+                RETURNING *`,
+                [
+                    id,
+                    input.namespace,
+                    input.orgId ?? null,
+                    input.proposedByPersonId ?? null,
+                    input.proposedByEmail ?? null,
+                    input.content,
+                    input.source ?? null,
+                    input.sessionId ?? null,
+                    now,
+                ],
+            )
+            await client.query(
+                `INSERT INTO team_memory_audits (
+                    id, namespace, org_id, candidate_id, action, prior_status, new_status,
+                    actor_email, reason, memory_ref, payload, created_at
+                ) VALUES ($1, $2, $3, $4, 'proposed', NULL, 'pending', $5, NULL, NULL, NULL, $6)`,
+                [
+                    randomUUID(),
+                    input.namespace,
+                    input.orgId ?? null,
+                    id,
+                    input.proposedByEmail ?? null,
+                    now,
+                ],
+            )
+            await client.query('COMMIT')
+            return this.toStoredTeamMemoryCandidate(inserted.rows[0])
+        } catch (error) {
+            try { await client.query('ROLLBACK') } catch {}
+            throw error
+        } finally {
+            client.release()
+        }
+    }
+
+    async listTeamMemoryCandidates(options: {
+        namespace: string
+        orgId?: string | null
+        status?: TeamMemoryCandidateStatus | null
+        limit?: number
+    }): Promise<StoredTeamMemoryCandidate[]> {
+        const params: unknown[] = [options.namespace, options.orgId ?? null]
+        let sql = `
+            SELECT * FROM team_memory_candidates
+            WHERE namespace = $1
+              AND org_id IS NOT DISTINCT FROM $2
+        `
+        if (options.status) {
+            params.push(options.status)
+            sql += ` AND status = $${params.length}`
+        }
+        const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
+        params.push(limit)
+        sql += ` ORDER BY created_at DESC LIMIT $${params.length}`
+        const result = await this.pool.query(sql, params)
+        return result.rows.map((row) => this.toStoredTeamMemoryCandidate(row))
+    }
+
+    async getTeamMemoryCandidate(options: {
+        namespace: string
+        orgId?: string | null
+        id: string
+    }): Promise<StoredTeamMemoryCandidate | null> {
+        const result = await this.pool.query(
+            `SELECT * FROM team_memory_candidates
+             WHERE namespace = $1 AND org_id IS NOT DISTINCT FROM $2 AND id = $3`,
+            [options.namespace, options.orgId ?? null, options.id],
+        )
+        if (result.rowCount === 0) return null
+        return this.toStoredTeamMemoryCandidate(result.rows[0])
+    }
+
+    async decideTeamMemoryCandidate(input: {
+        namespace: string
+        orgId?: string | null
+        id: string
+        action: 'approve' | 'reject' | 'supersede' | 'expire'
+        actorEmail?: string | null
+        reason?: string | null
+        memoryRef?: string | null
+        payload?: Record<string, unknown> | null
+    }): Promise<StoredTeamMemoryCandidate | null> {
+        const now = Date.now()
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
+            const existing = await client.query(
+                `SELECT * FROM team_memory_candidates
+                 WHERE namespace = $1 AND org_id IS NOT DISTINCT FROM $2 AND id = $3
+                 FOR UPDATE`,
+                [input.namespace, input.orgId ?? null, input.id],
+            )
+            if (existing.rowCount === 0) {
+                await client.query('ROLLBACK')
+                return null
+            }
+            const priorStatus = existing.rows[0].status as TeamMemoryCandidateStatus
+
+            let newStatus: TeamMemoryCandidateStatus
+            let auditAction: TeamMemoryAuditAction
+            switch (input.action) {
+                case 'approve':
+                    newStatus = 'approved'
+                    auditAction = 'approved'
+                    break
+                case 'reject':
+                    newStatus = 'rejected'
+                    auditAction = 'rejected'
+                    break
+                case 'supersede':
+                    newStatus = 'superseded'
+                    auditAction = 'superseded'
+                    break
+                case 'expire':
+                    newStatus = 'expired'
+                    auditAction = 'expired'
+                    break
+            }
+
+            const updated = await client.query(
+                `UPDATE team_memory_candidates
+                 SET status = $1,
+                     decided_by = $2,
+                     decided_at = $3,
+                     decision_reason = $4,
+                     memory_ref = COALESCE($5, memory_ref),
+                     updated_at = $3
+                 WHERE id = $6
+                 RETURNING *`,
+                [
+                    newStatus,
+                    input.actorEmail ?? null,
+                    now,
+                    input.reason ?? null,
+                    input.memoryRef ?? null,
+                    input.id,
+                ],
+            )
+
+            await client.query(
+                `INSERT INTO team_memory_audits (
+                    id, namespace, org_id, candidate_id, action, prior_status, new_status,
+                    actor_email, reason, memory_ref, payload, created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)`,
+                [
+                    randomUUID(),
+                    input.namespace,
+                    input.orgId ?? null,
+                    input.id,
+                    auditAction,
+                    priorStatus,
+                    newStatus,
+                    input.actorEmail ?? null,
+                    input.reason ?? null,
+                    input.memoryRef ?? null,
+                    input.payload ? JSON.stringify(input.payload) : null,
+                    now,
+                ],
+            )
+
+            await client.query('COMMIT')
+            return this.toStoredTeamMemoryCandidate(updated.rows[0])
+        } catch (error) {
+            try { await client.query('ROLLBACK') } catch {}
+            throw error
+        } finally {
+            client.release()
+        }
+    }
+
+    async listTeamMemoryAudits(options: {
+        namespace: string
+        orgId?: string | null
+        candidateId?: string | null
+        limit?: number
+    }): Promise<StoredTeamMemoryAudit[]> {
+        const params: unknown[] = [options.namespace, options.orgId ?? null]
+        let sql = `
+            SELECT * FROM team_memory_audits
+            WHERE namespace = $1
+              AND org_id IS NOT DISTINCT FROM $2
+        `
+        if (options.candidateId) {
+            params.push(options.candidateId)
+            sql += ` AND candidate_id = $${params.length}`
+        }
+        const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
+        params.push(limit)
+        sql += ` ORDER BY created_at DESC LIMIT $${params.length}`
+        const result = await this.pool.query(sql, params)
+        return result.rows.map((row) => this.toStoredTeamMemoryAudit(row))
+    }
+
+    // === Observation Hypothesis Pool (Phase 3F) ===
+    async createObservationCandidate(input: {
+        namespace: string
+        orgId?: string | null
+        subjectPersonId?: string | null
+        subjectEmail?: string | null
+        hypothesisKey: string
+        summary: string
+        detail?: string | null
+        detectorVersion: string
+        confidence?: number | null
+        signals?: ObservationSignal[]
+        suggestedPatch?: Record<string, unknown> | null
+        expiresAt?: number | null
+    }): Promise<StoredObservationCandidate> {
+        const now = Date.now()
+        const id = randomUUID()
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
+            const inserted = await client.query(
+                `INSERT INTO observation_candidates (
+                    id, namespace, org_id, subject_person_id, subject_email,
+                    hypothesis_key, summary, detail, detector_version, confidence,
+                    signals, suggested_patch, status, expires_at, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                          $11::jsonb, $12::jsonb, 'pending', $13, $14, $14)
+                RETURNING *`,
+                [
+                    id,
+                    input.namespace,
+                    input.orgId ?? null,
+                    input.subjectPersonId ?? null,
+                    input.subjectEmail ?? null,
+                    input.hypothesisKey,
+                    input.summary,
+                    input.detail ?? null,
+                    input.detectorVersion,
+                    input.confidence ?? null,
+                    JSON.stringify(input.signals ?? []),
+                    input.suggestedPatch ? JSON.stringify(input.suggestedPatch) : null,
+                    input.expiresAt ?? null,
+                    now,
+                ],
+            )
+            await client.query(
+                `INSERT INTO observation_audits (
+                    id, namespace, org_id, candidate_id, action, prior_status, new_status,
+                    actor_email, reason, payload, created_at
+                ) VALUES ($1, $2, $3, $4, 'generated', NULL, 'pending', NULL, NULL, $5::jsonb, $6)`,
+                [
+                    randomUUID(),
+                    input.namespace,
+                    input.orgId ?? null,
+                    id,
+                    input.suggestedPatch ? JSON.stringify(input.suggestedPatch) : null,
+                    now,
+                ],
+            )
+            await client.query('COMMIT')
+            return this.toStoredObservationCandidate(inserted.rows[0])
+        } catch (error) {
+            try { await client.query('ROLLBACK') } catch {}
+            throw error
+        } finally {
+            client.release()
+        }
+    }
+
+    async listObservationCandidates(options: {
+        namespace: string
+        orgId?: string | null
+        subjectPersonId?: string | null
+        subjectEmail?: string | null
+        status?: ObservationCandidateStatus | null
+        limit?: number
+    }): Promise<StoredObservationCandidate[]> {
+        const params: unknown[] = [options.namespace, options.orgId ?? null]
+        let sql = `
+            SELECT * FROM observation_candidates
+            WHERE namespace = $1
+              AND org_id IS NOT DISTINCT FROM $2
+        `
+        if (options.subjectPersonId) {
+            params.push(options.subjectPersonId)
+            sql += ` AND subject_person_id = $${params.length}`
+        }
+        if (options.subjectEmail) {
+            params.push(options.subjectEmail)
+            sql += ` AND subject_email = $${params.length}`
+        }
+        if (options.status) {
+            params.push(options.status)
+            sql += ` AND status = $${params.length}`
+        }
+        const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
+        params.push(limit)
+        sql += ` ORDER BY created_at DESC LIMIT $${params.length}`
+        const result = await this.pool.query(sql, params)
+        return result.rows.map((row) => this.toStoredObservationCandidate(row))
+    }
+
+    async getObservationCandidate(options: {
+        namespace: string
+        orgId?: string | null
+        id: string
+    }): Promise<StoredObservationCandidate | null> {
+        const result = await this.pool.query(
+            `SELECT * FROM observation_candidates
+             WHERE namespace = $1 AND org_id IS NOT DISTINCT FROM $2 AND id = $3`,
+            [options.namespace, options.orgId ?? null, options.id],
+        )
+        if (result.rowCount === 0) return null
+        return this.toStoredObservationCandidate(result.rows[0])
+    }
+
+    async decideObservationCandidate(input: {
+        namespace: string
+        orgId?: string | null
+        id: string
+        action: 'confirm' | 'reject' | 'dismiss' | 'expire'
+        actorEmail?: string | null
+        reason?: string | null
+        promotedCommunicationPlanId?: string | null
+        payload?: Record<string, unknown> | null
+    }): Promise<StoredObservationCandidate | null> {
+        const now = Date.now()
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
+            const existing = await client.query(
+                `SELECT * FROM observation_candidates
+                 WHERE namespace = $1 AND org_id IS NOT DISTINCT FROM $2 AND id = $3
+                 FOR UPDATE`,
+                [input.namespace, input.orgId ?? null, input.id],
+            )
+            if (existing.rowCount === 0) {
+                await client.query('ROLLBACK')
+                return null
+            }
+            const priorStatus = existing.rows[0].status as ObservationCandidateStatus
+
+            let newStatus: ObservationCandidateStatus
+            let auditAction: ObservationAuditAction
+            switch (input.action) {
+                case 'confirm':
+                    newStatus = 'confirmed'
+                    auditAction = 'confirmed'
+                    break
+                case 'reject':
+                    newStatus = 'rejected'
+                    auditAction = 'rejected'
+                    break
+                case 'dismiss':
+                    newStatus = 'dismissed'
+                    auditAction = 'dismissed'
+                    break
+                case 'expire':
+                    newStatus = 'expired'
+                    auditAction = 'expired'
+                    break
+            }
+
+            const updated = await client.query(
+                `UPDATE observation_candidates
+                 SET status = $1,
+                     decided_by = $2,
+                     decided_at = $3,
+                     decision_reason = $4,
+                     promoted_communication_plan_id = COALESCE($5, promoted_communication_plan_id),
+                     updated_at = $3
+                 WHERE id = $6
+                 RETURNING *`,
+                [
+                    newStatus,
+                    input.actorEmail ?? null,
+                    now,
+                    input.reason ?? null,
+                    input.promotedCommunicationPlanId ?? null,
+                    input.id,
+                ],
+            )
+
+            await client.query(
+                `INSERT INTO observation_audits (
+                    id, namespace, org_id, candidate_id, action, prior_status, new_status,
+                    actor_email, reason, payload, created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)`,
+                [
+                    randomUUID(),
+                    input.namespace,
+                    input.orgId ?? null,
+                    input.id,
+                    auditAction,
+                    priorStatus,
+                    newStatus,
+                    input.actorEmail ?? null,
+                    input.reason ?? null,
+                    input.payload ? JSON.stringify(input.payload) : null,
+                    now,
+                ],
+            )
+
+            await client.query('COMMIT')
+            return this.toStoredObservationCandidate(updated.rows[0])
+        } catch (error) {
+            try { await client.query('ROLLBACK') } catch {}
+            throw error
+        } finally {
+            client.release()
+        }
+    }
+
+    async listObservationAudits(options: {
+        namespace: string
+        orgId?: string | null
+        candidateId?: string | null
+        limit?: number
+    }): Promise<StoredObservationAudit[]> {
+        const params: unknown[] = [options.namespace, options.orgId ?? null]
+        let sql = `
+            SELECT * FROM observation_audits
+            WHERE namespace = $1
+              AND org_id IS NOT DISTINCT FROM $2
+        `
+        if (options.candidateId) {
+            params.push(options.candidateId)
+            sql += ` AND candidate_id = $${params.length}`
+        }
+        const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
+        params.push(limit)
+        sql += ` ORDER BY created_at DESC LIMIT $${params.length}`
+        const result = await this.pool.query(sql, params)
+        return result.rows.map((row) => this.toStoredObservationAudit(row))
     }
 
     async resolveActorByIdentityObservation(observation: IdentityObservation): Promise<ResolvedActorContext> {

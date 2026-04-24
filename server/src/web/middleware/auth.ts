@@ -101,15 +101,10 @@ export function createAuthMiddleware(store: IStore): MiddlewareHandler<WebAppEnv
                     ? requestedOrgId
                     : null
 
-                console.log('[Auth/Identity] enter', { sub: user.sub, email: user.email, orgCount: orgsWithRoles.length, currentOrgId })
                 for (const org of orgsWithRoles) {
                     const cacheKey = `${user.sub}::${org.id}`
-                    if (!shouldResolveIdentity(cacheKey, now)) {
-                        console.log('[Auth/Identity] skip(cache)', { orgId: org.id })
-                        continue
-                    }
+                    if (!shouldResolveIdentity(cacheKey, now)) continue
                     try {
-                        console.log('[Auth/Identity] resolve.start', { orgId: org.id })
                         const actor = await resolve({
                             namespace: org.id,
                             orgId: org.id,
@@ -120,18 +115,12 @@ export function createAuthMiddleware(store: IStore): MiddlewareHandler<WebAppEnv
                             accountType: 'human',
                             assurance: 'high',
                         })
-                        console.log('[Auth/Identity] resolve.ok', {
-                            orgId: org.id,
-                            identityId: actor.identity?.id,
-                            personId: actor.person?.id,
-                            resolution: actor.resolution,
-                        })
                         if (org.id === currentOrgId) {
                             c.set('identityActor', actor)
                         }
                     } catch (error) {
                         identityResolveCache.delete(cacheKey)
-                        console.warn('[Auth/Identity] resolve.fail', { orgId: org.id, error })
+                        console.warn('[Auth] Identity resolve failed:', { orgId: org.id, error })
                     }
                 }
 
@@ -157,7 +146,8 @@ export function createAuthMiddleware(store: IStore): MiddlewareHandler<WebAppEnv
             await next()
             return
         } catch (error) {
-            console.error('[Auth] Token verification failed:', error)
+            const message = error instanceof Error ? error.message : String(error)
+            console.warn('[Auth] Token verification failed:', message)
             return c.json({ error: 'Invalid token' }, 401)
         }
     }

@@ -37,34 +37,34 @@ export function isTurnStartUserMessage(content: unknown): boolean {
     })
 }
 
-export function isRealActivityMessage(content: unknown): boolean {
-    function hasVisibleClaudeAttachment(data: Record<string, unknown>): boolean {
-        if (data.type !== 'attachment') return false
-        const attachment = data.attachment
-        if (!attachment || typeof attachment !== 'object') return false
-        const attachmentObj = attachment as Record<string, unknown>
-        if (attachmentObj.type === 'edited_text_file') {
-            const filename = asNonEmptyString(attachmentObj.filename)
-            const snippet = typeof attachmentObj.snippet === 'string' ? attachmentObj.snippet : null
-            return filename !== null && typeof snippet === 'string' && snippet.trim().length > 0
-        }
-        if (
-            attachmentObj.type === 'plan_file_reference'
-            || attachmentObj.type === 'plan_mode'
-            || attachmentObj.type === 'queued_command'
-        ) {
-            return true
-        }
-        if (attachmentObj.type !== 'todo_reminder') {
-            return false
-        }
-        return Array.isArray(attachmentObj.content) && attachmentObj.content.length > 0
+function hasVisibleClaudeAttachment(data: Record<string, unknown>): boolean {
+    if (data.type !== 'attachment') return false
+    const attachment = data.attachment
+    if (!attachment || typeof attachment !== 'object') return false
+    const attachmentObj = attachment as Record<string, unknown>
+    if (attachmentObj.type === 'edited_text_file') {
+        const filename = asNonEmptyString(attachmentObj.filename)
+        const snippet = typeof attachmentObj.snippet === 'string' ? attachmentObj.snippet : null
+        return filename !== null && typeof snippet === 'string' && snippet.trim().length > 0
     }
+    if (
+        attachmentObj.type === 'plan_file_reference'
+        || attachmentObj.type === 'plan_mode'
+        || attachmentObj.type === 'queued_command'
+    ) {
+        return true
+    }
+    if (attachmentObj.type !== 'todo_reminder') {
+        return false
+    }
+    return Array.isArray(attachmentObj.content) && attachmentObj.content.length > 0
+}
 
+export function isAssistantOrAgentReplyMessage(content: unknown): boolean {
     if (!content || typeof content !== 'object') return false
     const c = content as Record<string, unknown>
     const role = c.role
-    if (role === 'user' || role === 'assistant') return true
+    if (role === 'assistant') return true
     if (role === 'agent') {
         const inner = c.content
         if (inner && typeof inner === 'object') {
@@ -83,7 +83,21 @@ export function isRealActivityMessage(content: unknown): boolean {
                 return false
             }
         }
-        return true
+    }
+    return false
+}
+
+export function isRealActivityMessage(content: unknown): boolean {
+    if (!content || typeof content !== 'object') return false
+    const c = content as Record<string, unknown>
+    const role = c.role
+    if (role === 'user' || role === 'assistant') return true
+    if (role === 'agent') {
+        const inner = c.content
+        if (inner && typeof inner === 'object' && (inner as Record<string, unknown>).type === 'event') {
+            return false
+        }
+        return isAssistantOrAgentReplyMessage(content) || c.content !== undefined
     }
     return false
 }

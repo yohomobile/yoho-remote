@@ -135,30 +135,6 @@ function BrainIcon(props: { className?: string }) {
     )
 }
 
-function OrchestratorIcon(props: { className?: string }) {
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={props.className}
-        >
-            <circle cx="12" cy="5" r="2.5" />
-            <circle cx="6" cy="18" r="2.5" />
-            <circle cx="18" cy="18" r="2.5" />
-            <path d="M12 7.5v4.5" />
-            <path d="M12 12H6" />
-            <path d="M12 12h6" />
-        </svg>
-    )
-}
-
 function SelfSystemIcon(props: { className?: string }) {
     return (
         <svg
@@ -189,7 +165,6 @@ function SessionsPage() {
         ? 'archive'
         : DEFAULT_SESSION_LIST_SEARCH.archive
     const ownerFilter: OwnerFilter = search.owner === 'brain'
-        || search.owner === 'orchestrator'
         || search.owner === 'automation'
         || search.owner === 'others'
         ? search.owner
@@ -328,17 +303,6 @@ function SessionsPage() {
                             title="New Brain Session"
                         >
                             <BrainIcon className="h-4 w-4" />
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => navigate({
-                                to: '/sessions/new',
-                                search: { ...search, kind: 'orchestrator' },
-                            })}
-                            className="flex items-center justify-center h-7 w-7 rounded-lg bg-gradient-to-br from-sky-500 to-cyan-600 text-white shadow-sm hover:shadow-md transition-all hover:scale-105"
-                            title="New Orchestrator Session"
-                        >
-                            <OrchestratorIcon className="h-4 w-4" />
                         </button>
                         <button
                             type="button"
@@ -541,7 +505,6 @@ function NewSessionPage() {
         owner: search.owner ?? DEFAULT_SESSION_LIST_SEARCH.owner,
     } satisfies NewSessionSearch
     const isBrainCreation = search.kind === 'brain'
-    const isOrchestratorCreation = search.kind === 'orchestrator'
 
     const handleCancel = useCallback(() => {
         goBack()
@@ -583,9 +546,7 @@ function NewSessionPage() {
                         <div className="flex-1 font-medium text-sm">
                             {isBrainCreation
                                 ? 'Create Brain Session'
-                                : isOrchestratorCreation
-                                    ? 'Create Orchestrator Session'
-                                    : 'Create Session'}
+                                : 'Create Session'}
                         </div>
                     </div>
                 </div>
@@ -637,17 +598,6 @@ function NewSessionPage() {
                                 isLoading={machinesLoading}
                                 onCancel={handleCancel}
                                 onSuccess={handleSuccess}
-                            />
-                        ) : isOrchestratorCreation ? (
-                            <NewSession
-                                api={api}
-                                machines={machines}
-                                isLoading={machinesLoading}
-                                onCancel={handleCancel}
-                                onSuccess={handleSuccess}
-                                source="orchestrator"
-                                introTitle="Create an Orchestrator Session"
-                                introDescription="Orchestrator sessions use a regular project workspace and can coordinate child sessions without Brain self-system or the managed Brain workspace."
                             />
                         ) : (
                             <NewSession

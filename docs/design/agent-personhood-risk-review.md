@@ -333,19 +333,39 @@
 
 > Advisor Prompt 只扩展三类内容：证据摘要、风险边界、审批要求。必须显式鼓励输出不确定性、禁止关系化话术、禁止声称知道用户心理或长期意图。
 
-## 结合当前架构，哪些需求现在根本不该做
+## 结合当前架构，哪些需求必须受控开工
 
-### 根本不该做
+补充说明：本节不是把“关系状态 / 人格假设 / 短时状态 / 观察学习”整体判定为永远不能做。真正不能做的是让这些软信号秘密进入生产 prompt、权限判断、审批判断或真实执行动作。
+
+Phase 3 的正式方案见 [K1 Phase 3: Actor-Aware Brain](./k1-phase3-actor-aware-brain.md)。该方案按“越硬越能进热路径，越软越进审阅面板”的原则拆分能力：
+
+- 用户显式偏好和已审团队事实可以进入 prompt。
+- 会话级短时状态只能在当前 session 内影响表达。
+- 冲突记忆、观察假设、人格/关系/情绪推断默认不进 prompt。
+- 观察假设必须由用户或管理员确认后，才能升级为可生效配置。
+
+换句话说，禁止的是“秘密驱动决策”，不是“建审阅池、候选池、短时状态层”。
+
+### 禁止直接做
 
 - 把“独立人格”设为产品目标或宣传语。
-- 在生产路径中引入 `self/identity/karma/苦值/六道` 等长期人格状态。
-- 让情绪化状态、价值观状态、宗教化隐喻直接驱动 agent 行为。
+- 在生产路径中引入 `self/identity/karma/苦值/六道` 等长期人格状态作为执行依据。
+- 让情绪化状态、价值观状态、宗教化隐喻直接驱动 agent 行为、工具调用或审批判断。
 - 让 agent 基于用户画像、长期偏好、历史互动自行决定是否越过审批。
 - 把“它认识你”“它理解你”“它会自我成长”作为面向用户的承诺。
 - 在未显式同意、未可见、未可删除的前提下长期保留 openId + email + keycloakId + 偏好画像。
 - 让不同 session 共享一份会驱动行动的 `self` 记忆空间。
 
-### 当前不该做，未来也只能极慎重推进
+### 可以受控推进
+
+- `communicationPlan`：只影响表达方式，不影响事实、权限或工具调用。
+- team memory：只允许管理员批准后的团队事实进入 team scope。
+- session affect：只在当前会话中调节回复节奏，会话结束即丢弃。
+- observation hypothesis：只进入候选面板，用户确认后才能升级为偏好。
+- conflict review：后台只生成候选冲突，不自动合并。
+- eval harness：用脱敏 golden set 评估策略变化，不用分数自动替人做上线判断。
+
+### 未来仍需极慎重推进
 
 - 自动执行 `git commit`、`git push`、`deploy`、`delete_file` 一类动作。
 - 让 agent 因“历史经验”自动批准自己或自动扩大执行范围。
@@ -372,8 +392,10 @@
 - 为 proposal 打上风险标签、证据引用、目标范围和建议审批级别。
 - 先接入只读分析、提醒、待办建议、可见 diff 摘要。
 
-### Phase 3：只开放受限自动化
+### Phase 3：Actor-Aware Brain 与受限自动化
 
+- 先做 Actor-Aware Brain：communicationPlan、team memory、conflict review、eval harness、session affect、observation hypothesis pool。
+- 用户显式偏好和已审团队事实可以进入 prompt；观察假设和人格/关系/情绪推断默认不进 prompt。
 - 仅对低风险、可逆、项目内、显式 opt-in 的动作开放自动执行。
 - 每类动作要有单独策略，不允许“一键开启全部自动化”。
 - 自动执行日志必须默认可见、可筛选、可导出。
@@ -458,4 +480,3 @@
 - `/home/workspaces/tools/yoho-memory/src/core/memory-policy.ts`
 - `/home/workspaces/tools/yoho-memory/src/tools/skill.ts`
 - `/home/workspaces/tools/yoho-memory/memories/projects/vijnapti-ai.md`
-

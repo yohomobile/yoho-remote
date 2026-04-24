@@ -40,6 +40,22 @@ import type {
     StoredPersonIdentityLink,
     StoredPersonIdentityCandidate,
     StoredPersonIdentityAudit,
+    StoredCommunicationPlan,
+    StoredCommunicationPlanAudit,
+    CommunicationPlanPreferences,
+    StoredMemoryConflictCandidate,
+    StoredMemoryConflictAudit,
+    MemoryConflictEntry,
+    MemoryConflictResolution,
+    MemoryConflictScope,
+    MemoryConflictStatus,
+    StoredTeamMemoryCandidate,
+    StoredTeamMemoryAudit,
+    TeamMemoryCandidateStatus,
+    StoredObservationCandidate,
+    StoredObservationAudit,
+    ObservationCandidateStatus,
+    ObservationSignal,
     IdentityObservation,
     ResolvedActorContext,
     IdentityCandidateSummary,
@@ -663,6 +679,160 @@ export interface IStore {
         limit?: number
     }): Promise<StoredPersonIdentityAudit[]>
 
+    // === Communication Plan (Phase 3A) 操作 ===
+    getCommunicationPlanByPerson(options: {
+        namespace: string
+        orgId?: string | null
+        personId: string
+    }): Promise<StoredCommunicationPlan | null>
+    upsertCommunicationPlan(input: {
+        namespace: string
+        orgId?: string | null
+        personId: string
+        preferences: CommunicationPlanPreferences
+        enabled?: boolean
+        editedBy?: string | null
+        reason?: string | null
+    }): Promise<StoredCommunicationPlan>
+    setCommunicationPlanEnabled(input: {
+        namespace: string
+        orgId?: string | null
+        personId: string
+        enabled: boolean
+        editedBy?: string | null
+        reason?: string | null
+    }): Promise<StoredCommunicationPlan | null>
+    listCommunicationPlanAudits(options: {
+        namespace: string
+        orgId?: string | null
+        personId?: string | null
+        planId?: string | null
+        limit?: number
+    }): Promise<StoredCommunicationPlanAudit[]>
+
+    // === Memory Conflict Candidates (Phase 3C) ===
+    createMemoryConflictCandidate(input: {
+        namespace: string
+        orgId?: string | null
+        scope: MemoryConflictScope
+        subjectKey: string
+        summary: string
+        entries: MemoryConflictEntry[]
+        evidence?: Record<string, unknown> | null
+        detectorVersion: string
+    }): Promise<StoredMemoryConflictCandidate>
+    listMemoryConflictCandidates(options: {
+        namespace: string
+        orgId?: string | null
+        scope?: MemoryConflictScope | null
+        status?: MemoryConflictStatus | null
+        limit?: number
+    }): Promise<StoredMemoryConflictCandidate[]>
+    getMemoryConflictCandidate(options: {
+        namespace: string
+        orgId?: string | null
+        id: string
+    }): Promise<StoredMemoryConflictCandidate | null>
+    decideMemoryConflictCandidate(input: {
+        namespace: string
+        orgId?: string | null
+        id: string
+        action: 'resolve' | 'dismiss' | 'reopen' | 'expire'
+        resolution?: MemoryConflictResolution | null
+        actorEmail?: string | null
+        reason?: string | null
+        payload?: Record<string, unknown> | null
+    }): Promise<StoredMemoryConflictCandidate | null>
+    listMemoryConflictAudits(options: {
+        namespace: string
+        orgId?: string | null
+        candidateId?: string | null
+        limit?: number
+    }): Promise<StoredMemoryConflictAudit[]>
+
+    // === Team Memory Candidates (Phase 3B) ===
+    proposeTeamMemoryCandidate(input: {
+        namespace: string
+        orgId?: string | null
+        proposedByPersonId?: string | null
+        proposedByEmail?: string | null
+        content: string
+        source?: string | null
+        sessionId?: string | null
+    }): Promise<StoredTeamMemoryCandidate>
+    listTeamMemoryCandidates(options: {
+        namespace: string
+        orgId?: string | null
+        status?: TeamMemoryCandidateStatus | null
+        limit?: number
+    }): Promise<StoredTeamMemoryCandidate[]>
+    getTeamMemoryCandidate(options: {
+        namespace: string
+        orgId?: string | null
+        id: string
+    }): Promise<StoredTeamMemoryCandidate | null>
+    decideTeamMemoryCandidate(input: {
+        namespace: string
+        orgId?: string | null
+        id: string
+        action: 'approve' | 'reject' | 'supersede' | 'expire'
+        actorEmail?: string | null
+        reason?: string | null
+        memoryRef?: string | null
+        payload?: Record<string, unknown> | null
+    }): Promise<StoredTeamMemoryCandidate | null>
+    listTeamMemoryAudits(options: {
+        namespace: string
+        orgId?: string | null
+        candidateId?: string | null
+        limit?: number
+    }): Promise<StoredTeamMemoryAudit[]>
+
+    // === Observation Hypothesis Pool (Phase 3F) ===
+    createObservationCandidate(input: {
+        namespace: string
+        orgId?: string | null
+        subjectPersonId?: string | null
+        subjectEmail?: string | null
+        hypothesisKey: string
+        summary: string
+        detail?: string | null
+        detectorVersion: string
+        confidence?: number | null
+        signals?: ObservationSignal[]
+        suggestedPatch?: Record<string, unknown> | null
+        expiresAt?: number | null
+    }): Promise<StoredObservationCandidate>
+    listObservationCandidates(options: {
+        namespace: string
+        orgId?: string | null
+        subjectPersonId?: string | null
+        subjectEmail?: string | null
+        status?: ObservationCandidateStatus | null
+        limit?: number
+    }): Promise<StoredObservationCandidate[]>
+    getObservationCandidate(options: {
+        namespace: string
+        orgId?: string | null
+        id: string
+    }): Promise<StoredObservationCandidate | null>
+    decideObservationCandidate(input: {
+        namespace: string
+        orgId?: string | null
+        id: string
+        action: 'confirm' | 'reject' | 'dismiss' | 'expire'
+        actorEmail?: string | null
+        reason?: string | null
+        promotedCommunicationPlanId?: string | null
+        payload?: Record<string, unknown> | null
+    }): Promise<StoredObservationCandidate | null>
+    listObservationAudits(options: {
+        namespace: string
+        orgId?: string | null
+        candidateId?: string | null
+        limit?: number
+    }): Promise<StoredObservationAudit[]>
+
     // === Download Files 操作 ===
     addDownloadFile(file: { sessionId: string; orgId: string | null; filename: string; mimeType: string; content: Buffer }): Promise<StoredDownloadFile>
     getDownloadFile(id: string): Promise<{ meta: StoredDownloadFile; content: Buffer } | null>
@@ -891,6 +1061,22 @@ export type {
     StoredPersonIdentityLink,
     StoredPersonIdentityCandidate,
     StoredPersonIdentityAudit,
+    StoredCommunicationPlan,
+    StoredCommunicationPlanAudit,
+    CommunicationPlanPreferences,
+    StoredMemoryConflictCandidate,
+    StoredMemoryConflictAudit,
+    MemoryConflictEntry,
+    MemoryConflictResolution,
+    MemoryConflictScope,
+    MemoryConflictStatus,
+    StoredTeamMemoryCandidate,
+    StoredTeamMemoryAudit,
+    TeamMemoryCandidateStatus,
+    StoredObservationCandidate,
+    StoredObservationAudit,
+    ObservationCandidateStatus,
+    ObservationSignal,
     IdentityObservation,
     ResolvedActorContext,
     IdentityCandidateSummary,

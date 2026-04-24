@@ -307,6 +307,21 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
     let first = true;
     let titleInstructionPending = true;
     let scanner: Awaited<ReturnType<typeof createCodexSessionScanner>> | null = null;
+    let execTurnInProgress = false;
+
+    const commitThreadId = (id: string): void => {
+        threadId = id;
+        session.onSessionFound(id);
+        scanner?.onNewSession(id);
+    };
+
+    const commitScannedThreadId = (id: string): void => {
+        if (execTurnInProgress) {
+            logger.debug('[codex-exec] Scanner observed session during active exec turn; waiting for successful process exit before committing', { sessionId: id });
+            return;
+        }
+        commitThreadId(id);
+    };
 
     scanner = await createCodexSessionScanner({
         sessionId: threadId,
@@ -316,15 +331,12 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
             logger.warn(`[codex-exec] ${message}`);
         },
         onSessionFound: (sessionId) => {
-            threadId = sessionId;
-            session.onSessionFound(sessionId);
+            commitScannedThreadId(sessionId);
         },
         onEvent: (event) => {
             const converted = convertCodexEvent(event);
             if (converted?.sessionId) {
-                threadId = converted.sessionId;
-                session.onSessionFound(converted.sessionId);
-                scanner?.onNewSession(converted.sessionId);
+                commitScannedThreadId(converted.sessionId);
             }
             if (converted?.modelInfo) {
                 session.updateRuntimeModel(converted.modelInfo.model, converted.modelInfo.reasoningEffort ?? null);
@@ -435,6 +447,7 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
                 });
 
                 // Spawn codex exec process
+                execTurnInProgress = true;
                 const childResult = await spawnCodexExec({
                     codexBin,
                     startConfig,
@@ -445,10 +458,7 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
                     session,
                     messageBuffer,
                     turnTimeoutMs: TURN_TIMEOUT_MS,
-                    onThreadId: (id) => {
-                        threadId = id;
-                        scanner?.onNewSession(id);
-                    },
+                    onThreadId: commitThreadId,
                     onChildSpawned: (child) => {
                         activeChild = child;
                         activeChildExited = false;
@@ -476,10 +486,17 @@ export async function codexExecLauncher(session: CodexSession): Promise<'switch'
                 messageBuffer.addMessage(displayMessage, 'status');
                 session.sendSessionEvent({ type: 'message', message: displayMessage });
 
-                // On error, clear thread to allow fresh start
-                threadId = null;
-                currentModeHash = null;
+                if (isUnrecoverableCodexResumeError(errorMessage)) {
+                    logger.warn('[codex-exec] Clearing stale Codex resume id after unrecoverable local resume error', {
+                        threadId,
+                        error: errorMessage.slice(0, 500),
+                    });
+                    threadId = null;
+                    session.clearCodexSessionId();
+                    currentModeHash = null;
+                }
             } finally {
+                execTurnInProgress = false;
                 activeChild = null;
                 activeChildExited = true;
                 session.onThinkingChange(false);
@@ -685,6 +702,9 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
                 queueReplacementThreadId: (id) => {
                     pendingReplacementThreadId = id;
                 },
+                discardPendingThreadId: () => {
+                    pendingReplacementThreadId = null;
+                },
                 commitPendingReplacementThreadId,
                 onThreadId: (id) => {
                     resultThreadId = id;
@@ -722,13 +742,13 @@ async function spawnCodexExec(opts: SpawnCodexExecOptions): Promise<SpawnCodexEx
                 return;
             }
 
-            if (code !== 0 && code !== null) {
+            if (code !== 0) {
                 pendingReplacementThreadId = null;
                 const msg = lastEventError
-                    ? `codex exec exited with code ${code}: ${lastEventError.slice(0, 500)}`
+                    ? `codex exec exited with ${formatProcessExit(code, signal)}: ${lastEventError.slice(0, 500)}`
                     : stderr
-                        ? `codex exec exited with code ${code}: ${stderr.slice(0, 500)}`
-                        : `codex exec exited with code ${code}`;
+                        ? `codex exec exited with ${formatProcessExit(code, signal)}: ${stderr.slice(0, 500)}`
+                        : `codex exec exited with ${formatProcessExit(code, signal)}`;
                 logger.warn('[codex-exec] Non-zero exit', { ...summary, lastEventError });
                 finish(new Error(msg));
                 return;
@@ -753,6 +773,7 @@ interface EventHandlerContext {
     announcedToolCalls: Set<string>;
     currentThreadId?: () => string | null;
     queueReplacementThreadId?: (id: string) => void;
+    discardPendingThreadId?: () => void;
     commitPendingReplacementThreadId?: () => string | null;
     emittedReasoningItemIds?: Set<string>;
     lastStreamErrorMessage?: string | null;
@@ -770,18 +791,24 @@ function handleThreadStartedEvent(threadId: string, ctx: EventHandlerContext): v
     }
 
     const previousThreadId = ctx.currentThreadId?.() ?? null;
-    if (previousThreadId && previousThreadId !== threadId) {
+    if (previousThreadId === threadId) {
+        ctx.onThreadId(threadId);
+        ctx.session.onSessionFound(threadId);
+        logger.debug(`[codex-exec] Thread started: ${threadId}`);
+        return;
+    }
+
+    if (previousThreadId) {
         logger.warn('[codex-exec] Thread ID changed during exec stream; deferring replacement until success', {
             previousThreadId,
             nextThreadId: threadId,
         });
-        ctx.queueReplacementThreadId?.(threadId);
-        return;
+    } else {
+        logger.debug('[codex-exec] New thread observed during exec stream; deferring commit until success', {
+            nextThreadId: threadId,
+        });
     }
-
-    ctx.onThreadId(threadId);
-    ctx.session.onSessionFound(threadId);
-    logger.debug(`[codex-exec] Thread started: ${threadId}`);
+    ctx.queueReplacementThreadId?.(threadId);
 }
 
 function handleExecEvent(event: ExecEvent, ctx: EventHandlerContext): void {
@@ -840,6 +867,7 @@ function handleExecEvent(event: ExecEvent, ctx: EventHandlerContext): void {
         }
 
         case 'turn.failed': {
+            ctx.discardPendingThreadId?.();
             const errorMessage = getExecEventErrorMessage(event);
             messageBuffer.addMessage(`Task failed${errorMessage ? `: ${errorMessage}` : ''}`, 'status');
             if (errorMessage && errorMessage !== ctx.lastStreamErrorMessage) {
@@ -1436,6 +1464,18 @@ function parseTimeoutEnv(name: string, fallback: number): number {
     return parsed;
 }
 
+function formatProcessExit(code: number | null, signal: NodeJS.Signals | null): string {
+    if (code !== null) {
+        return `code ${code}`;
+    }
+    return signal ? `signal ${signal}` : 'unknown exit status';
+}
+
+function isUnrecoverableCodexResumeError(message: string): boolean {
+    return /thread\/resume failed: no rollout found for thread id/i.test(message)
+        || /thread\/resume failed: failed to load rollout .*stream did not contain valid UTF-8/i.test(message);
+}
+
 export const __testOnly = {
     getInitialExecThreadId,
     handleExecEvent,
@@ -1447,4 +1487,6 @@ export const __testOnly = {
     mapCollabToolName,
     buildCollabToolPayload,
     getExecEventErrorMessage,
+    formatProcessExit,
+    isUnrecoverableCodexResumeError,
 };

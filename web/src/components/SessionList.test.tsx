@@ -125,7 +125,7 @@ describe('SessionList', () => {
         expect(html).toContain('Self: K1 + memory')
     })
 
-    test('renders an orchestrator-specific empty state when the orchestrator filter is selected', () => {
+    test('renders orchestrator sessions through the regular session list', () => {
         const html = renderToStaticMarkup(
             <SessionList
                 sessions={[
@@ -140,8 +140,8 @@ describe('SessionList', () => {
                 ]}
                 projects={[] as Project[]}
                 currentUserEmail={null}
-                archiveFilter="archive"
-                ownerFilter="orchestrator"
+                archiveFilter="active"
+                ownerFilter="mine"
                 onArchiveFilterChange={() => {}}
                 onOwnerFilterChange={() => {}}
                 onSelect={() => {}}
@@ -153,6 +153,7 @@ describe('SessionList', () => {
             />
         )
 
-        expect(html).toContain('No archived Orchestrator sessions')
+        expect(html).toContain('orchestrator-active')
+        expect(html).not.toContain('Orchestrator')
     })
 })
