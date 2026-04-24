@@ -430,7 +430,7 @@ describe('/session/find-or-create', () => {
             orgId: 'org-1',
             active: true,
             thinking: false,
-            metadata: { machineId: 'machine-1', path: '/test/dir', runtimeAgent: 'claude' },
+            metadata: { machineId: 'machine-1', path: '/test/dir', runtimeAgent: 'claude', source: 'worker-ai-task' },
         }
         const engine = makeEngine({ sessions: [existingSession] })
         const store = makeStore()
@@ -619,11 +619,11 @@ describe('/session/find-or-create', () => {
     it('finds existing session scoped by orgId (getSessionsByOrg, not getSessionsByNamespace)', async () => {
         const mySession: FakeSession = {
             id: 'sess-mine', namespace: 'ns-1', orgId: 'org-1', active: true, thinking: false,
-            metadata: { machineId: 'machine-1', path: '/test/dir', runtimeAgent: 'claude' },
+            metadata: { machineId: 'machine-1', path: '/test/dir', runtimeAgent: 'claude', source: 'worker-ai-task' },
         }
         const otherOrgSession: FakeSession = {
             id: 'sess-other', namespace: 'ns-1', orgId: 'org-2', active: true, thinking: false,
-            metadata: { machineId: 'machine-1', path: '/test/dir', runtimeAgent: 'claude' },
+            metadata: { machineId: 'machine-1', path: '/test/dir', runtimeAgent: 'claude', source: 'worker-ai-task' },
         }
         const engine = makeEngine({ sessions: [otherOrgSession, mySession] })
         const store = makeStore()

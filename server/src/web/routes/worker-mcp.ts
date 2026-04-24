@@ -213,19 +213,19 @@ export function createWorkerMcpRoutes(
 
         // Look for an existing active session on this machine with matching directory and agent.
         // Scope by orgId — namespace is kept only for backwards-compat on older rows.
-        // When mainSessionId is provided, also require the candidate to be attached to the
-        // same creator session with the same source, so unrelated plain sessions never get
-        // mis-attributed as orchestrator-child.
+        // Always filter by source so worker sessions never accidentally reuse a user's
+        // interactive session (e.g. webapp/cli). When mainSessionId is provided, also
+        // require the candidate to be attached to the same creator session.
         const sessions = engine.getSessionsByOrg(machine.orgId)
         const existing = sessions.find(s => {
             if (!s.active) return false
             if (s.metadata?.machineId !== machine.id) return false
             if (s.metadata?.path !== directory) return false
             if ((s.metadata?.runtimeAgent ?? 'claude') !== agent) return false
+            const meta = s.metadata as Record<string, unknown> | null
+            if (meta?.source !== resolvedSource) return false
             if (mainSessionId) {
-                const meta = s.metadata as Record<string, unknown> | null
                 if (meta?.mainSessionId !== mainSessionId) return false
-                if (meta?.source !== resolvedSource) return false
             }
             return true
         })
