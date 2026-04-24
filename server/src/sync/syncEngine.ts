@@ -940,6 +940,7 @@ export class SyncEngine {
             ? {
                 type: event.type,
                 namespace,
+                orgId,
                 sessionId: event.sessionId,
                 machineId: event.machineId,
                 message: event.message
@@ -948,6 +949,7 @@ export class SyncEngine {
             ? {
                 type: event.type,
                 namespace,
+                orgId,
                 sessionId: event.sessionId,
                 typing: event.typing
             }
@@ -955,18 +957,21 @@ export class SyncEngine {
             ? {
                 type: event.type,
                 namespace,
+                orgId,
                 users: event.users
             }
             : event.type === 'group-message'
             ? {
                 type: event.type,
                 namespace,
+                orgId,
                 groupId: event.groupId,
                 groupMessage: event.groupMessage
             }
             : {
                 type: event.type,
                 namespace,
+                orgId,
                 sessionId: event.sessionId,
                 machineId: event.machineId,
                 data: event.data
