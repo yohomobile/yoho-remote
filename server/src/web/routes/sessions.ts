@@ -1255,9 +1255,9 @@ export function createSessionsRoutes(
             getBrainConfig?: IStore['getBrainConfig']
         }).getBrainConfig
         const brainConfig = typeof getBrainConfigByOrg === 'function'
-            ? await getBrainConfigByOrg(orgId)
+            ? await getBrainConfigByOrg.call(store, orgId)
             : typeof getLegacyBrainConfig === 'function'
-                ? await getLegacyBrainConfig(orgId)
+                ? await getLegacyBrainConfig.call(store, orgId)
             : null
         const childModelDefaults = extractBrainChildModelDefaults(brainConfig?.extra)
         const requestedAgent = parsed.data.agent ?? brainConfig?.agent ?? 'claude'

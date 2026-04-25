@@ -69,8 +69,8 @@ export async function buildSessionContextBundle(
         return null
     }
 
-    const loader = (store as ContextBundleStore).getSessionContextSummaries
-    if (!loader) {
+    const bundleStore = store as ContextBundleStore
+    if (typeof bundleStore.getSessionContextSummaries !== 'function') {
         return {
             version: 1,
             orgId,
@@ -89,7 +89,7 @@ export async function buildSessionContextBundle(
         }
     }
 
-    const summaries = await loader({
+    const summaries = await bundleStore.getSessionContextSummaries({
         orgId,
         sessionId: input.sessionId,
         recentL1Limit: 5,
