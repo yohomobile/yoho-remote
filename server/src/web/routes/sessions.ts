@@ -16,6 +16,7 @@ import {
     resolveTokenSourceForAgent,
 } from '../tokenSources'
 import {
+    hasResourceOrgAccess,
     requireMachineInOrg,
     requireRequestedOrgId,
     requireSessionFromParam,
@@ -2512,6 +2513,9 @@ export function createSessionsRoutes(
         if (!storedSession.orgId) {
             return c.json({ error: 'Session orgId missing' }, 409)
         }
+        if (!hasResourceOrgAccess(c, storedSession.orgId)) {
+            return c.json({ error: 'Session access denied' }, 403)
+        }
 
         const subscription = await store.subscribeToSessionNotificationsByClientId(sessionId, clientId, storedSession.orgId)
 
@@ -2613,6 +2617,9 @@ export function createSessionsRoutes(
         if (!storedSession) {
             return c.json({ error: 'Session not found' }, 404)
         }
+        if (!hasResourceOrgAccess(c, storedSession.orgId)) {
+            return c.json({ error: 'Session access denied' }, 403)
+        }
 
         // 检查权限：必须是创建者或已被共享的用户
         if (storedSession.createdBy !== email) {
@@ -2650,6 +2657,9 @@ export function createSessionsRoutes(
         const storedSession = await store.getSession(sessionId)
         if (!storedSession) {
             return c.json({ error: 'Session not found' }, 404)
+        }
+        if (!hasResourceOrgAccess(c, storedSession.orgId)) {
+            return c.json({ error: 'Session access denied' }, 403)
         }
 
         // 只有创建者可以分享
@@ -2694,6 +2704,9 @@ export function createSessionsRoutes(
         if (!storedSession) {
             return c.json({ error: 'Session not found' }, 404)
         }
+        if (!hasResourceOrgAccess(c, storedSession.orgId)) {
+            return c.json({ error: 'Session access denied' }, 403)
+        }
 
         // 只有创建者可以移除共享
         if (storedSession.createdBy !== email) {
@@ -2728,6 +2741,9 @@ export function createSessionsRoutes(
         if (!storedSession) {
             return c.json({ error: 'Session not found' }, 404)
         }
+        if (!hasResourceOrgAccess(c, storedSession.orgId)) {
+            return c.json({ error: 'Session access denied' }, 403)
+        }
 
         // 检查权限：必须是创建者
         if (storedSession.createdBy !== email) {
@@ -2760,6 +2776,9 @@ export function createSessionsRoutes(
         const storedSession = await store.getSession(sessionId)
         if (!storedSession) {
             return c.json({ error: 'Session not found' }, 404)
+        }
+        if (!hasResourceOrgAccess(c, storedSession.orgId)) {
+            return c.json({ error: 'Session access denied' }, 403)
         }
 
         // 只有创建者可以设置隐私模式

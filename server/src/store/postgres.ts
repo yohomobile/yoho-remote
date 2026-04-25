@@ -636,6 +636,13 @@ export class PostgresStore implements IStore {
             );
             CREATE INDEX IF NOT EXISTS idx_fcm_chat_id_created ON feishu_chat_messages(chat_id, created_at DESC);
 
+            -- 飞书 webhook 消息去重（防止 Feishu 重试导致同一消息被处理多次）
+            CREATE TABLE IF NOT EXISTS feishu_webhook_dedup (
+                message_id TEXT PRIMARY KEY,
+                processed_at BIGINT NOT NULL DEFAULT FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000)
+            );
+            CREATE INDEX IF NOT EXISTS idx_fwd_processed_at ON feishu_webhook_dedup(processed_at);
+
             -- Brain Config 表（K1 配置，独立于 IM 平台）
             CREATE TABLE IF NOT EXISTS brain_config (
                 namespace TEXT PRIMARY KEY,
@@ -1780,17 +1787,7 @@ export class PostgresStore implements IStore {
         }
 
         const result = await this.pool.query(query, params)
-        console.log(`[DEBUG] getMessages(${sessionId.slice(0,8)}...): query=${query}, beforeSeq=${beforeSeq}`)
-        console.log(`[DEBUG] DB returned ${result.rows.length} messages, first 3 rows:`)
-        result.rows.slice(0, 3).forEach((row, i) => {
-            console.log(`[DEBUG]   Row${i}: seq=${row.seq}, created_at=${row.created_at}, id=${row.id}`)
-        })
-        const reversed = result.rows.reverse().map(row => this.toStoredMessage(row))
-        console.log(`[DEBUG] After reverse(), first 3 messages:`)
-        reversed.slice(0, 3).forEach((msg, i) => {
-            console.log(`[DEBUG]   Msg${i}: seq=${msg.seq}, createdAt=${msg.createdAt}, id=${msg.id}`)
-        })
-        return reversed
+        return result.rows.reverse().map(row => this.toStoredMessage(row))
     }
 
     async getMessagesAfter(sessionId: string, afterSeq: number, limit: number = 200): Promise<StoredMessage[]> {
@@ -4019,7 +4016,27 @@ export class PostgresStore implements IStore {
             const now = Date.now()
             const txnQuery = (text: string, params?: unknown[]) =>
                 client.query(text, params) as Promise<{ rows: any[]; rowCount: number }>
-            const outcome = await args.decide({ record: priorRecord, payload, now, query: txnQuery })
+            // The decide callback runs inside a transaction holding a FOR UPDATE row lock.
+            // If a domain implementation does long-running work (slow effects, network calls),
+            // the lock + connection are tied up — under load this cascades to pool exhaustion.
+            // Cap the callback at 30s; callers must keep decide() fast or refactor to apply
+            // effects outside the transaction.
+            const DECIDE_CALLBACK_TIMEOUT_MS = 30_000
+            let timeoutHandle: NodeJS.Timeout | null = null
+            const decidePromise = args.decide({ record: priorRecord, payload, now, query: txnQuery })
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                timeoutHandle = setTimeout(
+                    () => reject(new Error(`approval decide callback exceeded ${DECIDE_CALLBACK_TIMEOUT_MS}ms (approvalId=${args.approvalId}, table=${args.payloadTable})`)),
+                    DECIDE_CALLBACK_TIMEOUT_MS,
+                )
+                timeoutHandle.unref?.()
+            })
+            let outcome: ApprovalDecisionOutcome<TPayload>
+            try {
+                outcome = await Promise.race([decidePromise, timeoutPromise])
+            } finally {
+                if (timeoutHandle) clearTimeout(timeoutHandle)
+            }
 
             const updated = await client.query(
                 `UPDATE approvals
@@ -4634,6 +4651,33 @@ export class PostgresStore implements IStore {
     }
 
     // === 飞书消息持久化（单聊+群聊） ===
+
+    /**
+     * Atomically claim a Feishu webhook messageId for processing. Returns true if this caller
+     * acquired the claim (first time seeing this messageId), false if it was already processed
+     * (duplicate webhook delivery from Feishu retry). Survives server restarts; replaces the
+     * in-memory dedup that was lost on every deploy.
+     */
+    async tryClaimFeishuWebhookMessage(messageId: string): Promise<boolean> {
+        const result = await this.pool.query(
+            `INSERT INTO feishu_webhook_dedup (message_id) VALUES ($1) ON CONFLICT (message_id) DO NOTHING`,
+            [messageId]
+        )
+        return (result.rowCount ?? 0) > 0
+    }
+
+    /**
+     * Drop dedup rows older than the cutoff so the table doesn't grow forever. Caller should
+     * invoke this on a slow cadence (e.g. once per hour). Cutoff should comfortably exceed
+     * Feishu's webhook retry window (a few minutes).
+     */
+    async pruneFeishuWebhookDedup(olderThanMs: number): Promise<number> {
+        const result = await this.pool.query(
+            `DELETE FROM feishu_webhook_dedup WHERE processed_at < $1`,
+            [olderThanMs]
+        )
+        return result.rowCount ?? 0
+    }
 
     async saveFeishuChatMessage(data: {
         chatId: string

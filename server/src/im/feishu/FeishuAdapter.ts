@@ -100,8 +100,27 @@ export class FeishuAdapter implements IMAdapter {
 
     // ========== IMAdapter lifecycle ==========
 
+    private dedupPruneTimer: NodeJS.Timeout | null = null
+
     async start(bridge: IMBridgeCallbacks): Promise<void> {
         this.bridge = bridge
+        // Prune old dedup entries hourly. Feishu's webhook retry window is on the order of
+        // minutes, so anything older than 1 hour is safe to drop.
+        const DEDUP_RETENTION_MS = 60 * 60 * 1000
+        const PRUNE_INTERVAL_MS = 60 * 60 * 1000
+        const prune = async (): Promise<void> => {
+            try {
+                const removed = await this.store.pruneFeishuWebhookDedup(Date.now() - DEDUP_RETENTION_MS)
+                if (removed > 0) {
+                    console.log(`[FeishuAdapter] Pruned ${removed} expired webhook dedup entries`)
+                }
+            } catch (err) {
+                console.error('[FeishuAdapter] Dedup prune failed:', err)
+            }
+        }
+        void prune()
+        this.dedupPruneTimer = setInterval(() => { void prune() }, PRUNE_INTERVAL_MS)
+        this.dedupPruneTimer.unref?.()
 
         // Resolve bot's own open_id
         try {
@@ -149,6 +168,10 @@ export class FeishuAdapter implements IMAdapter {
         if (this.wsClient) {
             try { this.wsClient.close({ force: true }) } catch {}
             this.wsClient = null
+        }
+        if (this.dedupPruneTimer) {
+            clearInterval(this.dedupPruneTimer)
+            this.dedupPruneTimer = null
         }
         this.recentMessageIds.clear()
         this.recentCardActions.clear()
@@ -548,19 +571,32 @@ export class FeishuAdapter implements IMAdapter {
         const senderOpenId = sender.sender_id?.open_id as string
         const messageType = message.message_type as string
 
-        // Dedup: Feishu may re-deliver the same message on webhook timeout/retry
+        // Dedup: Feishu may re-deliver the same message on webhook timeout/retry. We claim
+        // the messageId via an atomic INSERT...ON CONFLICT DO NOTHING in DB so dedup state
+        // survives server restarts (the previous in-memory Map was lost on every deploy,
+        // letting Feishu replay messages already processed).
         if (messageId) {
-            const now = Date.now()
-            const lastSeen = this.recentMessageIds.get(messageId)
-            if (lastSeen !== undefined && now - lastSeen < FeishuAdapter.MSG_DEDUP_TTL_MS) {
-                console.log(`[FeishuAdapter] Duplicate messageId ${messageId.slice(0, 12)}, skipping`)
-                return
-            }
-            this.recentMessageIds.set(messageId, now)
-            // Evict expired entries when cache grows large
-            if (this.recentMessageIds.size > 1000) {
-                for (const [id, ts] of this.recentMessageIds) {
-                    if (now - ts > FeishuAdapter.MSG_DEDUP_TTL_MS) this.recentMessageIds.delete(id)
+            try {
+                const claimed = await this.store.tryClaimFeishuWebhookMessage(messageId)
+                if (!claimed) {
+                    console.log(`[FeishuAdapter] Duplicate messageId ${messageId.slice(0, 12)}, skipping`)
+                    return
+                }
+            } catch (err) {
+                // If the dedup write fails (DB transient), fall back to in-memory check rather
+                // than dropping the message — better to risk a rare duplicate than lose it.
+                console.warn(`[FeishuAdapter] dedup claim failed for ${messageId.slice(0, 12)}; falling back to in-memory:`, err)
+                const now = Date.now()
+                const lastSeen = this.recentMessageIds.get(messageId)
+                if (lastSeen !== undefined && now - lastSeen < FeishuAdapter.MSG_DEDUP_TTL_MS) {
+                    console.log(`[FeishuAdapter] Duplicate messageId ${messageId.slice(0, 12)} (memory-fallback), skipping`)
+                    return
+                }
+                this.recentMessageIds.set(messageId, now)
+                if (this.recentMessageIds.size > 1000) {
+                    for (const [id, ts] of this.recentMessageIds) {
+                        if (now - ts > FeishuAdapter.MSG_DEDUP_TTL_MS) this.recentMessageIds.delete(id)
+                    }
                 }
             }
         }

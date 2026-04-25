@@ -15,7 +15,7 @@ function hasOrgAccess(c: Context<WebAppEnv>, orgId: string | null | undefined): 
     return typeof orgId === 'string' && orgId.length > 0 && getAuthorizedOrgIds(c).has(orgId)
 }
 
-function hasResourceOrgAccess(c: Context<WebAppEnv>, orgId: string | null | undefined): boolean {
+export function hasResourceOrgAccess(c: Context<WebAppEnv>, orgId: string | null | undefined): boolean {
     if (orgId === null || orgId === undefined) {
         return false
     }

@@ -482,6 +482,8 @@ export interface IStore {
     deleteFeishuChatSession(feishuChatId: string): Promise<boolean>
 
     // === 飞书消息持久化（单聊+群聊） ===
+    tryClaimFeishuWebhookMessage(messageId: string): Promise<boolean>
+    pruneFeishuWebhookDedup(olderThanMs: number): Promise<number>
     saveFeishuChatMessage(data: {
         chatId: string
         messageId: string
