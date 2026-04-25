@@ -16,6 +16,7 @@ import {
 import { useSyncingState } from '@/hooks/useSyncingState'
 import type { Project, SessionResponse, SessionSummary, SyncEvent } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
+import { scheduleSessionsListInvalidation } from '@/lib/sessions-invalidation'
 import { AppContextProvider, useAppContext, getStoredOrgId, setStoredOrgId } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { OfflineBanner } from '@/components/OfflineBanner'
@@ -346,8 +347,11 @@ export function App() {
 
         // EventSource reconnects can miss messages even when the outage is very short.
         // Always backfill queries on every successful open; only debounce the syncing UI.
+        // Session list invalidation goes through the shared throttle so the server-restart
+        // burst (one reconnect per session as the daemon re-registers each CLI process)
+        // collapses to a single /api/sessions refetch instead of dozens.
+        scheduleSessionsListInvalidation(queryClient)
         const invalidations = [
-            queryClient.invalidateQueries({ queryKey: queryKeys.sessions }),
             ...(selectedSessionId ? [
                 queryClient.invalidateQueries({ queryKey: queryKeys.session(selectedSessionId) }),
                 queryClient.invalidateQueries({ queryKey: queryKeys.messages(selectedSessionId) })

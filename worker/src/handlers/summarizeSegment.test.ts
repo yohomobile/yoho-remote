@@ -28,7 +28,13 @@ function makeL1(id: string, seqStart: number): StoredL1Summary {
     return { id, seqStart, seqEnd: seqStart + 5, summary: `Turn ${id} summary`, topic: 'Test', tools: [], entities: [] }
 }
 
-const DEFAULT_L1S = [makeL1('l1-1', 10), makeL1('l1-2', 20), makeL1('l1-3', 30)]
+const DEFAULT_L1S = [
+    makeL1('l1-1', 10),
+    makeL1('l1-2', 20),
+    makeL1('l1-3', 30),
+    makeL1('l1-4', 40),
+    makeL1('l1-5', 50),
+]
 
 function createContext(options?: {
     sessionSnapshot?: { id: string; namespace: string; orgId: string | null; thinking: boolean } | null
@@ -80,8 +86,12 @@ function createContext(options?: {
         summaryStore: {
             getUnassignedL1Summaries: async () => l1s,
             countUnassignedL1: async () => l1s.length,
-            tryAcquireSessionLock: async () => async () => {},
-            insertL2AndMarkL1s: async (_input: unknown, ids: string[]) => {
+            claimUnassignedL1ForSegment: async (_orgId: string, _sessionId: string, limit: number) => ({
+                batchId: 'batch-test',
+                summaries: l1s.slice(0, limit),
+            }),
+            releaseL1Claim: async () => {},
+            insertL2AndMarkClaimedL1s: async (_input: unknown, ids: string[]) => {
                 l2AndMarkCalls += 1
                 capturedL1Ids = ids
                 if (options?.insertL2AndMarkL1sError) throw options.insertL2AndMarkL1sError
@@ -167,7 +177,7 @@ function createContext(options?: {
 
 describe('handleSummarizeSegment', () => {
     it('happy path: calls LLM, inserts L2, marks L1s atomically', async () => {
-        const l1s = [makeL1('l1-a', 10), makeL1('l1-b', 20), makeL1('l1-c', 30)]
+        const l1s = [makeL1('l1-a', 10), makeL1('l1-b', 20), makeL1('l1-c', 30), makeL1('l1-d', 40), makeL1('l1-e', 50)]
         const { ctx, insertedRuns, getLlmCalls, getL2AndMarkCalls, getCapturedL1Ids } =
             createContext({ unassignedL1s: l1s })
 
@@ -175,14 +185,15 @@ describe('handleSummarizeSegment', () => {
 
         expect(getLlmCalls()).toBe(1)
         expect(getL2AndMarkCalls()).toBe(1)
-        expect(getCapturedL1Ids()).toEqual(['l1-a', 'l1-b', 'l1-c'])
+        expect(getCapturedL1Ids()).toEqual(['l1-a', 'l1-b', 'l1-c', 'l1-d', 'l1-e'])
         expect(insertedRuns).toHaveLength(1)
         expect(insertedRuns[0]).toMatchObject({ status: 'success', level: 2 })
-        expect(insertedRuns[0]?.metadata).toMatchObject({ l2_id: 'l2-inserted', l1_count: 3 })
+        expect(insertedRuns[0]?.metadata).toMatchObject({ l2_id: 'l2-inserted', l1_count: 5, segment_batch_id: 'batch-test' })
+        expect(insertedRuns[0]?.metadata?.sources).toHaveLength(5)
     })
 
     it('writes L2 memory and candidate skill for valuable segments', async () => {
-        const l1s = [makeL1('l1-a', 10), makeL1('l1-b', 20), makeL1('l1-c', 30)]
+        const l1s = DEFAULT_L1S
         const { ctx, remembered, savedSkills } = createContext({
             unassignedL1s: l1s,
             memoryClientEnabled: true,
@@ -224,7 +235,7 @@ describe('handleSummarizeSegment', () => {
         expect(savedSkills).toHaveLength(0)
     })
 
-    it('skips when fewer than MIN_L1_TO_SEGMENT unassigned L1s', async () => {
+    it('skips when fewer than l2SegmentThreshold claimable L1s', async () => {
         const { ctx, insertedRuns, getLlmCalls } = createContext({ unassignedL1s: [makeL1('l1-only', 10)] })
 
         await handleSummarizeSegment(payload, createJob(), ctx)
@@ -248,7 +259,7 @@ describe('handleSummarizeSegment', () => {
     })
 
     it('records transient error and rethrows when atomic insert+mark fails', async () => {
-        const l1s = [makeL1('l1-x', 10), makeL1('l1-y', 20), makeL1('l1-z', 30)]
+        const l1s = DEFAULT_L1S
         const { ctx, insertedRuns, getLlmCalls } = createContext({
             unassignedL1s: l1s,
             insertL2AndMarkL1sError: new Error('DB connection lost'),
@@ -262,11 +273,11 @@ describe('handleSummarizeSegment', () => {
     })
 
     it('retry: second invocation succeeds after first insertL2AndMarkL1s failure', async () => {
-        const l1s = [makeL1('l1-r1', 10), makeL1('l1-r2', 20), makeL1('l1-r3', 30)]
+        const l1s = DEFAULT_L1S
         let callCount = 0
         const { ctx, getLlmCalls } = createContext({ unassignedL1s: l1s })
 
-        ;(ctx.summaryStore as any).insertL2AndMarkL1s = async (_input: unknown, _ids: string[]) => {
+        ;(ctx.summaryStore as any).insertL2AndMarkClaimedL1s = async (_input: unknown, _ids: string[]) => {
             callCount += 1
             if (callCount === 1) throw new Error('Transient DB error')
             return { id: 'l2-retry-ok' }

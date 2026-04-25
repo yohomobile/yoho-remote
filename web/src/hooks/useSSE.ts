@@ -4,6 +4,7 @@ import type { MessagesResponse, Session, SessionResponse, SessionsResponse, Sess
 import { queryKeys } from '@/lib/query-keys'
 import { upsertMessagesInCache } from '@/lib/messages'
 import { getClientId, getDeviceType } from '@/lib/client-identity'
+import { scheduleSessionsListInvalidation } from '@/lib/sessions-invalidation'
 import {
     applySessionSummaryStatusUpdate,
     hasSessionStatusFields,
@@ -172,7 +173,7 @@ export function useSSE(options: {
                         if (import.meta.env.DEV) {
                             console.log('[sse] invalidate sessions (new session)', event.sessionId)
                         }
-                        void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+                        scheduleSessionsListInvalidation(queryClient)
                         void queryClient.invalidateQueries({ queryKey: queryKeys.session(event.sessionId) })
                     } else if (event.type === 'session-updated') {
                         const rawData = ('data' in event ? event.data : null)
@@ -220,7 +221,9 @@ export function useSSE(options: {
                                 (prev) => upsertSessionSummary(prev, nextSummary)
                             )
                             // viewers / ownerEmail 等服务端衍生字段仍然走后台刷新。
-                            void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+                            // 用 throttle 版本，避免 daemon 重启后 ~30 个 session 同时 full-update
+                            // 触发 30 次 /api/sessions 回查。
+                            scheduleSessionsListInvalidation(queryClient)
                         } else if (hasStatusUpdate && statusData) {
                             if (import.meta.env.DEV) {
                                 console.log('[sse] update session cache directly', event.sessionId, statusData)
@@ -262,13 +265,14 @@ export function useSSE(options: {
                             if (import.meta.env.DEV) {
                                 console.log('[sse] sid-only update, invalidating session detail + list', event.sessionId)
                             }
-                            invalidateSessionCachesForSidOnlyUpdate(queryClient, event.sessionId)
+                            scheduleSessionsListInvalidation(queryClient)
+                            void queryClient.invalidateQueries({ queryKey: queryKeys.session(event.sessionId) })
                         } else {
                             // No status fields and no sid in event, fallback to invalidation
                             if (import.meta.env.DEV) {
                                 console.log('[sse] invalidate session (unknown update type)', event.sessionId, rawData)
                             }
-                            void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+                            scheduleSessionsListInvalidation(queryClient)
                             void queryClient.invalidateQueries({ queryKey: queryKeys.session(event.sessionId) })
                         }
                     }
@@ -277,7 +281,7 @@ export function useSSE(options: {
                     if (import.meta.env.DEV) {
                         console.log('[sse] invalidate sessions (no sessionId)')
                     }
-                    void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+                    scheduleSessionsListInvalidation(queryClient)
                 }
             }
 
@@ -285,11 +289,9 @@ export function useSSE(options: {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.machines })
             }
 
-            if (event.type === 'identity-candidate-updated') {
-                void queryClient.invalidateQueries({
-                    queryKey: queryKeys.identityCandidates(event.data.orgId, 'open')
-                })
-            }
+            // identity-candidate-updated SSE removed with the legacy
+            // /api/identity/candidates surface — approval candidates flow
+            // through /api/approvals now (no SSE invalidation wired yet).
 
             if (event.type === 'file-ready' && 'sessionId' in event) {
                 void queryClient.invalidateQueries({ queryKey: queryKeys.sessionDownloads(event.sessionId) })

@@ -17,7 +17,7 @@ export const queryKeys = {
     typing: (sessionId: string) => ['typing', sessionId] as const,
     me: ['me'] as const,
     userPreferences: ['user-preferences'] as const,
-    identityCandidates: (orgId?: string | null, status = 'open') => ['identity-candidates', orgId ?? null, status] as const,
+    // identityCandidates removed — approval candidates use queryKeys.approvals(...)
     identityPersons: (orgId?: string | null, q?: string | null) => ['identity-persons', orgId ?? null, q?.trim() ?? ''] as const,
     identityPersonDetail: (orgId?: string | null, personId?: string | null) => ['identity-person-detail', orgId ?? null, personId ?? null] as const,
     identityAudits: (

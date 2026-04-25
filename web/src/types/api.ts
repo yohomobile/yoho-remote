@@ -645,18 +645,6 @@ export type SyncEvent =
     | { type: 'online-users-changed'; users: OnlineUser[]; orgId?: string | null; namespace?: string }
     | { type: 'typing-changed'; sessionId: string; typing: TypingUser; orgId?: string | null; namespace?: string }
     | { type: 'file-ready'; sessionId: string; fileInfo: DownloadFileInfo; orgId?: string | null; namespace?: string }
-    | {
-        type: 'identity-candidate-updated'
-        orgId?: string | null
-        namespace?: string
-        data: {
-            orgId: string | null
-            candidateId: string
-            identityId: string
-            status: IdentityCandidateStatus
-            score: number
-        }
-    }
 
 export type OnlineUsersResponse = { users: OnlineUser[] }
 
@@ -667,7 +655,6 @@ export type IdentityStatus = 'active' | 'disabled' | 'departed' | 'conflict'
 export type IdentityActorResolution = 'auto_verified' | 'admin_verified' | 'pending' | 'rejected' | 'detached' | 'unresolved' | 'shared'
 export type PersonType = 'human' | 'shared' | 'service' | 'bot'
 export type PersonStatus = 'active' | 'suspended' | 'departed' | 'merged'
-export type IdentityCandidateStatus = 'open' | 'confirmed' | 'rejected' | 'superseded' | 'expired'
 
 export type StoredPerson = {
     id: string
@@ -719,44 +706,10 @@ export type IdentityActorMeta = {
     accountType: IdentityAccountType
 }
 
-export type IdentityCandidate = {
-    id: string
-    namespace: string
-    orgId: string | null
-    identityId: string
-    candidatePersonId: string | null
-    score: number
-    autoAction: 'auto_bind' | 'review' | 'ignore'
-    status: IdentityCandidateStatus
-    riskFlags: unknown[]
-    evidence: unknown[]
-    matcherVersion: string
-    suppressUntil: number | null
-    decidedBy: string | null
-    decidedAt: number | null
-    decisionReason: string | null
-    createdAt: number
-    updatedAt: number
-    identity: StoredPersonIdentity
-    candidatePerson: StoredPerson | null
-}
+// IdentityCandidate types removed — flow migrated to ApprovalRecord +
+// approval_payload_identity (see Approvals Engine section below).
 
-export type IdentityCandidatesResponse = { candidates: IdentityCandidate[] }
 export type IdentityPersonsResponse = { persons: StoredPerson[] }
-export type IdentityCandidateDecision =
-    | { action: 'confirm_existing_person'; personId: string; reason?: string }
-    | {
-        action: 'create_person_and_confirm'
-        createPerson?: {
-            canonicalName?: string | null
-            primaryEmail?: string | null
-            employeeCode?: string | null
-        }
-        reason?: string
-    }
-    | { action: 'mark_shared'; reason?: string }
-    | { action: 'reject'; reason?: string }
-export type IdentityCandidateDecisionResponse = { ok: true; candidate: IdentityCandidate }
 
 export type IdentityLinkState =
     | 'pending'

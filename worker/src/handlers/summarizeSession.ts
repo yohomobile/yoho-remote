@@ -10,6 +10,26 @@ import {
 import type { StoredL1Summary, StoredL2Summary } from '../types'
 import type { WorkerContext } from '../types'
 
+type SessionSourceSummary = (StoredL1Summary | StoredL2Summary) & { level: 1 | 2 }
+
+function withLevel<T extends StoredL1Summary | StoredL2Summary>(summary: T, level: 1 | 2): T & { level: 1 | 2 } {
+    return { ...summary, level }
+}
+
+function buildSourceMetadata(sourceSummaries: SessionSourceSummary[]): Array<{
+    id: string
+    level: 1 | 2
+    seqStart: number | null
+    seqEnd: number | null
+}> {
+    return sourceSummaries.map(source => ({
+        id: source.id,
+        level: source.level,
+        seqStart: source.seqStart,
+        seqEnd: source.seqEnd,
+    }))
+}
+
 // Sessions with fewer than this many turns (L1-only path) are trivial:
 // write a minimal L3 without calling the LLM.
 const TRIVIAL_TURN_THRESHOLD = 6
@@ -40,6 +60,7 @@ export async function handleSummarizeSession(
         await ctx.runStore.insert({
             sessionId: payload.sessionId,
             namespace: sessionNamespace,
+            orgId: sessionOrgId,
             level: 3,
             jobId: job.id ?? null,
             jobName: job.name,
@@ -111,10 +132,30 @@ export async function handleSummarizeSession(
         // are still included in L3.
         const l2Summaries = await ctx.summaryStore.getSegmentSummaries(sessionOrgId, payload.sessionId)
         let sourceLevel: 1 | 2
-        let sourceSummaries: Array<StoredL1Summary | StoredL2Summary>
+        let sourceSummaries: SessionSourceSummary[]
         let orphanL1Count = 0
 
         if (l2Summaries.length > 0) {
+            const activeClaimCount = await ctx.summaryStore.countActiveL1Claims(sessionOrgId, payload.sessionId)
+            if (activeClaimCount > 0) {
+                await ctx.boss.send(
+                    QUEUE.SUMMARIZE_SESSION,
+                    {
+                        version: 1 as const,
+                        idempotencyKey: `session:${sessionOrgId}:${payload.sessionId}`,
+                        payload: { sessionId: payload.sessionId, orgId: sessionOrgId, namespace: sessionNamespace, scheduledAtMs: Date.now() },
+                    },
+                    { singletonKey: `session:${sessionOrgId}:${payload.sessionId}`, startAfter: DEFER_WHEN_ACTIVE_SECONDS }
+                )
+                await recordRun({
+                    status: 'skipped',
+                    durationMs: Date.now() - startedAt,
+                    errorCode: 'pending_l2_claims',
+                    error: `Deferred L3 because ${activeClaimCount} L1 summaries are currently claimed by L2`,
+                    metadata: { active_l1_claim_count: activeClaimCount },
+                })
+                return
+            }
             const orphanL1s = await ctx.summaryStore.getUnassignedL1Summaries(sessionOrgId, payload.sessionId)
             orphanL1Count = orphanL1s.length
             if (orphanL1Count >= ctx.config.l2SegmentThreshold) {
@@ -147,13 +188,17 @@ export async function handleSummarizeSession(
                 return
             }
             // Merge and sort chronologically
-            const merged: Array<StoredL1Summary | StoredL2Summary> = [...l2Summaries, ...orphanL1s]
+            const merged: SessionSourceSummary[] = [
+                ...l2Summaries.map(summary => withLevel(summary, 2)),
+                ...orphanL1s.map(summary => withLevel(summary, 1)),
+            ]
             merged.sort((a, b) => (a.seqStart ?? Infinity) - (b.seqStart ?? Infinity))
             sourceSummaries = merged
             sourceLevel = 2
         } else {
             // No L2s yet: fall back to all L1 turn summaries
-            sourceSummaries = await ctx.summaryStore.getTurnSummaries(sessionOrgId, payload.sessionId)
+            sourceSummaries = (await ctx.summaryStore.getTurnSummaries(sessionOrgId, payload.sessionId))
+                .map(summary => withLevel(summary, 1))
             sourceLevel = 1
         }
 
@@ -170,6 +215,7 @@ export async function handleSummarizeSession(
 
         // Trivial path: very short pure-L1 sessions don't warrant an LLM call.
         // Write a minimal L3 summary locally and return.
+        const sources = buildSourceMetadata(sourceSummaries)
         const isTrivial = sourceLevel === 1 && sourceSummaries.length < TRIVIAL_TURN_THRESHOLD
         if (isTrivial) {
             const trivialSummary = sourceSummaries
@@ -184,6 +230,7 @@ export async function handleSummarizeSession(
                     metadata: {
                         source_level: 1,
                         source_count: sourceSummaries.length,
+                        sources,
                         trivial: true,
                         scheduled_at_ms: payload.scheduledAtMs,
                     },
@@ -191,7 +238,7 @@ export async function handleSummarizeSession(
                 await recordRun({
                     status: 'success',
                     durationMs: Date.now() - startedAt,
-                    metadata: { l3_id: upserted.id, source_level: 1, source_count: sourceSummaries.length, trivial: true },
+                    metadata: { l3_id: upserted.id, source_level: 1, source_count: sourceSummaries.length, sources, trivial: true },
                 })
             } catch (error) {
                 const transientError = error as Error
@@ -200,14 +247,21 @@ export async function handleSummarizeSession(
                     durationMs: Date.now() - startedAt,
                     errorCode: extractJobErrorCode(error),
                     error: transientError.message,
-                    metadata: { source_level: 1, source_count: sourceSummaries.length, trivial: true },
+                    metadata: { source_level: 1, source_count: sourceSummaries.length, sources, trivial: true },
                 })
                 throw transientError
             }
             return
         }
 
-        const llmInput = sourceSummaries.map(s => ({ summary: s.summary, topic: s.topic }))
+        const llmInput = sourceSummaries.map(s => ({
+            id: s.id,
+            level: s.level,
+            seqStart: s.seqStart,
+            seqEnd: s.seqEnd,
+            summary: s.summary,
+            topic: s.topic,
+        }))
         const llmResult = await safeLLMCall(() =>
             ctx.deepseekClient.summarizeSession(llmInput, sourceLevel)
         )
@@ -219,6 +273,7 @@ export async function handleSummarizeSession(
             source_level: sourceLevel,
             source_count: sourceSummaries.length,
             orphan_l1_count: orphanL1Count,
+            sources,
             trivial: false,
             scheduled_at_ms: payload.scheduledAtMs,
             provider: llmResult.provider.provider,
@@ -299,6 +354,7 @@ export async function handleSummarizeSession(
                     source_level: sourceLevel,
                     source_count: sourceSummaries.length,
                     orphan_l1_count: orphanL1Count,
+                    sources,
                     trivial: false,
                 },
             })
@@ -311,7 +367,7 @@ export async function handleSummarizeSession(
                 tokensOut: llmResult.tokensOut,
                 errorCode: extractJobErrorCode(error),
                 error: transientError.message,
-                metadata: { source_level: sourceLevel, source_count: sourceSummaries.length },
+                metadata: { source_level: sourceLevel, source_count: sourceSummaries.length, sources },
             })
             throw transientError
         }
@@ -321,6 +377,7 @@ export async function handleSummarizeSession(
                 await ctx.runStore.insert({
                     sessionId: payload.sessionId,
                     namespace: sessionNamespace,
+                    orgId: sessionOrgId,
                     level: 3,
                     jobId: job.id ?? null,
                     jobName: job.name,
@@ -340,6 +397,7 @@ export async function handleSummarizeSession(
             await ctx.runStore.insert({
                 sessionId: payload.sessionId,
                 namespace: sessionNamespace,
+                orgId: sessionOrgId,
                 level: 3,
                 jobId: job.id ?? null,
                 jobName: job.name,

@@ -10,7 +10,7 @@ import {
 } from '../infra/yohoMemory'
 import type { WorkerContext } from '../types'
 
-const MIN_L1_TO_SEGMENT = 2
+const L1_CLAIM_TTL_MS = 10 * 60 * 1000
 
 export async function handleSummarizeSegment(
     payload: SummarizeSegmentPayload,
@@ -35,6 +35,7 @@ export async function handleSummarizeSegment(
         await ctx.runStore.insert({
             sessionId: payload.sessionId,
             namespace: sessionNamespace,
+            orgId: sessionOrgId,
             level: 2,
             jobId: job.id ?? null,
             jobName: job.name,
@@ -79,33 +80,37 @@ export async function handleSummarizeSegment(
         }
         sessionOrgId = session.orgId
 
-        const releaseLock = await ctx.summaryStore.tryAcquireSessionLock(sessionOrgId, payload.sessionId, 'l2')
-        if (!releaseLock) {
+        const threshold = ctx.config.l2SegmentThreshold
+        const claimed = await ctx.summaryStore.claimUnassignedL1ForSegment(
+            sessionOrgId,
+            payload.sessionId,
+            threshold,
+            L1_CLAIM_TTL_MS
+        )
+        const l1Summaries = claimed.summaries
+        if (l1Summaries.length < threshold) {
+            await ctx.summaryStore.releaseL1Claim(sessionOrgId, claimed.batchId)
             await recordRun({
                 status: 'skipped',
                 durationMs: Date.now() - startedAt,
-                errorCode: 'segment_already_running',
-                error: 'Another L2 summarization is already running for this session',
+                errorCode: 'insufficient_l1_summaries',
+                error: `Only ${l1Summaries.length} claimable L1(s); need >= ${threshold}`,
+                metadata: { l1_count: l1Summaries.length, threshold, segment_batch_id: claimed.batchId },
             })
             return
         }
 
         try {
-            const l1Summaries = await ctx.summaryStore.getUnassignedL1Summaries(sessionOrgId, payload.sessionId)
-        if (l1Summaries.length < MIN_L1_TO_SEGMENT) {
-            await recordRun({
-                status: 'skipped',
-                durationMs: Date.now() - startedAt,
-                errorCode: 'insufficient_l1_summaries',
-                error: `Only ${l1Summaries.length} unassigned L1(s); need >= ${MIN_L1_TO_SEGMENT}`,
-                metadata: { l1_count: l1Summaries.length },
-            })
-            return
-        }
 
         const seqStart = l1Summaries[0]?.seqStart ?? null
         const seqEnd = l1Summaries[l1Summaries.length - 1]?.seqEnd ?? null
 
+        const sources = l1Summaries.map(s => ({
+            id: s.id,
+            level: 1 as const,
+            seqStart: s.seqStart,
+            seqEnd: s.seqEnd,
+        }))
         const llmInput = l1Summaries.map(s => ({ summary: s.summary, topic: s.topic }))
         const llmResult = await safeLLMCall(() => ctx.deepseekClient.summarizeSegment(llmInput))
 
@@ -115,6 +120,8 @@ export async function handleSummarizeSegment(
             entities: llmResult.entities,
             l1_count: l1Summaries.length,
             l1_ids: l1Summaries.map(s => s.id),
+            segment_batch_id: claimed.batchId,
+            sources,
             scheduled_at_ms: payload.scheduledAtMs,
             provider: llmResult.provider.provider,
             provider_model: llmResult.provider.model,
@@ -125,7 +132,7 @@ export async function handleSummarizeSegment(
 
         try {
             const l1Ids = l1Summaries.map(s => s.id)
-            const { id: l2Id } = await ctx.summaryStore.insertL2AndMarkL1s(
+            const { id: l2Id } = await ctx.summaryStore.insertL2AndMarkClaimedL1s(
                 {
                     sessionId: payload.sessionId,
                     namespace: sessionNamespace,
@@ -134,6 +141,7 @@ export async function handleSummarizeSegment(
                     seqEnd,
                     summary: llmResult.summary,
                     metadata: summaryMetadata,
+                    batchId: claimed.batchId,
                 },
                 l1Ids
             )
@@ -199,6 +207,8 @@ export async function handleSummarizeSegment(
                     l2_id: l2Id,
                     seq_start: seqStart,
                     seq_end: seqEnd,
+                    segment_batch_id: claimed.batchId,
+                    sources,
                 },
             })
         } catch (error) {
@@ -210,12 +220,18 @@ export async function handleSummarizeSegment(
                 tokensOut: llmResult.tokensOut,
                 errorCode: extractJobErrorCode(error),
                 error: transientError.message,
-                metadata: { l1_count: l1Summaries.length, cached_summary: llmResult.summary },
+                metadata: {
+                    l1_count: l1Summaries.length,
+                    cached_summary: llmResult.summary,
+                    segment_batch_id: claimed.batchId,
+                    sources,
+                },
             })
             throw transientError
         }
-        } finally {
-            await releaseLock()
+        } catch (error) {
+            await ctx.summaryStore.releaseL1Claim(sessionOrgId, claimed.batchId)
+            throw error
         }
     } catch (error) {
         if (error instanceof PermanentLLMError || error instanceof PermanentJobError) {
@@ -223,6 +239,7 @@ export async function handleSummarizeSegment(
                 await ctx.runStore.insert({
                     sessionId: payload.sessionId,
                     namespace: sessionNamespace,
+                    orgId: sessionOrgId,
                     level: 2,
                     jobId: job.id ?? null,
                     jobName: job.name,
@@ -242,6 +259,7 @@ export async function handleSummarizeSegment(
             await ctx.runStore.insert({
                 sessionId: payload.sessionId,
                 namespace: sessionNamespace,
+                orgId: sessionOrgId,
                 level: 2,
                 jobId: job.id ?? null,
                 jobName: job.name,

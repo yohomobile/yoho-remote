@@ -318,7 +318,7 @@ export function IdentityPersonDrawer(props: {
 
     const invalidateAll = useCallback(async () => {
         await Promise.all([
-            queryClient.invalidateQueries({ queryKey: ['identity-candidates'] }),
+            queryClient.invalidateQueries({ queryKey: ['approvals'] }),
             queryClient.invalidateQueries({ queryKey: ['identity-persons'] }),
             queryClient.invalidateQueries({ queryKey: ['identity-person-detail'] }),
             queryClient.invalidateQueries({ queryKey: ['identity-audits'] }),

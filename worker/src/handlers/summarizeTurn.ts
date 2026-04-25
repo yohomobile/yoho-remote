@@ -237,6 +237,7 @@ export async function handleSummarizeTurn(
     }): Parameters<typeof ctx.runStore.insert>[0] => ({
         sessionId: payload.sessionId,
         namespace: sessionNamespace,
+        orgId: sessionOrgId,
         level: 1,
         jobId: job.id ?? null,
         jobName: job.name,

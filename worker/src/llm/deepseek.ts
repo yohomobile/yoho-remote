@@ -611,13 +611,22 @@ export class DeepSeekClient {
     }
 
     async summarizeSession(
-        summaries: Array<{ summary: string; topic: string | null }>,
+        summaries: Array<{
+            id?: string
+            level?: 1 | 2
+            seqStart?: number | null
+            seqEnd?: number | null
+            summary: string
+            topic: string | null
+        }>,
         sourceLevel: 1 | 2,
     ): Promise<LLMSummaryResult> {
-        const sourceLabel = sourceLevel === 2 ? 'segment' : 'turn'
+        const sourceLabel = sourceLevel === 2 ? 'mixed segment/turn' : 'turn'
         const systemPrompt = [
             '你是 coding session 的 L3 session 摘要器。',
             `你会收到若干个 ${sourceLabel} 摘要，代表整个 session 的工作内容。`,
+            '每条输入会标明 Level：L2 表示已聚合的 segment，L1 表示尚未进入 L2 的尾部 raw turn 摘要。',
+            '如果 L2 与 L1 混合出现，要把 L2 当作粗粒度历史片段，把 L1 当作最后尾巴补充；不要误以为所有输入都是同一粒度。',
             '必须只返回一个合法的 json object，不要 markdown，不要代码块，不要额外解释。',
             'json schema:',
             '{',
@@ -633,7 +642,7 @@ export class DeepSeekClient {
             '- L3 是给未来 agent 继续工作的长期 operational memory，不是宣传稿或泛泛验收报告。',
             '- 开头先写最终状态；随后保留关键配置、部署路径、命令/测试、健康检查、DB/队列状态等可复现依据。',
             '- 必须保留重要失败、误判、连接耗尽、配置不匹配、外部 API 不兼容、被废弃方案及修正路径；不要把过程抹平成“无阻塞”。',
-            '- 如果 source 只提供压缩后的 L2 和 orphan L1，要合并两者；不要丢掉最后几个未进入 L2 的 turn。',
+            '- 如果 source 同时提供压缩后的 L2 和 orphan L1，要合并两者；L2 负责历史主干，L1 负责最新尾巴。',
             '- 如果仍有风险或未验证项，明确写出；没有可靠依据时不要声称完全成功。',
             '- 涉及密钥或 token 时只写“已配置/已保存/已脱敏”，不要复述 secret 值。',
             '- entities/tools 去重并只保留关键项，避免重复堆实体。',
@@ -652,10 +661,18 @@ export class DeepSeekClient {
         const userPrompt = [
             `以下是 ${summaries.length} 个 ${sourceLabel} 摘要，请综合生成 session 摘要：`,
             '',
-            ...summaries.map((s, i) => [
-                `[${sourceLabel === 'segment' ? 'Segment' : 'Turn'} ${i + 1}${s.topic ? ` - ${s.topic}` : ''}]`,
-                truncate(s.summary, 800),
-            ].join('\n')),
+            ...summaries.map((s, i) => {
+                const itemLevel = s.level ?? sourceLevel
+                const label = itemLevel === 2 ? 'Segment' : 'Turn'
+                const seqText = s.seqStart != null || s.seqEnd != null
+                    ? ` seq=${s.seqStart ?? '?'}-${s.seqEnd ?? '?'}`
+                    : ''
+                const idText = s.id ? ` id=${s.id}` : ''
+                return [
+                    `[${label} ${i + 1} level=L${itemLevel}${idText}${seqText}${s.topic ? ` - ${s.topic}` : ''}]`,
+                    truncate(s.summary, 800),
+                ].join('\n')
+            }),
         ].join('\n')
 
         const sessResponseSchema = z.object({

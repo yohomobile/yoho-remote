@@ -47,33 +47,14 @@ import type {
     StoredPerson,
     StoredPersonIdentity,
     StoredPersonIdentityLink,
-    StoredPersonIdentityCandidate,
     StoredPersonIdentityAudit,
     PersonIdentityAuditAction,
     StoredCommunicationPlan,
     StoredCommunicationPlanAudit,
     CommunicationPlanPreferences,
     CommunicationPlanAuditAction,
-    StoredMemoryConflictCandidate,
-    StoredMemoryConflictAudit,
-    MemoryConflictEntry,
-    MemoryConflictScope,
-    MemoryConflictStatus,
-    MemoryConflictResolution,
-    MemoryConflictAuditAction,
-    StoredTeamMemoryCandidate,
-    StoredTeamMemoryAudit,
-    TeamMemoryScope,
-    TeamMemoryCandidateStatus,
-    TeamMemoryAuditAction,
-    StoredObservationCandidate,
-    StoredObservationAudit,
-    ObservationCandidateStatus,
-    ObservationAuditAction,
-    ObservationSignal,
     IdentityObservation,
     ResolvedActorContext,
-    IdentityCandidateSummary,
     StoredBrainConfig,
     StoredUserSelfSystemConfig,
     BrainAgent,
@@ -805,52 +786,6 @@ export class PostgresStore implements IStore {
                 WHERE valid_to IS NULL AND state IN ('auto_verified', 'admin_verified');
             CREATE INDEX IF NOT EXISTS idx_person_identity_links_person ON person_identity_links(person_id);
 
-            -- Identity Graph: Admin review candidates
-            CREATE TABLE IF NOT EXISTS person_identity_candidates (
-                id TEXT PRIMARY KEY,
-                namespace TEXT NOT NULL,
-                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
-                identity_id TEXT NOT NULL REFERENCES person_identities(id) ON DELETE CASCADE,
-                candidate_person_id TEXT REFERENCES persons(id) ON DELETE CASCADE,
-                score REAL NOT NULL,
-                auto_action TEXT NOT NULL DEFAULT 'review',
-                status TEXT NOT NULL DEFAULT 'open',
-                risk_flags JSONB NOT NULL DEFAULT '[]',
-                evidence JSONB NOT NULL DEFAULT '[]',
-                matcher_version TEXT NOT NULL,
-                suppress_until BIGINT,
-                decided_by TEXT,
-                decided_at BIGINT,
-                decision_reason TEXT,
-                created_at BIGINT NOT NULL,
-                updated_at BIGINT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_person_identity_candidates_open
-                ON person_identity_candidates(namespace, org_id, status, created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_person_identity_candidates_identity ON person_identity_candidates(identity_id);
-
-            -- Identity Graph: Admin audit trail
-            CREATE TABLE IF NOT EXISTS person_identity_audits (
-                id TEXT PRIMARY KEY,
-                namespace TEXT NOT NULL,
-                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
-                action TEXT NOT NULL,
-                actor_email TEXT,
-                person_id TEXT REFERENCES persons(id) ON DELETE SET NULL,
-                target_person_id TEXT REFERENCES persons(id) ON DELETE SET NULL,
-                identity_id TEXT REFERENCES person_identities(id) ON DELETE SET NULL,
-                link_id TEXT REFERENCES person_identity_links(id) ON DELETE SET NULL,
-                reason TEXT,
-                payload JSONB NOT NULL DEFAULT '{}',
-                created_at BIGINT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_person_identity_audits_scope
-                ON person_identity_audits(namespace, org_id, created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_person_identity_audits_person
-                ON person_identity_audits(person_id, target_person_id);
-            CREATE INDEX IF NOT EXISTS idx_person_identity_audits_identity
-                ON person_identity_audits(identity_id);
-
             -- Communication Plan (Phase 3A): per-person reply preferences
             CREATE TABLE IF NOT EXISTS communication_plans (
                 id TEXT PRIMARY KEY,
@@ -891,135 +826,10 @@ export class PostgresStore implements IStore {
             CREATE INDEX IF NOT EXISTS idx_communication_plan_audits_scope
                 ON communication_plan_audits(namespace, org_id, created_at DESC);
 
-            -- Memory Conflict Candidates (Phase 3C)
-            CREATE TABLE IF NOT EXISTS memory_conflict_candidates (
-                id TEXT PRIMARY KEY,
-                namespace TEXT NOT NULL,
-                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
-                scope TEXT NOT NULL,
-                subject_key TEXT NOT NULL,
-                summary TEXT NOT NULL,
-                entries JSONB NOT NULL DEFAULT '[]',
-                evidence JSONB,
-                detector_version TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'open',
-                resolution TEXT,
-                decided_by TEXT,
-                decided_at BIGINT,
-                decision_reason TEXT,
-                created_at BIGINT NOT NULL,
-                updated_at BIGINT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_memory_conflict_candidates_scope
-                ON memory_conflict_candidates(namespace, org_id, status, created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_memory_conflict_candidates_subject
-                ON memory_conflict_candidates(namespace, COALESCE(org_id, ''), scope, subject_key);
-
-            CREATE TABLE IF NOT EXISTS memory_conflict_audits (
-                id TEXT PRIMARY KEY,
-                namespace TEXT NOT NULL,
-                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
-                candidate_id TEXT NOT NULL REFERENCES memory_conflict_candidates(id) ON DELETE CASCADE,
-                action TEXT NOT NULL,
-                prior_status TEXT,
-                new_status TEXT,
-                resolution TEXT,
-                actor_email TEXT,
-                reason TEXT,
-                payload JSONB,
-                created_at BIGINT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_memory_conflict_audits_candidate
-                ON memory_conflict_audits(candidate_id, created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_memory_conflict_audits_scope
-                ON memory_conflict_audits(namespace, org_id, created_at DESC);
-
-            -- Team Shared Memory Candidates (Phase 3B)
-            CREATE TABLE IF NOT EXISTS team_memory_candidates (
-                id TEXT PRIMARY KEY,
-                namespace TEXT NOT NULL,
-                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
-                proposed_by_person_id TEXT,
-                proposed_by_email TEXT,
-                scope TEXT NOT NULL,
-                content TEXT NOT NULL,
-                source TEXT,
-                session_id TEXT,
-                status TEXT NOT NULL DEFAULT 'pending',
-                decided_by TEXT,
-                decided_at BIGINT,
-                decision_reason TEXT,
-                memory_ref TEXT,
-                created_at BIGINT NOT NULL,
-                updated_at BIGINT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_team_memory_candidates_scope
-                ON team_memory_candidates(namespace, org_id, status, created_at DESC);
-
-            CREATE TABLE IF NOT EXISTS team_memory_audits (
-                id TEXT PRIMARY KEY,
-                namespace TEXT NOT NULL,
-                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
-                candidate_id TEXT NOT NULL REFERENCES team_memory_candidates(id) ON DELETE CASCADE,
-                action TEXT NOT NULL,
-                prior_status TEXT,
-                new_status TEXT,
-                actor_email TEXT,
-                reason TEXT,
-                memory_ref TEXT,
-                payload JSONB,
-                created_at BIGINT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_team_memory_audits_candidate
-                ON team_memory_audits(candidate_id, created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_team_memory_audits_scope
-                ON team_memory_audits(namespace, org_id, created_at DESC);
-
-            -- Observation Hypothesis Pool (Phase 3F)
-            CREATE TABLE IF NOT EXISTS observation_candidates (
-                id TEXT PRIMARY KEY,
-                namespace TEXT NOT NULL,
-                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
-                subject_person_id TEXT,
-                subject_email TEXT,
-                hypothesis_key TEXT NOT NULL,
-                summary TEXT NOT NULL,
-                detail TEXT,
-                detector_version TEXT NOT NULL,
-                confidence DOUBLE PRECISION,
-                signals JSONB NOT NULL DEFAULT '[]',
-                suggested_patch JSONB,
-                status TEXT NOT NULL DEFAULT 'pending',
-                decided_by TEXT,
-                decided_at BIGINT,
-                decision_reason TEXT,
-                promoted_communication_plan_id TEXT,
-                expires_at BIGINT,
-                created_at BIGINT NOT NULL,
-                updated_at BIGINT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_observation_candidates_subject
-                ON observation_candidates(namespace, org_id, subject_person_id, status, created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_observation_candidates_status
-                ON observation_candidates(namespace, org_id, status, created_at DESC);
-
-            CREATE TABLE IF NOT EXISTS observation_audits (
-                id TEXT PRIMARY KEY,
-                namespace TEXT NOT NULL,
-                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
-                candidate_id TEXT NOT NULL REFERENCES observation_candidates(id) ON DELETE CASCADE,
-                action TEXT NOT NULL,
-                prior_status TEXT,
-                new_status TEXT,
-                actor_email TEXT,
-                reason TEXT,
-                payload JSONB,
-                created_at BIGINT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_observation_audits_candidate
-                ON observation_audits(candidate_id, created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_observation_audits_scope
-                ON observation_audits(namespace, org_id, created_at DESC);
+            -- Phase 3 candidate tables (memory_conflict / team_memory /
+            -- observation / person_identity_candidates) were merged into the
+            -- unified Approvals Engine — see store/approvals-ddl.ts and the
+            -- 2026-04-25 cutover note in docs/design/unified-approvals-engine.md.
 
             -- Migration: Add org_id to projects
             ALTER TABLE projects ADD COLUMN IF NOT EXISTS org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL;
@@ -5270,28 +5080,6 @@ export class PostgresStore implements IStore {
         }
     }
 
-    private toStoredPersonIdentityCandidate(row: any): StoredPersonIdentityCandidate {
-        return {
-            id: row.id,
-            namespace: row.namespace,
-            orgId: row.org_id ?? null,
-            identityId: row.identity_id,
-            candidatePersonId: row.candidate_person_id ?? null,
-            score: Number(row.score),
-            autoAction: row.auto_action,
-            status: row.status,
-            riskFlags: Array.isArray(row.risk_flags) ? row.risk_flags : [],
-            evidence: Array.isArray(row.evidence) ? row.evidence : [],
-            matcherVersion: row.matcher_version,
-            suppressUntil: row.suppress_until ? Number(row.suppress_until) : null,
-            decidedBy: row.decided_by ?? null,
-            decidedAt: row.decided_at ? Number(row.decided_at) : null,
-            decisionReason: row.decision_reason ?? null,
-            createdAt: Number(row.created_at),
-            updatedAt: Number(row.updated_at),
-        }
-    }
-
     private toStoredPersonIdentityAudit(row: any): StoredPersonIdentityAudit {
         return {
             id: row.id,
@@ -5338,123 +5126,6 @@ export class PostgresStore implements IStore {
             newEnabled: row.new_enabled === null || row.new_enabled === undefined ? null : row.new_enabled === true,
             actorEmail: row.actor_email ?? null,
             reason: row.reason ?? null,
-            createdAt: Number(row.created_at),
-        }
-    }
-
-    private toStoredMemoryConflictCandidate(row: any): StoredMemoryConflictCandidate {
-        return {
-            id: row.id,
-            namespace: row.namespace,
-            orgId: row.org_id ?? null,
-            scope: row.scope as MemoryConflictScope,
-            subjectKey: row.subject_key,
-            summary: row.summary,
-            entries: (row.entries ?? []) as MemoryConflictEntry[],
-            evidence: (row.evidence ?? null) as Record<string, unknown> | null,
-            detectorVersion: row.detector_version,
-            status: row.status as MemoryConflictStatus,
-            resolution: (row.resolution ?? null) as MemoryConflictResolution | null,
-            decidedBy: row.decided_by ?? null,
-            decidedAt: row.decided_at === null || row.decided_at === undefined ? null : Number(row.decided_at),
-            decisionReason: row.decision_reason ?? null,
-            createdAt: Number(row.created_at),
-            updatedAt: Number(row.updated_at),
-        }
-    }
-
-    private toStoredMemoryConflictAudit(row: any): StoredMemoryConflictAudit {
-        return {
-            id: row.id,
-            namespace: row.namespace,
-            orgId: row.org_id ?? null,
-            candidateId: row.candidate_id,
-            action: row.action as MemoryConflictAuditAction,
-            priorStatus: (row.prior_status ?? null) as MemoryConflictStatus | null,
-            newStatus: (row.new_status ?? null) as MemoryConflictStatus | null,
-            resolution: (row.resolution ?? null) as MemoryConflictResolution | null,
-            actorEmail: row.actor_email ?? null,
-            reason: row.reason ?? null,
-            payload: (row.payload ?? null) as Record<string, unknown> | null,
-            createdAt: Number(row.created_at),
-        }
-    }
-
-    private toStoredTeamMemoryCandidate(row: any): StoredTeamMemoryCandidate {
-        return {
-            id: row.id,
-            namespace: row.namespace,
-            orgId: row.org_id ?? null,
-            proposedByPersonId: row.proposed_by_person_id ?? null,
-            proposedByEmail: row.proposed_by_email ?? null,
-            scope: row.scope as TeamMemoryScope,
-            content: row.content,
-            source: row.source ?? null,
-            sessionId: row.session_id ?? null,
-            status: row.status as TeamMemoryCandidateStatus,
-            decidedBy: row.decided_by ?? null,
-            decidedAt: row.decided_at === null || row.decided_at === undefined ? null : Number(row.decided_at),
-            decisionReason: row.decision_reason ?? null,
-            memoryRef: row.memory_ref ?? null,
-            createdAt: Number(row.created_at),
-            updatedAt: Number(row.updated_at),
-        }
-    }
-
-    private toStoredTeamMemoryAudit(row: any): StoredTeamMemoryAudit {
-        return {
-            id: row.id,
-            namespace: row.namespace,
-            orgId: row.org_id ?? null,
-            candidateId: row.candidate_id,
-            action: row.action as TeamMemoryAuditAction,
-            priorStatus: (row.prior_status ?? null) as TeamMemoryCandidateStatus | null,
-            newStatus: (row.new_status ?? null) as TeamMemoryCandidateStatus | null,
-            actorEmail: row.actor_email ?? null,
-            reason: row.reason ?? null,
-            memoryRef: row.memory_ref ?? null,
-            payload: (row.payload ?? null) as Record<string, unknown> | null,
-            createdAt: Number(row.created_at),
-        }
-    }
-
-    private toStoredObservationCandidate(row: any): StoredObservationCandidate {
-        return {
-            id: row.id,
-            namespace: row.namespace,
-            orgId: row.org_id ?? null,
-            subjectPersonId: row.subject_person_id ?? null,
-            subjectEmail: row.subject_email ?? null,
-            hypothesisKey: row.hypothesis_key,
-            summary: row.summary,
-            detail: row.detail ?? null,
-            detectorVersion: row.detector_version,
-            confidence: row.confidence === null || row.confidence === undefined ? null : Number(row.confidence),
-            signals: (row.signals ?? []) as ObservationSignal[],
-            suggestedPatch: (row.suggested_patch ?? null) as Record<string, unknown> | null,
-            status: row.status as ObservationCandidateStatus,
-            decidedBy: row.decided_by ?? null,
-            decidedAt: row.decided_at === null || row.decided_at === undefined ? null : Number(row.decided_at),
-            decisionReason: row.decision_reason ?? null,
-            promotedCommunicationPlanId: row.promoted_communication_plan_id ?? null,
-            expiresAt: row.expires_at === null || row.expires_at === undefined ? null : Number(row.expires_at),
-            createdAt: Number(row.created_at),
-            updatedAt: Number(row.updated_at),
-        }
-    }
-
-    private toStoredObservationAudit(row: any): StoredObservationAudit {
-        return {
-            id: row.id,
-            namespace: row.namespace,
-            orgId: row.org_id ?? null,
-            candidateId: row.candidate_id,
-            action: row.action as ObservationAuditAction,
-            priorStatus: (row.prior_status ?? null) as ObservationCandidateStatus | null,
-            newStatus: (row.new_status ?? null) as ObservationCandidateStatus | null,
-            actorEmail: row.actor_email ?? null,
-            reason: row.reason ?? null,
-            payload: (row.payload ?? null) as Record<string, unknown> | null,
             createdAt: Number(row.created_at),
         }
     }
@@ -6051,153 +5722,6 @@ export class PostgresStore implements IStore {
         return this.toStoredPersonIdentityAudit(result.rows[0])
     }
 
-    async createPersonIdentityCandidate(data: {
-        namespace: string
-        orgId?: string | null
-        identityId: string
-        candidatePersonId?: string | null
-        score: number
-        autoAction?: StoredPersonIdentityCandidate['autoAction']
-        riskFlags?: unknown[]
-        evidence?: unknown[]
-        matcherVersion: string
-        suppressUntil?: number | null
-    }): Promise<StoredPersonIdentityCandidate> {
-        const now = Date.now()
-        const result = await this.pool.query(
-            `INSERT INTO person_identity_candidates (
-                id, namespace, org_id, identity_id, candidate_person_id, score,
-                auto_action, status, risk_flags, evidence, matcher_version,
-                suppress_until, decided_by, decided_at, decision_reason, created_at, updated_at
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8, $9, $10, $11, NULL, NULL, NULL, $12, $12)
-             RETURNING *`,
-            [
-                randomUUID(),
-                data.namespace,
-                data.orgId ?? null,
-                data.identityId,
-                data.candidatePersonId ?? null,
-                data.score,
-                data.autoAction ?? 'review',
-                JSON.stringify(data.riskFlags ?? []),
-                JSON.stringify(data.evidence ?? []),
-                data.matcherVersion,
-                data.suppressUntil ?? null,
-                now,
-            ]
-        )
-        return this.toStoredPersonIdentityCandidate(result.rows[0])
-    }
-
-    async listPersonIdentityCandidates(options: {
-        namespace: string
-        orgId?: string | null
-        status?: StoredPersonIdentityCandidate['status']
-        limit?: number
-    }): Promise<IdentityCandidateSummary[]> {
-        const limit = Math.min(Math.max(options.limit ?? 50, 1), 100)
-        const params: unknown[] = [options.namespace, options.orgId ?? null]
-        let sql = `
-            SELECT
-                c.*,
-                row_to_json(i.*) AS identity,
-                CASE WHEN p.id IS NULL THEN NULL ELSE row_to_json(p.*) END AS candidate_person
-            FROM person_identity_candidates c
-            INNER JOIN person_identities i ON i.id = c.identity_id
-            LEFT JOIN persons p ON p.id = c.candidate_person_id
-            WHERE c.namespace = $1
-              AND c.org_id IS NOT DISTINCT FROM $2
-        `
-        if (options.status) {
-            params.push(options.status)
-            sql += ` AND c.status = $${params.length}`
-        }
-        params.push(limit)
-        sql += ` ORDER BY c.created_at DESC LIMIT $${params.length}`
-        const result = await this.pool.query(sql, params)
-        return result.rows.map((row: any) => ({
-            ...this.toStoredPersonIdentityCandidate(row),
-            identity: this.toStoredPersonIdentity(row.identity),
-            candidatePerson: row.candidate_person ? this.toStoredPerson(row.candidate_person) : null,
-        }))
-    }
-
-    async decidePersonIdentityCandidate(candidateId: string, decision: {
-        action: 'confirm_existing_person' | 'create_person_and_confirm' | 'mark_shared' | 'reject'
-        personId?: string | null
-        createPerson?: {
-            canonicalName?: string | null
-            primaryEmail?: string | null
-            employeeCode?: string | null
-        }
-        reason?: string | null
-        decidedBy?: string | null
-    }): Promise<StoredPersonIdentityCandidate | null> {
-        const existingResult = await this.pool.query('SELECT * FROM person_identity_candidates WHERE id = $1', [candidateId])
-        if (existingResult.rows.length === 0) {
-            return null
-        }
-        const candidate = this.toStoredPersonIdentityCandidate(existingResult.rows[0])
-        const identity = await this.getPersonIdentity(candidate.identityId)
-        if (!identity) {
-            return null
-        }
-
-        let nextStatus: StoredPersonIdentityCandidate['status'] = 'confirmed'
-        if (decision.action === 'confirm_existing_person') {
-            if (!decision.personId) {
-                throw new Error('personId is required for confirm_existing_person')
-            }
-            await this.createPersonIdentityLink({
-                personId: decision.personId,
-                identityId: candidate.identityId,
-                state: 'admin_verified',
-                confidence: candidate.score,
-                source: 'admin',
-                evidence: candidate.evidence,
-                decisionReason: decision.reason ?? null,
-                decidedBy: decision.decidedBy ?? null,
-            })
-        } else if (decision.action === 'create_person_and_confirm') {
-            const person = await this.createPerson({
-                namespace: candidate.namespace,
-                orgId: candidate.orgId,
-                canonicalName: decision.createPerson?.canonicalName ?? identity.displayName,
-                primaryEmail: decision.createPerson?.primaryEmail ?? identity.canonicalEmail,
-                employeeCode: decision.createPerson?.employeeCode ?? identity.employeeCode,
-                createdBy: decision.decidedBy ?? null,
-            })
-            await this.createPersonIdentityLink({
-                personId: person.id,
-                identityId: candidate.identityId,
-                state: 'admin_verified',
-                confidence: candidate.score,
-                source: 'admin',
-                evidence: candidate.evidence,
-                decisionReason: decision.reason ?? null,
-                decidedBy: decision.decidedBy ?? null,
-            })
-        } else if (decision.action === 'mark_shared') {
-            await this.pool.query(
-                `UPDATE person_identities
-                 SET account_type = 'shared', updated_at = $2
-                 WHERE id = $1`,
-                [candidate.identityId, Date.now()]
-            )
-        } else if (decision.action === 'reject') {
-            nextStatus = 'rejected'
-        }
-
-        const now = Date.now()
-        const result = await this.pool.query(
-            `UPDATE person_identity_candidates
-             SET status = $2, decided_by = $3, decided_at = $4, decision_reason = $5, updated_at = $4
-             WHERE id = $1
-             RETURNING *`,
-            [candidateId, nextStatus, decision.decidedBy ?? null, now, decision.reason ?? null]
-        )
-        return result.rows.length > 0 ? this.toStoredPersonIdentityCandidate(result.rows[0]) : null
-    }
 
     async mergePersons(data: {
         namespace: string
@@ -6686,679 +6210,6 @@ export class PostgresStore implements IStore {
         return result.rows.map((row) => this.toStoredCommunicationPlanAudit(row))
     }
 
-    async createMemoryConflictCandidate(input: {
-        namespace: string
-        orgId?: string | null
-        scope: MemoryConflictScope
-        subjectKey: string
-        summary: string
-        entries: MemoryConflictEntry[]
-        evidence?: Record<string, unknown> | null
-        detectorVersion: string
-    }): Promise<StoredMemoryConflictCandidate> {
-        const now = Date.now()
-        const id = randomUUID()
-        const client = await this.pool.connect()
-        try {
-            await client.query('BEGIN')
-            const inserted = await client.query(
-                `INSERT INTO memory_conflict_candidates (
-                    id, namespace, org_id, scope, subject_key, summary, entries, evidence,
-                    detector_version, status, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, 'open', $10, $10)
-                RETURNING *`,
-                [
-                    id,
-                    input.namespace,
-                    input.orgId ?? null,
-                    input.scope,
-                    input.subjectKey,
-                    input.summary,
-                    JSON.stringify(input.entries ?? []),
-                    input.evidence ? JSON.stringify(input.evidence) : null,
-                    input.detectorVersion,
-                    now,
-                ],
-            )
-            await client.query(
-                `INSERT INTO memory_conflict_audits (
-                    id, namespace, org_id, candidate_id, action, prior_status, new_status,
-                    resolution, actor_email, reason, payload, created_at
-                ) VALUES ($1, $2, $3, $4, 'generated', NULL, 'open', NULL, NULL, NULL, $5::jsonb, $6)`,
-                [
-                    randomUUID(),
-                    input.namespace,
-                    input.orgId ?? null,
-                    id,
-                    input.evidence ? JSON.stringify(input.evidence) : null,
-                    now,
-                ],
-            )
-            await client.query('COMMIT')
-            return this.toStoredMemoryConflictCandidate(inserted.rows[0])
-        } catch (error) {
-            try { await client.query('ROLLBACK') } catch {}
-            throw error
-        } finally {
-            client.release()
-        }
-    }
-
-    async listMemoryConflictCandidates(options: {
-        namespace: string
-        orgId?: string | null
-        scope?: MemoryConflictScope | null
-        status?: MemoryConflictStatus | null
-        limit?: number
-    }): Promise<StoredMemoryConflictCandidate[]> {
-        const params: unknown[] = [options.namespace, options.orgId ?? null]
-        let sql = `
-            SELECT * FROM memory_conflict_candidates
-            WHERE namespace = $1
-              AND org_id IS NOT DISTINCT FROM $2
-        `
-        if (options.scope) {
-            params.push(options.scope)
-            sql += ` AND scope = $${params.length}`
-        }
-        if (options.status) {
-            params.push(options.status)
-            sql += ` AND status = $${params.length}`
-        }
-        const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
-        params.push(limit)
-        sql += ` ORDER BY created_at DESC LIMIT $${params.length}`
-        const result = await this.pool.query(sql, params)
-        return result.rows.map((row) => this.toStoredMemoryConflictCandidate(row))
-    }
-
-    async getMemoryConflictCandidate(options: {
-        namespace: string
-        orgId?: string | null
-        id: string
-    }): Promise<StoredMemoryConflictCandidate | null> {
-        const result = await this.pool.query(
-            `SELECT * FROM memory_conflict_candidates
-             WHERE namespace = $1 AND org_id IS NOT DISTINCT FROM $2 AND id = $3`,
-            [options.namespace, options.orgId ?? null, options.id],
-        )
-        if (result.rowCount === 0) return null
-        return this.toStoredMemoryConflictCandidate(result.rows[0])
-    }
-
-    async decideMemoryConflictCandidate(input: {
-        namespace: string
-        orgId?: string | null
-        id: string
-        action: 'resolve' | 'dismiss' | 'reopen' | 'expire'
-        resolution?: MemoryConflictResolution | null
-        actorEmail?: string | null
-        reason?: string | null
-        payload?: Record<string, unknown> | null
-    }): Promise<StoredMemoryConflictCandidate | null> {
-        const now = Date.now()
-        const client = await this.pool.connect()
-        try {
-            await client.query('BEGIN')
-            const existing = await client.query(
-                `SELECT * FROM memory_conflict_candidates
-                 WHERE namespace = $1 AND org_id IS NOT DISTINCT FROM $2 AND id = $3
-                 FOR UPDATE`,
-                [input.namespace, input.orgId ?? null, input.id],
-            )
-            if (existing.rowCount === 0) {
-                await client.query('ROLLBACK')
-                return null
-            }
-            const priorStatus = existing.rows[0].status as MemoryConflictStatus
-
-            let newStatus: MemoryConflictStatus
-            let auditAction: MemoryConflictAuditAction
-            let resolution: MemoryConflictResolution | null = null
-            switch (input.action) {
-                case 'resolve':
-                    newStatus = 'resolved'
-                    auditAction = 'resolved'
-                    resolution = input.resolution ?? null
-                    break
-                case 'dismiss':
-                    newStatus = 'dismissed'
-                    auditAction = 'dismissed'
-                    break
-                case 'reopen':
-                    newStatus = 'open'
-                    auditAction = 'reopened'
-                    break
-                case 'expire':
-                    newStatus = 'expired'
-                    auditAction = 'expired'
-                    break
-            }
-
-            const updated = await client.query(
-                `UPDATE memory_conflict_candidates
-                 SET status = $1,
-                     resolution = $2,
-                     decided_by = $3,
-                     decided_at = $4,
-                     decision_reason = $5,
-                     updated_at = $4
-                 WHERE id = $6
-                 RETURNING *`,
-                [
-                    newStatus,
-                    resolution,
-                    input.actorEmail ?? null,
-                    now,
-                    input.reason ?? null,
-                    input.id,
-                ],
-            )
-
-            await client.query(
-                `INSERT INTO memory_conflict_audits (
-                    id, namespace, org_id, candidate_id, action, prior_status, new_status,
-                    resolution, actor_email, reason, payload, created_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)`,
-                [
-                    randomUUID(),
-                    input.namespace,
-                    input.orgId ?? null,
-                    input.id,
-                    auditAction,
-                    priorStatus,
-                    newStatus,
-                    resolution,
-                    input.actorEmail ?? null,
-                    input.reason ?? null,
-                    input.payload ? JSON.stringify(input.payload) : null,
-                    now,
-                ],
-            )
-
-            await client.query('COMMIT')
-            return this.toStoredMemoryConflictCandidate(updated.rows[0])
-        } catch (error) {
-            try { await client.query('ROLLBACK') } catch {}
-            throw error
-        } finally {
-            client.release()
-        }
-    }
-
-    async listMemoryConflictAudits(options: {
-        namespace: string
-        orgId?: string | null
-        candidateId?: string | null
-        limit?: number
-    }): Promise<StoredMemoryConflictAudit[]> {
-        const params: unknown[] = [options.namespace, options.orgId ?? null]
-        let sql = `
-            SELECT * FROM memory_conflict_audits
-            WHERE namespace = $1
-              AND org_id IS NOT DISTINCT FROM $2
-        `
-        if (options.candidateId) {
-            params.push(options.candidateId)
-            sql += ` AND candidate_id = $${params.length}`
-        }
-        const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
-        params.push(limit)
-        sql += ` ORDER BY created_at DESC LIMIT $${params.length}`
-        const result = await this.pool.query(sql, params)
-        return result.rows.map((row) => this.toStoredMemoryConflictAudit(row))
-    }
-
-    // === Team Memory Candidates (Phase 3B) ===
-    async proposeTeamMemoryCandidate(input: {
-        namespace: string
-        orgId?: string | null
-        proposedByPersonId?: string | null
-        proposedByEmail?: string | null
-        content: string
-        source?: string | null
-        sessionId?: string | null
-    }): Promise<StoredTeamMemoryCandidate> {
-        const now = Date.now()
-        const id = randomUUID()
-        const client = await this.pool.connect()
-        try {
-            await client.query('BEGIN')
-            const inserted = await client.query(
-                `INSERT INTO team_memory_candidates (
-                    id, namespace, org_id, proposed_by_person_id, proposed_by_email,
-                    scope, content, source, session_id, status, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, 'team', $6, $7, $8, 'pending', $9, $9)
-                RETURNING *`,
-                [
-                    id,
-                    input.namespace,
-                    input.orgId ?? null,
-                    input.proposedByPersonId ?? null,
-                    input.proposedByEmail ?? null,
-                    input.content,
-                    input.source ?? null,
-                    input.sessionId ?? null,
-                    now,
-                ],
-            )
-            await client.query(
-                `INSERT INTO team_memory_audits (
-                    id, namespace, org_id, candidate_id, action, prior_status, new_status,
-                    actor_email, reason, memory_ref, payload, created_at
-                ) VALUES ($1, $2, $3, $4, 'proposed', NULL, 'pending', $5, NULL, NULL, NULL, $6)`,
-                [
-                    randomUUID(),
-                    input.namespace,
-                    input.orgId ?? null,
-                    id,
-                    input.proposedByEmail ?? null,
-                    now,
-                ],
-            )
-            await client.query('COMMIT')
-            return this.toStoredTeamMemoryCandidate(inserted.rows[0])
-        } catch (error) {
-            try { await client.query('ROLLBACK') } catch {}
-            throw error
-        } finally {
-            client.release()
-        }
-    }
-
-    async listTeamMemoryCandidates(options: {
-        namespace: string
-        orgId?: string | null
-        status?: TeamMemoryCandidateStatus | null
-        limit?: number
-    }): Promise<StoredTeamMemoryCandidate[]> {
-        const params: unknown[] = [options.namespace, options.orgId ?? null]
-        let sql = `
-            SELECT * FROM team_memory_candidates
-            WHERE namespace = $1
-              AND org_id IS NOT DISTINCT FROM $2
-        `
-        if (options.status) {
-            params.push(options.status)
-            sql += ` AND status = $${params.length}`
-        }
-        const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
-        params.push(limit)
-        sql += ` ORDER BY created_at DESC LIMIT $${params.length}`
-        const result = await this.pool.query(sql, params)
-        return result.rows.map((row) => this.toStoredTeamMemoryCandidate(row))
-    }
-
-    async getTeamMemoryCandidate(options: {
-        namespace: string
-        orgId?: string | null
-        id: string
-    }): Promise<StoredTeamMemoryCandidate | null> {
-        const result = await this.pool.query(
-            `SELECT * FROM team_memory_candidates
-             WHERE namespace = $1 AND org_id IS NOT DISTINCT FROM $2 AND id = $3`,
-            [options.namespace, options.orgId ?? null, options.id],
-        )
-        if (result.rowCount === 0) return null
-        return this.toStoredTeamMemoryCandidate(result.rows[0])
-    }
-
-    async decideTeamMemoryCandidate(input: {
-        namespace: string
-        orgId?: string | null
-        id: string
-        action: 'approve' | 'reject' | 'supersede' | 'expire'
-        actorEmail?: string | null
-        reason?: string | null
-        memoryRef?: string | null
-        payload?: Record<string, unknown> | null
-    }): Promise<StoredTeamMemoryCandidate | null> {
-        const now = Date.now()
-        const client = await this.pool.connect()
-        try {
-            await client.query('BEGIN')
-            const existing = await client.query(
-                `SELECT * FROM team_memory_candidates
-                 WHERE namespace = $1 AND org_id IS NOT DISTINCT FROM $2 AND id = $3
-                 FOR UPDATE`,
-                [input.namespace, input.orgId ?? null, input.id],
-            )
-            if (existing.rowCount === 0) {
-                await client.query('ROLLBACK')
-                return null
-            }
-            const priorStatus = existing.rows[0].status as TeamMemoryCandidateStatus
-
-            let newStatus: TeamMemoryCandidateStatus
-            let auditAction: TeamMemoryAuditAction
-            switch (input.action) {
-                case 'approve':
-                    newStatus = 'approved'
-                    auditAction = 'approved'
-                    break
-                case 'reject':
-                    newStatus = 'rejected'
-                    auditAction = 'rejected'
-                    break
-                case 'supersede':
-                    newStatus = 'superseded'
-                    auditAction = 'superseded'
-                    break
-                case 'expire':
-                    newStatus = 'expired'
-                    auditAction = 'expired'
-                    break
-            }
-
-            const updated = await client.query(
-                `UPDATE team_memory_candidates
-                 SET status = $1,
-                     decided_by = $2,
-                     decided_at = $3,
-                     decision_reason = $4,
-                     memory_ref = COALESCE($5, memory_ref),
-                     updated_at = $3
-                 WHERE id = $6
-                 RETURNING *`,
-                [
-                    newStatus,
-                    input.actorEmail ?? null,
-                    now,
-                    input.reason ?? null,
-                    input.memoryRef ?? null,
-                    input.id,
-                ],
-            )
-
-            await client.query(
-                `INSERT INTO team_memory_audits (
-                    id, namespace, org_id, candidate_id, action, prior_status, new_status,
-                    actor_email, reason, memory_ref, payload, created_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)`,
-                [
-                    randomUUID(),
-                    input.namespace,
-                    input.orgId ?? null,
-                    input.id,
-                    auditAction,
-                    priorStatus,
-                    newStatus,
-                    input.actorEmail ?? null,
-                    input.reason ?? null,
-                    input.memoryRef ?? null,
-                    input.payload ? JSON.stringify(input.payload) : null,
-                    now,
-                ],
-            )
-
-            await client.query('COMMIT')
-            return this.toStoredTeamMemoryCandidate(updated.rows[0])
-        } catch (error) {
-            try { await client.query('ROLLBACK') } catch {}
-            throw error
-        } finally {
-            client.release()
-        }
-    }
-
-    async listTeamMemoryAudits(options: {
-        namespace: string
-        orgId?: string | null
-        candidateId?: string | null
-        limit?: number
-    }): Promise<StoredTeamMemoryAudit[]> {
-        const params: unknown[] = [options.namespace, options.orgId ?? null]
-        let sql = `
-            SELECT * FROM team_memory_audits
-            WHERE namespace = $1
-              AND org_id IS NOT DISTINCT FROM $2
-        `
-        if (options.candidateId) {
-            params.push(options.candidateId)
-            sql += ` AND candidate_id = $${params.length}`
-        }
-        const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
-        params.push(limit)
-        sql += ` ORDER BY created_at DESC LIMIT $${params.length}`
-        const result = await this.pool.query(sql, params)
-        return result.rows.map((row) => this.toStoredTeamMemoryAudit(row))
-    }
-
-    // === Observation Hypothesis Pool (Phase 3F) ===
-    async createObservationCandidate(input: {
-        namespace: string
-        orgId?: string | null
-        subjectPersonId?: string | null
-        subjectEmail?: string | null
-        hypothesisKey: string
-        summary: string
-        detail?: string | null
-        detectorVersion: string
-        confidence?: number | null
-        signals?: ObservationSignal[]
-        suggestedPatch?: Record<string, unknown> | null
-        expiresAt?: number | null
-    }): Promise<StoredObservationCandidate> {
-        const now = Date.now()
-        const id = randomUUID()
-        const client = await this.pool.connect()
-        try {
-            await client.query('BEGIN')
-            const inserted = await client.query(
-                `INSERT INTO observation_candidates (
-                    id, namespace, org_id, subject_person_id, subject_email,
-                    hypothesis_key, summary, detail, detector_version, confidence,
-                    signals, suggested_patch, status, expires_at, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                          $11::jsonb, $12::jsonb, 'pending', $13, $14, $14)
-                RETURNING *`,
-                [
-                    id,
-                    input.namespace,
-                    input.orgId ?? null,
-                    input.subjectPersonId ?? null,
-                    input.subjectEmail ?? null,
-                    input.hypothesisKey,
-                    input.summary,
-                    input.detail ?? null,
-                    input.detectorVersion,
-                    input.confidence ?? null,
-                    JSON.stringify(input.signals ?? []),
-                    input.suggestedPatch ? JSON.stringify(input.suggestedPatch) : null,
-                    input.expiresAt ?? null,
-                    now,
-                ],
-            )
-            await client.query(
-                `INSERT INTO observation_audits (
-                    id, namespace, org_id, candidate_id, action, prior_status, new_status,
-                    actor_email, reason, payload, created_at
-                ) VALUES ($1, $2, $3, $4, 'generated', NULL, 'pending', NULL, NULL, $5::jsonb, $6)`,
-                [
-                    randomUUID(),
-                    input.namespace,
-                    input.orgId ?? null,
-                    id,
-                    input.suggestedPatch ? JSON.stringify(input.suggestedPatch) : null,
-                    now,
-                ],
-            )
-            await client.query('COMMIT')
-            return this.toStoredObservationCandidate(inserted.rows[0])
-        } catch (error) {
-            try { await client.query('ROLLBACK') } catch {}
-            throw error
-        } finally {
-            client.release()
-        }
-    }
-
-    async listObservationCandidates(options: {
-        namespace: string
-        orgId?: string | null
-        subjectPersonId?: string | null
-        subjectEmail?: string | null
-        status?: ObservationCandidateStatus | null
-        limit?: number
-    }): Promise<StoredObservationCandidate[]> {
-        const params: unknown[] = [options.namespace, options.orgId ?? null]
-        let sql = `
-            SELECT * FROM observation_candidates
-            WHERE namespace = $1
-              AND org_id IS NOT DISTINCT FROM $2
-        `
-        if (options.subjectPersonId) {
-            params.push(options.subjectPersonId)
-            sql += ` AND subject_person_id = $${params.length}`
-        }
-        if (options.subjectEmail) {
-            params.push(options.subjectEmail)
-            sql += ` AND subject_email = $${params.length}`
-        }
-        if (options.status) {
-            params.push(options.status)
-            sql += ` AND status = $${params.length}`
-        }
-        const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
-        params.push(limit)
-        sql += ` ORDER BY created_at DESC LIMIT $${params.length}`
-        const result = await this.pool.query(sql, params)
-        return result.rows.map((row) => this.toStoredObservationCandidate(row))
-    }
-
-    async getObservationCandidate(options: {
-        namespace: string
-        orgId?: string | null
-        id: string
-    }): Promise<StoredObservationCandidate | null> {
-        const result = await this.pool.query(
-            `SELECT * FROM observation_candidates
-             WHERE namespace = $1 AND org_id IS NOT DISTINCT FROM $2 AND id = $3`,
-            [options.namespace, options.orgId ?? null, options.id],
-        )
-        if (result.rowCount === 0) return null
-        return this.toStoredObservationCandidate(result.rows[0])
-    }
-
-    async decideObservationCandidate(input: {
-        namespace: string
-        orgId?: string | null
-        id: string
-        action: 'confirm' | 'reject' | 'dismiss' | 'expire'
-        actorEmail?: string | null
-        reason?: string | null
-        promotedCommunicationPlanId?: string | null
-        payload?: Record<string, unknown> | null
-    }): Promise<StoredObservationCandidate | null> {
-        const now = Date.now()
-        const client = await this.pool.connect()
-        try {
-            await client.query('BEGIN')
-            const existing = await client.query(
-                `SELECT * FROM observation_candidates
-                 WHERE namespace = $1 AND org_id IS NOT DISTINCT FROM $2 AND id = $3
-                 FOR UPDATE`,
-                [input.namespace, input.orgId ?? null, input.id],
-            )
-            if (existing.rowCount === 0) {
-                await client.query('ROLLBACK')
-                return null
-            }
-            const priorStatus = existing.rows[0].status as ObservationCandidateStatus
-
-            let newStatus: ObservationCandidateStatus
-            let auditAction: ObservationAuditAction
-            switch (input.action) {
-                case 'confirm':
-                    newStatus = 'confirmed'
-                    auditAction = 'confirmed'
-                    break
-                case 'reject':
-                    newStatus = 'rejected'
-                    auditAction = 'rejected'
-                    break
-                case 'dismiss':
-                    newStatus = 'dismissed'
-                    auditAction = 'dismissed'
-                    break
-                case 'expire':
-                    newStatus = 'expired'
-                    auditAction = 'expired'
-                    break
-            }
-
-            const updated = await client.query(
-                `UPDATE observation_candidates
-                 SET status = $1,
-                     decided_by = $2,
-                     decided_at = $3,
-                     decision_reason = $4,
-                     promoted_communication_plan_id = COALESCE($5, promoted_communication_plan_id),
-                     updated_at = $3
-                 WHERE id = $6
-                 RETURNING *`,
-                [
-                    newStatus,
-                    input.actorEmail ?? null,
-                    now,
-                    input.reason ?? null,
-                    input.promotedCommunicationPlanId ?? null,
-                    input.id,
-                ],
-            )
-
-            await client.query(
-                `INSERT INTO observation_audits (
-                    id, namespace, org_id, candidate_id, action, prior_status, new_status,
-                    actor_email, reason, payload, created_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)`,
-                [
-                    randomUUID(),
-                    input.namespace,
-                    input.orgId ?? null,
-                    input.id,
-                    auditAction,
-                    priorStatus,
-                    newStatus,
-                    input.actorEmail ?? null,
-                    input.reason ?? null,
-                    input.payload ? JSON.stringify(input.payload) : null,
-                    now,
-                ],
-            )
-
-            await client.query('COMMIT')
-            return this.toStoredObservationCandidate(updated.rows[0])
-        } catch (error) {
-            try { await client.query('ROLLBACK') } catch {}
-            throw error
-        } finally {
-            client.release()
-        }
-    }
-
-    async listObservationAudits(options: {
-        namespace: string
-        orgId?: string | null
-        candidateId?: string | null
-        limit?: number
-    }): Promise<StoredObservationAudit[]> {
-        const params: unknown[] = [options.namespace, options.orgId ?? null]
-        let sql = `
-            SELECT * FROM observation_audits
-            WHERE namespace = $1
-              AND org_id IS NOT DISTINCT FROM $2
-        `
-        if (options.candidateId) {
-            params.push(options.candidateId)
-            sql += ` AND candidate_id = $${params.length}`
-        }
-        const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
-        params.push(limit)
-        sql += ` ORDER BY created_at DESC LIMIT $${params.length}`
-        const result = await this.pool.query(sql, params)
-        return result.rows.map((row) => this.toStoredObservationAudit(row))
-    }
 
     async resolveActorByIdentityObservation(observation: IdentityObservation): Promise<ResolvedActorContext> {
         const identity = await this.upsertPersonIdentity(observation)
@@ -7400,14 +6251,11 @@ export class PostgresStore implements IStore {
         }
 
         if (matches.length > 1) {
-            await this.createPersonIdentityCandidate({
-                namespace: identity.namespace,
-                orgId: identity.orgId,
-                identityId: identity.id,
+            await this.proposeIdentityApproval(identity, {
                 score: 0.75,
-                riskFlags: ['ambiguous_person_match'],
+                risk_flags: ['ambiguous_person_match'],
                 evidence: identity.employeeCode ? ['employee_code_multiple'] : ['email_multiple'],
-                matcherVersion: 'identity-graph-v1',
+                matcher_version: 'identity-graph-v1',
             })
             return this.buildResolvedActor(identity, null, 'unresolved')
         }
@@ -7434,17 +6282,58 @@ export class PostgresStore implements IStore {
         }
 
         if (identity.canonicalEmail || identity.displayName) {
-            await this.createPersonIdentityCandidate({
-                namespace: identity.namespace,
-                orgId: identity.orgId,
-                identityId: identity.id,
+            await this.proposeIdentityApproval(identity, {
                 score: 0.7,
                 evidence: ['new_identity_review'],
-                matcherVersion: 'identity-graph-v1',
+                matcher_version: 'identity-graph-v1',
             })
         }
 
         return this.buildResolvedActor(identity, null, 'unresolved')
+    }
+
+    /**
+     * Internal helper: surface a freshly-detected identity match as an
+     * approval candidate in the unified `approvals` schema. Wraps
+     * `upsertApproval` so the resolver doesn't need to know about
+     * subjectKey conventions or payload-table layout.
+     */
+    private async proposeIdentityApproval(
+        identity: StoredPersonIdentity,
+        payload: {
+            score: number
+            risk_flags?: unknown[]
+            evidence: unknown[]
+            matcher_version: string
+            candidate_person_id?: string | null
+            auto_action?: string
+            suppress_until?: number | null
+        },
+    ): Promise<void> {
+        if (!identity.orgId) return // approvals.org_id is NOT NULL
+        const subjectKey = `id:${identity.id}:${payload.candidate_person_id ?? 'new'}`
+        await this.upsertApproval({
+            namespace: identity.namespace,
+            orgId: identity.orgId,
+            domain: 'identity',
+            subjectKind: 'identity_candidate',
+            subjectKey,
+            payloadTable: 'approval_payload_identity',
+            payload: {
+                identity_id: identity.id,
+                candidate_person_id: payload.candidate_person_id ?? null,
+                score: payload.score,
+                auto_action: payload.auto_action ?? 'review',
+                risk_flags: payload.risk_flags ?? [],
+                evidence: payload.evidence,
+                matcher_version: payload.matcher_version,
+                suppress_until: payload.suppress_until ?? null,
+            },
+        }).catch((err) => {
+            // Best-effort: a duplicate or already-decided subject just means
+            // the resolver re-detected an existing review item.
+            console.warn('[identity] proposeIdentityApproval failed:', err)
+        })
     }
 
     // ========== Org License 操作 ==========

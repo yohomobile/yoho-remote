@@ -42,27 +42,12 @@ import type {
     StoredPerson,
     StoredPersonIdentity,
     StoredPersonIdentityLink,
-    StoredPersonIdentityCandidate,
     StoredPersonIdentityAudit,
     StoredCommunicationPlan,
     StoredCommunicationPlanAudit,
     CommunicationPlanPreferences,
-    StoredMemoryConflictCandidate,
-    StoredMemoryConflictAudit,
-    MemoryConflictEntry,
-    MemoryConflictResolution,
-    MemoryConflictScope,
-    MemoryConflictStatus,
-    StoredTeamMemoryCandidate,
-    StoredTeamMemoryAudit,
-    TeamMemoryCandidateStatus,
-    StoredObservationCandidate,
-    StoredObservationAudit,
-    ObservationCandidateStatus,
-    ObservationSignal,
     IdentityObservation,
     ResolvedActorContext,
-    IdentityCandidateSummary,
     StoredBrainConfig,
     StoredUserSelfSystemConfig,
     BrainAgent,
@@ -629,35 +614,8 @@ export interface IStore {
         decisionReason?: string | null
         decidedBy?: string | null
     }): Promise<StoredPersonIdentityLink>
-    createPersonIdentityCandidate(data: {
-        namespace: string
-        orgId?: string | null
-        identityId: string
-        candidatePersonId?: string | null
-        score: number
-        autoAction?: StoredPersonIdentityCandidate['autoAction']
-        riskFlags?: unknown[]
-        evidence?: unknown[]
-        matcherVersion: string
-        suppressUntil?: number | null
-    }): Promise<StoredPersonIdentityCandidate>
-    listPersonIdentityCandidates(options: {
-        namespace: string
-        orgId?: string | null
-        status?: StoredPersonIdentityCandidate['status']
-        limit?: number
-    }): Promise<IdentityCandidateSummary[]>
-    decidePersonIdentityCandidate(candidateId: string, decision: {
-        action: 'confirm_existing_person' | 'create_person_and_confirm' | 'mark_shared' | 'reject'
-        personId?: string | null
-        createPerson?: {
-            canonicalName?: string | null
-            primaryEmail?: string | null
-            employeeCode?: string | null
-        }
-        reason?: string | null
-        decidedBy?: string | null
-    }): Promise<StoredPersonIdentityCandidate | null>
+    // Identity candidate CRUD moved to the unified Approvals Engine
+    // (server/src/approvals/domains/identity.ts).
     resolveActorByIdentityObservation(observation: IdentityObservation): Promise<ResolvedActorContext>
     mergePersons(data: {
         namespace: string
@@ -720,128 +678,9 @@ export interface IStore {
         limit?: number
     }): Promise<StoredCommunicationPlanAudit[]>
 
-    // === Memory Conflict Candidates (Phase 3C) ===
-    createMemoryConflictCandidate(input: {
-        namespace: string
-        orgId?: string | null
-        scope: MemoryConflictScope
-        subjectKey: string
-        summary: string
-        entries: MemoryConflictEntry[]
-        evidence?: Record<string, unknown> | null
-        detectorVersion: string
-    }): Promise<StoredMemoryConflictCandidate>
-    listMemoryConflictCandidates(options: {
-        namespace: string
-        orgId?: string | null
-        scope?: MemoryConflictScope | null
-        status?: MemoryConflictStatus | null
-        limit?: number
-    }): Promise<StoredMemoryConflictCandidate[]>
-    getMemoryConflictCandidate(options: {
-        namespace: string
-        orgId?: string | null
-        id: string
-    }): Promise<StoredMemoryConflictCandidate | null>
-    decideMemoryConflictCandidate(input: {
-        namespace: string
-        orgId?: string | null
-        id: string
-        action: 'resolve' | 'dismiss' | 'reopen' | 'expire'
-        resolution?: MemoryConflictResolution | null
-        actorEmail?: string | null
-        reason?: string | null
-        payload?: Record<string, unknown> | null
-    }): Promise<StoredMemoryConflictCandidate | null>
-    listMemoryConflictAudits(options: {
-        namespace: string
-        orgId?: string | null
-        candidateId?: string | null
-        limit?: number
-    }): Promise<StoredMemoryConflictAudit[]>
-
-    // === Team Memory Candidates (Phase 3B) ===
-    proposeTeamMemoryCandidate(input: {
-        namespace: string
-        orgId?: string | null
-        proposedByPersonId?: string | null
-        proposedByEmail?: string | null
-        content: string
-        source?: string | null
-        sessionId?: string | null
-    }): Promise<StoredTeamMemoryCandidate>
-    listTeamMemoryCandidates(options: {
-        namespace: string
-        orgId?: string | null
-        status?: TeamMemoryCandidateStatus | null
-        limit?: number
-    }): Promise<StoredTeamMemoryCandidate[]>
-    getTeamMemoryCandidate(options: {
-        namespace: string
-        orgId?: string | null
-        id: string
-    }): Promise<StoredTeamMemoryCandidate | null>
-    decideTeamMemoryCandidate(input: {
-        namespace: string
-        orgId?: string | null
-        id: string
-        action: 'approve' | 'reject' | 'supersede' | 'expire'
-        actorEmail?: string | null
-        reason?: string | null
-        memoryRef?: string | null
-        payload?: Record<string, unknown> | null
-    }): Promise<StoredTeamMemoryCandidate | null>
-    listTeamMemoryAudits(options: {
-        namespace: string
-        orgId?: string | null
-        candidateId?: string | null
-        limit?: number
-    }): Promise<StoredTeamMemoryAudit[]>
-
-    // === Observation Hypothesis Pool (Phase 3F) ===
-    createObservationCandidate(input: {
-        namespace: string
-        orgId?: string | null
-        subjectPersonId?: string | null
-        subjectEmail?: string | null
-        hypothesisKey: string
-        summary: string
-        detail?: string | null
-        detectorVersion: string
-        confidence?: number | null
-        signals?: ObservationSignal[]
-        suggestedPatch?: Record<string, unknown> | null
-        expiresAt?: number | null
-    }): Promise<StoredObservationCandidate>
-    listObservationCandidates(options: {
-        namespace: string
-        orgId?: string | null
-        subjectPersonId?: string | null
-        subjectEmail?: string | null
-        status?: ObservationCandidateStatus | null
-        limit?: number
-    }): Promise<StoredObservationCandidate[]>
-    getObservationCandidate(options: {
-        namespace: string
-        orgId?: string | null
-        id: string
-    }): Promise<StoredObservationCandidate | null>
-    decideObservationCandidate(input: {
-        namespace: string
-        orgId?: string | null
-        id: string
-        action: 'confirm' | 'reject' | 'dismiss' | 'expire'
-        actorEmail?: string | null
-        reason?: string | null
-        promotedCommunicationPlanId?: string | null
-        payload?: Record<string, unknown> | null
-    }): Promise<StoredObservationCandidate | null>
-    listObservationAudits(options: {
-        namespace: string
-        orgId?: string | null
-        candidateId?: string | null
-        limit?: number
-    }): Promise<StoredObservationAudit[]>
+    // Memory Conflict / Team Memory / Observation candidate CRUD methods all
+    // migrated to the unified Approvals Engine — see
+    // server/src/approvals/domains/{memory-conflict,team-memory,observation}.ts.
 
     // === Approvals Engine (unified审批流) ===
     // Master-table CRUD + domain payload upsert + transactional decide. Domain
@@ -953,27 +792,12 @@ export type {
     StoredPerson,
     StoredPersonIdentity,
     StoredPersonIdentityLink,
-    StoredPersonIdentityCandidate,
     StoredPersonIdentityAudit,
     StoredCommunicationPlan,
     StoredCommunicationPlanAudit,
     CommunicationPlanPreferences,
-    StoredMemoryConflictCandidate,
-    StoredMemoryConflictAudit,
-    MemoryConflictEntry,
-    MemoryConflictResolution,
-    MemoryConflictScope,
-    MemoryConflictStatus,
-    StoredTeamMemoryCandidate,
-    StoredTeamMemoryAudit,
-    TeamMemoryCandidateStatus,
-    StoredObservationCandidate,
-    StoredObservationAudit,
-    ObservationCandidateStatus,
-    ObservationSignal,
     IdentityObservation,
     ResolvedActorContext,
-    IdentityCandidateSummary,
     StoredDownloadFile,
     LicenseStatus,
     OrgRole,

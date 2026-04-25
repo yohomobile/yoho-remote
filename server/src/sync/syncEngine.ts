@@ -2003,21 +2003,29 @@ export class SyncEngine {
         // Heal pseudo-archive metadata after we've persisted active=true. Doing it
         // after activation avoids ghost states (active=true with lifecycleState=archived
         // would confuse the auto-resume skip-reason gate and webapp archive view).
+        //
+        // Retry once on version-mismatch: the concurrent backfill-exhausted persist
+        // (patchSessionMetadata bumps metadata_version) routinely races with the heal
+        // and causes unarchiveSession's optimistic update to miss. unarchiveSession
+        // already calls refreshSession on failure, so the second attempt sees the
+        // bumped version and succeeds.
         if (healPseudoArchive) {
-            void this.unarchiveSession(session.id, { actor: 'pseudo-archive-heal' })
-                .then(result => {
-                    if (!result.ok) {
-                        console.warn(
-                            `[handleSessionAlive] pseudo-archive heal for ${session.id.slice(0, 8)} failed: ${result.error}`
-                        )
-                    }
-                })
-                .catch(err => {
-                    console.error(
-                        `[handleSessionAlive] pseudo-archive heal for ${session.id.slice(0, 8)} threw:`,
-                        err
+            const runHeal = async () => {
+                const first = await this.unarchiveSession(session.id, { actor: 'pseudo-archive-heal' })
+                if (first.ok) return
+                const retry = await this.unarchiveSession(session.id, { actor: 'pseudo-archive-heal-retry' })
+                if (!retry.ok) {
+                    console.warn(
+                        `[handleSessionAlive] pseudo-archive heal for ${session.id.slice(0, 8)} failed after retry: ${retry.error}`
                     )
-                })
+                }
+            }
+            void runHeal().catch(err => {
+                console.error(
+                    `[handleSessionAlive] pseudo-archive heal for ${session.id.slice(0, 8)} threw:`,
+                    err
+                )
+            })
         }
         if (!wasActive && this.isBrainSession(session)) {
             void this.reconcilePendingBrainCallbacksForMain(session.id, session.namespace).catch(error => {

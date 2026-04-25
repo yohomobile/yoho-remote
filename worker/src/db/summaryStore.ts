@@ -27,6 +27,11 @@ export type InsertSummaryResult = {
     inserted: boolean
 }
 
+export type ClaimedL1Batch = {
+    batchId: string
+    summaries: StoredL1Summary[]
+}
+
 function asString(v: unknown): string | null {
     return typeof v === 'string' ? v : null
 }
@@ -168,8 +173,27 @@ export class SummaryStore {
         const result = await this.pool.query(
             `SELECT COUNT(*)::int AS cnt
              FROM session_summaries
-             WHERE org_id = $1 AND session_id = $2 AND level = 1 AND parent_id IS NULL`,
-            [orgId, sessionId]
+             WHERE org_id = $1
+               AND session_id = $2
+               AND level = 1
+               AND parent_id IS NULL
+               AND (segment_batch_id IS NULL OR claim_expires_at IS NULL OR claim_expires_at < $3)`,
+            [orgId, sessionId, Date.now()]
+        )
+        return Number(result.rows[0]?.cnt ?? 0)
+    }
+
+    async countActiveL1Claims(orgId: string, sessionId: string): Promise<number> {
+        const result = await this.pool.query(
+            `SELECT COUNT(*)::int AS cnt
+             FROM session_summaries
+             WHERE org_id = $1
+               AND session_id = $2
+               AND level = 1
+               AND parent_id IS NULL
+               AND segment_batch_id IS NOT NULL
+               AND claim_expires_at >= $3`,
+            [orgId, sessionId, Date.now()]
         )
         return Number(result.rows[0]?.cnt ?? 0)
     }
@@ -178,18 +202,87 @@ export class SummaryStore {
         const result = await this.pool.query(
             `SELECT id, seq_start, seq_end, summary, metadata
              FROM session_summaries
-             WHERE org_id = $1 AND session_id = $2 AND level = 1 AND parent_id IS NULL
+             WHERE org_id = $1
+               AND session_id = $2
+               AND level = 1
+               AND parent_id IS NULL
+               AND (segment_batch_id IS NULL OR claim_expires_at IS NULL OR claim_expires_at < $3)
              ORDER BY seq_start ASC NULLS LAST, created_at ASC`,
-            [orgId, sessionId]
+            [orgId, sessionId, Date.now()]
         )
         return (result.rows as Record<string, unknown>[]).map(rowToL1)
+    }
+
+    async claimUnassignedL1ForSegment(
+        orgId: string,
+        sessionId: string,
+        limit: number,
+        claimTtlMs: number
+    ): Promise<ClaimedL1Batch> {
+        const client = await this.pool.connect()
+        const batchId = randomUUID()
+        const now = Date.now()
+        const expiresAt = now + claimTtlMs
+        try {
+            await client.query('BEGIN')
+            const result = await client.query(
+                `WITH picked AS (
+                    SELECT id
+                    FROM session_summaries
+                    WHERE org_id = $1
+                      AND session_id = $2
+                      AND level = 1
+                      AND parent_id IS NULL
+                      AND (segment_batch_id IS NULL OR claim_expires_at IS NULL OR claim_expires_at < $3)
+                    ORDER BY seq_start ASC NULLS LAST, created_at ASC
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT $4
+                )
+                UPDATE session_summaries ss
+                SET segment_batch_id = $5,
+                    claimed_at = $3,
+                    claim_expires_at = $6
+                FROM picked
+                WHERE ss.id = picked.id
+                RETURNING ss.id, ss.seq_start, ss.seq_end, ss.summary, ss.metadata, ss.created_at`,
+                [orgId, sessionId, now, limit, batchId, expiresAt]
+            )
+            await client.query('COMMIT')
+            return {
+                batchId,
+                summaries: (result.rows as Record<string, unknown>[])
+                    .sort((a, b) => {
+                        const aSeq = a.seq_start != null ? Number(a.seq_start) : Number.POSITIVE_INFINITY
+                        const bSeq = b.seq_start != null ? Number(b.seq_start) : Number.POSITIVE_INFINITY
+                        if (aSeq !== bSeq) return aSeq - bSeq
+                        return Number(a.created_at ?? 0) - Number(b.created_at ?? 0)
+                    })
+                    .map(rowToL1),
+            }
+        } catch (error) {
+            await client.query('ROLLBACK')
+            throw error
+        } finally {
+            client.release()
+        }
+    }
+
+    async releaseL1Claim(orgId: string, batchId: string): Promise<void> {
+        await this.pool.query(
+            `UPDATE session_summaries
+             SET segment_batch_id = NULL,
+                 claimed_at = NULL,
+                 claim_expires_at = NULL
+             WHERE org_id = $1 AND level = 1 AND parent_id IS NULL AND segment_batch_id = $2`,
+            [orgId, batchId]
+        )
     }
 
     // Atomically insert L2 and mark the supplied L1 ids as segmented.
     // Uses a transaction + UPSERT so that on retry the existing L2 id is
     // returned and the mark step is always re-executed — preventing orphan L1s
     // even if the mark step failed on a prior attempt.
-    async insertL2AndMarkL1s(
+    async insertL2AndMarkClaimedL1s(
         input: {
             sessionId: string
             namespace: string
@@ -198,9 +291,10 @@ export class SummaryStore {
             seqEnd: number | null
             summary: string
             metadata: Record<string, unknown>
+            batchId: string
         },
         l1Ids: string[]
-    ): Promise<{ id: string }> {
+    ): Promise<{ id: string; markedL1Count: number }> {
         const client = await this.pool.connect()
         try {
             await client.query('BEGIN')
@@ -236,16 +330,29 @@ export class SummaryStore {
                 l2Id = id
             }
 
+            let markedL1Count = 0
             if (l1Ids.length > 0) {
-                await client.query(
-                    `UPDATE session_summaries SET parent_id = $1
-                     WHERE org_id = $2 AND id = ANY($3::text[]) AND level = 1`,
-                    [l2Id, input.orgId, l1Ids]
+                const marked = await client.query(
+                    `UPDATE session_summaries
+                     SET parent_id = $1,
+                         segment_batch_id = NULL,
+                         claimed_at = NULL,
+                         claim_expires_at = NULL
+                     WHERE org_id = $2
+                       AND id = ANY($3::text[])
+                       AND level = 1
+                       AND segment_batch_id = $4`,
+                    [l2Id, input.orgId, l1Ids, input.batchId]
                 )
+                markedL1Count = marked.rowCount ?? 0
+            }
+
+            if (markedL1Count !== l1Ids.length) {
+                throw new Error(`L2 claim lost before mark: expected ${l1Ids.length}, marked ${markedL1Count}`)
             }
 
             await client.query('COMMIT')
-            return { id: l2Id }
+            return { id: l2Id, markedL1Count }
         } catch (error) {
             await client.query('ROLLBACK')
             throw error
@@ -253,6 +360,8 @@ export class SummaryStore {
             client.release()
         }
     }
+
+
 
     async getSegmentSummaries(orgId: string, sessionId: string): Promise<StoredL2Summary[]> {
         const result = await this.pool.query(
