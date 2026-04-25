@@ -1318,6 +1318,7 @@ export class SyncEngine {
             this.brainChildPendingMessages.delete(session.id)
             this.brainChildPendingRetryCallbackKeyBySessionId.delete(session.id)
             this.brainChildInFlightCallbackKeyBySessionId.delete(session.id)
+            this.clearTodoBackfillState(session.id)
 
             const metadataPatch = {
                 lifecycleState: 'archived',
@@ -3780,6 +3781,7 @@ export class SyncEngine {
         const stored = await this.store.getMachine(machineId)
         if (!stored) {
             const existed = this.machines.delete(machineId)
+            this.lastBroadcastAtByMachineId.delete(machineId)
             if (existed && !opts?.silent) {
                 this.emit({ type: 'machine-updated', machineId, data: null })
             }
@@ -4182,11 +4184,12 @@ export class SyncEngine {
         // brain-children (hundreds of messages) the original #InitPrompt- has
         // already scrolled out of any reasonable recent window, so a tail scan
         // will wrongly conclude init never ran and trap subsequent brain sends
-        // in the buffering queue. The init prompt is always among the first
-        // user messages, so a small earliest-slice is both sufficient and cheap.
+        // in the buffering queue. The init prompt is normally message #1, but a slow
+        // brain-child may have user messages or tool results land before it, so scan a
+        // larger window to cover late init delivery.
         let earliest: DecryptedMessage[] = []
         try {
-            earliest = await this.store.getMessagesAfter(sessionId, 0, 10)
+            earliest = await this.store.getMessagesAfter(sessionId, 0, 50)
         } catch (err) {
             console.warn(`[brain-queue] Failed to load earliest history for ${shortId(sessionId)}:`, err)
             return false

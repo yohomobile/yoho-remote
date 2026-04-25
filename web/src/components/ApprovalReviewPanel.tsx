@@ -15,13 +15,25 @@ import type {
 // decision form. Sticks to var(--app-*) tokens so it slots cleanly into the
 // host page.
 
-const DOMAIN_OPTIONS: Array<{ value: 'all' | ApprovalDomainName; label: string }> = [
-    { value: 'all', label: '全部域' },
-    { value: 'identity', label: 'Identity' },
-    { value: 'team_memory', label: 'Team Memory' },
-    { value: 'observation', label: '观察假设' },
-    { value: 'memory_conflict', label: '记忆冲突' },
+const DOMAIN_OPTIONS: Array<{
+    value: 'all' | ApprovalDomainName
+    label: string
+    activeGradient: string
+}> = [
+    { value: 'all', label: '全部', activeGradient: 'from-indigo-500 to-purple-600' },
+    { value: 'identity', label: 'Identity', activeGradient: 'from-violet-500 to-purple-600' },
+    { value: 'team_memory', label: 'Team Memory', activeGradient: 'from-sky-500 to-blue-600' },
+    { value: 'observation', label: '观察假设', activeGradient: 'from-emerald-500 to-teal-600' },
+    { value: 'memory_conflict', label: '记忆冲突', activeGradient: 'from-amber-500 to-orange-600' },
 ]
+
+const STATUS_GRADIENT: Record<ApprovalMasterStatus, string> = {
+    pending: 'from-amber-500 to-orange-600',
+    approved: 'from-emerald-500 to-teal-600',
+    rejected: 'from-rose-500 to-red-600',
+    dismissed: 'from-slate-500 to-slate-600',
+    expired: 'from-slate-500 to-slate-600',
+}
 
 const STATUS_OPTIONS: ApprovalMasterStatus[] = ['pending', 'approved', 'rejected', 'dismissed', 'expired']
 
@@ -313,32 +325,48 @@ function FilterBar(props: {
     isLoading: boolean
 }) {
     return (
-        <div className="flex flex-wrap items-end gap-2 pb-2 border-b border-[var(--app-divider)]">
-            <label className="block">
-                <span className="block text-[10px] font-semibold text-[var(--app-hint)] uppercase tracking-wide mb-1">域</span>
-                <select
-                    className="text-sm px-2 py-1.5 rounded border border-[var(--app-divider)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-link)] min-w-[140px]"
-                    value={props.domain}
-                    onChange={(e) => props.onDomainChange(e.target.value as 'all' | ApprovalDomainName)}
-                >
-                    {DOMAIN_OPTIONS.map((o) => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                </select>
-            </label>
-            <label className="block">
-                <span className="block text-[10px] font-semibold text-[var(--app-hint)] uppercase tracking-wide mb-1">状态</span>
-                <select
-                    className="text-sm px-2 py-1.5 rounded border border-[var(--app-divider)] bg-[var(--app-bg)] text-[var(--app-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--app-link)] min-w-[120px]"
-                    value={props.status}
-                    onChange={(e) => props.onStatusChange(e.target.value as ApprovalMasterStatus)}
-                >
-                    {STATUS_OPTIONS.map((s) => (
-                        <option key={s} value={s}>{STATUS_LABEL[s]}</option>
-                    ))}
-                </select>
-            </label>
-            <div className="ml-auto self-end text-[11px] text-[var(--app-hint)] py-1.5">
+        <div className="flex flex-wrap items-center gap-2 py-2 border-b border-[var(--app-divider)]">
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                <span className="text-[11px] text-[var(--app-hint)] shrink-0">域</span>
+                {DOMAIN_OPTIONS.map((o) => {
+                    const isActive = props.domain === o.value
+                    return (
+                        <button
+                            key={o.value}
+                            type="button"
+                            onClick={() => props.onDomainChange(o.value)}
+                            className={`px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap ${
+                                isActive
+                                    ? `bg-gradient-to-r ${o.activeGradient} text-white shadow-sm`
+                                    : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
+                            }`}
+                        >
+                            {o.label}
+                        </button>
+                    )
+                })}
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                <span className="text-[11px] text-[var(--app-hint)] shrink-0">状态</span>
+                {STATUS_OPTIONS.map((s) => {
+                    const isActive = props.status === s
+                    return (
+                        <button
+                            key={s}
+                            type="button"
+                            onClick={() => props.onStatusChange(s)}
+                            className={`px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap ${
+                                isActive
+                                    ? `bg-gradient-to-r ${STATUS_GRADIENT[s]} text-white shadow-sm`
+                                    : 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)] hover:bg-[var(--app-secondary-bg)]'
+                            }`}
+                        >
+                            {STATUS_LABEL[s]}
+                        </button>
+                    )
+                })}
+            </div>
+            <div className="ml-auto text-[11px] text-[var(--app-hint)]">
                 {props.isLoading ? '加载中...' : `${props.count} 条`}
             </div>
         </div>
@@ -535,6 +563,10 @@ function DetailSheetContent({ approvalId, onClose }: { approvalId: string; onClo
                     <div className="p-8 flex justify-center"><Spinner /></div>
                 )}
 
+                {selected && (
+                    <ContextPanel domain={selected.domain} />
+                )}
+
                 {selected && payload && (
                     <PayloadSection
                         domain={selected.domain}
@@ -631,6 +663,98 @@ function DomainPayloadView({ domain, payload }: { domain: string; payload: Recor
     if (domain === 'memory_conflict') return <MemoryConflictPayload p={payload} />
     if (domain === 'identity') return <IdentityPayload p={payload} />
     return <RawJsonView value={payload} />
+}
+
+// "决策上下文" — 在 payload 之前讲清楚这是啥、为什么要决策、批/拒分别怎样。
+// 文案与每个 domain 的 effects 实现强绑定；effect 没真接通的部分用 ⚠️ 标出来，
+// 避免审批人误以为按了"批准"就万事大吉。
+function ContextPanel({ domain }: { domain: string }) {
+    const ctx = DOMAIN_CONTEXT[domain]
+    if (!ctx) return null
+    return (
+        <section>
+            <h3 className="text-[10px] font-semibold text-[var(--app-hint)] uppercase tracking-wide mb-2">这是什么 / 为什么要决策</h3>
+            <div className="rounded-lg bg-[var(--app-bg)] border border-[var(--app-divider)] p-3 space-y-2.5 text-xs leading-relaxed">
+                <p className="text-[var(--app-fg)]">{ctx.what}</p>
+                <p className="text-[var(--app-hint)]">
+                    <span className="font-medium text-[var(--app-fg)]">为什么要你审批：</span>{ctx.why}
+                </p>
+                <div className="space-y-1 pt-1.5 border-t border-[var(--app-divider)]">
+                    {ctx.outcomes.map((o, i) => (
+                        <div key={i} className="flex items-start gap-2">
+                            <span className={`mt-0.5 inline-block w-1 h-1 rounded-full shrink-0 ${
+                                o.tone === 'positive' ? 'bg-emerald-500'
+                                : o.tone === 'negative' ? 'bg-rose-500'
+                                : 'bg-[var(--app-hint)]'
+                            }`} />
+                            <div className="flex-1">
+                                <span className="font-medium text-[var(--app-fg)]">{o.action}</span>
+                                <span className="text-[var(--app-hint)]"> · {o.effect}</span>
+                                {o.warn && (
+                                    <span className="ml-1 px-1 py-0.5 rounded text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                                        ⚠ {o.warn}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </section>
+    )
+}
+
+type DomainContext = {
+    what: string
+    why: string
+    outcomes: Array<{
+        action: string
+        effect: string
+        tone: 'positive' | 'negative' | 'neutral'
+        warn?: string
+    }>
+}
+
+const DOMAIN_CONTEXT: Record<string, DomainContext> = {
+    identity: {
+        what: '系统在某个渠道（飞书 / 邮件 / CLI 等）看到一个新身份，但匹配到多个候选 Person 或没把握，请人工裁决归属。',
+        why: 'identity 自动绑定误判会让别人的会话/记忆错挂到你账号上，影响隐私和审计。匹配分低或风险标志命中时由人工判断。',
+        outcomes: [
+            { action: '关联到已有 Person', effect: '此 identity 绑定到指定 person；今后此渠道的所有发言都视为同一人，参与统一记忆/会话。', tone: 'positive' },
+            { action: '新建 Person 并关联', effect: '建一个新 person 并绑定；该人可被其他渠道继续关联。', tone: 'positive' },
+            { action: '标记为共享身份', effect: '标记为非个人账号（如 #channel / 服务账号），不归属任何 person。', tone: 'neutral' },
+            { action: '驳回', effect: '本次不绑定。同候选不再重复打扰你。', tone: 'negative' },
+        ],
+    },
+    team_memory: {
+        what: '组织成员提议把一条规则/约定写入团队共享知识库（yoho-vault 的 team/ 命名空间），所有人召回时会读到。',
+        why: '团队共享记忆是高权限写入，会影响所有人的 AI 决策上下文，必须 org admin 批准；同时防止低质量/错误事实污染共享池。',
+        outcomes: [
+            { action: '批准', effect: '记录决策 + 标记 memory_ref。', tone: 'positive', warn: '当前未真正写入 yoho-vault；后续接通后会自动 remember' },
+            { action: '覆盖旧版', effect: '声明此条替换某个旧 memory_ref。', tone: 'positive', warn: '当前未真正替换旧记忆' },
+            { action: '驳回', effect: '不写入团队记忆库；同提议人短期内不再重复同样内容。', tone: 'negative' },
+            { action: '过期', effect: '候选超过保留期，自动清理。', tone: 'neutral' },
+        ],
+    },
+    observation: {
+        what: 'K1 detector 在多次会话里观察到某个 person 表现出某种偏好（如「要更短回复」「要更详细解释」），生成一条"假设"等你确认。',
+        why: '把假设直接写成事实风险大（错误标签会被 AI 当真）。必须由本人或 admin 确认后才升级为 communicationPlan，让 Brain 在后续会话里调整风格。',
+        outcomes: [
+            { action: '确认假设', effect: '把 suggested_patch 写入此人的 communicationPlan；后续 Brain 会话会按这些 hint 调整 length/tone/explanationDepth。', tone: 'positive', warn: '当前 demo 数据 person_id 为空时会跳过 auto-promote' },
+            { action: '驳回', effect: '明确否决，detector 短期不再生成同 hypothesis_key。', tone: 'negative' },
+            { action: '忽略', effect: '暂不处理也不否决，候选静默归档。', tone: 'neutral' },
+            { action: '过期', effect: '超过 TTL 自动隐藏。', tone: 'neutral' },
+        ],
+    },
+    memory_conflict: {
+        what: 'worker 扫描发现同一主体下有多条互相矛盾的记忆（如「onboarding 周一 / 周三」），需要人工裁决保留哪条。',
+        why: '冲突解决的正确性取决于业务上下文，自动合并/删除可能丢失正确信息或保留错的版本，所以由 admin 裁决。',
+        outcomes: [
+            { action: '解决（keep_a / keep_b / supersede / discard_all / mark_expired）', effect: '记录裁决方式。', tone: 'positive', warn: '当前未真正应用裁决（未删除/合并冲突项）；接通 yoho-vault forget 后会自动执行' },
+            { action: '忽略', effect: '暂不处理，冲突候选保留为已忽略。', tone: 'neutral' },
+            { action: '重新打开', effect: '把已解决的冲突回滚为待审，重新进入决策流。', tone: 'neutral' },
+        ],
+    },
 }
 
 function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {

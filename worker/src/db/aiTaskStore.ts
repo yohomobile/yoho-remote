@@ -321,4 +321,22 @@ export class AiTaskStore {
         )
         return (result.rows as Record<string, unknown>[]).map(rowToRun)
     }
+
+    /**
+     * Mark runs that have been stuck in 'running' or 'pending' state past their deadline as
+     * 'timeout'. This catches runs whose worker crashed mid-task — without a reaper they
+     * remain 'running' forever and never trigger retry callbacks.
+     */
+    async reapStuckRuns(stuckBeforeMs: number): Promise<number> {
+        const result = await this.pool.query(
+            `UPDATE ai_task_runs
+             SET status = 'timeout',
+                 finished_at = $1,
+                 error = COALESCE(error, $2)
+             WHERE status IN ('running', 'pending')
+               AND started_at < $3`,
+            [Date.now(), 'reaper: stuck past deadline', stuckBeforeMs]
+        )
+        return result.rowCount ?? 0
+    }
 }

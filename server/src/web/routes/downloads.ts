@@ -15,11 +15,16 @@ import type { SSEManager } from '../../sse/sseManager'
 import type { IStore } from '../../store/interface'
 import type { WebAppEnv } from '../middleware/auth'
 
+// Cap file uploads at 50MB (decoded). Base64 inflates by ~4/3, so the equivalent
+// payload limit is ~67MB — still well under maxRequestBodySize=150MB on the http server.
+const MAX_UPLOAD_FILE_BYTES = 50 * 1024 * 1024
+const MAX_UPLOAD_BASE64_LEN = Math.ceil((MAX_UPLOAD_FILE_BYTES * 4) / 3)
+
 const uploadSchema = z.object({
     sessionId: z.string().min(1),
-    filename: z.string().min(1),
-    content: z.string().min(1),  // base64
-    mimeType: z.string().optional(),
+    filename: z.string().min(1).max(512),
+    content: z.string().min(1).max(MAX_UPLOAD_BASE64_LEN),  // base64
+    mimeType: z.string().max(255).optional(),
 })
 
 type CliEnv = { Variables: { orgId: string } }
@@ -117,6 +122,9 @@ export function createDownloadCliRoutes(
             buf = Buffer.from(content, 'base64')
         } catch {
             return c.json({ error: 'Invalid base64 content' }, 400)
+        }
+        if (buf.length > MAX_UPLOAD_FILE_BYTES) {
+            return c.json({ error: `File too large (max ${MAX_UPLOAD_FILE_BYTES} bytes)` }, 413)
         }
 
         const resolvedMimeType = mimeType || guessMimeType(filename)

@@ -11,6 +11,7 @@ import { SummaryStore } from './db/summaryStore'
 import { enqueueSegmentIfNeeded } from './handlers/summarizeSegment'
 import { handleAiTask, aiTaskPayloadSchema } from './handlers/aiTask'
 import { handleAiTaskDispatcher } from './handlers/aiTaskDispatcher'
+import { AiTaskStore } from './db/aiTaskStore'
 import { handleConflictScan } from './handlers/conflictScan'
 import { startWorkerHealthServer, type WorkerHealthSnapshot } from './health'
 import { YohoMemoryClient } from './infra/yohoMemory'
@@ -260,6 +261,28 @@ async function main(): Promise<void> {
         void runCatchup(ctx, state)
     }, config.catchupIntervalMs)
 
+    // AI task run reaper: mark runs stuck in 'running' or 'pending' past their deadline as
+    // 'timeout' so retry callbacks fire and the run row stops looking active. Without this,
+    // a crashed worker leaves runs in 'running' state indefinitely (observed: 24h+ stuck rows).
+    const REAPER_INTERVAL_MS = 5 * 60 * 1000
+    const REAPER_GRACE_FACTOR = 1.5 // wait 1.5x the configured timeout before reaping
+    const aiTaskStore = new AiTaskStore(ctx.pool)
+    const reapStuckRuns = async (): Promise<void> => {
+        const stuckBeforeMs = Date.now() - Math.floor(config.aiTaskTimeoutMs * REAPER_GRACE_FACTOR)
+        try {
+            const reaped = await aiTaskStore.reapStuckRuns(stuckBeforeMs)
+            if (reaped > 0) {
+                console.warn(`[Worker] Reaped ${reaped} stuck ai_task_runs (running/pending past deadline)`)
+            }
+        } catch (err) {
+            console.error('[Worker] Failed to reap stuck ai_task_runs:', err)
+        }
+    }
+    void reapStuckRuns()
+    const reaperTimer = setInterval(() => {
+        void reapStuckRuns()
+    }, REAPER_INTERVAL_MS)
+
     state.ready = true
     const queueNames = allQueueNames.join(', ')
     console.log(
@@ -282,6 +305,7 @@ async function main(): Promise<void> {
         state.ready = false
         clearInterval(pruneTimer)
         clearInterval(catchupTimer)
+        clearInterval(reaperTimer)
         console.log(`[Worker] Shutting down on ${signal}`)
         await healthServer?.close().catch((error: unknown) => {
             console.error('[Worker] Failed to stop health server:', error)
