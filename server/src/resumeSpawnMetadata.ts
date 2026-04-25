@@ -4,7 +4,7 @@ import {
     getSessionMetadataInvariantError,
     normalizeSessionMetadataInvariants,
 } from './sessionSourcePolicy'
-import { resolveTokenSourceForAgent } from './web/tokenSources'
+import { pickDefaultTokenSourceForAgent, resolveTokenSourceForAgent } from './web/tokenSources'
 
 function asNonEmptyString(value: unknown): string | undefined {
     if (typeof value !== 'string') {
@@ -143,8 +143,20 @@ export async function resolveResumeTokenSourceSpawnOptions(
 
     const resolved = await resolveTokenSourceForAgent(store, orgId, tokenSourceId, agent)
     if ('error' in resolved) {
-        console.warn(`[resume] Failed to resolve Token Source ${tokenSourceId} for agent=${agent}: ${resolved.error}`)
-        return null
+        console.warn(`[resume] Failed to resolve Token Source ${tokenSourceId} for agent=${agent}: ${resolved.error}. Trying fallback to default ${agent} Token Source.`)
+        const fallback = await pickDefaultTokenSourceForAgent(store, orgId, agent)
+        if (!fallback) {
+            console.warn(`[resume] No fallback ${agent} Token Source available for org ${orgId}; skipping Token Source reattach`)
+            return null
+        }
+        console.log(`[resume] Falling back to Token Source "${fallback.name}" (${fallback.id}) for agent=${agent}`)
+        return {
+            tokenSourceId: fallback.id,
+            tokenSourceName: fallback.name,
+            tokenSourceType: agent,
+            tokenSourceBaseUrl: fallback.baseUrl,
+            tokenSourceApiKey: fallback.apiKey,
+        }
     }
 
     return {

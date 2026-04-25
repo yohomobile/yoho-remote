@@ -45,6 +45,7 @@ import { isSessionVisibleInActiveList } from '@/lib/sessionActivity'
 import SettingsPage from '@/routes/settings'
 import SelfSystemPage from '@/routes/self-system'
 import AutomationPage from '@/routes/automation'
+import ApprovalsPage from '@/routes/approvals'
 import AcceptInvitationPage from '@/routes/invitations/accept'
 import { LoginPage } from '@/routes/login'
 import { AuthCallbackPage } from '@/routes/auth/callback'
@@ -152,6 +153,26 @@ function SelfSystemIcon(props: { className?: string }) {
             <path d="M12 14a4 4 0 1 0-4-4" />
             <path d="M6 20a6 6 0 0 1 12 0" />
             <path d="m18 3 .8 1.7L20.5 5l-1.7.8L18 7.5l-.8-1.7L15.5 5l1.7-.8z" />
+        </svg>
+    )
+}
+
+function ApprovalsIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <path d="M9 11l3 3L22 4" />
+            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
         </svg>
     )
 }
@@ -277,6 +298,14 @@ function SessionsPage() {
                             <span className="sm:hidden">{sessions.filter((session) => isSessionVisibleInActiveList(session)).length}</span>
                             <span className="hidden sm:inline">{sessions.filter((session) => isSessionVisibleInActiveList(session)).length} sessions</span>
                         </span>
+                        <button
+                            type="button"
+                            onClick={() => navigate({ to: '/approvals' })}
+                            className="flex items-center justify-center h-7 w-7 rounded-lg text-[var(--app-hint)] hover:text-[var(--app-fg)] hover:bg-[var(--app-secondary-bg)] transition-colors"
+                            title="Approvals · 统一审批流"
+                        >
+                            <ApprovalsIcon />
+                        </button>
                         <button
                             type="button"
                             onClick={() => navigate({ to: '/self-system', search: { openPerson: undefined } })}
@@ -669,6 +698,12 @@ const automationRoute = createRoute({
     component: AutomationPage,
 })
 
+const approvalsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/approvals',
+    component: ApprovalsPage,
+})
+
 // Auth routes (public - no authentication required)
 const loginRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -698,6 +733,7 @@ export const routeTree = rootRoute.addChildren([
     selfSystemRoute,
     settingsRoute,
     automationRoute,
+    approvalsRoute,
     acceptInvitationRoute,
 ])
 

@@ -7,7 +7,6 @@ import { isFlutterApp } from '@/hooks/useFlutterApp'
 import { Spinner } from '@/components/Spinner'
 import { AIProfileSettings } from '@/components/AIProfileSettings'
 import { CommunicationPlanPanel } from '@/components/CommunicationPlanPanel'
-import { ApprovalReviewPanel } from '@/components/ApprovalReviewPanel'
 import { IdentityPersonsPanel } from '@/components/IdentityPersonsPanel'
 import { IdentityAuditPanel } from '@/components/IdentityAuditPanel'
 import { queryKeys } from '@/lib/query-keys'
@@ -497,14 +496,6 @@ export default function SelfSystemPage() {
 
                             {canManageOrgProfiles && currentOrgId && (
                                 <>
-                                    <div className="border rounded bg-white" style={{ height: '70vh' }}>
-                                        <div className="px-3 py-2 border-b bg-gray-50 text-sm font-medium">
-                                            统一审批流（Phase 3 Unified Approvals）
-                                        </div>
-                                        <div style={{ height: 'calc(70vh - 40px)' }}>
-                                            <ApprovalReviewPanel />
-                                        </div>
-                                    </div>
                                     <IdentityPersonsPanel
                                         orgId={currentOrgId}
                                         initialPersonId={openPersonId}
