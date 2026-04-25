@@ -214,6 +214,7 @@ function toSessionSummaryMetadata(
         ...(typeof metadata.lifecycleStateSince === 'number' && { lifecycleStateSince: metadata.lifecycleStateSince }),
         ...(typeof metadata.archivedBy === 'string' && { archivedBy: metadata.archivedBy }),
         ...(typeof metadata.archiveReason === 'string' && { archiveReason: metadata.archiveReason }),
+        ...(typeof metadata.scheduleId === 'string' && { scheduleId: metadata.scheduleId }),
         ...(metadata.selfSystemEnabled === true && { selfSystemEnabled: true }),
         ...(typeof metadata.selfProfileId === 'string' && { selfProfileId: metadata.selfProfileId }),
         ...(typeof metadata.selfProfileName === 'string' && { selfProfileName: metadata.selfProfileName }),

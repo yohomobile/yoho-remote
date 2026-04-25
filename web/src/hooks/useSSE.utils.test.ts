@@ -249,6 +249,28 @@ describe('useSSE utils', () => {
         })
     })
 
+    test('preserves scheduleId in session summary metadata for orchestrator-child SSE payloads', () => {
+        const summary = toSessionSummaryFromSsePayload({
+            id: 'session-schedule',
+            createdAt: 1,
+            updatedAt: 2,
+            activeAt: 3,
+            lastMessageAt: null,
+            active: true,
+            thinking: true,
+            metadata: {
+                path: '/tmp/project',
+                source: 'orchestrator-child',
+                mainSessionId: 'parent-session',
+                scheduleId: 'sched-abc',
+            },
+            agentState: null,
+        })
+
+        expect(summary.metadata?.source).toBe('orchestrator-child')
+        expect(summary.metadata?.scheduleId).toBe('sched-abc')
+    })
+
     test('upserts session summaries while preserving list-only fields not present in SSE payload', () => {
         const previous = {
             sessions: [{
