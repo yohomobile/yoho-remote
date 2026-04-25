@@ -6,6 +6,7 @@ import type { SSEManager } from '../../sse/sseManager'
 import type { WebAppEnv } from '../middleware/auth'
 import { resolvePersonalWorktreeSpawnOptions } from '../personalWorktree'
 import { buildInitPrompt } from '../prompts/initPrompt'
+import { buildSessionContextBundle, renderSessionContextBundlePrompt } from '../prompts/contextBundle'
 import { resolveSessionSelfSystemContext, appendSelfSystemPrompt } from '../../brain/selfSystem'
 import { resolveSessionCommunicationPlanContext, appendCommunicationPlanPrompt } from '../../brain/communicationPlan'
 import { getLocalTokenSourceEnabledForOrg, resolveTokenSourceForAgent } from '../tokenSources'
@@ -58,16 +59,22 @@ async function sendInitPrompt(
         const projectRoot = session?.metadata?.path?.trim()
             || worktree?.basePath?.trim()
             || null
+        const resolvedOrgId = orgId ?? session?.orgId ?? null
+        const contextBundlePrompt = renderSessionContextBundlePrompt(await buildSessionContextBundle(store, {
+            orgId: resolvedOrgId,
+            sessionId,
+            projectRoot,
+        }))
 
         console.log(`[machines/sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}`)
-        let prompt = await buildInitPrompt(role, { projectRoot, userName, worktree })
+        let prompt = await buildInitPrompt(role, { projectRoot, userName, worktree, contextBundlePrompt })
 
         if (session) {
             const source = getSessionSourceFromMetadata(session.metadata)
             try {
                 const selfSystem = await resolveSessionSelfSystemContext({
                     store,
-                    orgId: orgId ?? null,
+                    orgId: resolvedOrgId,
                     userEmail: userEmail ?? null,
                     source,
                 })
@@ -82,7 +89,7 @@ async function sendInitPrompt(
             try {
                 const communicationPlan = await resolveSessionCommunicationPlanContext({
                     store,
-                    orgId: orgId ?? null,
+                    orgId: resolvedOrgId,
                     personId: personId ?? null,
                 })
                 prompt = appendCommunicationPlanPrompt(prompt, communicationPlan.prompt)

@@ -3547,9 +3547,15 @@ export class SyncEngine {
 
     private async refreshSession(
         sessionId: string,
-        opts?: { silent?: boolean }
+        opts?: { silent?: boolean; prefetchedStored?: import('../store').StoredSession | null }
     ): Promise<Session | null> {
-        let stored = await this.store.getSession(sessionId)
+        // Hydrate (reloadAllAsync) bulk-fetches all sessions via getSessions() and
+        // then re-fetches each one through refreshSession — that's 2× the DB load
+        // for no benefit. Accept a prefetched row so the bulk path skips the second
+        // round-trip. Other callers still go through getSession.
+        let stored = opts?.prefetchedStored !== undefined
+            ? opts.prefetchedStored
+            : await this.store.getSession(sessionId)
         if (!stored) {
             const existed = this.sessions.delete(sessionId)
             this.pendingMonitorCallsBySessionId.delete(sessionId)
@@ -3786,17 +3792,24 @@ export class SyncEngine {
         // silent 模式：启动 hydrate 时不广播 session-added/session-updated，
         // 避免前端订阅者（含 SSE）在 server 重启后收到大量带历史 terminationReason
         // 的 payload 触发 "License expired" 等 toast 风暴。
-        for (const s of sessions) {
-            await this.refreshSession(s.id, { silent: true })
+        //
+        // Refresh in parallel batches (sequential await over 2k+ sessions used to
+        // burn ~25s of pure round-trip latency even when every refresh was cheap).
+        // Pass the row we already fetched via getSessions() so refreshSession skips
+        // its redundant getSession call.
+        const HYDRATE_BATCH_SIZE = 32
+        for (let i = 0; i < sessions.length; i += HYDRATE_BATCH_SIZE) {
+            const batch = sessions.slice(i, i + HYDRATE_BATCH_SIZE)
+            await Promise.all(batch.map(s =>
+                this.refreshSession(s.id, { silent: true, prefetchedStored: s })
+            ))
         }
 
         const machines = await this.store.getMachines()
         const initialMachineActivityAtById = new Map<string, number>(
             machines.map(machine => [machine.id, machine.activeAt ?? machine.createdAt])
         )
-        for (const m of machines) {
-            await this.refreshMachine(m.id, { silent: true })
-        }
+        await Promise.all(machines.map(m => this.refreshMachine(m.id, { silent: true })))
 
         // On server startup, no daemon/CLI is connected yet.
         // Mark all machines and sessions as inactive in memory so that:
@@ -3901,12 +3914,20 @@ export class SyncEngine {
             // Persist exhausted flag so server restarts don't re-scan a session
             // that genuinely has no todo markers in history. refreshSession reads
             // metadata.todoBackfillExhausted and short-circuits when true.
+            //
+            // postgres patchSessionMetadata filters by org_id. Most callers in this
+            // file pass session.namespace which works only for new sessions where
+            // namespace==org_id; legacy rows (namespace='default', org_id=<uuid>)
+            // would silently fail the WHERE filter, leaving the flag un-persisted
+            // and making every server restart re-storm the same sessions. Prefer
+            // orgId; namespace is the legacy fallback.
             const session = this.sessions.get(sessionId)
             if (session) {
+                const ownerKey = session.orgId ?? session.namespace
                 void this.store.patchSessionMetadata(
                     sessionId,
                     { todoBackfillExhausted: true },
-                    session.namespace
+                    ownerKey
                 ).catch(err => {
                     console.error(
                         `[todo-backfill] Failed to persist exhausted flag for ${sessionId.slice(0, 8)}:`,

@@ -23,6 +23,7 @@ import {
     requireSyncEngine,
 } from './guards'
 import { buildInitPrompt, buildBrainInitPrompt } from '../prompts/initPrompt'
+import { buildSessionContextBundle, renderSessionContextBundlePrompt } from '../prompts/contextBundle'
 import { getLicenseService } from '../../license/licenseService'
 import {
     BRAIN_CLAUDE_CHILD_MODELS,
@@ -588,15 +589,21 @@ async function sendInitPrompt(
     const projectRoot = session?.metadata?.path?.trim() || null
     const source = getSessionSourceFromMetadata(session?.metadata)
     const brainPreferences = extractBrainSessionPreferencesFromMetadata((session?.metadata as Record<string, unknown> | null | undefined) ?? null)
+    const resolvedOrgId = orgId ?? storedSession?.orgId ?? session?.orgId ?? null
+    const contextBundlePrompt = renderSessionContextBundlePrompt(await buildSessionContextBundle(store, {
+        orgId: resolvedOrgId,
+        sessionId,
+        projectRoot,
+    }))
     console.log(`[sendInitPrompt] sessionId=${sessionId}, role=${role}, projectRoot=${projectRoot}, userName=${userName}, source=${source}`)
     let prompt = isSessionOrchestrationParentSource(source)
-        ? await buildBrainInitPrompt(role, { projectRoot, userName, brainPreferences })
-        : await buildInitPrompt(role, { projectRoot, userName })
+        ? await buildBrainInitPrompt(role, { projectRoot, userName, brainPreferences, contextBundlePrompt })
+        : await buildInitPrompt(role, { projectRoot, userName, contextBundlePrompt })
 
     if (session) {
         const selfSystem = await resolveSessionSelfSystemContext({
             store,
-            orgId: orgId ?? storedSession?.orgId ?? null,
+            orgId: resolvedOrgId,
             userEmail: userEmail ?? storedSession?.createdBy ?? session.createdBy ?? null,
             source,
         })

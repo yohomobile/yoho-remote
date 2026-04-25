@@ -88,24 +88,49 @@ safe_kill() {
     done
 }
 
+# 轮询直到条件满足或超时。比固定 sleep 快得多——通常进程退出/HTTP 起来都在 1-2 秒内。
+# 用法: wait_until "<condition_cmd>" <timeout_seconds> "<description>"
+# 返回 0 = 条件成立，1 = 超时
+wait_until() {
+    local condition="$1"
+    local timeout="${2:-30}"
+    local desc="${3:-condition}"
+    local start=$(date +%s)
+    while ! eval "$condition" >/dev/null 2>&1; do
+        local now=$(date +%s)
+        if [ $((now - start)) -ge "$timeout" ]; then
+            echo "  ⚠ Timeout (${timeout}s) waiting for: $desc"
+            return 1
+        fi
+        sleep 0.2
+    done
+    local elapsed=$(( $(date +%s) - start ))
+    if [ "$elapsed" -gt 0 ]; then
+        echo "  · $desc ready after ${elapsed}s"
+    fi
+    return 0
+}
+
 # 通用的进程强杀流程
 # 用法: force_kill_process <process_name> <sudo_cmd>
-# 处理：SIGTERM → 等3秒 → SIGKILL → 等2秒 → 逐 PID 强杀 → 确认
+# 处理：SIGTERM → 等待最多 3 秒退出 → SIGKILL → 等待最多 2 秒退出 → 逐 PID 强杀 → 确认
 force_kill_process() {
     local proc_name="$1"
     local sudo_cmd="$2"
     # 1. SIGTERM（优雅关闭）
     safe_kill "$proc_name" "-TERM" "$sudo_cmd"
-    sleep 3
-    # 2. 检查存活 → SIGKILL
+    # 2. 等待退出最多 3 秒（用轮询代替盲 sleep 3）。
+    # `yoho-remote-server` 这种 process name 只会匹配到目标进程本身，
+    # 不会撞到 bash/claude 这类祖先，所以这里不需要 SELF_ANCESTORS 排除。
+    wait_until "! pgrep -x '$proc_name' >/dev/null 2>&1" 3 "$proc_name SIGTERM exit" || true
+    # 3. 仍然存活 → SIGKILL
     local remaining
     remaining=$(pgrep -x "$proc_name" 2>/dev/null || true)
-    # 排除祖先
     for a in $SELF_ANCESTORS; do remaining=$(echo "$remaining" | grep -v "^${a}$"); done
     if [ -n "$remaining" ]; then
         echo "  ⚠ $proc_name did not exit after SIGTERM, sending SIGKILL..."
         safe_kill "$proc_name" "-9" "$sudo_cmd"
-        sleep 2
+        wait_until "! pgrep -x '$proc_name' >/dev/null 2>&1" 2 "$proc_name SIGKILL exit" || true
     fi
     # 3. 最终确认（排除祖先后）
     remaining=$(pgrep -x "$proc_name" 2>/dev/null || true)
@@ -401,18 +426,31 @@ if [[ "$DEPLOY_SERVER" == "true" ]]; then
         fi
     "
 
-    # Stop server (处理假死/僵尸)
+    # Stop server (处理假死/僵尸)。systemctl stop 会先尝试 SIGTERM，再 SIGKILL；
+    # force_kill_process / 远端 pkill 是兜底，处理 systemctl 漏掉的孤儿。
     ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl stop yoho-remote-server.service 2>/dev/null || true"
-    sleep 2
     if is_ncu; then
         force_kill_process yoho-remote-server "echo $NCU_SUDO_PASS | sudo -S"
     else
-        ncu_exec "P=yoho-remote-server; S='echo $NCU_SUDO_PASS | sudo -S'; \$S pkill -x \$P 2>/dev/null; sleep 3; if pgrep -x \$P >/dev/null 2>&1; then echo '  ⚠ SIGTERM failed, SIGKILL...'; \$S pkill -9 -x \$P 2>/dev/null; sleep 2; fi; R=\$(pgrep -x \$P 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do \$S kill -9 \$p 2>/dev/null||true; done; sleep 1; fi; pgrep -x \$P >/dev/null 2>&1 && echo '  ✗ WARNING: still alive' || echo '  ✓ Fully stopped'"
+        ncu_exec "P=yoho-remote-server; S='echo $NCU_SUDO_PASS | sudo -S'; \$S pkill -x \$P 2>/dev/null; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do pgrep -x \$P >/dev/null 2>&1 || break; sleep 0.2; done; if pgrep -x \$P >/dev/null 2>&1; then echo '  ⚠ SIGTERM failed, SIGKILL...'; \$S pkill -9 -x \$P 2>/dev/null; for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -x \$P >/dev/null 2>&1 || break; sleep 0.2; done; fi; R=\$(pgrep -x \$P 2>/dev/null||true); if [ -n \"\$R\" ]; then for p in \$R; do \$S kill -9 \$p 2>/dev/null||true; done; sleep 0.5; fi; pgrep -x \$P >/dev/null 2>&1 && echo '  ✗ WARNING: still alive' || echo '  ✓ Fully stopped'"
     fi
-    # Start server
+    # Start server，然后轮询直到 HTTP 起来（替代固定 sleep 2 + is-active 检查）。
+    # 健康判定：systemctl is-active 通过 + HTTP 200 — 后者才能保证 syncEngine
+    # 已 hydrate 完毕、accept connections。
     ncu_exec "echo $NCU_SUDO_PASS | sudo -S systemctl start yoho-remote-server.service"
-    sleep 2
-    ncu_exec "systemctl is-active --quiet yoho-remote-server.service && echo '  ✓ Server restarted' || echo '  ✗ Server failed to start'"
+    if is_ncu; then
+        if wait_until "systemctl is-active --quiet yoho-remote-server.service" 30 "systemd active"; then
+            if wait_until "curl -sf -m 1 http://127.0.0.1:3006/ -o /dev/null" 30 "HTTP listener"; then
+                echo "  ✓ Server restarted"
+            else
+                echo "  ✗ Server systemd active but HTTP not responding"
+            fi
+        else
+            echo "  ✗ Server failed to start"
+        fi
+    else
+        ncu_exec "for i in \$(seq 1 150); do systemctl is-active --quiet yoho-remote-server.service && curl -sf -m 1 http://127.0.0.1:3006/ -o /dev/null && break; sleep 0.2; done; systemctl is-active --quiet yoho-remote-server.service && curl -sf -m 1 http://127.0.0.1:3006/ -o /dev/null && echo '  ✓ Server restarted' || echo '  ✗ Server failed to start'"
+    fi
 fi
 
 # --- 6c: Restart ncu daemon on self (LAST step) ---

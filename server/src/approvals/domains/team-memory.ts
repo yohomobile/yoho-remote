@@ -20,6 +20,16 @@ export type TeamMemoryApprovalAction =
     | { action: 'supersede'; memoryRef?: string | null; reason?: string | null }
     | { action: 'expire'; reason?: string | null }
 
+const proposalPayloadSchema = z.object({
+    proposed_by_person_id: z.string().nullable().optional().transform((v) => v ?? null),
+    proposed_by_email: z.string().email().nullable().optional().transform((v) => v ?? null),
+    scope: z.string().min(1).max(100),
+    content: z.string().min(1).max(8000),
+    source: z.string().max(200).nullable().optional().transform((v) => v ?? null),
+    session_id: z.string().max(200).nullable().optional().transform((v) => v ?? null),
+    memory_ref: z.string().max(500).nullable().optional().transform((v) => v ?? null),
+}) as unknown as import('../types').ApprovalActionValidator<TeamMemoryApprovalPayload>
+
 const actionSchema = z.discriminatedUnion('action', [
     z.object({
         action: z.literal('approve'),
@@ -49,6 +59,12 @@ export const teamMemoryDomain: ApprovalDomain<
     subjectKind: 'memory_proposal',
     payloadTable: 'approval_payload_team_memory',
     actionSchema,
+    proposalPayloadSchema,
+
+    canPropose({ isOperator, orgRole }) {
+        // Any authenticated org member can propose; approval still requires admin.
+        return isOperator || orgRole !== null
+    },
 
     subjectKey(payload) {
         // Supersede flows dedupe on memory_ref; fresh proposals use a content

@@ -88,6 +88,69 @@ export function createApprovalsRoutes(
         return c.json({ approvals: records })
     })
 
+    // Human-origin proposal endpoint. Only domains that opt-in via
+    // `proposalPayloadSchema` + `canPropose` accept submissions. Detector-only
+    // domains (identity / observation / memory_conflict) return 403 here —
+    // their candidates flow in through the worker side.
+    app.post('/approvals', async (c) => {
+        const orgId = requireOrgId(c)
+        if (orgId instanceof Response) return orgId
+        const permissionError = await requireOrgMember(c, store, orgId)
+        if (permissionError) return permissionError
+
+        const body = await c.req.json().catch(() => null)
+        if (!body || typeof body !== 'object') {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+        const domainName = typeof (body as { domain?: unknown }).domain === 'string'
+            ? (body as { domain: string }).domain
+            : null
+        if (!domainName) return c.json({ error: 'domain is required' }, 400)
+
+        const domain = registry.get(domainName)
+        if (!domain || !domain.proposalPayloadSchema || !domain.canPropose) {
+            return c.json({ error: `Domain "${domainName}" does not accept proposals` }, 403)
+        }
+
+        const actorEmail = c.get('email') ?? null
+        const isOperator = c.get('role') === 'operator'
+        const orgRole = actorEmail ? await store.getUserOrgRole(orgId, actorEmail) : null
+        if (!domain.canPropose({ actorEmail, isOperator, orgRole })) {
+            return c.json({ error: 'Not permitted to propose in this domain' }, 403)
+        }
+
+        const payloadInput = (body as { payload?: unknown }).payload
+        const parsed = domain.proposalPayloadSchema.safeParse(payloadInput)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid payload', issues: parsed.error.issues }, 400)
+        }
+
+        const expiresAtRaw = (body as { expiresAt?: unknown }).expiresAt
+        const expiresAt = typeof expiresAtRaw === 'number' ? expiresAtRaw : null
+
+        const subjectKey = domain.subjectKey(parsed.data as Record<string, unknown>)
+
+        try {
+            const result = await store.upsertApproval({
+                namespace,
+                orgId,
+                domain: domain.name,
+                subjectKind: domain.subjectKind,
+                subjectKey,
+                expiresAt,
+                payloadTable: domain.payloadTable,
+                payload: parsed.data as Record<string, unknown>,
+            })
+            return c.json({ ok: true, approval: result.record, payload: result.payload }, 201)
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err)
+            if (message.includes('Cannot overwrite decided approval')) {
+                return c.json({ error: message }, 409)
+            }
+            throw err
+        }
+    })
+
     app.get('/approvals/:id', async (c) => {
         const orgId = requireOrgId(c)
         if (orgId instanceof Response) return orgId

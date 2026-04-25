@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { buildAutomationPreamble, buildBrainInitPrompt, buildInitPrompt } from './initPrompt'
+import { renderSessionContextBundlePrompt, type SessionContextBundle } from './contextBundle'
 
 describe('buildInitPrompt', () => {
     it('renders the standard workspace section for regular sessions', async () => {
@@ -16,11 +17,12 @@ describe('buildInitPrompt', () => {
         expect(prompt).not.toContain('部署线上环境前，必须确认代码已合入 `main`')
         expect(prompt).toContain('mcp__yoho_remote__environment_info')
         expect(prompt).toContain('不要通过 `claude mcp list`')
-        expect(prompt).toContain('mcp__yoho-vault__skill_list')
+        expect(prompt).toContain('skill_list` 不再作为非简单任务的必调前置步骤')
         expect(prompt).toContain('skill_search')
         expect(prompt).toContain('方法/能力类 skill')
         expect(prompt).toContain('activationMode=manual')
-        expect(prompt).toContain('candidate / draft / archived / disabled')
+        expect(prompt).toContain('skill_save` 只生成 candidate')
+        expect(prompt).toContain('skill_update` 只生成 draft')
         expect(prompt).toContain('skill_promote')
         expect(prompt).toContain('skill_doctor')
         expect(prompt).toContain('allowActive=true')
@@ -38,9 +40,45 @@ describe('buildInitPrompt', () => {
         expect(prompt).toContain('绑定到具体机器')
         expect(prompt).not.toContain('所有查看、编辑、测试、提交都必须在当前会话目录进行')
         expect(prompt).not.toContain('Git worktree')
-        expect(prompt).toContain('mcp__yoho-vault__recall')
+        expect(prompt).toContain('`recall` 是按需深查工具')
         expect(prompt).toContain('mcp__yoho-memory__remember')
         expect(prompt).toContain('不要因为有相似关键词就硬套 skill')
+    })
+
+    it('injects ContextBundle and makes recall/remember/skill_list on-demand', async () => {
+        const bundle: SessionContextBundle = {
+            version: 1,
+            orgId: 'org-a',
+            sessionId: 'session-a',
+            generatedAtMs: 1,
+            summaries: {
+                recentL1: [{
+                    id: 'l1-a',
+                    level: 1,
+                    summary: '最近一轮修复了 worker L1 orgId 隔离。',
+                    topic: 'worker orgId',
+                    seqStart: 10,
+                    seqEnd: 12,
+                    createdAt: 1,
+                }],
+                latestL2: [],
+                latestL3: null,
+            },
+            toolPolicy: {
+                recallDefault: 'fallback',
+                rememberDefault: 'explicit_or_gap_only',
+                skillListDefault: 'injected_manifest_or_on_demand',
+            },
+        }
+        const contextBundlePrompt = renderSessionContextBundlePrompt(bundle)
+        const prompt = await buildInitPrompt('developer', { contextBundlePrompt })
+
+        expect(prompt).toContain('Yoho ContextBundle（自动上下文，优先使用）')
+        expect(prompt).toContain('orgId: org-a')
+        expect(prompt).toContain('L1 seq=10-12 topic=worker orgId id=l1-a')
+        expect(prompt).toContain('`recall` 是按需深查工具')
+        expect(prompt).toContain('remember 默认由 L1/L2/L3 worker 异步沉淀')
+        expect(prompt).toContain('skill_list 默认不必每轮调用')
     })
 
     it('uses the same shared-directory rules in brain init prompts', async () => {
@@ -53,10 +91,10 @@ describe('buildInitPrompt', () => {
         expect(prompt).not.toContain('部署 dev 必须先合入 dev-release')
         expect(prompt).not.toContain('部署线上必须先合入 main')
         expect(prompt).toContain('不要通过 `claude mcp list`')
-        expect(prompt).toContain('mcp__yoho-vault__skill_list')
+        expect(prompt).toContain('才调用 `mcp__yoho-vault__skill_list`')
         expect(prompt).toContain('skill_search')
         expect(prompt).toContain('activationMode=manual')
-        expect(prompt).toContain('candidate / draft / archived / disabled')
+        expect(prompt).toContain('不要让未确认的 candidate/draft 进入 active')
         expect(prompt).toContain('不要把噪声 skill 传给子 session')
         expect(prompt).toContain('skill_promote')
         expect(prompt).toContain('skill_doctor')
@@ -224,7 +262,7 @@ describe('buildAutomationPreamble', () => {
         expect(prompt).toContain('mcp__yoho_remote__environment_info')
         expect(prompt).toContain('mcp__yoho_remote__change_title')
         expect(prompt).toContain('任务定义为：daily backup')
-        expect(prompt).toContain('mcp__yoho-vault__recall')
+        expect(prompt).toContain('调用 `mcp__yoho-vault__recall`')
         expect(prompt).toContain('mcp__yoho-vault__get_credential')
         expect(prompt).toContain('mcp__yoho-vault__remember')
         expect(prompt).toContain('keywords')

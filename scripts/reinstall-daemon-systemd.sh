@@ -79,7 +79,13 @@ fi
 
 echo "[daemon-deploy] Restarting $SYSTEMD_SERVICE_NAME to load the deployed binary"
 systemctl restart "$SYSTEMD_SERVICE_NAME"
-sleep 2
+
+# 轮询直到 systemd 报告 active（最多 10 秒，每 200ms 检查一次）。
+# 替代固定 sleep 2 + 单次 is-active 检查 — 通常在 1 秒内完成。
+for _ in $(seq 1 50); do
+    systemctl is-active --quiet "$SYSTEMD_SERVICE_NAME" && break
+    sleep 0.2
+done
 
 if ! systemctl is-active --quiet "$SYSTEMD_SERVICE_NAME"; then
     echo "[daemon-deploy] Error: $SYSTEMD_SERVICE_NAME is not active after restart" >&2

@@ -1625,6 +1625,67 @@ export class PostgresStore implements IStore {
         return ranked.slice(0, input.limit)
     }
 
+    async getSessionContextSummaries(input: {
+        orgId: string
+        sessionId: string
+        recentL1Limit: number
+        latestL2Limit: number
+    }): Promise<{
+        recentL1: import('./types').StoredSessionContextSummary[]
+        latestL2: import('./types').StoredSessionContextSummary[]
+        latestL3: import('./types').StoredSessionContextSummary | null
+    }> {
+        const result = await this.pool.query(
+            `(
+                SELECT id, level, summary, metadata, seq_start, seq_end, created_at
+                FROM session_summaries
+                WHERE org_id = $1 AND session_id = $2 AND level = 3
+                ORDER BY created_at DESC
+                LIMIT 1
+            )
+            UNION ALL
+            (
+                SELECT id, level, summary, metadata, seq_start, seq_end, created_at
+                FROM session_summaries
+                WHERE org_id = $1 AND session_id = $2 AND level = 2
+                ORDER BY seq_start DESC NULLS LAST, created_at DESC
+                LIMIT $3
+            )
+            UNION ALL
+            (
+                SELECT id, level, summary, metadata, seq_start, seq_end, created_at
+                FROM session_summaries
+                WHERE org_id = $1 AND session_id = $2 AND level = 1
+                ORDER BY seq_start DESC NULLS LAST, created_at DESC
+                LIMIT $4
+            )`,
+            [input.orgId, input.sessionId, input.latestL2Limit, input.recentL1Limit]
+        )
+
+        const summaries = result.rows.map((row) => {
+            const metadata = row.metadata && typeof row.metadata === 'object'
+                ? row.metadata as Record<string, unknown>
+                : {}
+            return {
+                id: String(row.id),
+                level: Number(row.level) as 1 | 2 | 3,
+                summary: String(row.summary),
+                topic: typeof metadata.topic === 'string' ? metadata.topic : null,
+                seqStart: row.seq_start == null ? null : Number(row.seq_start),
+                seqEnd: row.seq_end == null ? null : Number(row.seq_end),
+                createdAt: Number(row.created_at),
+            }
+        })
+
+        return {
+            recentL1: summaries.filter((summary) => summary.level === 1),
+            latestL2: summaries
+                .filter((summary) => summary.level === 2)
+                .sort((a, b) => (a.seqStart ?? 0) - (b.seqStart ?? 0)),
+            latestL3: summaries.find((summary) => summary.level === 3) ?? null,
+        }
+    }
+
     async getActiveSessionCount(orgId: string): Promise<number> {
         const result = await this.pool.query(
             'SELECT COUNT(*) as count FROM sessions WHERE org_id = $1 AND active = true',

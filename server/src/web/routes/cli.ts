@@ -11,6 +11,7 @@ import type { SSEManager } from '../../sse/sseManager'
 import { serializeMachine, sortMachinesForDisplay } from './machinePayload'
 import { getLicenseService } from '../../license/licenseService'
 import { buildInitPrompt } from '../prompts/initPrompt'
+import { buildSessionContextBundle, renderSessionContextBundlePrompt } from '../prompts/contextBundle'
 import {
     buildResumeContextMessage,
     RESUME_CONTEXT_MAX_LINES,
@@ -1740,7 +1741,12 @@ export function createCliRoutes(
 
         const resumedSession = engine.getSession(newSessionId)
         const projectRoot = resumedSession?.metadata?.path?.trim() || null
-        const initPrompt = await buildInitPrompt('developer', { projectRoot })
+        const contextBundlePrompt = renderSessionContextBundlePrompt(await buildSessionContextBundle(store, {
+            orgId,
+            sessionId: newSessionId,
+            projectRoot,
+        }))
+        const initPrompt = await buildInitPrompt('developer', { projectRoot, contextBundlePrompt })
         if (initPrompt.trim()) {
             await engine.sendMessage(newSessionId, { text: initPrompt, sentFrom: 'webapp' })
         }
@@ -2117,7 +2123,14 @@ export function createCliRoutes(
                     // Build and send init prompt
                     const session = engine.getSession(result.sessionId)
                     const projectRoot = session?.metadata?.path?.trim() || null
-                    const prompt = await buildInitPrompt('developer', { projectRoot })
+                    const contextBundlePrompt = store
+                        ? renderSessionContextBundlePrompt(await buildSessionContextBundle(store, {
+                            orgId,
+                            sessionId: result.sessionId,
+                            projectRoot,
+                        }))
+                        : ''
+                    const prompt = await buildInitPrompt('developer', { projectRoot, contextBundlePrompt })
                     if (prompt.trim()) {
                         await engine.sendMessage(result.sessionId, { text: prompt, sentFrom: 'webapp' })
                         console.log(`[brain/spawn] Sent init prompt to ${parsed.data.source} session ${result.sessionId}`)

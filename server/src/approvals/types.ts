@@ -122,6 +122,22 @@ export interface ApprovalDomain<
     /** Validator for the decide-body `{ action: ... }` payload. The generic
      *  HTTP route calls `safeParse` and returns 400 on failure. */
     readonly actionSchema: ApprovalActionValidator<TAction>
+    /** Optional: validator for the proposal body. Domains that accept human
+     *  submissions (e.g. team_memory) populate this; worker-only domains
+     *  (identity/observation/memory_conflict) leave it undefined and the
+     *  `POST /api/approvals` route returns 403. */
+    readonly proposalPayloadSchema?: ApprovalActionValidator<TPayload>
+    /**
+     * Optional: decide whether the caller may submit a proposal for this
+     * domain. Defaults to "no one" when `proposalPayloadSchema` is also
+     * unset. Intended for domains whose candidates come from a human, not a
+     * detector.
+     */
+    canPropose?(ctx: {
+        actorEmail: string | null
+        isOperator: boolean
+        orgRole: OrgRole | null
+    }): boolean
 
     /**
      * Derive the subject_key used for dedup. Must be stable for the same logical

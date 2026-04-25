@@ -50,6 +50,16 @@ export type StoredSessionSearchResult = {
     match: StoredSessionSearchMatch
 }
 
+export type StoredSessionContextSummary = {
+    id: string
+    level: 1 | 2 | 3
+    summary: string
+    topic: string | null
+    seqStart: number | null
+    seqEnd: number | null
+    createdAt: number
+}
+
 export type SpawnAgentType = 'claude' | 'codex'
 
 export type StoredMachine = {

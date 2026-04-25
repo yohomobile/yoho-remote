@@ -8,6 +8,7 @@ import type {
 } from '../approvals/types'
 import type {
     StoredSession,
+    StoredSessionContextSummary,
     StoredSessionSearchResult,
     StoredMachine,
     StoredMessage,
@@ -133,6 +134,16 @@ export interface IStore {
         flavor?: string
         source?: string
     }): Promise<StoredSessionSearchResult[]>
+    getSessionContextSummaries?(input: {
+        orgId: string
+        sessionId: string
+        recentL1Limit: number
+        latestL2Limit: number
+    }): Promise<{
+        recentL1: StoredSessionContextSummary[]
+        latestL2: StoredSessionContextSummary[]
+        latestL3: StoredSessionContextSummary | null
+    }>
     getActiveSessionCount(orgId: string): Promise<number>
     deleteSession(id: string): Promise<boolean>
     patchSessionMetadata(id: string, patch: Record<string, unknown>, orgId: string): Promise<boolean>

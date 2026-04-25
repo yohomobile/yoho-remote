@@ -40,10 +40,6 @@ import type {
     UpdateProjectResponse,
     UpdateUserPreferencesResponse,
     UserPreferencesResponse,
-    IdentityCandidateDecision,
-    IdentityCandidateDecisionResponse,
-    IdentityCandidateStatus,
-    IdentityCandidatesResponse,
     IdentityPersonsResponse,
     IdentityPersonDetailResponse,
     IdentityAuditsResponse,
@@ -54,22 +50,11 @@ import type {
     CommunicationPlanResponse,
     CommunicationPlanUpdateResponse,
     CommunicationPlanAuditsResponse,
-    TeamMemoryCandidatesResponse,
-    TeamMemoryCandidateResponse,
-    TeamMemoryCandidateDecision,
-    TeamMemoryCandidateStatus,
-    TeamMemoryDecisionResponse,
-    TeamMemoryAuditsResponse,
-    ObservationCandidatesResponse,
-    ObservationCandidateResponse,
-    ObservationCandidateStatus,
-    ObservationDecision,
-    ObservationDecisionResponse,
-    ObservationAuditsResponse,
     ApprovalsResponse,
     ApprovalDetailResponse,
     ApprovalAuditsResponse,
     ApprovalDecisionResponse,
+    ApprovalProposalResponse,
     ApprovalMasterStatus,
     OrgsResponse,
     OrgDetailResponse,
@@ -463,6 +448,25 @@ export class ApiClient {
         if (options.subjectKey) params.set('subjectKey', options.subjectKey)
         if (options.limit) params.set('limit', String(options.limit))
         return await this.request<ApprovalsResponse>(`/api/approvals?${params.toString()}`)
+    }
+
+    async proposeApproval(
+        input: {
+            orgId: string
+            domain: string
+            payload: Record<string, unknown>
+            expiresAt?: number | null
+        },
+    ): Promise<ApprovalProposalResponse> {
+        const qs = `?orgId=${encodeURIComponent(input.orgId)}`
+        return await this.request<ApprovalProposalResponse>(`/api/approvals${qs}`, {
+            method: 'POST',
+            body: JSON.stringify({
+                domain: input.domain,
+                payload: input.payload,
+                expiresAt: input.expiresAt ?? null,
+            }),
+        })
     }
 
     async getApproval(id: string, orgId: string): Promise<ApprovalDetailResponse> {
