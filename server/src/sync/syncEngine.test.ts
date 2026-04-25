@@ -3609,6 +3609,85 @@ describe('SyncEngine', () => {
         ])
     })
 
+    test('machine disconnect deactivates its sessions in memory so auto-resume can pick them up', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionThinking: async () => {},
+        } as any
+
+        const emitted: unknown[] = []
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast(_event: unknown) { emitted.push(_event) },
+                broadcastToGroup() {},
+            } as any
+        )
+        engine.stop()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        const machine = createMachine('machine-2', {
+            host: 'test-host',
+            platform: 'linux',
+            yohoRemoteCliVersion: 'test',
+        })
+        machine.active = true
+        ;(engine as any).machines.set(machine.id, machine)
+
+        // One active session on this machine
+        const session = createSession('sess-1', {
+            path: '/tmp/project',
+            host: 'test-host',
+            machineId: machine.id,
+            flavor: 'claude',
+            claudeSessionId: 'claude-abc',
+            startedFromDaemon: true,
+        })
+        session.active = true
+        session.activeAt = Date.now() - 5_000
+        session.thinking = true
+        ;(engine as any).sessions.set(session.id, session)
+        ;(engine as any)._dbActiveSessionIds.add(session.id)
+
+        // One active session on a DIFFERENT machine — must NOT be touched
+        const otherSession = createSession('sess-other', {
+            path: '/tmp/other',
+            host: 'other-host',
+            machineId: 'other-machine',
+        })
+        otherSession.active = true
+        ;(engine as any).sessions.set(otherSession.id, otherSession)
+
+        engine.handleMachineDisconnect({ machineId: machine.id, time: Date.now() })
+
+        // Session for this machine is now inactive in memory
+        expect(session.active).toBe(false)
+        expect(session.thinking).toBe(false)
+
+        // Stays in _dbActiveSessionIds so auto-resume not-in-dbActive check passes
+        expect((engine as any)._dbActiveSessionIds.has(session.id)).toBe(true)
+
+        // SSE emitted reconnecting:true so the UI shows "reconnecting" state
+        const sessionUpdate = (emitted as Array<{ type: string; sessionId?: string; data?: Record<string, unknown> }>)
+            .find(e => (e as { type: string }).type === 'session-updated' && (e as { sessionId?: string }).sessionId === session.id)
+        expect(sessionUpdate).toBeDefined()
+        expect((sessionUpdate as { data: Record<string, unknown> }).data.active).toBe(false)
+        expect((sessionUpdate as { data: Record<string, unknown> }).data.reconnecting).toBe(true)
+
+        // Session on other machine is untouched
+        expect(otherSession.active).toBe(true)
+    })
+
     test('tracks monitor lifecycle from realtime messages', async () => {
         const persisted: unknown[] = []
         const store = {

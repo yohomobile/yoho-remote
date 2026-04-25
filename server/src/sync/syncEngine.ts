@@ -2873,6 +2873,50 @@ export class SyncEngine {
                 active: false,
             }
         })
+
+        // Deactivate the machine's sessions in memory so they become candidates
+        // for auto-resume when the machine reconnects. We intentionally do NOT
+        // remove them from _dbActiveSessionIds — that set is the "was active at
+        // startup" registry checked by getAutoResumeSkipReasons' not-in-dbActive
+        // gate, and clearing it here would block re-activation.
+        const t = clampAliveTime(payload.time) ?? Date.now()
+        for (const session of this.sessions.values()) {
+            if (!session.active) continue
+            if (session.metadata?.machineId !== machine.id) continue
+            if (session.namespace !== machine.namespace) continue
+            if (this.deletingSessions.has(session.id)) continue
+
+            session.active = false
+            const wasThinking = session.thinking
+            session.thinking = false
+            session.thinkingAt = t
+            if (wasThinking !== session.thinking) {
+                this.persistSessionThinking(session)
+            }
+            const changedActiveMonitors = session.activeMonitors.length > 0
+                ? this.markSessionActiveMonitorsUnknown(session)
+                : undefined
+            this.pendingMonitorCallsBySessionId.delete(session.id)
+
+            this.emit({
+                type: 'session-updated',
+                sessionId: session.id,
+                data: {
+                    active: false,
+                    reconnecting: true,
+                    thinking: false,
+                    wasThinking: false,
+                    ...(session.activeMonitors.length > 0 ? { activeMonitorCount: session.activeMonitors.length } : {}),
+                }
+            })
+            if (changedActiveMonitors !== undefined) {
+                void changedActiveMonitors.then((changed) => {
+                    if (changed) {
+                        this.emitSessionActiveMonitors(session)
+                    }
+                })
+            }
+        }
     }
 
     async handleMachineAlive(payload: { machineId: string; time: number }): Promise<void> {
