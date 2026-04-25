@@ -25,7 +25,6 @@ import {
 } from '../resumeSpawnMetadata'
 import {
     applyArchiveProtectionOnPatch,
-    getBrainChildMainSessionId,
     getSessionSourceFromMetadata,
     isProtectedArchivedSession,
 } from '../sessionSourcePolicy'
@@ -1125,8 +1124,8 @@ export class SyncEngine {
         const metadata = session.metadata && typeof session.metadata === 'object'
             ? {
                 ...session.metadata,
-                ...(getBrainChildMainSessionId(session.metadata) !== undefined
-                    ? { mainSessionId: getBrainChildMainSessionId(session.metadata) }
+                ...(getSessionOrchestrationParentSessionId(session.metadata) !== undefined
+                    ? { mainSessionId: getSessionOrchestrationParentSessionId(session.metadata) }
                     : { mainSessionId: undefined }),
             }
             : session.metadata
