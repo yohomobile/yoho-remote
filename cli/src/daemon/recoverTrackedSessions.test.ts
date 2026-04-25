@@ -111,6 +111,7 @@ describe('recoverTrackedSessionsFromServer', () => {
             pidToTrackedSession: tracked,
         });
 
+        expect(api.listSessions).toHaveBeenCalledWith({ includeOffline: true });
         expect(recovered).toBe(1);
         expect(tracked.get(111)).toMatchObject({
             pid: 111,
@@ -119,6 +120,49 @@ describe('recoverTrackedSessionsFromServer', () => {
         });
         expect(tracked.has(333)).toBe(false);
         expect(api.getSession).toHaveBeenCalledTimes(2);
+    });
+
+    it('rehydrates daemon-owned sessions that server marked inactive during machine disconnect', async () => {
+        const api = {
+            listSessions: vi.fn().mockResolvedValue({
+                sessions: [
+                    { id: 'session-disconnected', active: false, metadata: { machineId: 'machine-1' } },
+                ],
+            }),
+            getSession: vi.fn().mockResolvedValue({
+                ...createSession('session-disconnected', {
+                    path: '/tmp/disconnected',
+                    host: 'host-disconnected',
+                    homeDir: '/tmp',
+                    yohoRemoteHomeDir: '/tmp/.yr',
+                    yohoRemoteLibDir: '/tmp/.yr/lib',
+                    yohoRemoteToolsDir: '/tmp/.yr/tools',
+                    machineId: 'machine-1',
+                    hostPid: 515,
+                    hostProcessStartedAt: 5_000,
+                    startedBy: 'daemon',
+                    startedFromDaemon: true,
+                }),
+                active: false,
+            }),
+        } satisfies Pick<ApiClient, 'listSessions' | 'getSession'>;
+
+        (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
+        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(5_000);
+
+        const tracked = new Map<number, TrackedSession>();
+        const recovered = await recoverTrackedSessionsFromServer({
+            api,
+            machineId: 'machine-1',
+            pidToTrackedSession: tracked,
+        });
+
+        expect(recovered).toBe(1);
+        expect(tracked.get(515)).toMatchObject({
+            pid: 515,
+            yohoRemoteSessionId: 'session-disconnected',
+            startedBy: 'daemon',
+        });
     });
 
     it('restores daemon temp dirs from persisted metadata so a new daemon can clean them later', async () => {

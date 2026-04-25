@@ -460,9 +460,19 @@ describe('createSessionsRoutes', () => {
         await new Promise((resolve) => setTimeout(resolve, 0))
 
         expect(setActiveCalls).toEqual([['session-zombie', false, 'org-a']])
-        expect(patchMetadataCalls).toEqual([
-            ['session-zombie', { lifecycleState: 'archived' }, 'org-a'],
-        ])
+        // archiveStaleSession now writes a full archive fingerprint so future code
+        // can distinguish staleness archives from legitimate user/cli/server ones.
+        // The handleSessionAlive heal path keys off the absence of archivedBy.
+        expect(patchMetadataCalls).toHaveLength(1)
+        const [zombieId, zombiePatch, zombieOrg] = patchMetadataCalls[0]
+        expect(zombieId).toBe('session-zombie')
+        expect(zombieOrg).toBe('org-a')
+        expect(zombiePatch).toMatchObject({
+            lifecycleState: 'archived',
+            archivedBy: 'system-stale',
+        })
+        expect(typeof zombiePatch.lifecycleStateSince).toBe('number')
+        expect(typeof zombiePatch.archiveReason).toBe('string')
     })
 
     it('does not archive reconnecting sessions even when their heartbeat looks stale', async () => {
@@ -512,6 +522,206 @@ describe('createSessionsRoutes', () => {
 
         expect(setActiveCalls).toEqual([])
         expect(patchMetadataCalls).toEqual([])
+    })
+
+    it('does not archive sessions whose machine is currently online', async () => {
+        const storedSessions = [
+            createStoredSession({
+                id: 'session-on-live-machine',
+                active: true,
+                activeAt: 1_700_000_000_000,
+                updatedAt: 1_700_000_000_000,
+                metadata: { path: '/tmp/live', machineId: 'machine-online' },
+            }),
+        ]
+
+        const setActiveCalls: string[] = []
+        const patchMetadataCalls: string[] = []
+
+        const fakeEngine = {
+            getSessionsByNamespace: () => [],
+            isSessionStartupRecovering: () => false,
+            inStartupQuietWindow: () => false,
+            getMachine: (id: string) => {
+                if (id !== 'machine-online') return undefined
+                return { id, active: true, activeAt: Date.now() }
+            },
+        }
+
+        const fakeStore = {
+            getSessionsByNamespace: async () => storedSessions,
+            setSessionActive: async (id: string) => { setActiveCalls.push(id); return true },
+            patchSessionMetadata: async (id: string) => { patchMetadataCalls.push(id); return true },
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'ns-test')
+            c.set('role', 'developer')
+            c.set('orgs', TEST_ORGS)
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/sessions?orgId=org-a')
+        expect(response.status).toBe(200)
+
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        expect(setActiveCalls).toEqual([])
+        expect(patchMetadataCalls).toEqual([])
+    })
+
+    it('does not archive sessions whose machine just disconnected (within 5 minute grace)', async () => {
+        const storedSessions = [
+            createStoredSession({
+                id: 'session-recently-disconnected',
+                active: true,
+                activeAt: 1_700_000_000_000,
+                updatedAt: 1_700_000_000_000,
+                metadata: { path: '/tmp/recent', machineId: 'machine-just-down' },
+            }),
+        ]
+
+        const setActiveCalls: string[] = []
+        const patchMetadataCalls: string[] = []
+
+        const fakeEngine = {
+            getSessionsByNamespace: () => [],
+            isSessionStartupRecovering: () => false,
+            inStartupQuietWindow: () => false,
+            // Machine is offline but disconnected only 60s ago — well under 5min grace.
+            getMachine: (id: string) => {
+                if (id !== 'machine-just-down') return undefined
+                return { id, active: false, activeAt: Date.now() - 60_000 }
+            },
+        }
+
+        const fakeStore = {
+            getSessionsByNamespace: async () => storedSessions,
+            setSessionActive: async (id: string) => { setActiveCalls.push(id); return true },
+            patchSessionMetadata: async (id: string) => { patchMetadataCalls.push(id); return true },
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'ns-test')
+            c.set('role', 'developer')
+            c.set('orgs', TEST_ORGS)
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/sessions?orgId=org-a')
+        expect(response.status).toBe(200)
+
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        expect(setActiveCalls).toEqual([])
+        expect(patchMetadataCalls).toEqual([])
+    })
+
+    it('does not archive any session during the startup quiet window', async () => {
+        const storedSessions = [
+            createStoredSession({
+                id: 'session-during-startup',
+                active: true,
+                activeAt: 1_700_000_000_000,
+                updatedAt: 1_700_000_000_000,
+                metadata: { path: '/tmp/startup', machineId: 'machine-down' },
+            }),
+        ]
+
+        const setActiveCalls: string[] = []
+        const patchMetadataCalls: string[] = []
+
+        const fakeEngine = {
+            getSessionsByNamespace: () => [],
+            isSessionStartupRecovering: () => false,
+            inStartupQuietWindow: () => true,  // server just started
+            getMachine: () => ({ id: 'machine-down', active: false, activeAt: 0 }),
+        }
+
+        const fakeStore = {
+            getSessionsByNamespace: async () => storedSessions,
+            setSessionActive: async (id: string) => { setActiveCalls.push(id); return true },
+            patchSessionMetadata: async (id: string) => { patchMetadataCalls.push(id); return true },
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'ns-test')
+            c.set('role', 'developer')
+            c.set('orgs', TEST_ORGS)
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/sessions?orgId=org-a')
+        expect(response.status).toBe(200)
+
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        expect(setActiveCalls).toEqual([])
+        expect(patchMetadataCalls).toEqual([])
+    })
+
+    it('archives sessions whose machine has been offline for more than 5 minutes', async () => {
+        const storedSessions = [
+            createStoredSession({
+                id: 'session-on-long-dead-machine',
+                active: true,
+                activeAt: 1_700_000_000_000,
+                updatedAt: 1_700_000_000_000,
+                metadata: { path: '/tmp/dead', machineId: 'machine-long-dead' },
+            }),
+        ]
+
+        const setActiveCalls: Array<[string, boolean, string]> = []
+        const patchMetadataCalls: Array<[string, Record<string, unknown>, string]> = []
+
+        const fakeEngine = {
+            getSessionsByNamespace: () => [],
+            isSessionStartupRecovering: () => false,
+            inStartupQuietWindow: () => false,
+            getMachine: (id: string) => {
+                if (id !== 'machine-long-dead') return undefined
+                return { id, active: false, activeAt: Date.now() - 10 * 60 * 1000 }  // 10 min ago
+            },
+        }
+
+        const fakeStore = {
+            getSessionsByNamespace: async () => storedSessions,
+            setSessionActive: async (id: string, active: boolean, _at: number, orgId: string) => {
+                setActiveCalls.push([id, active, orgId])
+                return true
+            },
+            patchSessionMetadata: async (id: string, patch: Record<string, unknown>, orgId: string) => {
+                patchMetadataCalls.push([id, patch, orgId])
+                return true
+            },
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'ns-test')
+            c.set('role', 'developer')
+            c.set('orgs', TEST_ORGS)
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/sessions?orgId=org-a')
+        expect(response.status).toBe(200)
+
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        expect(setActiveCalls).toEqual([['session-on-long-dead-machine', false, 'org-a']])
+        expect(patchMetadataCalls).toHaveLength(1)
+        expect(patchMetadataCalls[0][1]).toMatchObject({
+            lifecycleState: 'archived',
+            archivedBy: 'system-stale',
+        })
     })
 
     it('marks startup-recovering sessions as reconnecting instead of dropping them into archive semantics', async () => {

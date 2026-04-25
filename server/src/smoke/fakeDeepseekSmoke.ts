@@ -344,12 +344,13 @@ async function main(): Promise<void> {
         }
 
         const scheduledAtMs = Date.now()
-        const idempotencyKey = `turn:${config.sessionId}:${userSeq}`
+        const idempotencyKey = `turn:${config.namespace}:${config.sessionId}:${userSeq}`
         await publisher.send('summarize-turn', {
             version: SUMMARIZE_TURN_JOB_VERSION,
             idempotencyKey,
             payload: {
                 sessionId: config.sessionId,
+                orgId: config.namespace,
                 namespace: config.namespace,
                 userSeq,
                 scheduledAtMs,

@@ -32,6 +32,7 @@ export function createVersionedJobDataSchema<
 
 export const summarizeTurnPayloadSchema = z.object({
     sessionId: z.string().min(1),
+    orgId: z.string().min(1),
     namespace: z.string().min(1),
     userSeq: z.number().int().positive(),
     scheduledAtMs: z.number().int().nonnegative(),
@@ -52,6 +53,7 @@ export type SummarizeTurnJobData = z.infer<typeof summarizeTurnJobDataSchema>
 
 export const summarizeSegmentPayloadSchema = z.object({
     sessionId: z.string().min(1),
+    orgId: z.string().min(1),
     namespace: z.string().min(1),
     scheduledAtMs: z.number().int().nonnegative(),
 })
@@ -71,6 +73,7 @@ export type SummarizeSegmentJobData = z.infer<typeof summarizeSegmentJobDataSche
 
 export const summarizeSessionPayloadSchema = z.object({
     sessionId: z.string().min(1),
+    orgId: z.string().min(1),
     namespace: z.string().min(1),
     scheduledAtMs: z.number().int().nonnegative(),
 })

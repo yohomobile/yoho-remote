@@ -99,14 +99,14 @@ async function runCatchup(ctx: WorkerContext, state?: WorkerRuntimeState): Promi
     try {
         const cutoff = Date.now() - CATCHUP_ORPHAN_AGE_MS
         const result = await ctx.pool.query(
-            `SELECT session_id, namespace, COUNT(*)::int AS cnt
+            `SELECT session_id, namespace, org_id, COUNT(*)::int AS cnt
              FROM session_summaries
-             WHERE level = 1 AND parent_id IS NULL AND created_at < $1
-             GROUP BY session_id, namespace
+             WHERE level = 1 AND parent_id IS NULL AND created_at < $1 AND org_id IS NOT NULL
+             GROUP BY session_id, namespace, org_id
              HAVING COUNT(*) >= $2`,
             [cutoff, ctx.config.l2SegmentThreshold]
         )
-        const rows = result.rows as Array<{ session_id: string; namespace: string; cnt: number }>
+        const rows = result.rows as Array<{ session_id: string; namespace: string; org_id: string; cnt: number }>
         if (rows.length === 0) return
 
         console.log(`[Worker] catch-up: ${rows.length} session(s) with orphaned L1s`)
@@ -114,6 +114,7 @@ async function runCatchup(ctx: WorkerContext, state?: WorkerRuntimeState): Promi
             await enqueueSegmentIfNeeded(
                 row.session_id,
                 row.namespace,
+                row.org_id,
                 ctx,
                 ctx.config.l2SegmentThreshold
             ).catch((err: unknown) => {

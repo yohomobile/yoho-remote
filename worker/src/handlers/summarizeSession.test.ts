@@ -7,7 +7,8 @@ import { handleSummarizeSession } from './summarizeSession'
 
 const payload: SummarizeSessionPayload = {
     sessionId: 'session-sess-1',
-    namespace: 'ns-test',
+    namespace: 'org-test',
+    orgId: 'org-test',
     scheduledAtMs: 1_717_171_717_000,
 }
 
@@ -32,7 +33,7 @@ function makeL1(id: string, seqStart: number): StoredL1Summary {
 }
 
 function createContext(options?: {
-    sessionSnapshot?: { id: string; namespace: string; thinking: boolean } | null
+    sessionSnapshot?: { id: string; namespace: string; orgId: string | null; thinking: boolean } | null
     l2Summaries?: StoredL2Summary[]
     l1Summaries?: StoredL1Summary[]
     orphanL1s?: StoredL1Summary[]
@@ -52,6 +53,7 @@ function createContext(options?: {
     const ctx = {
         config: {
             bossSchema: 'yr_boss',
+            l2SegmentThreshold: 5,
             deepseek: { model: 'deepseek-chat' },
             yohoMemory: {
                 enabled: true,
@@ -74,7 +76,7 @@ function createContext(options?: {
             getSessionSnapshot: async () =>
                 options && 'sessionSnapshot' in options
                     ? options.sessionSnapshot
-                    : { id: payload.sessionId, namespace: payload.namespace, thinking: false },
+                    : { id: payload.sessionId, namespace: payload.namespace, orgId: payload.orgId, thinking: false },
         },
         summaryStore: {
             getSegmentSummaries: async () => options?.l2Summaries ?? [],
@@ -262,7 +264,7 @@ describe('handleSummarizeSession', () => {
 
     it('defers L3 and records skipped when session is still thinking', async () => {
         const { ctx, insertedRuns, getLlmCalls, getBossSendCalls } = createContext({
-            sessionSnapshot: { id: payload.sessionId, namespace: payload.namespace, thinking: true },
+            sessionSnapshot: { id: payload.sessionId, namespace: payload.namespace, orgId: payload.orgId, thinking: true },
         })
 
         await handleSummarizeSession(payload, createJob(), ctx)
@@ -271,6 +273,22 @@ describe('handleSummarizeSession', () => {
         expect(getBossSendCalls()).toBe(1)
         expect(insertedRuns).toHaveLength(1)
         expect(insertedRuns[0]).toMatchObject({ status: 'skipped', errorCode: 'session_still_active' })
+    })
+
+    it('defers L3 when orphan L1s should first be rolled into L2', async () => {
+        const orphanL1s = [1, 2, 3, 4, 5].map(index => makeL1(`orphan-${index}`, index * 10))
+        const { ctx, insertedRuns, getLlmCalls, getBossSendCalls } = createContext({
+            l2Summaries: [makeL2('l2-existing', 1)],
+            orphanL1s,
+        })
+
+        await handleSummarizeSession(payload, createJob(), ctx)
+
+        expect(getLlmCalls()).toBe(0)
+        expect(getBossSendCalls()).toBe(2)
+        expect(insertedRuns).toHaveLength(1)
+        expect(insertedRuns[0]).toMatchObject({ status: 'skipped', errorCode: 'pending_l2_segments' })
+        expect(insertedRuns[0]?.metadata).toMatchObject({ orphan_l1_count: 5, threshold: 5 })
     })
 
     it('skips when no L1 or L2 summaries found', async () => {

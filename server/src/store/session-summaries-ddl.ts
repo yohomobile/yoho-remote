@@ -3,6 +3,7 @@ export const SESSION_SUMMARIES_DDL = `
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
         namespace TEXT NOT NULL,
+        org_id TEXT,
         level SMALLINT NOT NULL,
         seq_start INTEGER,
         seq_end INTEGER,
@@ -12,13 +13,26 @@ export const SESSION_SUMMARIES_DDL = `
         created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
     );
 
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_ss_dedup
-        ON session_summaries(session_id, level, seq_start) WHERE level IN (1, 2);
+    ALTER TABLE session_summaries ADD COLUMN IF NOT EXISTS org_id TEXT;
 
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_ss_l3_unique
-        ON session_summaries(session_id) WHERE level = 3;
+    UPDATE session_summaries ss
+    SET org_id = s.org_id
+    FROM sessions s
+    WHERE ss.session_id = s.id
+      AND ss.org_id IS NULL
+      AND s.org_id IS NOT NULL;
+
+    DROP INDEX IF EXISTS idx_ss_dedup;
+    DROP INDEX IF EXISTS idx_ss_l3_unique;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ss_dedup_org
+        ON session_summaries(org_id, session_id, level, seq_start) WHERE level IN (1, 2);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ss_l3_unique_org
+        ON session_summaries(org_id, session_id) WHERE level = 3;
 
     CREATE INDEX IF NOT EXISTS idx_ss_session_level ON session_summaries(session_id, level);
+    CREATE INDEX IF NOT EXISTS idx_ss_org_session_level ON session_summaries(org_id, session_id, level);
     CREATE INDEX IF NOT EXISTS idx_ss_created ON session_summaries(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_ss_namespace_level_created
         ON session_summaries(namespace, level, created_at DESC);

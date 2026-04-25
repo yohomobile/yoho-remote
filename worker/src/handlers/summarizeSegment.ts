@@ -20,6 +20,7 @@ export async function handleSummarizeSegment(
     const startedAt = Date.now()
     let outcomeRecorded = false
     let sessionNamespace = payload.namespace
+    let sessionOrgId = payload.orgId
 
     const recordRun = async (input: {
         status: 'success' | 'error_transient' | 'error_permanent' | 'skipped'
@@ -67,8 +68,30 @@ export async function handleSummarizeSegment(
             return
         }
         sessionNamespace = session.namespace
+        if (!session.orgId || session.orgId !== payload.orgId) {
+            await recordRun({
+                status: 'error_permanent',
+                durationMs: Date.now() - startedAt,
+                errorCode: 'session_org_mismatch',
+                error: 'Session orgId missing or does not match job payload',
+            })
+            return
+        }
+        sessionOrgId = session.orgId
 
-        const l1Summaries = await ctx.summaryStore.getUnassignedL1Summaries(payload.sessionId)
+        const releaseLock = await ctx.summaryStore.tryAcquireSessionLock(sessionOrgId, payload.sessionId, 'l2')
+        if (!releaseLock) {
+            await recordRun({
+                status: 'skipped',
+                durationMs: Date.now() - startedAt,
+                errorCode: 'segment_already_running',
+                error: 'Another L2 summarization is already running for this session',
+            })
+            return
+        }
+
+        try {
+            const l1Summaries = await ctx.summaryStore.getUnassignedL1Summaries(sessionOrgId, payload.sessionId)
         if (l1Summaries.length < MIN_L1_TO_SEGMENT) {
             await recordRun({
                 status: 'skipped',
@@ -106,6 +129,7 @@ export async function handleSummarizeSegment(
                 {
                     sessionId: payload.sessionId,
                     namespace: sessionNamespace,
+                    orgId: sessionOrgId,
                     seqStart,
                     seqEnd,
                     summary: llmResult.summary,
@@ -190,6 +214,9 @@ export async function handleSummarizeSegment(
             })
             throw transientError
         }
+        } finally {
+            await releaseLock()
+        }
     } catch (error) {
         if (error instanceof PermanentLLMError || error instanceof PermanentJobError) {
             if (!outcomeRecorded) {
@@ -234,19 +261,20 @@ export async function handleSummarizeSegment(
 export async function enqueueSegmentIfNeeded(
     sessionId: string,
     namespace: string,
+    orgId: string,
     ctx: WorkerContext,
     threshold = 5,
 ): Promise<void> {
-    const count = await ctx.summaryStore.countUnassignedL1(sessionId)
+    const count = await ctx.summaryStore.countUnassignedL1(orgId, sessionId)
     if (count < threshold) return
 
-    const singletonKey = `segment:${sessionId}`
+    const singletonKey = `segment:${orgId}:${sessionId}:${Math.floor(count / threshold)}`
     await ctx.boss.send(
         QUEUE.SUMMARIZE_SEGMENT,
         {
             version: 1 as const,
             idempotencyKey: singletonKey,
-            payload: { sessionId, namespace, scheduledAtMs: Date.now() },
+            payload: { sessionId, orgId, namespace, scheduledAtMs: Date.now() },
         },
         { singletonKey }
     )

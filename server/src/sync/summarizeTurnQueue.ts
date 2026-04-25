@@ -8,6 +8,7 @@ export const SUMMARIZE_SESSION_JOB_VERSION = 1 as const
 
 export type SummarizeTurnJobPayload = {
     sessionId: string
+    orgId: string
     namespace: string
     userSeq: number
     scheduledAtMs: number
@@ -21,6 +22,7 @@ export type SummarizeTurnJobData = {
 
 export type SummarizeSessionJobPayload = {
     sessionId: string
+    orgId: string
     namespace: string
     scheduledAtMs: number
 }
@@ -51,6 +53,7 @@ export interface SummarizeTurnQueuePublisher {
     ): Promise<unknown>
     sendSessionSummary(
         sessionId: string,
+        orgId: string,
         namespace: string,
     ): Promise<unknown>
     stop(): Promise<void>
@@ -139,12 +142,12 @@ export async function createSummarizeTurnQueuePublisher(
             send(queueName, payload, options) {
                 return boss.send(queueName, payload, options)
             },
-            sendSessionSummary(sessionId: string, namespace: string) {
-                const singletonKey = `session:${sessionId}`
+            sendSessionSummary(sessionId: string, orgId: string, namespace: string) {
+                const singletonKey = `session:${orgId}:${sessionId}`
                 const data: SummarizeSessionJobData = {
                     version: SUMMARIZE_SESSION_JOB_VERSION,
                     idempotencyKey: singletonKey,
-                    payload: { sessionId, namespace, scheduledAtMs: Date.now() },
+                    payload: { sessionId, orgId, namespace, scheduledAtMs: Date.now() },
                 }
                 return boss.send(SUMMARIZE_SESSION_QUEUE_NAME, data as unknown as SummarizeTurnJobData, {
                     singletonKey,

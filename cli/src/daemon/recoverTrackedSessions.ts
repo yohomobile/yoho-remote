@@ -20,10 +20,14 @@ export function getTrackedSessionStartedBy(metadata: Metadata): TrackedSession['
  * `deleteSession` to keep message history intact for audit.
  */
 async function requestArchiveForStaleSession(
-    api: Pick<ApiClient, 'patchSessionMetadata'>,
+    api: { patchSessionMetadata?: ApiClient['patchSessionMetadata'] },
     sessionId: string,
     reason: string,
 ): Promise<void> {
+    if (!api.patchSessionMetadata) {
+        logger.debug(`[DAEMON RUN] Cannot request archive for stale session ${sessionId}: patchSessionMetadata unavailable (reason=${reason})`);
+        return;
+    }
     try {
         await api.patchSessionMetadata(sessionId, { lifecycleState: 'archiveRequested' });
         logger.debug(`[DAEMON RUN] Requested archive for stale session ${sessionId} (reason=${reason})`);
@@ -37,13 +41,13 @@ export async function recoverTrackedSessionsFromServer({
     machineId,
     pidToTrackedSession,
 }: {
-    api: Pick<ApiClient, 'listSessions' | 'getSession' | 'patchSessionMetadata'>;
+    api: Pick<ApiClient, 'listSessions' | 'getSession'> & { patchSessionMetadata?: ApiClient['patchSessionMetadata'] };
     machineId: string;
     pidToTrackedSession: Map<number, TrackedSession>;
 }): Promise<number> {
-    const listed = await api.listSessions();
+    const listed = await api.listSessions({ includeOffline: true });
     const candidateIds = listed.sessions
-        .filter((session) => session.active && session.metadata?.machineId === machineId)
+        .filter((session) => session.metadata?.machineId === machineId)
         .map((session) => session.id);
 
     let recovered = 0;

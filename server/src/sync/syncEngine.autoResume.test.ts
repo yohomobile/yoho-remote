@@ -361,14 +361,28 @@ describe('SyncEngine auto-resume', () => {
             sessionId: options?.sessionId ?? 'unknown',
         })
         ;(engine as any).listDaemonLiveSessions = async () => []
-        ;(engine as any).waitForSessionHeartbeatAfter = async () => false
+        let heartbeatAfterActiveAt: number | null = null
+        ;(engine as any).waitForSessionHeartbeatAfter = async (_sessionId: string, afterActiveAt: number) => {
+            heartbeatAfterActiveAt = afterActiveAt
+            return false
+        }
 
         await (engine as any).autoResumeSessions(machine.id, machine.namespace)
 
-        expect(setSessionActiveCalls).toEqual([
-            { id: session.id, active: true, activeAt: originalActiveAt, namespace: session.namespace },
-            { id: session.id, active: false, activeAt: originalActiveAt, namespace: session.namespace },
-        ])
+        expect(setSessionActiveCalls).toHaveLength(2)
+        expect(setSessionActiveCalls[0]).toMatchObject({
+            id: session.id,
+            active: true,
+            namespace: session.namespace,
+        })
+        expect(setSessionActiveCalls[0]!.activeAt).toBeGreaterThanOrEqual(originalActiveAt)
+        expect(setSessionActiveCalls[1]).toEqual({
+            id: session.id,
+            active: false,
+            activeAt: originalActiveAt,
+            namespace: session.namespace,
+        })
+        expect(heartbeatAfterActiveAt ?? 0).toBe(setSessionActiveCalls[0]!.activeAt)
         expect(session.active).toBe(false)
         expect(session.activeAt).toBe(originalActiveAt)
         expect((engine as any)._dbActiveSessionIds.has(session.id)).toBe(false)

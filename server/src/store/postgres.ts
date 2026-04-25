@@ -5,6 +5,14 @@ import type { IStore } from './interface'
 import { SESSION_SUMMARIES_DDL, SUMMARIZATION_RUNS_DDL } from './session-summaries-ddl'
 import { AI_TASK_SCHEDULES_DDL, AI_TASK_RUNS_DDL, AI_TASK_INDEXES_DDL } from './ai-tasks-ddl'
 import { APPROVALS_ALL_DDL } from './approvals-ddl'
+import {
+    ApprovalNotFoundError,
+    type ApprovalRecord,
+    type ApprovalAudit,
+    type ApprovalMasterStatus,
+    type ApprovalTxnContext,
+    type ApprovalDecisionOutcome,
+} from '../approvals/types'
 import type {
     StoredSession,
     StoredMachine,
@@ -3858,6 +3866,357 @@ export class PostgresStore implements IStore {
             [sessionId]
         )
         return Number(result.rowCount ?? 0)
+    }
+
+    // ========== Approvals Engine ==========
+    // Master + payload + audit CRUD for the unified approval flow. Domain
+    // semantics live in server/src/approvals/*; this layer stays agnostic.
+
+    private toApprovalRecord(row: any): ApprovalRecord {
+        return {
+            id: row.id,
+            namespace: row.namespace,
+            orgId: row.org_id,
+            domain: row.domain,
+            subjectKind: row.subject_kind,
+            subjectKey: row.subject_key,
+            status: row.status as ApprovalMasterStatus,
+            decidedBy: row.decided_by ?? null,
+            decidedAt: row.decided_at != null ? Number(row.decided_at) : null,
+            decisionReason: row.decision_reason ?? null,
+            expiresAt: row.expires_at != null ? Number(row.expires_at) : null,
+            createdAt: Number(row.created_at),
+            updatedAt: Number(row.updated_at),
+        }
+    }
+
+    private toApprovalAudit(row: any): ApprovalAudit {
+        return {
+            id: row.id,
+            approvalId: row.approval_id,
+            namespace: row.namespace,
+            orgId: row.org_id,
+            domain: row.domain,
+            action: row.action,
+            priorStatus: row.prior_status ?? null,
+            newStatus: row.new_status ?? null,
+            actorEmail: row.actor_email ?? null,
+            actorRole: (row.actor_role ?? null) as ApprovalAudit['actorRole'],
+            reason: row.reason ?? null,
+            payloadSnapshot: row.payload_snapshot ?? null,
+            createdAt: Number(row.created_at),
+        }
+    }
+
+    /** Block column/table identifiers that would allow SQL injection through
+     *  dynamic payload table queries. Snake_case ASCII only. */
+    private assertApprovalIdent(name: string): void {
+        if (!/^[a-z_][a-z_0-9]*$/.test(name)) {
+            throw new Error(`Invalid approvals identifier: ${name}`)
+        }
+    }
+
+    async listApprovals(filter: {
+        namespace: string
+        orgId: string
+        domain?: string | null
+        status?: ApprovalMasterStatus | null
+        subjectKey?: string | null
+        limit?: number
+    }): Promise<ApprovalRecord[]> {
+        const where: string[] = ['namespace = $1', 'org_id = $2']
+        const params: unknown[] = [filter.namespace, filter.orgId]
+        let idx = 3
+        if (filter.domain) { where.push(`domain = $${idx++}`); params.push(filter.domain) }
+        if (filter.status) { where.push(`status = $${idx++}`); params.push(filter.status) }
+        if (filter.subjectKey) { where.push(`subject_key = $${idx++}`); params.push(filter.subjectKey) }
+        const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200)
+        params.push(limit)
+        const result = await this.pool.query(
+            `SELECT * FROM approvals WHERE ${where.join(' AND ')}
+             ORDER BY created_at DESC LIMIT $${idx}`,
+            params,
+        )
+        return result.rows.map((row) => this.toApprovalRecord(row))
+    }
+
+    async getApproval(namespace: string, orgId: string, id: string): Promise<ApprovalRecord | null> {
+        const result = await this.pool.query(
+            `SELECT * FROM approvals WHERE namespace = $1 AND org_id = $2 AND id = $3`,
+            [namespace, orgId, id],
+        )
+        return result.rows.length > 0 ? this.toApprovalRecord(result.rows[0]) : null
+    }
+
+    async getApprovalBySubject(
+        namespace: string,
+        orgId: string,
+        domain: string,
+        subjectKey: string,
+    ): Promise<ApprovalRecord | null> {
+        const result = await this.pool.query(
+            `SELECT * FROM approvals
+             WHERE namespace = $1 AND org_id = $2 AND domain = $3 AND subject_key = $4`,
+            [namespace, orgId, domain, subjectKey],
+        )
+        return result.rows.length > 0 ? this.toApprovalRecord(result.rows[0]) : null
+    }
+
+    async getApprovalPayload<TPayload extends Record<string, unknown>>(
+        namespace: string,
+        approvalId: string,
+        payloadTable: string,
+    ): Promise<TPayload | null> {
+        this.assertApprovalIdent(payloadTable)
+        // Verify tenancy — refuse to read payload for an approval in another namespace.
+        const tenancy = await this.pool.query(
+            `SELECT 1 FROM approvals WHERE id = $1 AND namespace = $2`,
+            [approvalId, namespace],
+        )
+        if (tenancy.rows.length === 0) return null
+        const result = await this.pool.query(
+            `SELECT * FROM ${payloadTable} WHERE approval_id = $1`,
+            [approvalId],
+        )
+        if (result.rows.length === 0) return null
+        return this.stripApprovalId(result.rows[0]) as TPayload
+    }
+
+    async upsertApproval<TPayload extends Record<string, unknown>>(data: {
+        namespace: string
+        orgId: string
+        domain: string
+        subjectKind: string
+        subjectKey: string
+        expiresAt?: number | null
+        payloadTable: string
+        payload: TPayload
+    }): Promise<{ record: ApprovalRecord; payload: TPayload }> {
+        this.assertApprovalIdent(data.payloadTable)
+        const payloadKeys = Object.keys(data.payload)
+        for (const key of payloadKeys) this.assertApprovalIdent(key)
+
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
+            const now = Date.now()
+
+            const existing = await client.query(
+                `SELECT * FROM approvals
+                 WHERE namespace = $1 AND org_id = $2 AND domain = $3 AND subject_key = $4
+                 FOR UPDATE`,
+                [data.namespace, data.orgId, data.domain, data.subjectKey],
+            )
+
+            let record: ApprovalRecord
+            if (existing.rows.length > 0) {
+                const prev = this.toApprovalRecord(existing.rows[0])
+                if (prev.status !== 'pending') {
+                    throw new Error(
+                        `Cannot overwrite decided approval ${prev.id} (status=${prev.status})`,
+                    )
+                }
+                const updated = await client.query(
+                    `UPDATE approvals SET updated_at = $1, expires_at = $2
+                     WHERE id = $3 RETURNING *`,
+                    [now, data.expiresAt ?? null, prev.id],
+                )
+                record = this.toApprovalRecord(updated.rows[0])
+            } else {
+                const id = randomUUID()
+                const inserted = await client.query(
+                    `INSERT INTO approvals
+                     (id, namespace, org_id, domain, subject_kind, subject_key,
+                      status, created_at, updated_at, expires_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $7, $8)
+                     RETURNING *`,
+                    [
+                        id,
+                        data.namespace,
+                        data.orgId,
+                        data.domain,
+                        data.subjectKind,
+                        data.subjectKey,
+                        now,
+                        data.expiresAt ?? null,
+                    ],
+                )
+                record = this.toApprovalRecord(inserted.rows[0])
+            }
+
+            // Upsert payload row (1:1 with approvals.id)
+            const cols = ['approval_id', ...payloadKeys]
+            const values: unknown[] = [record.id]
+            for (const key of payloadKeys) {
+                const v = data.payload[key]
+                values.push(this.encodeApprovalPayloadValue(v))
+            }
+            const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ')
+            const updateSet = payloadKeys.length > 0
+                ? payloadKeys.map((k) => `${k} = EXCLUDED.${k}`).join(', ')
+                : 'approval_id = EXCLUDED.approval_id' // no-op but valid
+            const payloadInsert = await client.query(
+                `INSERT INTO ${data.payloadTable} (${cols.join(', ')})
+                 VALUES (${placeholders})
+                 ON CONFLICT (approval_id) DO UPDATE SET ${updateSet}
+                 RETURNING *`,
+                values,
+            )
+            await client.query('COMMIT')
+
+            const payload = this.stripApprovalId(payloadInsert.rows[0]) as TPayload
+            return { record, payload }
+        } catch (err) {
+            try { await client.query('ROLLBACK') } catch {}
+            throw err
+        } finally {
+            client.release()
+        }
+    }
+
+    async decideApproval<TPayload extends Record<string, unknown>>(args: {
+        namespace: string
+        approvalId: string
+        payloadTable: string
+        decide: (ctx: ApprovalTxnContext<TPayload>) => Promise<ApprovalDecisionOutcome<TPayload>>
+    }): Promise<{ record: ApprovalRecord; payload: TPayload; audit: ApprovalAudit }> {
+        this.assertApprovalIdent(args.payloadTable)
+
+        const client = await this.pool.connect()
+        try {
+            await client.query('BEGIN')
+
+            const recordResult = await client.query(
+                `SELECT * FROM approvals WHERE id = $1 AND namespace = $2 FOR UPDATE`,
+                [args.approvalId, args.namespace],
+            )
+            if (recordResult.rows.length === 0) {
+                throw new ApprovalNotFoundError(args.approvalId)
+            }
+            const priorRecord = this.toApprovalRecord(recordResult.rows[0])
+
+            const payloadResult = await client.query(
+                `SELECT * FROM ${args.payloadTable} WHERE approval_id = $1`,
+                [args.approvalId],
+            )
+            if (payloadResult.rows.length === 0) {
+                throw new Error(
+                    `Missing payload row for approval ${args.approvalId} in ${args.payloadTable}`,
+                )
+            }
+            const payload = this.stripApprovalId(payloadResult.rows[0]) as TPayload
+
+            const now = Date.now()
+            const txnQuery = (text: string, params?: unknown[]) =>
+                client.query(text, params) as Promise<{ rows: any[]; rowCount: number }>
+            const outcome = await args.decide({ record: priorRecord, payload, now, query: txnQuery })
+
+            const updated = await client.query(
+                `UPDATE approvals
+                 SET status = $1, decided_by = $2, decided_at = $3,
+                     decision_reason = $4, updated_at = $5
+                 WHERE id = $6 RETURNING *`,
+                [
+                    outcome.newStatus,
+                    outcome.decidedBy,
+                    outcome.newStatus === priorRecord.status ? priorRecord.decidedAt : now,
+                    outcome.decisionReason,
+                    now,
+                    priorRecord.id,
+                ],
+            )
+            const newRecord = this.toApprovalRecord(updated.rows[0])
+
+            let finalPayload: TPayload = payload
+            if (outcome.payloadPatch) {
+                const patchKeys = Object.keys(outcome.payloadPatch)
+                for (const key of patchKeys) this.assertApprovalIdent(key)
+                if (patchKeys.length > 0) {
+                    const setClause = patchKeys
+                        .map((k, i) => `${k} = $${i + 2}`)
+                        .join(', ')
+                    const patchValues = patchKeys.map((k) =>
+                        this.encodeApprovalPayloadValue(outcome.payloadPatch![k]),
+                    )
+                    const patched = await client.query(
+                        `UPDATE ${args.payloadTable} SET ${setClause}
+                         WHERE approval_id = $1 RETURNING *`,
+                        [priorRecord.id, ...patchValues],
+                    )
+                    finalPayload = this.stripApprovalId(patched.rows[0]) as TPayload
+                }
+            }
+
+            const auditId = randomUUID()
+            const auditResult = await client.query(
+                `INSERT INTO approval_audits
+                 (id, approval_id, namespace, org_id, domain, action,
+                  prior_status, new_status, actor_email, actor_role, reason,
+                  payload_snapshot, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                 RETURNING *`,
+                [
+                    auditId,
+                    priorRecord.id,
+                    priorRecord.namespace,
+                    priorRecord.orgId,
+                    priorRecord.domain,
+                    outcome.audit.action,
+                    priorRecord.status,
+                    outcome.newStatus,
+                    outcome.audit.actorEmail,
+                    outcome.audit.actorRole,
+                    outcome.audit.reason,
+                    JSON.stringify(finalPayload ?? null),
+                    now,
+                ],
+            )
+            const audit = this.toApprovalAudit(auditResult.rows[0])
+
+            await client.query('COMMIT')
+            return { record: newRecord, payload: finalPayload, audit }
+        } catch (err) {
+            try { await client.query('ROLLBACK') } catch {}
+            throw err
+        } finally {
+            client.release()
+        }
+    }
+
+    async listApprovalAudits(filter: {
+        namespace: string
+        orgId: string
+        approvalId?: string | null
+        domain?: string | null
+        limit?: number
+    }): Promise<ApprovalAudit[]> {
+        const where: string[] = ['namespace = $1', 'org_id = $2']
+        const params: unknown[] = [filter.namespace, filter.orgId]
+        let idx = 3
+        if (filter.approvalId) { where.push(`approval_id = $${idx++}`); params.push(filter.approvalId) }
+        if (filter.domain) { where.push(`domain = $${idx++}`); params.push(filter.domain) }
+        const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200)
+        params.push(limit)
+        const result = await this.pool.query(
+            `SELECT * FROM approval_audits WHERE ${where.join(' AND ')}
+             ORDER BY created_at DESC LIMIT $${idx}`,
+            params,
+        )
+        return result.rows.map((row) => this.toApprovalAudit(row))
+    }
+
+    /** JSON-stringify object/array payload values so pg driver stores JSONB correctly. */
+    private encodeApprovalPayloadValue(value: unknown): unknown {
+        if (value === null || value === undefined) return value
+        if (typeof value !== 'object') return value
+        // Arrays + plain objects go into JSONB columns; pg handles Date/Buffer natively.
+        if (value instanceof Date || Buffer.isBuffer(value)) return value
+        return JSON.stringify(value)
+    }
+
+    private stripApprovalId(row: any): Record<string, unknown> {
+        const { approval_id: _approvalId, ...rest } = row ?? {}
+        return rest as Record<string, unknown>
     }
 
     async close(): Promise<void> {

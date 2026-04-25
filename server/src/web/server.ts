@@ -30,10 +30,9 @@ import { createWorkerMcpRoutes } from './routes/worker-mcp'
 import { createAiTaskSchedulesRoutes } from './routes/aiTaskSchedules'
 import { createIdentityRoutes } from './routes/identity'
 import { createCommunicationPlanRoutes } from './routes/communication-plan'
-import { createMemoryConflictRoutes } from './routes/memory-conflicts'
-import { createTeamMemoryRoutes } from './routes/team-memory'
-import { createObservationRoutes } from './routes/observation'
+import { createApprovalsRoutes } from './routes/approvals'
 import { createSessionAffectRoutes } from './routes/session-affect'
+import { buildApprovalDomainRegistry } from '../approvals/setup'
 import { internalAuthMiddleware } from './middleware/internal-auth'
 import type { SSEManager } from '../sse/sseManager'
 import type { Server as BunServer } from 'bun'
@@ -139,11 +138,13 @@ function createWebApp(options: {
     app.route('/api', createOrgsRoutes(options.store))
     app.route('/api', createLicensesRoutes(options.store))
     app.route('/api', createDownloadApiRoutes(options.store))
-    app.route('/api', createIdentityRoutes(options.store, options.getSseManager))
+    // Identity routes still expose person management endpoints (non-approval
+    // surface is kept; approval candidates now flow through /api/approvals).
+    app.route('/api', createIdentityRoutes(options.store))
     app.route('/api', createCommunicationPlanRoutes(options.store))
-    app.route('/api', createMemoryConflictRoutes(options.store))
-    app.route('/api', createTeamMemoryRoutes(options.store))
-    app.route('/api', createObservationRoutes(options.store))
+    // Unified审批流: replaces /api/team-memory, /api/observations,
+    // /api/memory-conflicts, and the /approvals/candidates surface of identity.
+    app.route('/api', createApprovalsRoutes(options.store, buildApprovalDomainRegistry()))
     app.route('/api', createSessionAffectRoutes(options.getSyncEngine, options.store))
     app.route('/api', createAiTaskSchedulesRoutes(options.getSyncEngine, options.store))
 

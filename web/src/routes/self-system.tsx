@@ -7,11 +7,9 @@ import { isFlutterApp } from '@/hooks/useFlutterApp'
 import { Spinner } from '@/components/Spinner'
 import { AIProfileSettings } from '@/components/AIProfileSettings'
 import { CommunicationPlanPanel } from '@/components/CommunicationPlanPanel'
-import { IdentityReviewPanel } from '@/components/IdentityReviewPanel'
+import { ApprovalReviewPanel } from '@/components/ApprovalReviewPanel'
 import { IdentityPersonsPanel } from '@/components/IdentityPersonsPanel'
 import { IdentityAuditPanel } from '@/components/IdentityAuditPanel'
-import { TeamMemoryReviewPanel } from '@/components/TeamMemoryReviewPanel'
-import { ObservationReviewPanel } from '@/components/ObservationReviewPanel'
 import { queryKeys } from '@/lib/query-keys'
 import type { AIProfile, Machine } from '@/types/api'
 import {
@@ -499,7 +497,14 @@ export default function SelfSystemPage() {
 
                             {canManageOrgProfiles && currentOrgId && (
                                 <>
-                                    <IdentityReviewPanel orgId={currentOrgId} canManage={canManageOrgProfiles} />
+                                    <div className="border rounded bg-white" style={{ height: '70vh' }}>
+                                        <div className="px-3 py-2 border-b bg-gray-50 text-sm font-medium">
+                                            统一审批流（Phase 3 Unified Approvals）
+                                        </div>
+                                        <div style={{ height: 'calc(70vh - 40px)' }}>
+                                            <ApprovalReviewPanel />
+                                        </div>
+                                    </div>
                                     <IdentityPersonsPanel
                                         orgId={currentOrgId}
                                         initialPersonId={openPersonId}
@@ -512,8 +517,6 @@ export default function SelfSystemPage() {
                                         }}
                                     />
                                     <IdentityAuditPanel orgId={currentOrgId} />
-                                    <TeamMemoryReviewPanel orgId={currentOrgId} canManage={canManageOrgProfiles} />
-                                    <ObservationReviewPanel orgId={currentOrgId} canManage={canManageOrgProfiles} />
                                 </>
                             )}
                         </div>

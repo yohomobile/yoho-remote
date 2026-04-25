@@ -17,6 +17,7 @@ export type DbMessage = {
 export type SessionSnapshot = {
     id: string
     namespace: string
+    orgId: string | null
     thinking: boolean
 }
 

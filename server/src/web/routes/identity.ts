@@ -1,35 +1,11 @@
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
 import type { IStore, OrgRole } from '../../store'
-import type { SSEManager } from '../../sse/sseManager'
 import type { WebAppEnv } from '../middleware/auth'
 
-const candidateStatusSchema = z.enum(['open', 'confirmed', 'rejected', 'superseded', 'expired'])
-
-const candidateDecisionSchema = z.discriminatedUnion('action', [
-    z.object({
-        action: z.literal('confirm_existing_person'),
-        personId: z.string().min(1),
-        reason: z.string().max(1000).optional(),
-    }),
-    z.object({
-        action: z.literal('create_person_and_confirm'),
-        createPerson: z.object({
-            canonicalName: z.string().max(200).nullable().optional(),
-            primaryEmail: z.string().email().nullable().optional(),
-            employeeCode: z.string().max(100).nullable().optional(),
-        }).optional(),
-        reason: z.string().max(1000).optional(),
-    }),
-    z.object({
-        action: z.literal('mark_shared'),
-        reason: z.string().max(1000).optional(),
-    }),
-    z.object({
-        action: z.literal('reject'),
-        reason: z.string().max(1000).optional(),
-    }),
-])
+// Candidate-decision endpoints migrated to /api/approvals (identity domain).
+// Person management endpoints (persons / merge / unmerge / detach / audits)
+// stay here — they are not approval-flow endpoints.
 
 const identityReasonSchema = z.string().max(1000).nullable().optional()
 
@@ -71,30 +47,8 @@ async function requireIdentityAdmin(c: Context<WebAppEnv>, store: IStore, orgId:
 
 export function createIdentityRoutes(
     store: IStore,
-    getSseManager?: () => SSEManager | null,
 ): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
-
-    app.get('/identity/candidates', async (c) => {
-        const orgId = requireIdentityOrgId(c)
-        if (orgId instanceof Response) return orgId
-        const namespace = orgId
-        const permissionError = await requireIdentityAdmin(c, store, orgId)
-        if (permissionError) return permissionError
-
-        const parsedStatus = candidateStatusSchema.optional().safeParse(c.req.query('status'))
-        if (!parsedStatus.success) {
-            return c.json({ error: 'Invalid status' }, 400)
-        }
-        const limit = Number(c.req.query('limit') ?? 50)
-        const candidates = await store.listPersonIdentityCandidates({
-            namespace,
-            orgId,
-            status: parsedStatus.data,
-            limit: Number.isFinite(limit) ? limit : 50,
-        })
-        return c.json({ candidates })
-    })
 
     app.get('/identity/persons', async (c) => {
         const orgId = requireIdentityOrgId(c)
@@ -147,42 +101,6 @@ export function createIdentityRoutes(
             limit: Number.isFinite(limit) ? limit : 50,
         })
         return c.json({ audits })
-    })
-
-    app.post('/identity/candidates/:candidateId/decision', async (c) => {
-        const orgId = requireIdentityOrgId(c)
-        if (orgId instanceof Response) return orgId
-        const namespace = orgId
-        const permissionError = await requireIdentityAdmin(c, store, orgId)
-        if (permissionError) return permissionError
-
-        const body = await c.req.json().catch(() => null)
-        const parsed = candidateDecisionSchema.safeParse(body)
-        if (!parsed.success) {
-            return c.json({ error: 'Invalid decision', details: parsed.error.issues }, 400)
-        }
-
-        const candidate = await store.decidePersonIdentityCandidate(c.req.param('candidateId'), {
-            ...parsed.data,
-            decidedBy: c.get('email') ?? null,
-        })
-        if (!candidate) {
-            return c.json({ error: 'Candidate not found' }, 404)
-        }
-
-        getSseManager?.()?.broadcast({
-            type: 'identity-candidate-updated',
-            namespace,
-            data: {
-                orgId,
-                candidateId: candidate.id,
-                identityId: candidate.identityId,
-                status: candidate.status,
-                score: candidate.score,
-            },
-        })
-
-        return c.json({ ok: true, candidate })
     })
 
     app.post('/identity/persons/:personId/merge', async (c) => {

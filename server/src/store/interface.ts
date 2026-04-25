@@ -1,5 +1,12 @@
 // IStore 接口定义 - 所有方法异步化
 import type {
+    ApprovalRecord,
+    ApprovalAudit,
+    ApprovalMasterStatus,
+    ApprovalTxnContext,
+    ApprovalDecisionOutcome,
+} from '../approvals/types'
+import type {
     StoredSession,
     StoredSessionSearchResult,
     StoredMachine,
@@ -824,6 +831,73 @@ export interface IStore {
         candidateId?: string | null
         limit?: number
     }): Promise<StoredObservationAudit[]>
+
+    // === Approvals Engine (unified审批流) ===
+    // Master-table CRUD + domain payload upsert + transactional decide. Domain
+    // semantics (state machine, permission, effects) live in
+    // `server/src/approvals/*`; the store layer stays domain-agnostic.
+    listApprovals(filter: {
+        namespace: string
+        orgId: string
+        domain?: string | null
+        status?: ApprovalMasterStatus | null
+        subjectKey?: string | null
+        limit?: number
+    }): Promise<ApprovalRecord[]>
+    getApproval(namespace: string, orgId: string, id: string): Promise<ApprovalRecord | null>
+    getApprovalBySubject(
+        namespace: string,
+        orgId: string,
+        domain: string,
+        subjectKey: string,
+    ): Promise<ApprovalRecord | null>
+    /** Read the 1:1 payload row for an approval. Returns null when the
+     *  approval has no matching payload (shouldn't happen for well-formed
+     *  data but the route should handle it gracefully). */
+    getApprovalPayload<TPayload extends Record<string, unknown>>(
+        namespace: string,
+        approvalId: string,
+        payloadTable: string,
+    ): Promise<TPayload | null>
+    /**
+     * Create a new approval + payload pair, or refresh `expires_at` / payload
+     * fields when a pending one already exists for the same subject. Refuses
+     * to overwrite a terminal-state approval (caller should inspect via
+     * `getApprovalBySubject` first if re-proposal is needed).
+     */
+    upsertApproval<TPayload extends Record<string, unknown>>(data: {
+        namespace: string
+        orgId: string
+        domain: string
+        subjectKind: string
+        subjectKey: string
+        expiresAt?: number | null
+        payloadTable: string
+        payload: TPayload
+    }): Promise<{ record: ApprovalRecord; payload: TPayload }>
+    /**
+     * Atomic decide: locks the approval row, reads payload, invokes the
+     * `decide` callback, then applies the returned outcome (update approvals,
+     * patch payload, insert audit) inside one transaction. Throwing from the
+     * callback aborts the txn.
+     */
+    decideApproval<TPayload extends Record<string, unknown>>(args: {
+        namespace: string
+        approvalId: string
+        payloadTable: string
+        decide: (ctx: ApprovalTxnContext<TPayload>) => Promise<ApprovalDecisionOutcome<TPayload>>
+    }): Promise<{
+        record: ApprovalRecord
+        payload: TPayload
+        audit: ApprovalAudit
+    }>
+    listApprovalAudits(filter: {
+        namespace: string
+        orgId: string
+        approvalId?: string | null
+        domain?: string | null
+        limit?: number
+    }): Promise<ApprovalAudit[]>
 
     // === Download Files 操作 ===
     addDownloadFile(file: { sessionId: string; orgId: string | null; filename: string; mimeType: string; content: Buffer }): Promise<StoredDownloadFile>

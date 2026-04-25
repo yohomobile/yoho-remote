@@ -8,7 +8,8 @@ import type { DbMessage, L1SummaryRecord, WorkerContext } from '../types'
 
 const payload: SummarizeTurnPayload = {
     sessionId: 'session-1',
-    namespace: 'ns-demo',
+    namespace: 'org-test',
+    orgId: 'org-test',
     userSeq: 10,
     scheduledAtMs: 1_717_171_717_000,
 }
@@ -35,7 +36,7 @@ function createJob(overrides: Partial<WorkerJobMetadata> = {}): WorkerJobMetadat
 }
 
 function createContext(options?: {
-    sessionSnapshot?: { id: string; namespace: string; thinking: boolean } | null
+    sessionSnapshot?: { id: string; namespace: string; orgId: string | null; thinking: boolean } | null
     turnMessages?: DbMessage[]
     cachedResult?: L1SummaryRecord | null
     memoryClientEnabled?: boolean
@@ -74,6 +75,7 @@ function createContext(options?: {
             getSessionSnapshot: async () => options?.sessionSnapshot ?? {
                 id: payload.sessionId,
                 namespace: payload.namespace,
+                orgId: payload.orgId,
                 thinking: false,
             },
             getTurnMessages: async () => options?.turnMessages ?? [],
@@ -91,6 +93,7 @@ function createContext(options?: {
                 insertedRuns.push(input)
             },
             getLatestCachedL1Result: async (
+                _orgId: string,
                 _sessionId: string,
                 _seqStart: number,
                 _jobName: string,
@@ -226,6 +229,7 @@ describe('handleSummarizeTurn', () => {
             sessionSnapshot: {
                 id: payload.sessionId,
                 namespace: payload.namespace,
+                orgId: payload.orgId,
                 thinking: true,
             },
         })

@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import type { StoredL1Summary, StoredL2Summary } from '../types'
 
 export type InsertL1SummaryInput = {
     sessionId: string
     namespace: string
+    orgId: string
     seqStart: number
     seqEnd: number
     summary: string
@@ -14,6 +15,7 @@ export type InsertL1SummaryInput = {
 export type InsertL2SummaryInput = {
     sessionId: string
     namespace: string
+    orgId: string
     seqStart: number | null
     seqEnd: number | null
     summary: string
@@ -64,24 +66,60 @@ function rowToL2(row: Record<string, unknown>): StoredL2Summary {
     }
 }
 
+async function releaseSessionLock(client: PoolClient, lockKey: string): Promise<void> {
+    try {
+        await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey])
+    } finally {
+        client.release()
+    }
+}
+
 export class SummaryStore {
     constructor(private readonly pool: Pool) {}
+
+    async tryAcquireSessionLock(
+        orgId: string,
+        sessionId: string,
+        scope: string
+    ): Promise<(() => Promise<void>) | null> {
+        const client = await this.pool.connect()
+        const lockKey = `session-summary:${scope}:${orgId}:${sessionId}`
+        let locked = false
+        try {
+            const result = await client.query<{ locked: boolean }>(
+                'SELECT pg_try_advisory_lock(hashtext($1)) AS locked',
+                [lockKey]
+            )
+            locked = result.rows[0]?.locked === true
+            if (!locked) {
+                client.release()
+                return null
+            }
+            return async () => {
+                await releaseSessionLock(client, lockKey)
+            }
+        } catch (error) {
+            client.release()
+            throw error
+        }
+    }
 
     async insertL1(input: InsertL1SummaryInput): Promise<InsertSummaryResult> {
         const id = randomUUID()
         const createdAt = Date.now()
         const result = await this.pool.query(
             `INSERT INTO session_summaries (
-                id, session_id, namespace, level, seq_start, seq_end, summary, metadata, created_at
+                id, session_id, namespace, org_id, level, seq_start, seq_end, summary, metadata, created_at
             )
-            VALUES ($1, $2, $3, 1, $4, $5, $6, $7, $8)
-            ON CONFLICT (session_id, level, seq_start) WHERE level IN (1, 2)
+            VALUES ($1, $2, $3, $4, 1, $5, $6, $7, $8, $9)
+            ON CONFLICT (org_id, session_id, level, seq_start) WHERE level IN (1, 2)
             DO NOTHING
             RETURNING id`,
             [
                 id,
                 input.sessionId,
                 input.namespace,
+                input.orgId,
                 input.seqStart,
                 input.seqEnd,
                 input.summary,
@@ -101,16 +139,17 @@ export class SummaryStore {
         const createdAt = Date.now()
         const result = await this.pool.query(
             `INSERT INTO session_summaries (
-                id, session_id, namespace, level, seq_start, seq_end, summary, metadata, created_at
+                id, session_id, namespace, org_id, level, seq_start, seq_end, summary, metadata, created_at
             )
-            VALUES ($1, $2, $3, 2, $4, $5, $6, $7, $8)
-            ON CONFLICT (session_id, level, seq_start) WHERE level IN (1, 2)
+            VALUES ($1, $2, $3, $4, 2, $5, $6, $7, $8, $9)
+            ON CONFLICT (org_id, session_id, level, seq_start) WHERE level IN (1, 2)
             DO NOTHING
             RETURNING id`,
             [
                 id,
                 input.sessionId,
                 input.namespace,
+                input.orgId,
                 input.seqStart,
                 input.seqEnd,
                 input.summary,
@@ -125,23 +164,23 @@ export class SummaryStore {
             : { id: null, inserted: false }
     }
 
-    async countUnassignedL1(sessionId: string): Promise<number> {
+    async countUnassignedL1(orgId: string, sessionId: string): Promise<number> {
         const result = await this.pool.query(
             `SELECT COUNT(*)::int AS cnt
              FROM session_summaries
-             WHERE session_id = $1 AND level = 1 AND parent_id IS NULL`,
-            [sessionId]
+             WHERE org_id = $1 AND session_id = $2 AND level = 1 AND parent_id IS NULL`,
+            [orgId, sessionId]
         )
         return Number(result.rows[0]?.cnt ?? 0)
     }
 
-    async getUnassignedL1Summaries(sessionId: string): Promise<StoredL1Summary[]> {
+    async getUnassignedL1Summaries(orgId: string, sessionId: string): Promise<StoredL1Summary[]> {
         const result = await this.pool.query(
             `SELECT id, seq_start, seq_end, summary, metadata
              FROM session_summaries
-             WHERE session_id = $1 AND level = 1 AND parent_id IS NULL
+             WHERE org_id = $1 AND session_id = $2 AND level = 1 AND parent_id IS NULL
              ORDER BY seq_start ASC NULLS LAST, created_at ASC`,
-            [sessionId]
+            [orgId, sessionId]
         )
         return (result.rows as Record<string, unknown>[]).map(rowToL1)
     }
@@ -154,6 +193,7 @@ export class SummaryStore {
         input: {
             sessionId: string
             namespace: string
+            orgId: string
             seqStart: number | null
             seqEnd: number | null
             summary: string
@@ -174,13 +214,13 @@ export class SummaryStore {
                 // step can still run even on a retry after a previous partial failure.
                 const result = await client.query<{ id: string }>(
                     `INSERT INTO session_summaries (
-                        id, session_id, namespace, level, seq_start, seq_end, summary, metadata, created_at
+                        id, session_id, namespace, org_id, level, seq_start, seq_end, summary, metadata, created_at
                     )
-                    VALUES ($1, $2, $3, 2, $4, $5, $6, $7, $8)
-                    ON CONFLICT (session_id, level, seq_start) WHERE level IN (1, 2)
+                    VALUES ($1, $2, $3, $4, 2, $5, $6, $7, $8, $9)
+                    ON CONFLICT (org_id, session_id, level, seq_start) WHERE level IN (1, 2)
                     DO UPDATE SET id = session_summaries.id
                     RETURNING id`,
-                    [id, input.sessionId, input.namespace, input.seqStart, input.seqEnd,
+                    [id, input.sessionId, input.namespace, input.orgId, input.seqStart, input.seqEnd,
                         input.summary, input.metadata, createdAt]
                 )
                 l2Id = String(result.rows[0]!.id)
@@ -188,10 +228,10 @@ export class SummaryStore {
                 // No dedup key: unconditional insert
                 await client.query(
                     `INSERT INTO session_summaries (
-                        id, session_id, namespace, level, seq_start, seq_end, summary, metadata, created_at
+                        id, session_id, namespace, org_id, level, seq_start, seq_end, summary, metadata, created_at
                     )
-                    VALUES ($1, $2, $3, 2, NULL, NULL, $4, $5, $6)`,
-                    [id, input.sessionId, input.namespace, input.summary, input.metadata, createdAt]
+                    VALUES ($1, $2, $3, $4, 2, NULL, NULL, $5, $6, $7)`,
+                    [id, input.sessionId, input.namespace, input.orgId, input.summary, input.metadata, createdAt]
                 )
                 l2Id = id
             }
@@ -199,8 +239,8 @@ export class SummaryStore {
             if (l1Ids.length > 0) {
                 await client.query(
                     `UPDATE session_summaries SET parent_id = $1
-                     WHERE id = ANY($2::text[]) AND level = 1`,
-                    [l2Id, l1Ids]
+                     WHERE org_id = $2 AND id = ANY($3::text[]) AND level = 1`,
+                    [l2Id, input.orgId, l1Ids]
                 )
             }
 
@@ -214,24 +254,24 @@ export class SummaryStore {
         }
     }
 
-    async getSegmentSummaries(sessionId: string): Promise<StoredL2Summary[]> {
+    async getSegmentSummaries(orgId: string, sessionId: string): Promise<StoredL2Summary[]> {
         const result = await this.pool.query(
             `SELECT id, seq_start, seq_end, summary, metadata
              FROM session_summaries
-             WHERE session_id = $1 AND level = 2
+             WHERE org_id = $1 AND session_id = $2 AND level = 2
              ORDER BY seq_start ASC NULLS LAST, created_at ASC`,
-            [sessionId]
+            [orgId, sessionId]
         )
         return (result.rows as Record<string, unknown>[]).map(rowToL2)
     }
 
-    async getTurnSummaries(sessionId: string): Promise<StoredL1Summary[]> {
+    async getTurnSummaries(orgId: string, sessionId: string): Promise<StoredL1Summary[]> {
         const result = await this.pool.query(
             `SELECT id, seq_start, seq_end, summary, metadata
              FROM session_summaries
-             WHERE session_id = $1 AND level = 1
+             WHERE org_id = $1 AND session_id = $2 AND level = 1
              ORDER BY seq_start ASC NULLS LAST, created_at ASC`,
-            [sessionId]
+            [orgId, sessionId]
         )
         return (result.rows as Record<string, unknown>[]).map(rowToL1)
     }
@@ -239,21 +279,22 @@ export class SummaryStore {
     async upsertL3(input: {
         sessionId: string
         namespace: string
+        orgId: string
         summary: string
         metadata: Record<string, unknown>
     }): Promise<{ id: string }> {
         const id = randomUUID()
         const createdAt = Date.now()
         const result = await this.pool.query(
-            `INSERT INTO session_summaries (id, session_id, namespace, level, summary, metadata, created_at)
-             VALUES ($1, $2, $3, 3, $4, $5, $6)
-             ON CONFLICT (session_id) WHERE level = 3
+            `INSERT INTO session_summaries (id, session_id, namespace, org_id, level, summary, metadata, created_at)
+             VALUES ($1, $2, $3, $4, 3, $5, $6, $7)
+             ON CONFLICT (org_id, session_id) WHERE level = 3
              DO UPDATE SET
                  summary = EXCLUDED.summary,
                  metadata = EXCLUDED.metadata,
                  created_at = EXCLUDED.created_at
              RETURNING id`,
-            [id, input.sessionId, input.namespace, input.summary, input.metadata, createdAt]
+            [id, input.sessionId, input.namespace, input.orgId, input.summary, input.metadata, createdAt]
         )
         return { id: String(result.rows[0]?.id ?? id) }
     }

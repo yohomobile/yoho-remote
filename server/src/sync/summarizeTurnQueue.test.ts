@@ -199,6 +199,7 @@ describe('createSummarizeTurnQueuePublisher', () => {
             idempotencyKey: 'turn:session-1:11',
             payload: {
                 sessionId: 'session-1',
+                orgId: 'org-a',
                 namespace: 'ns-a',
                 userSeq: 11,
                 scheduledAtMs: 1_700_000_000_123

@@ -66,6 +66,11 @@ import type {
     ObservationDecision,
     ObservationDecisionResponse,
     ObservationAuditsResponse,
+    ApprovalsResponse,
+    ApprovalDetailResponse,
+    ApprovalAuditsResponse,
+    ApprovalDecisionResponse,
+    ApprovalMasterStatus,
     OrgsResponse,
     OrgDetailResponse,
     CreateOrgResponse,
@@ -348,13 +353,8 @@ export class ApiClient {
 
     // ========== Identity Graph ==========
 
-    async getIdentityCandidates(orgId?: string | null, status: IdentityCandidateStatus = 'open', limit = 50): Promise<IdentityCandidatesResponse> {
-        const params = new URLSearchParams()
-        if (orgId) params.set('orgId', orgId)
-        params.set('status', status)
-        params.set('limit', String(limit))
-        return await this.request<IdentityCandidatesResponse>(`/api/identity/candidates?${params.toString()}`)
-    }
+    // Candidate endpoints are gone — use unified Approvals Engine
+    // (getApprovals / decideApproval) instead.
 
     async searchIdentityPersons(orgId?: string | null, q?: string | null, limit = 20): Promise<IdentityPersonsResponse> {
         const params = new URLSearchParams()
@@ -362,14 +362,6 @@ export class ApiClient {
         if (q?.trim()) params.set('q', q.trim())
         params.set('limit', String(limit))
         return await this.request<IdentityPersonsResponse>(`/api/identity/persons?${params.toString()}`)
-    }
-
-    async decideIdentityCandidate(candidateId: string, decision: IdentityCandidateDecision, orgId?: string | null): Promise<IdentityCandidateDecisionResponse> {
-        const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''
-        return await this.request<IdentityCandidateDecisionResponse>(`/api/identity/candidates/${encodeURIComponent(candidateId)}/decision${qs}`, {
-            method: 'POST',
-            body: JSON.stringify(decision)
-        })
     }
 
     async getIdentityPersonDetail(personId: string, orgId?: string | null): Promise<IdentityPersonDetailResponse> {
@@ -538,6 +530,48 @@ export class ApiClient {
         params.set('orgId', orgId)
         params.set('limit', String(limit))
         return await this.request<ObservationAuditsResponse>(`/api/observations/${encodeURIComponent(id)}/audits?${params.toString()}`)
+    }
+
+    // ========== Approvals Engine (unified) ==========
+
+    async getApprovals(options: {
+        orgId: string
+        domain?: string | null
+        status?: ApprovalMasterStatus | null
+        subjectKey?: string | null
+        limit?: number
+    }): Promise<ApprovalsResponse> {
+        const params = new URLSearchParams()
+        params.set('orgId', options.orgId)
+        if (options.domain) params.set('domain', options.domain)
+        if (options.status) params.set('status', options.status)
+        if (options.subjectKey) params.set('subjectKey', options.subjectKey)
+        if (options.limit) params.set('limit', String(options.limit))
+        return await this.request<ApprovalsResponse>(`/api/approvals?${params.toString()}`)
+    }
+
+    async getApproval(id: string, orgId: string): Promise<ApprovalDetailResponse> {
+        const qs = `?orgId=${encodeURIComponent(orgId)}`
+        return await this.request<ApprovalDetailResponse>(`/api/approvals/${encodeURIComponent(id)}${qs}`)
+    }
+
+    async decideApproval(
+        id: string,
+        action: { action: string; [key: string]: unknown },
+        orgId: string,
+    ): Promise<ApprovalDecisionResponse> {
+        const qs = `?orgId=${encodeURIComponent(orgId)}`
+        return await this.request<ApprovalDecisionResponse>(`/api/approvals/${encodeURIComponent(id)}/decide${qs}`, {
+            method: 'POST',
+            body: JSON.stringify(action),
+        })
+    }
+
+    async getApprovalAudits(id: string, orgId: string, limit = 50): Promise<ApprovalAuditsResponse> {
+        const params = new URLSearchParams()
+        params.set('orgId', orgId)
+        params.set('limit', String(limit))
+        return await this.request<ApprovalAuditsResponse>(`/api/approvals/${encodeURIComponent(id)}/audits?${params.toString()}`)
     }
 
     // ========== Brain Config ==========

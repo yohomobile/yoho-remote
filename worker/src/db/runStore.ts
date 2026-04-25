@@ -104,6 +104,7 @@ export class RunStore {
     }
 
     async getLatestCachedL1Result(
+        orgId: string,
         sessionId: string,
         seqStart: number,
         jobName: string,
@@ -112,16 +113,17 @@ export class RunStore {
         const result = await this.pool.query(
             `SELECT metadata
              FROM summarization_runs
-             WHERE session_id = $1
+             WHERE namespace = $1
+               AND session_id = $2
                AND level = 1
-               AND job_name = $3
-               AND job_version = $4
+               AND job_name = $4
+               AND job_version = $5
                AND status = 'error_transient'
-               AND metadata->>'seq_start' = $2
+               AND metadata->>'seq_start' = $3
                AND metadata ? 'cached_result'
              ORDER BY created_at DESC
              LIMIT 1`,
-            [sessionId, String(seqStart), jobName, jobVersion]
+            [orgId, sessionId, String(seqStart), jobName, jobVersion]
         )
 
         const metadata = asRecord(result.rows[0]?.metadata)

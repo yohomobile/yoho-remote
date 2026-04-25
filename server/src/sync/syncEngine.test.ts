@@ -2204,6 +2204,160 @@ describe('SyncEngine', () => {
         })
     })
 
+    test('handleSessionAlive ignores heartbeat when session is legitimately archived (archivedBy set)', async () => {
+        const setSessionActiveCalls: unknown[] = []
+        const updateSessionMetadataCalls: unknown[] = []
+        const storedRow = {
+            id: 'session-archived',
+            namespace: 'default',
+            active: false,
+            terminationReason: null,
+            metadata: {
+                machineId: 'machine-1',
+                path: '/tmp/archived',
+                flavor: 'claude',
+                lifecycleState: 'archived',
+                archivedBy: 'user',
+                archiveReason: 'user clicked archive',
+            },
+        }
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getSession: async () => storedRow,
+            setSessionActive: async (...args: unknown[]) => {
+                setSessionActiveCalls.push(args)
+                return true
+            },
+            updateSessionMetadata: async (...args: unknown[]) => {
+                updateSessionMetadataCalls.push(args)
+                return { result: 'success', version: 2 }
+            },
+            setSessionThinking: async () => {},
+            setSessionModelConfig: async () => {},
+        } as any
+        const io = { of: () => ({ to: () => ({ emit() {} }), emit() {} }) } as any
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise((r) => setTimeout(r, 0))
+
+        const session = createSession('session-archived', storedRow.metadata)
+        session.active = false
+        session.activeAt = Date.now() - 60_000
+        ;(engine as any).sessions.set(session.id, session)
+
+        await engine.handleSessionAlive({
+            sid: session.id,
+            time: Date.now(),
+        })
+
+        // Legitimate archive — heartbeat ignored, no activation, no heal.
+        expect(session.active).toBe(false)
+        expect(setSessionActiveCalls).toEqual([])
+        expect(updateSessionMetadataCalls).toEqual([])
+    })
+
+    test('handleSessionAlive heals pseudo-archive (lifecycleState=archived without archivedBy) on heartbeat', async () => {
+        const setSessionActiveCalls: Array<{ id: string; active: boolean }> = []
+        const updateSessionMetadataCalls: Array<{
+            id: string
+            metadata: Record<string, unknown>
+        }> = []
+        // Pseudo-archive: lifecycleState='archived' but archivedBy missing — the
+        // exact fingerprint left by the old archiveStaleSession path. handle-
+        // SessionAlive should detect this, allow the heartbeat through, and run
+        // unarchiveSession to clean up the metadata.
+        const storedMetadata: Record<string, unknown> = {
+            host: 'test-host',
+            machineId: 'machine-1',
+            path: '/tmp/pseudo',
+            flavor: 'claude',
+            claudeSessionId: 'claude-x',
+            startedFromDaemon: true,
+            startedBy: 'daemon',
+            lifecycleState: 'archived',
+            lifecycleStateSince: 1_700_000_000_000,
+            // archivedBy intentionally absent
+        }
+        const storedRow = {
+            id: 'session-pseudo',
+            namespace: 'default',
+            active: false,
+            activeAt: 1_700_000_000_000,
+            metadata: storedMetadata,
+            metadataVersion: 5,
+            terminationReason: null,
+            createdAt: 1_700_000_000_000,
+            updatedAt: 1_700_000_000_000,
+            seq: 10,
+            todos: null,
+            thinking: false,
+            thinkingAt: null,
+            modelMode: null,
+            modelReasoningEffort: null,
+            fastMode: null,
+            permissionMode: null,
+            activeMonitors: null,
+        }
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getSession: async () => storedRow,
+            setSessionActive: async (id: string, active: boolean) => {
+                setSessionActiveCalls.push({ id, active })
+                return true
+            },
+            updateSessionMetadata: async (
+                id: string,
+                metadata: Record<string, unknown>,
+            ) => {
+                updateSessionMetadataCalls.push({ id, metadata })
+                return { result: 'success' as const, version: 6 }
+            },
+            setSessionThinking: async () => {},
+            setSessionModelConfig: async () => {},
+            getMessagesAfter: async () => [],
+        } as any
+        const io = { of: () => ({ to: () => ({ emit() {} }), emit() {} }) } as any
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise((r) => setTimeout(r, 0))
+
+        const session = createSession('session-pseudo', storedMetadata)
+        session.active = false
+        session.activeAt = Date.now() - 5_000
+        session.metadataVersion = 5
+        ;(engine as any).sessions.set(session.id, session)
+
+        await engine.handleSessionAlive({
+            sid: session.id,
+            time: Date.now(),
+            thinking: false,
+        })
+
+        // Heartbeat allowed → activation persists active=true.
+        expect(setSessionActiveCalls.some((c) => c.active === true)).toBe(true)
+        expect(session.active).toBe(true)
+
+        // Let the fire-and-forget unarchive run.
+        await new Promise((r) => setTimeout(r, 10))
+
+        // Unarchive cleaned the metadata: archivedBy/archiveReason removed,
+        // lifecycleState moved out of 'archived'.
+        expect(updateSessionMetadataCalls.length).toBeGreaterThanOrEqual(1)
+        const lastUpdate = updateSessionMetadataCalls[updateSessionMetadataCalls.length - 1]
+        expect(lastUpdate.id).toBe('session-pseudo')
+        expect(lastUpdate.metadata.lifecycleState).not.toBe('archived')
+        expect(lastUpdate.metadata.archivedBy).toBeUndefined()
+        expect(lastUpdate.metadata.archiveReason).toBeUndefined()
+    })
+
     test('startup hydrate preserves sessions and machines that already reconnected during reload', async () => {
         const staleMachine = createMachine('machine-stale', {
             host: 'stale-host',

@@ -988,6 +988,67 @@ export type ObservationDecisionResponse = {
 }
 export type ObservationAuditsResponse = { audits: StoredObservationAudit[] }
 
+// ========== Approvals Engine (unified审批流) ==========
+
+export type ApprovalMasterStatus =
+    | 'pending'
+    | 'approved'
+    | 'rejected'
+    | 'expired'
+    | 'dismissed'
+
+export type ApprovalActorRole = 'admin' | 'subject' | 'operator' | 'system'
+
+export type ApprovalDomainName =
+    | 'identity'
+    | 'team_memory'
+    | 'observation'
+    | 'memory_conflict'
+
+export type ApprovalRecord = {
+    id: string
+    namespace: string
+    orgId: string
+    domain: string
+    subjectKind: string
+    subjectKey: string
+    status: ApprovalMasterStatus
+    decidedBy: string | null
+    decidedAt: number | null
+    decisionReason: string | null
+    expiresAt: number | null
+    createdAt: number
+    updatedAt: number
+}
+
+export type ApprovalAudit = {
+    id: string
+    approvalId: string
+    namespace: string
+    orgId: string
+    domain: string
+    action: string
+    priorStatus: string | null
+    newStatus: string | null
+    actorEmail: string | null
+    actorRole: ApprovalActorRole | null
+    reason: string | null
+    payloadSnapshot: unknown | null
+    createdAt: number
+}
+
+export type ApprovalsResponse = { approvals: ApprovalRecord[] }
+export type ApprovalDetailResponse = { approval: ApprovalRecord; payload: unknown }
+export type ApprovalAuditsResponse = { audits: ApprovalAudit[] }
+export type ApprovalDecisionResponse = {
+    ok: true
+    approval: ApprovalRecord
+    payload: unknown
+    audit: ApprovalAudit
+    effectsMeta: Record<string, unknown> | null
+    effectsError: string | null
+}
+
 // Organization 类型
 export type OrgRole = 'owner' | 'admin' | 'member'
 

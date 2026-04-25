@@ -25,6 +25,7 @@ export async function handleSummarizeSession(
     const startedAt = Date.now()
     let outcomeRecorded = false
     let sessionNamespace = payload.namespace
+    let sessionOrgId = payload.orgId
 
     const recordRun = async (input: {
         status: 'success' | 'error_transient' | 'error_permanent' | 'skipped'
@@ -72,17 +73,27 @@ export async function handleSummarizeSession(
             return
         }
         sessionNamespace = session.namespace
+        if (!session.orgId || session.orgId !== payload.orgId) {
+            await recordRun({
+                status: 'error_permanent',
+                durationMs: Date.now() - startedAt,
+                errorCode: 'session_org_mismatch',
+                error: 'Session orgId missing or does not match job payload',
+            })
+            return
+        }
+        sessionOrgId = session.orgId
 
         // Readiness check: if session is still active/thinking, the last L1 job
         // may not have finished yet.  Re-enqueue with a longer delay and skip.
         if (session.thinking) {
-            const singletonKey = `session:${payload.sessionId}`
+            const singletonKey = `session:${sessionOrgId}:${payload.sessionId}`
             await ctx.boss.send(
                 QUEUE.SUMMARIZE_SESSION,
                 {
                     version: 1 as const,
                     idempotencyKey: singletonKey,
-                    payload: { ...payload, scheduledAtMs: Date.now() },
+                    payload: { ...payload, orgId: sessionOrgId, namespace: sessionNamespace, scheduledAtMs: Date.now() },
                 },
                 { singletonKey, startAfter: DEFER_WHEN_ACTIVE_SECONDS }
             )
@@ -98,14 +109,43 @@ export async function handleSummarizeSession(
         // Build the merged source list: all L2 segments ∪ orphan L1s (parent_id IS NULL).
         // This ensures the last few turns that haven't been rolled into a segment yet
         // are still included in L3.
-        const l2Summaries = await ctx.summaryStore.getSegmentSummaries(payload.sessionId)
+        const l2Summaries = await ctx.summaryStore.getSegmentSummaries(sessionOrgId, payload.sessionId)
         let sourceLevel: 1 | 2
         let sourceSummaries: Array<StoredL1Summary | StoredL2Summary>
         let orphanL1Count = 0
 
         if (l2Summaries.length > 0) {
-            const orphanL1s = await ctx.summaryStore.getUnassignedL1Summaries(payload.sessionId)
+            const orphanL1s = await ctx.summaryStore.getUnassignedL1Summaries(sessionOrgId, payload.sessionId)
             orphanL1Count = orphanL1s.length
+            if (orphanL1Count >= ctx.config.l2SegmentThreshold) {
+                const singletonKey = `segment:${sessionOrgId}:${payload.sessionId}:l3-defer:${Math.floor(orphanL1Count / ctx.config.l2SegmentThreshold)}`
+                await ctx.boss.send(
+                    QUEUE.SUMMARIZE_SEGMENT,
+                    {
+                        version: 1 as const,
+                        idempotencyKey: singletonKey,
+                        payload: { sessionId: payload.sessionId, orgId: sessionOrgId, namespace: sessionNamespace, scheduledAtMs: Date.now() },
+                    },
+                    { singletonKey }
+                )
+                await ctx.boss.send(
+                    QUEUE.SUMMARIZE_SESSION,
+                    {
+                        version: 1 as const,
+                        idempotencyKey: `session:${sessionOrgId}:${payload.sessionId}`,
+                        payload: { sessionId: payload.sessionId, orgId: sessionOrgId, namespace: sessionNamespace, scheduledAtMs: Date.now() },
+                    },
+                    { singletonKey: `session:${sessionOrgId}:${payload.sessionId}`, startAfter: DEFER_WHEN_ACTIVE_SECONDS }
+                )
+                await recordRun({
+                    status: 'skipped',
+                    durationMs: Date.now() - startedAt,
+                    errorCode: 'pending_l2_segments',
+                    error: `Deferred L3 because ${orphanL1Count} orphan L1 summaries should be segmented first`,
+                    metadata: { orphan_l1_count: orphanL1Count, threshold: ctx.config.l2SegmentThreshold },
+                })
+                return
+            }
             // Merge and sort chronologically
             const merged: Array<StoredL1Summary | StoredL2Summary> = [...l2Summaries, ...orphanL1s]
             merged.sort((a, b) => (a.seqStart ?? Infinity) - (b.seqStart ?? Infinity))
@@ -113,7 +153,7 @@ export async function handleSummarizeSession(
             sourceLevel = 2
         } else {
             // No L2s yet: fall back to all L1 turn summaries
-            sourceSummaries = await ctx.summaryStore.getTurnSummaries(payload.sessionId)
+            sourceSummaries = await ctx.summaryStore.getTurnSummaries(sessionOrgId, payload.sessionId)
             sourceLevel = 1
         }
 
@@ -132,11 +172,14 @@ export async function handleSummarizeSession(
         // Write a minimal L3 summary locally and return.
         const isTrivial = sourceLevel === 1 && sourceSummaries.length < TRIVIAL_TURN_THRESHOLD
         if (isTrivial) {
-            const trivialSummary = `Short session (${sourceSummaries.length} turn${sourceSummaries.length === 1 ? '' : 's'}).`
+            const trivialSummary = sourceSummaries
+                .map((summary, index) => `${index + 1}. ${summary.summary}`)
+                .join('\n')
             try {
                 const upserted = await ctx.summaryStore.upsertL3({
                     sessionId: payload.sessionId,
                     namespace: sessionNamespace,
+                    orgId: sessionOrgId,
                     summary: trivialSummary,
                     metadata: {
                         source_level: 1,
@@ -189,6 +232,7 @@ export async function handleSummarizeSession(
             const upserted = await ctx.summaryStore.upsertL3({
                 sessionId: payload.sessionId,
                 namespace: sessionNamespace,
+                orgId: sessionOrgId,
                 summary: llmResult.summary,
                 metadata: summaryMetadata,
             })

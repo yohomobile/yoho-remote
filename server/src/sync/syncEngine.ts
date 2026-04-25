@@ -659,6 +659,10 @@ export class SyncEngine {
     private readonly lastBroadcastAtBySessionId: Map<string, number> = new Map()
     private readonly lastBroadcastAtByMachineId: Map<string, number> = new Map()
     private readonly todoBackfillStateBySessionId: Map<string, { attempts: number; timer: NodeJS.Timeout | null; nextRetryAt: number; seq: number }> = new Map()
+    // Coalesces concurrent todo-backfill triggers per session. Without this, a server
+    // restart with N sessions can fan out into 3-10× redundant DB scans (hydrate +
+    // session-alive + API refresh each call refreshSession on the same id).
+    private readonly todoBackfillInFlight: Map<string, Promise<boolean>> = new Map()
     private readonly deletingSessions: Set<string> = new Set()
     // Tracks brain-child sessions that have completed their init prompt at least once.
     // First thinking→false is the init prompt; subsequent completions are real task results.
@@ -844,7 +848,7 @@ export class SyncEngine {
      * 在此窗口内应抑制 hydrate 引起的广播、task-complete 通知与 terminationReason 回显，
      * 避免 server 重启后前端出现 toast 风暴。
      */
-    private inStartupQuietWindow(): boolean {
+    inStartupQuietWindow(): boolean {
         return Date.now() - this.serverStartedAt < SyncEngine.STARTUP_QUIET_WINDOW_MS
     }
 
@@ -1866,12 +1870,42 @@ export class SyncEngine {
         // But during resume, the DB may briefly say inactive due to the old process's
         // session-end racing with pre-activate — allow heartbeats through.
         const resumeGuardActive = session.resumingUntil && Date.now() < session.resumingUntil
+        // Pseudo-archive heal flag: if true, after the activation block below we'll
+        // run unarchiveSession to clean up the corrupt archive metadata (lifecycleState
+        // would otherwise stay 'archived' and trip the auto-resume skip-reason gate).
+        let healPseudoArchive = false
         if (!session.active && !resumeGuardActive) {
             // Verify with database - if DB says inactive, don't reactivate
             const stored = await this.store.getSession(payload.sid)
             if (stored && !stored.active) {
-                // Session is archived in DB, ignore heartbeat
-                return
+                // Detect pseudo-archive: routes/sessions.ts:archiveStaleSession used to
+                // (and historically did) write lifecycleState='archived' without setting
+                // archivedBy. Combined with the early-return below, that turned every
+                // server-restart into a permanent silence for any still-running CLI.
+                // If the on-disk archive lacks an attribution AND there's no termination
+                // reason, treat as corruption from the staleness path and let the heart-
+                // beat heal it. Legitimate user/cli/server archives always carry
+                // archivedBy (or terminationReason) and are still ignored.
+                const meta = (stored.metadata ?? {}) as Record<string, unknown>
+                const lifecycleState = typeof meta.lifecycleState === 'string' ? meta.lifecycleState : ''
+                const archivedByRaw = typeof meta.archivedBy === 'string' ? meta.archivedBy.trim() : ''
+                const isPseudoArchive =
+                    lifecycleState === 'archived'
+                    && archivedByRaw === ''
+                    && !stored.terminationReason
+                if (!isPseudoArchive) {
+                    // Legitimate archive — ignore stale heartbeat
+                    return
+                }
+                console.log(
+                    `[handleSessionAlive] healing pseudo-archive for session ${payload.sid.slice(0, 8)} ` +
+                    `(lifecycleState=archived without archivedBy)`
+                )
+                // Refresh in-memory metadata so the unarchive call below sees the same
+                // archived state that's on disk (avoids version-mismatch on the metadata
+                // update). Fall through to normal activation; unarchive runs after.
+                await this.refreshSession(payload.sid, { silent: true })
+                healPseudoArchive = true
             }
         }
 
@@ -1965,6 +1999,25 @@ export class SyncEngine {
             ).catch(err => {
                 console.error(`[handleSessionAlive] Failed to persist active=true for session ${session.id}:`, err)
             })
+        }
+        // Heal pseudo-archive metadata after we've persisted active=true. Doing it
+        // after activation avoids ghost states (active=true with lifecycleState=archived
+        // would confuse the auto-resume skip-reason gate and webapp archive view).
+        if (healPseudoArchive) {
+            void this.unarchiveSession(session.id, { actor: 'pseudo-archive-heal' })
+                .then(result => {
+                    if (!result.ok) {
+                        console.warn(
+                            `[handleSessionAlive] pseudo-archive heal for ${session.id.slice(0, 8)} failed: ${result.error}`
+                        )
+                    }
+                })
+                .catch(err => {
+                    console.error(
+                        `[handleSessionAlive] pseudo-archive heal for ${session.id.slice(0, 8)} threw:`,
+                        err
+                    )
+                })
         }
         if (!wasActive && this.isBrainSession(session)) {
             void this.reconcilePendingBrainCallbacksForMain(session.id, session.namespace).catch(error => {
@@ -2196,11 +2249,12 @@ export class SyncEngine {
 
         const payload: SummarizeTurnJobPayload = {
             sessionId: session.id,
+            orgId: session.orgId ?? session.namespace,
             namespace: session.namespace,
             userSeq,
             scheduledAtMs: Date.now()
         }
-        const idempotencyKey = `turn:${session.id}:${userSeq}`
+        const idempotencyKey = `turn:${session.orgId ?? session.namespace}:${session.id}:${userSeq}`
 
         await this.boss.send(SUMMARIZE_TURN_QUEUE_NAME, {
             version: SUMMARIZE_TURN_JOB_VERSION,
@@ -2810,8 +2864,8 @@ export class SyncEngine {
         }
 
         // Enqueue L3 session summary (delayed 30s to let the last L1 finish first)
-        if (this.boss) {
-            this.boss.sendSessionSummary(session.id, session.namespace).catch(err => {
+        if (this.boss && session.orgId) {
+            this.boss.sendSessionSummary(session.id, session.orgId, session.namespace).catch(err => {
                 console.error(`[syncEngine] failed to enqueue session summary for ${session.id}:`, err)
             })
         }
@@ -3340,8 +3394,11 @@ export class SyncEngine {
 
                     const directory = session.metadata!.path
                     const previousActiveAt = session.activeAt
-                    await this.store.setSessionActive(session.id, true, previousActiveAt, namespace)
+                    const resumeStartedAt = Date.now()
+                    await this.store.setSessionActive(session.id, true, resumeStartedAt, namespace)
                     session.active = true
+                    session.activeAt = Math.max(session.activeAt, resumeStartedAt)
+                    this._dbActiveSessionIds.add(session.id)
                     const previousThinking = session.thinking
                     session.thinking = false
                     if (previousThinking !== session.thinking) {
@@ -3370,7 +3427,7 @@ export class SyncEngine {
                     )
 
                     if (result.type === 'success') {
-                        const heartbeatReceived = await this.waitForSessionHeartbeatAfter(session.id, previousActiveAt, RESUME_TIMEOUT_MS)
+                        const heartbeatReceived = await this.waitForSessionHeartbeatAfter(session.id, resumeStartedAt, RESUME_TIMEOUT_MS)
                         if (!heartbeatReceived) {
                             await this.store.setSessionActive(session.id, false, previousActiveAt, namespace)
                             this._dbActiveSessionIds.delete(session.id)
@@ -3468,9 +3525,24 @@ export class SyncEngine {
         })
     }
 
-    /** Public alias for refreshSession - used by guards.ts and events.ts */
+    /**
+     * Public alias for refreshSession - used by guards.ts and events.ts.
+     *
+     * Unlike the hot-path refreshSession (fire-and-forget on todo backfill),
+     * external callers expect a session whose todos are populated when they
+     * exist on disk. Wait for any in-flight backfill kicked off by the inner
+     * refresh, then re-refresh so the returned session reflects the new todos.
+     */
     async getOrRefreshSession(sessionId: string): Promise<Session | null> {
-        return this.refreshSession(sessionId)
+        const session = await this.refreshSession(sessionId)
+        const inFlight = this.todoBackfillInFlight.get(sessionId)
+        if (inFlight) {
+            const backfilled = await inFlight.catch(() => false)
+            if (backfilled) {
+                return this.refreshSession(sessionId)
+            }
+        }
+        return session
     }
 
     private async refreshSession(
@@ -3497,14 +3569,41 @@ export class SyncEngine {
                 backfillState = undefined
             }
 
-            if (!backfillState || (!backfillState.timer && Date.now() >= backfillState.nextRetryAt && backfillState.attempts < 3)) {
-                const backfilled = await this.backfillTodosFromHistory(sessionId, stored.namespace)
-                if (backfilled) {
-                    this.clearTodoBackfillState(sessionId)
-                    stored = await this.store.getSession(sessionId) ?? stored
-                } else {
-                    this.scheduleTodoBackfillRetry(sessionId, stored.seq, 'todo markers not found in history')
-                }
+            // Skip backfill entirely when we previously gave up on this session.
+            // The exhausted flag is persisted to metadata so server restarts don't
+            // rescan the same history every cycle (was the largest contributor to
+            // post-deploy DB storm: 6000+ todo-backfill warns per restart).
+            const persistedExhausted = isRecord(stored.metadata)
+                && (stored.metadata as Record<string, unknown>).todoBackfillExhausted === true
+
+            const eligible = !persistedExhausted
+                && !this.todoBackfillInFlight.has(sessionId)
+                && (!backfillState || (!backfillState.timer && Date.now() >= backfillState.nextRetryAt && backfillState.attempts < 3))
+
+            if (eligible) {
+                const namespace = stored.namespace
+                const sessionSeq = stored.seq
+                // Fire-and-forget: don't block refreshSession on history scan. The
+                // in-flight map dedups concurrent triggers (hydrate, session-alive,
+                // API refresh) onto a single scan. Once it succeeds we re-refresh
+                // so the new todos propagate; if it fails we hand off to the retry
+                // scheduler. The current call returns with todos=undefined; next
+                // refresh picks them up.
+                const promise = this.backfillTodosFromHistory(sessionId, namespace)
+                    .finally(() => { this.todoBackfillInFlight.delete(sessionId) })
+                this.todoBackfillInFlight.set(sessionId, promise)
+                void promise.then(backfilled => {
+                    if (backfilled) {
+                        this.clearTodoBackfillState(sessionId)
+                        return this.refreshSession(sessionId).catch(err => {
+                            console.error(`[refreshSession] post-backfill refresh failed for ${sessionId.slice(0, 8)}:`, err)
+                        })
+                    }
+                    this.scheduleTodoBackfillRetry(sessionId, sessionSeq, 'todo markers not found in history')
+                    return undefined
+                }).catch(err => {
+                    console.error(`[refreshSession] backfill threw for session ${sessionId.slice(0, 8)}:`, err)
+                })
             }
         } else if (stored.todos !== null) {
             this.clearTodoBackfillState(sessionId)
@@ -3792,6 +3891,22 @@ export class SyncEngine {
             console.warn(`[todo-backfill] Giving up on session ${sessionId.slice(0, 8)} after ${state.attempts} attempts: ${reason}`)
             state.nextRetryAt = Number.POSITIVE_INFINITY
             this.todoBackfillStateBySessionId.set(sessionId, state)
+            // Persist exhausted flag so server restarts don't re-scan a session
+            // that genuinely has no todo markers in history. refreshSession reads
+            // metadata.todoBackfillExhausted and short-circuits when true.
+            const session = this.sessions.get(sessionId)
+            if (session) {
+                void this.store.patchSessionMetadata(
+                    sessionId,
+                    { todoBackfillExhausted: true },
+                    session.namespace
+                ).catch(err => {
+                    console.error(
+                        `[todo-backfill] Failed to persist exhausted flag for ${sessionId.slice(0, 8)}:`,
+                        err
+                    )
+                })
+            }
             return
         }
 

@@ -18,7 +18,7 @@ export class SessionStore {
 
     async getSessionSnapshot(sessionId: string): Promise<SessionSnapshot | null> {
         const result = await this.pool.query(
-            `SELECT id, namespace, thinking
+            `SELECT id, namespace, org_id, thinking
              FROM sessions
              WHERE id = $1
              LIMIT 1`,
@@ -33,6 +33,7 @@ export class SessionStore {
         return {
             id: String(row.id),
             namespace: String(row.namespace),
+            orgId: typeof row.org_id === 'string' && row.org_id.trim() !== '' ? row.org_id : null,
             thinking: Boolean(row.thinking),
         }
     }

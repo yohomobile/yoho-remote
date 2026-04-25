@@ -2,13 +2,16 @@ import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { WorkerContext } from '../types'
 
-// Phase 3C Conflict Scan：扫描同 personId 下"同 hypothesisKey 的 observation 候选"
-// 或同 memoryRef 的 team memory 候选，写入 memory_conflict_candidates 供管理员仲裁。
-// 设计稿：docs/design/k1-phase3-actor-aware-brain.md §4.C
-// 硬边界：只生成候选，不自动合并、不自动废弃。
-// 主键 subject_key 格式（与 server 端兼容）：
-//   personal: obs:<personId>:<hypothesisKey>
-//   team:     mem:<memoryRef>
+// Phase 3C Conflict Scan — rewritten in PR 9 to read/write the unified
+// approvals schema. Scans pending observation hypotheses and pending team
+// memory proposals, groups them by conflict subject, and upserts a
+// memory_conflict approval row when ≥2 pending candidates share the same
+// subject. Hard boundary: only generates candidates, never auto-resolves.
+//
+// Subject key conventions (carried over from the legacy schema so existing
+// conflict rows continue to dedupe correctly after migration):
+//   personal: `obs:<personId>:<hypothesisKey>`
+//   team:     `mem:<memoryRef>`
 
 export const CONFLICT_DETECTOR_VERSION = 'conflict-scan-v1'
 
@@ -21,7 +24,7 @@ export type ConflictScanResult = {
 
 type ObservationGroupRow = {
     namespace: string
-    org_id: string | null
+    org_id: string
     subject_person_id: string
     hypothesis_key: string
     candidate_ids: string[]
@@ -31,7 +34,7 @@ type ObservationGroupRow = {
 
 type TeamMemoryGroupRow = {
     namespace: string
-    org_id: string | null
+    org_id: string
     memory_ref: string
     candidate_ids: string[]
     contents: string[]
@@ -39,51 +42,57 @@ type TeamMemoryGroupRow = {
     actors: Array<string | null>
 }
 
+// Join master `approvals` with domain payload tables so the grouping key
+// (subject_person_id / hypothesis_key / memory_ref) stays typed.
 const OBSERVATION_GROUPS_SQL = `
     SELECT
-        namespace,
-        org_id,
-        subject_person_id,
-        hypothesis_key,
-        ARRAY_AGG(id ORDER BY created_at) AS candidate_ids,
-        ARRAY_AGG(summary ORDER BY created_at) AS summaries,
-        ARRAY_AGG(created_at::TEXT ORDER BY created_at) AS captured_ats
-    FROM observation_candidates
-    WHERE status = 'pending'
-      AND subject_person_id IS NOT NULL
-    GROUP BY namespace, org_id, subject_person_id, hypothesis_key
+        a.namespace,
+        a.org_id,
+        p.subject_person_id,
+        p.hypothesis_key,
+        ARRAY_AGG(a.id ORDER BY a.created_at) AS candidate_ids,
+        ARRAY_AGG(p.summary ORDER BY a.created_at) AS summaries,
+        ARRAY_AGG(a.created_at::TEXT ORDER BY a.created_at) AS captured_ats
+    FROM approvals a
+    JOIN approval_payload_observation p ON p.approval_id = a.id
+    WHERE a.domain = 'observation'
+      AND a.status = 'pending'
+      AND p.subject_person_id IS NOT NULL
+    GROUP BY a.namespace, a.org_id, p.subject_person_id, p.hypothesis_key
     HAVING COUNT(*) >= 2
 `
 
 const TEAM_MEMORY_GROUPS_SQL = `
     SELECT
-        namespace,
-        org_id,
-        memory_ref,
-        ARRAY_AGG(id ORDER BY created_at) AS candidate_ids,
-        ARRAY_AGG(content ORDER BY created_at) AS contents,
-        ARRAY_AGG(created_at::TEXT ORDER BY created_at) AS captured_ats,
-        ARRAY_AGG(proposed_by_email ORDER BY created_at) AS actors
-    FROM team_memory_candidates
-    WHERE status = 'pending'
-      AND memory_ref IS NOT NULL
-    GROUP BY namespace, org_id, memory_ref
+        a.namespace,
+        a.org_id,
+        p.memory_ref,
+        ARRAY_AGG(a.id ORDER BY a.created_at) AS candidate_ids,
+        ARRAY_AGG(p.content ORDER BY a.created_at) AS contents,
+        ARRAY_AGG(a.created_at::TEXT ORDER BY a.created_at) AS captured_ats,
+        ARRAY_AGG(p.proposed_by_email ORDER BY a.created_at) AS actors
+    FROM approvals a
+    JOIN approval_payload_team_memory p ON p.approval_id = a.id
+    WHERE a.domain = 'team_memory'
+      AND a.status = 'pending'
+      AND p.memory_ref IS NOT NULL
+    GROUP BY a.namespace, a.org_id, p.memory_ref
     HAVING COUNT(*) >= 2
 `
 
 async function findOpenConflictId(
     client: PoolClient,
-    args: { namespace: string; orgId: string | null; scope: 'personal' | 'team'; subjectKey: string },
+    args: { namespace: string; orgId: string; subjectKey: string },
 ): Promise<string | null> {
     const result = await client.query<{ id: string }>(
-        `SELECT id FROM memory_conflict_candidates
+        `SELECT id FROM approvals
          WHERE namespace = $1
-           AND COALESCE(org_id, '') = COALESCE($2, '')
-           AND scope = $3
-           AND subject_key = $4
-           AND status = 'open'
+           AND org_id = $2
+           AND domain = 'memory_conflict'
+           AND subject_key = $3
+           AND status = 'pending'
          LIMIT 1`,
-        [args.namespace, args.orgId, args.scope, args.subjectKey],
+        [args.namespace, args.orgId, args.subjectKey],
     )
     return result.rows[0]?.id ?? null
 }
@@ -92,7 +101,7 @@ async function insertConflict(
     client: PoolClient,
     args: {
         namespace: string
-        orgId: string | null
+        orgId: string
         scope: 'personal' | 'team'
         subjectKey: string
         summary: string
@@ -102,36 +111,50 @@ async function insertConflict(
 ): Promise<string> {
     const id = randomUUID()
     const now = Date.now()
+    // Master row — pending conflict for admin resolution.
     await client.query(
-        `INSERT INTO memory_conflict_candidates (
-            id, namespace, org_id, scope, subject_key, summary,
-            entries, evidence, detector_version, status, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, 'open', $10, $10)`,
+        `INSERT INTO approvals (
+            id, namespace, org_id, domain, subject_kind, subject_key,
+            status, created_at, updated_at
+        ) VALUES ($1, $2, $3, 'memory_conflict', 'conflict_subject', $4, 'pending', $5, $5)`,
+        [id, args.namespace, args.orgId, args.subjectKey, now],
+    )
+    // Domain payload.
+    await client.query(
+        `INSERT INTO approval_payload_memory_conflict (
+            approval_id, scope, summary, entries, evidence, detector_version, resolution
+        ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, NULL)`,
         [
             id,
-            args.namespace,
-            args.orgId,
             args.scope,
-            args.subjectKey,
             args.summary,
             JSON.stringify(args.entries),
             JSON.stringify(args.evidence),
             CONFLICT_DETECTOR_VERSION,
-            now,
         ],
     )
+    // Audit: detector auto-generation event. `actor_role='system'` signals a
+    // non-human origin so downstream review UI can filter these out.
     await client.query(
-        `INSERT INTO memory_conflict_audits (
-            id, namespace, org_id, candidate_id, action, prior_status, new_status,
-            resolution, actor_email, reason, payload, created_at
-        ) VALUES ($1, $2, $3, $4, 'generated', NULL, 'open', NULL, NULL, $5, $6::jsonb, $7)`,
+        `INSERT INTO approval_audits (
+            id, approval_id, namespace, org_id, domain, action,
+            prior_status, new_status, actor_email, actor_role, reason,
+            payload_snapshot, created_at
+        ) VALUES ($1, $2, $3, $4, 'memory_conflict', 'generated',
+                  NULL, 'pending', NULL, 'system', $5, $6::jsonb, $7)`,
         [
             randomUUID(),
+            id,
             args.namespace,
             args.orgId,
-            id,
             'auto-generated by conflict-scan',
-            JSON.stringify({ detectorVersion: CONFLICT_DETECTOR_VERSION }),
+            JSON.stringify({
+                detectorVersion: CONFLICT_DETECTOR_VERSION,
+                scope: args.scope,
+                summary: args.summary,
+                entries: args.entries,
+                evidence: args.evidence,
+            }),
             now,
         ],
     )
@@ -183,7 +206,6 @@ export async function scanForConflicts(pool: Pool): Promise<ConflictScanResult> 
             const existing = await findOpenConflictId(client, {
                 namespace: row.namespace,
                 orgId: row.org_id,
-                scope: 'personal',
                 subjectKey,
             })
             if (existing) {
@@ -209,7 +231,6 @@ export async function scanForConflicts(pool: Pool): Promise<ConflictScanResult> 
             const existing = await findOpenConflictId(client, {
                 namespace: row.namespace,
                 orgId: row.org_id,
-                scope: 'team',
                 subjectKey,
             })
             if (existing) {

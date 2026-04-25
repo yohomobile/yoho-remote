@@ -7,7 +7,8 @@ import { handleSummarizeSegment } from './summarizeSegment'
 
 const payload: SummarizeSegmentPayload = {
     sessionId: 'session-seg-1',
-    namespace: 'ns-test',
+    namespace: 'org-test',
+    orgId: 'org-test',
     scheduledAtMs: 1_717_171_717_000,
 }
 
@@ -30,7 +31,7 @@ function makeL1(id: string, seqStart: number): StoredL1Summary {
 const DEFAULT_L1S = [makeL1('l1-1', 10), makeL1('l1-2', 20), makeL1('l1-3', 30)]
 
 function createContext(options?: {
-    sessionSnapshot?: { id: string; namespace: string; thinking: boolean } | null
+    sessionSnapshot?: { id: string; namespace: string; orgId: string | null; thinking: boolean } | null
     unassignedL1s?: StoredL1Summary[]
     insertL2AndMarkL1sError?: Error
     llmError?: Error
@@ -74,11 +75,12 @@ function createContext(options?: {
             getSessionSnapshot: async () =>
                 options && 'sessionSnapshot' in options
                     ? options.sessionSnapshot
-                    : { id: payload.sessionId, namespace: payload.namespace, thinking: false },
+                    : { id: payload.sessionId, namespace: payload.namespace, orgId: payload.orgId, thinking: false },
         },
         summaryStore: {
             getUnassignedL1Summaries: async () => l1s,
             countUnassignedL1: async () => l1s.length,
+            tryAcquireSessionLock: async () => async () => {},
             insertL2AndMarkL1s: async (_input: unknown, ids: string[]) => {
                 l2AndMarkCalls += 1
                 capturedL1Ids = ids

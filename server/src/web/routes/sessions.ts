@@ -1529,6 +1529,10 @@ export function createSessionsRoutes(
         // - If database says active=true, check memory state
         // - Must have recent activeAt (within 2 minutes) to be considered truly active
         const ACTIVE_THRESHOLD_MS = 2 * 60 * 1000 // 2 minutes
+        // Machine must have been offline this long before we let the staleness path
+        // archive its sessions. Shorter values trigger false positives during deploy
+        // (server-up → daemon-up window can take 10–30s).
+        const MACHINE_DOWN_GRACE_MS = 5 * 60 * 1000 // 5 minutes
         const now = Date.now()
 
         // Fire-and-forget reconciliation: when a DB row says active=true but staleness checks
@@ -1536,7 +1540,38 @@ export function createSessionsRoutes(
         // converge with what we return to the client. Without this, every read recomputes
         // staleness while DB stays out of sync, and clients see ghosts (e.g. sessions that
         // never appear in either active or archive views).
-        const archiveStaleSession = (sessionId: string, reason: string): void => {
+        //
+        // Gate (added 2026-04-25 for the daemon-restart auto-resume regression): only archive
+        // when the machine is genuinely offline AND has been so for at least
+        // MACHINE_DOWN_GRACE_MS. Without this gate, every list query during the
+        // server-restart→daemon-reconnect window writes pseudo-archives (lifecycleState='archived'
+        // without archivedBy), which then permanently silence the session's heartbeats via
+        // handleSessionAlive's stored.active=false guard.
+        //
+        // Fingerprint (Fix 4): always write archivedBy='system-stale' + lifecycleStateSince + archiveReason
+        // so future code can distinguish staleness archives from legitimate user/cli/server archives.
+        const archiveStaleSession = (sessionId: string, reason: string, machineId?: string): void => {
+            // Gate 1: never archive during server's startup quiet window. The daemon may
+            // still be in the middle of reconnecting and hasn't sent machine-alive yet.
+            if (typeof (engine as Partial<SyncEngine>).inStartupQuietWindow === 'function'
+                && engine.inStartupQuietWindow()) {
+                return
+            }
+            // Gate 2: when the session points at a known machine, require that machine
+            // to have been offline long enough that we're confident it isn't just briefly
+            // disconnected. Sessions whose machineId is missing or whose machine no longer
+            // exists fall through (genuinely orphaned).
+            if (machineId) {
+                const machine = typeof engine.getMachine === 'function'
+                    ? engine.getMachine(machineId)
+                    : undefined
+                if (machine) {
+                    if (machine.active) return
+                    const machineDownFor = now - (machine.activeAt ?? 0)
+                    if (machineDownFor < MACHINE_DOWN_GRACE_MS) return
+                }
+            }
+
             void (async () => {
                 try {
                     const tasks: Promise<unknown>[] = []
@@ -1549,7 +1584,12 @@ export function createSessionsRoutes(
                     }
                     if (typeof store.patchSessionMetadata === 'function') {
                         tasks.push(Promise.resolve(
-                            store.patchSessionMetadata(sessionId, { lifecycleState: 'archived' }, orgId)
+                            store.patchSessionMetadata(sessionId, {
+                                lifecycleState: 'archived',
+                                lifecycleStateSince: now,
+                                archivedBy: 'system-stale',
+                                archiveReason: `staleness: ${reason}`,
+                            }, orgId)
                         ).catch((error) => {
                             console.error(`[sessions] patchSessionMetadata failed while archiving stale session ${sessionId} (reason=${reason})`, error)
                         }))
@@ -1573,25 +1613,29 @@ export function createSessionsRoutes(
             // Database active=false is the source of truth for archived sessions
             if (!stored.active) return false
 
-            // If not in memory (e.g. server restarted), also check activeAt freshness
-            // Previously this returned stored.active blindly, causing zombie sessions to show as "running"
-            // Always verify liveness via heartbeat recency
-            if (!memorySession) {
-                const dbActiveAt = stored.activeAt ?? stored.updatedAt
-                const timeSinceDbActive = now - dbActiveAt
-                if (timeSinceDbActive < ACTIVE_THRESHOLD_MS) return true
-                archiveStaleSession(stored.id, `no-memory-stale-${timeSinceDbActive}ms`)
-                return false
-            }
-
-            if (!memorySession.active) {
-                archiveStaleSession(stored.id, 'memory-inactive')
-                return false
-            }
-            // Check if activeAt is recent (CLI is sending heartbeats)
-            const timeSinceActive = now - memorySession.activeAt
+            // Use the freshest activeAt across memory and DB. memory.active can briefly
+            // be false right after server restart (hydrate's reset) even when the CLI
+            // process is still live and DB.activeAt is recent — taking the max prevents
+            // those transient gaps from being misread as staleness.
+            const memoryActiveAt = memorySession?.activeAt ?? 0
+            const dbActiveAt = stored.activeAt ?? stored.updatedAt ?? 0
+            const latestActiveAt = Math.max(memoryActiveAt, dbActiveAt)
+            const timeSinceActive = now - latestActiveAt
             if (timeSinceActive < ACTIVE_THRESHOLD_MS) return true
-            archiveStaleSession(stored.id, `memory-stale-${timeSinceActive}ms`)
+
+            const machineId = (() => {
+                const fromMem = (memorySession?.metadata as { machineId?: unknown } | null | undefined)?.machineId
+                if (typeof fromMem === 'string' && fromMem) return fromMem
+                const fromDb = (stored.metadata as { machineId?: unknown } | null | undefined)?.machineId
+                if (typeof fromDb === 'string' && fromDb) return fromDb
+                return undefined
+            })()
+
+            archiveStaleSession(
+                stored.id,
+                memorySession ? `memory-stale-${timeSinceActive}ms` : `no-memory-stale-${timeSinceActive}ms`,
+                machineId
+            )
             return false
         }
 

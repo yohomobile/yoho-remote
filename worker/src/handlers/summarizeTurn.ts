@@ -81,6 +81,7 @@ function extractProviderTelemetry(error: unknown): ProviderTelemetry | null {
 function buildRunMetadata(input: {
     payload: SummarizeTurnPayload
     sessionNamespace: string
+    sessionOrgId: string
     workerHost: string
     workerVersion: string
     queueSchema: string
@@ -102,7 +103,9 @@ function buildRunMetadata(input: {
         job_version: input.job.version,
         idempotency_key: input.job.idempotencyKey,
         payload_namespace: input.payload.namespace,
+        payload_org_id: input.payload.orgId,
         session_namespace: input.sessionNamespace,
+        session_org_id: input.sessionOrgId,
         user_seq: input.payload.userSeq,
         seq_start: input.payload.userSeq,
         scheduled_at_ms: input.payload.scheduledAtMs,
@@ -213,6 +216,7 @@ export async function handleSummarizeTurn(
     const startedAt = Date.now()
     let outcomeRecorded = false
     let sessionNamespace = payload.namespace
+    let sessionOrgId = payload.orgId
     let seqEnd: number | null = null
     let messageCount = 0
     let realMessageCount = 0
@@ -270,6 +274,7 @@ export async function handleSummarizeTurn(
     } = {}): Record<string, unknown> => buildRunMetadata({
         payload,
         sessionNamespace,
+        sessionOrgId,
         workerHost: ctx.worker.host,
         workerVersion: ctx.worker.version,
         queueSchema: ctx.config.bossSchema,
@@ -301,6 +306,18 @@ export async function handleSummarizeTurn(
         }
 
         sessionNamespace = session.namespace
+        if (!session.orgId || session.orgId !== payload.orgId) {
+            providerSkippedReason = 'session_org_mismatch'
+            await recordRun(buildRunInput({
+                status: 'error_permanent',
+                durationMs: Date.now() - startedAt,
+                errorCode: 'session_org_mismatch',
+                error: 'Session orgId missing or does not match job payload',
+                metadata: buildMetadata(),
+            }))
+            return
+        }
+        sessionOrgId = session.orgId
         if (session.thinking) {
             providerSkippedReason = 'session_still_thinking'
             const error = new TransientJobError(
@@ -388,6 +405,7 @@ export async function handleSummarizeTurn(
         }
 
         const cachedResult = await ctx.runStore.getLatestCachedL1Result(
+            sessionOrgId,
             payload.sessionId,
             payload.userSeq,
             job.name,
@@ -468,6 +486,7 @@ export async function handleSummarizeTurn(
             const inserted = await ctx.summaryStore.insertL1({
                 sessionId: payload.sessionId,
                 namespace: sessionNamespace,
+                orgId: sessionOrgId,
                 seqStart: payload.userSeq,
                 seqEnd: seqEnd ?? payload.userSeq,
                 summary: llmResult.summary,
@@ -512,6 +531,7 @@ export async function handleSummarizeTurn(
             enqueueSegmentIfNeeded(
                 payload.sessionId,
                 sessionNamespace,
+                sessionOrgId,
                 ctx,
                 ctx.config.l2SegmentThreshold
             ).catch(err => {

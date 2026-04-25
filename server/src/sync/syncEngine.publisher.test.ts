@@ -11,7 +11,7 @@ function createSession(id: string): Session {
     return {
         id,
         namespace: 'default',
-        orgId: null,
+        orgId: 'org-test',
         seq: 0,
         createdAt: 0,
         updatedAt: 0,
@@ -68,7 +68,7 @@ describe('SyncEngine summarize-turn publisher contract', () => {
                 sendCalls.push({ queueName, payload, options })
                 return 'job-1'
             },
-            async sendSessionSummary(_sessionId, _namespace) {
+            async sendSessionSummary(_sessionId, _orgId, _namespace) {
                 return 'job-session'
             },
             async stop() {}
@@ -102,14 +102,15 @@ describe('SyncEngine summarize-turn publisher contract', () => {
         expect(sendCalls).toHaveLength(1)
         expect(sendCalls[0]?.queueName).toBe(SUMMARIZE_TURN_QUEUE_NAME)
         expect(sendCalls[0]?.payload.version).toBe(SUMMARIZE_TURN_JOB_VERSION)
-        expect(sendCalls[0]?.payload.idempotencyKey).toBe(`turn:${session.id}:5`)
+        expect(sendCalls[0]?.payload.idempotencyKey).toBe(`turn:${session.orgId}:${session.id}:5`)
         expect(sendCalls[0]?.payload.payload.sessionId).toBe(session.id)
+        expect(sendCalls[0]?.payload.payload.orgId).toBe(session.orgId!)
         expect(sendCalls[0]?.payload.payload.namespace).toBe(session.namespace)
         expect(sendCalls[0]?.payload.payload.userSeq).toBe(5)
         expect(sendCalls[0]?.payload.payload.scheduledAtMs).toBeGreaterThanOrEqual(startedAt)
         expect(sendCalls[0]?.payload.payload.scheduledAtMs).toBeLessThanOrEqual(Date.now())
         expect(sendCalls[0]?.options).toEqual({
-            singletonKey: `turn:${session.id}:5`
+            singletonKey: `turn:${session.orgId}:${session.id}:5`
         })
     })
 })
