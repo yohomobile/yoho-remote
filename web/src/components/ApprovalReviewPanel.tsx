@@ -32,31 +32,104 @@ const STATUS_LABEL: Record<ApprovalMasterStatus, string> = {
     expired: '已过期',
 }
 
-// Action menu per domain — drives the "choose action" select in the decide form.
-const ACTIONS_BY_DOMAIN: Record<string, Array<{ value: string; label: string }>> = {
+// Per-action extra-field metadata. Drives the dynamic form rendered after the
+// action dropdown so users don't have to hand-write JSON. Field names with a
+// dot path (e.g. `createPerson.canonicalName`) are nested into the body as
+// objects when posted.
+type ExtraField = {
+    name: string
+    label: string
+    type: 'text' | 'select'
+    required?: boolean
+    options?: string[]
+    placeholder?: string
+}
+
+type DomainAction = {
+    value: string
+    label: string
+    fields?: ExtraField[]
+}
+
+const ACTIONS_BY_DOMAIN: Record<string, DomainAction[]> = {
     identity: [
-        { value: 'confirm_existing_person', label: '关联已有 Person' },
-        { value: 'create_person_and_confirm', label: '新建 Person 并关联' },
+        {
+            value: 'confirm_existing_person',
+            label: '关联已有 Person',
+            fields: [{ name: 'personId', label: 'personId', type: 'text', required: true }],
+        },
+        {
+            value: 'create_person_and_confirm',
+            label: '新建 Person 并关联',
+            fields: [
+                { name: 'createPerson.canonicalName', label: '姓名（可选）', type: 'text' },
+                { name: 'createPerson.canonicalEmail', label: '邮箱（可选）', type: 'text' },
+                { name: 'createPerson.description', label: '描述（可选）', type: 'text' },
+            ],
+        },
         { value: 'mark_shared', label: '标记为共享身份' },
         { value: 'reject', label: '驳回' },
     ],
     team_memory: [
-        { value: 'approve', label: '批准' },
-        { value: 'supersede', label: '覆盖旧版' },
+        {
+            value: 'approve',
+            label: '批准',
+            fields: [{ name: 'memoryRef', label: 'memoryRef（可选）', type: 'text' }],
+        },
+        {
+            value: 'supersede',
+            label: '覆盖旧版',
+            fields: [{ name: 'memoryRef', label: 'memoryRef（可选）', type: 'text' }],
+        },
         { value: 'reject', label: '驳回' },
         { value: 'expire', label: '过期' },
     ],
     observation: [
-        { value: 'confirm', label: '确认假设' },
+        {
+            value: 'confirm',
+            label: '确认假设',
+            fields: [
+                {
+                    name: 'promotedCommunicationPlanId',
+                    label: '手动 plan id（留空走 auto-promote）',
+                    type: 'text',
+                },
+            ],
+        },
         { value: 'reject', label: '驳回' },
         { value: 'dismiss', label: '忽略' },
         { value: 'expire', label: '过期' },
     ],
     memory_conflict: [
-        { value: 'resolve', label: '解决' },
+        {
+            value: 'resolve',
+            label: '解决',
+            fields: [
+                {
+                    name: 'resolution',
+                    label: '解决方式',
+                    type: 'select',
+                    required: true,
+                    options: ['keep_a', 'keep_b', 'supersede', 'discard_all', 'mark_expired'],
+                },
+            ],
+        },
         { value: 'dismiss', label: '忽略' },
         { value: 'reopen', label: '重新打开' },
     ],
+}
+
+function setNestedField(target: Record<string, unknown>, dotPath: string, value: unknown): void {
+    const parts = dotPath.split('.')
+    let cursor = target
+    for (let i = 0; i < parts.length - 1; i++) {
+        const key = parts[i]!
+        if (typeof cursor[key] !== 'object' || cursor[key] === null) {
+            cursor[key] = {}
+        }
+        cursor = cursor[key] as Record<string, unknown>
+    }
+    cursor[parts[parts.length - 1]!] = value
 }
 
 function formatTimestamp(ts: number): string {
@@ -77,7 +150,7 @@ export function ApprovalReviewPanel() {
     const [selectedId, setSelectedId] = useState<string | null>(null)
     const [actionKey, setActionKey] = useState<string>('')
     const [reason, setReason] = useState<string>('')
-    const [extraJson, setExtraJson] = useState<string>('')
+    const [fieldValues, setFieldValues] = useState<Record<string, string>>({})
     const [lastResultHint, setLastResultHint] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
 
@@ -110,6 +183,11 @@ export function ApprovalReviewPanel() {
         return ACTIONS_BY_DOMAIN[selected.domain] ?? []
     }, [selected])
 
+    const currentActionFields = useMemo(() => {
+        if (!actionKey) return []
+        return availableActions.find((a) => a.value === actionKey)?.fields ?? []
+    }, [availableActions, actionKey])
+
     const decideMutation = useMutation({
         mutationFn: async (args: { id: string; body: Record<string, unknown> }) => {
             return await apiClient.decideApproval(args.id, args.body as { action: string }, currentOrgId!)
@@ -127,7 +205,7 @@ export function ApprovalReviewPanel() {
             queryClient.invalidateQueries({ queryKey: queryKeys.approvalDetail(currentOrgId, result.approval.id) })
             setActionKey('')
             setReason('')
-            setExtraJson('')
+            setFieldValues({})
         },
         onError: (err: unknown) => {
             setError(err instanceof Error ? err.message : String(err))
@@ -136,22 +214,19 @@ export function ApprovalReviewPanel() {
 
     const handleSubmit = () => {
         if (!selected || !actionKey) return
-        let extra: Record<string, unknown> = {}
-        const trimmed = extraJson.trim()
-        if (trimmed) {
-            try {
-                const parsed = JSON.parse(trimmed)
-                if (parsed && typeof parsed === 'object') extra = parsed as Record<string, unknown>
-            } catch {
-                setError('extra 字段必须是合法 JSON 对象')
-                return
+        const body: Record<string, unknown> = { action: actionKey, reason: reason || null }
+        for (const field of currentActionFields) {
+            const raw = (fieldValues[field.name] ?? '').trim()
+            if (!raw) {
+                if (field.required) {
+                    setError(`${field.label} 是必填项`)
+                    return
+                }
+                continue
             }
+            setNestedField(body, field.name, raw)
         }
-        const body: Record<string, unknown> = {
-            ...extra,
-            action: actionKey,
-            reason: reason || null,
-        }
+        setError(null)
         decideMutation.mutate({ id: selected.id, body })
     }
 
@@ -240,26 +315,53 @@ export function ApprovalReviewPanel() {
                                 <select
                                     className="w-full text-sm px-2 py-1 border rounded"
                                     value={actionKey}
-                                    onChange={(e) => setActionKey(e.target.value)}
+                                    onChange={(e) => {
+                                        setActionKey(e.target.value)
+                                        setFieldValues({})
+                                    }}
                                 >
                                     <option value="">选择动作...</option>
                                     {availableActions.map((a) => (
                                         <option key={a.value} value={a.value}>{a.label}</option>
                                     ))}
                                 </select>
+                                {currentActionFields.map((field) => (
+                                    <div key={field.name}>
+                                        <label className="text-xs text-gray-600 block mb-1">
+                                            {field.label}{field.required ? ' *' : ''}
+                                        </label>
+                                        {field.type === 'select' ? (
+                                            <select
+                                                className="w-full text-sm px-2 py-1 border rounded"
+                                                value={fieldValues[field.name] ?? ''}
+                                                onChange={(e) =>
+                                                    setFieldValues((prev) => ({ ...prev, [field.name]: e.target.value }))
+                                                }
+                                            >
+                                                <option value="">— 选择 —</option>
+                                                {(field.options ?? []).map((opt) => (
+                                                    <option key={opt} value={opt}>{opt}</option>
+                                                ))}
+                                            </select>
+                                        ) : (
+                                            <input
+                                                type="text"
+                                                className="w-full text-sm px-2 py-1 border rounded"
+                                                placeholder={field.placeholder ?? ''}
+                                                value={fieldValues[field.name] ?? ''}
+                                                onChange={(e) =>
+                                                    setFieldValues((prev) => ({ ...prev, [field.name]: e.target.value }))
+                                                }
+                                            />
+                                        )}
+                                    </div>
+                                ))}
                                 <textarea
                                     className="w-full text-xs px-2 py-1 border rounded"
                                     placeholder="原因（可选）"
                                     rows={2}
                                     value={reason}
                                     onChange={(e) => setReason(e.target.value)}
-                                />
-                                <textarea
-                                    className="w-full font-mono text-xs px-2 py-1 border rounded"
-                                    placeholder='extra JSON (动作需要额外字段时填, e.g. {"personId":"p-1"})'
-                                    rows={3}
-                                    value={extraJson}
-                                    onChange={(e) => setExtraJson(e.target.value)}
                                 />
                                 <button
                                     className="px-3 py-1 bg-blue-600 text-white text-sm rounded disabled:bg-gray-400"

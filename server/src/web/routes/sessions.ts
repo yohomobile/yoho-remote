@@ -1540,6 +1540,10 @@ export function createSessionsRoutes(
         // archive its sessions. Shorter values trigger false positives during deploy
         // (server-up → daemon-up window can take 10–30s).
         const MACHINE_DOWN_GRACE_MS = 5 * 60 * 1000 // 5 minutes
+        // Grace for machine-online orphan detection: if the machine is alive but a session has
+        // been inactive this long, auto-resume already ran (or the session can't be resumed),
+        // and the session is a permanent orphan. Archive it so it moves to the archive view.
+        const MACHINE_ONLINE_ORPHAN_GRACE_MS = 10 * 60 * 1000 // 10 minutes
         const now = Date.now()
 
         // Fire-and-forget reconciliation: when a DB row says active=true but staleness checks
@@ -1555,53 +1559,48 @@ export function createSessionsRoutes(
         // without archivedBy), which then permanently silence the session's heartbeats via
         // handleSessionAlive's stored.active=false guard.
         //
-        // Fingerprint (Fix 4): always write archivedBy='system-stale' + lifecycleStateSince + archiveReason
-        // so future code can distinguish staleness archives from legitimate user/cli/server archives.
-        const archiveStaleSession = (sessionId: string, reason: string, machineId?: string): void => {
+        // Exception: when the machine IS online but the session has been inactive for
+        // >MACHINE_ONLINE_ORPHAN_GRACE_MS, auto-resume has already run and failed (e.g. Codex
+        // sessions whose temp dirs were deleted on daemon restart). Archive them so they appear
+        // in archive view instead of being permanently invisible.
+        //
+        // Uses engine.archiveSession (not store.patchSessionMetadata) so in-memory state is
+        // updated atomically with the DB write and an SSE session-updated event is emitted.
+        const archiveStaleSession = (sessionId: string, reason: string, machineId?: string, sessionActiveAt?: number): void => {
             // Gate 1: never archive during server's startup quiet window. The daemon may
             // still be in the middle of reconnecting and hasn't sent machine-alive yet.
             if (typeof (engine as Partial<SyncEngine>).inStartupQuietWindow === 'function'
                 && engine.inStartupQuietWindow()) {
                 return
             }
-            // Gate 2: when the session points at a known machine, require that machine
-            // to have been offline long enough that we're confident it isn't just briefly
-            // disconnected. Sessions whose machineId is missing or whose machine no longer
-            // exists fall through (genuinely orphaned).
+            // Gate 2: when the session points at a known machine, require either:
+            //   (a) machine is offline for >MACHINE_DOWN_GRACE_MS, OR
+            //   (b) machine is online but session has been inactive for >MACHINE_ONLINE_ORPHAN_GRACE_MS
+            //       (orphaned — auto-resume already ran and couldn't recover it)
             if (machineId) {
                 const machine = typeof engine.getMachine === 'function'
                     ? engine.getMachine(machineId)
                     : undefined
                 if (machine) {
-                    if (machine.active) return
-                    const machineDownFor = now - (machine.activeAt ?? 0)
-                    if (machineDownFor < MACHINE_DOWN_GRACE_MS) return
+                    if (machine.active) {
+                        // Machine is online: only archive sessions that have been inactive long
+                        // enough for auto-resume to have definitively given up.
+                        const sessionDownFor = now - (sessionActiveAt ?? 0)
+                        if (sessionDownFor < MACHINE_ONLINE_ORPHAN_GRACE_MS) return
+                    } else {
+                        const machineDownFor = now - (machine.activeAt ?? 0)
+                        if (machineDownFor < MACHINE_DOWN_GRACE_MS) return
+                    }
                 }
             }
 
             void (async () => {
                 try {
-                    const tasks: Promise<unknown>[] = []
-                    if (typeof store.setSessionActive === 'function') {
-                        tasks.push(Promise.resolve(
-                            store.setSessionActive(sessionId, false, now, orgId)
-                        ).catch((error) => {
-                            console.error(`[sessions] setSessionActive failed while archiving stale session ${sessionId} (reason=${reason})`, error)
-                        }))
-                    }
-                    if (typeof store.patchSessionMetadata === 'function') {
-                        tasks.push(Promise.resolve(
-                            store.patchSessionMetadata(sessionId, {
-                                lifecycleState: 'archived',
-                                lifecycleStateSince: now,
-                                archivedBy: 'system-stale',
-                                archiveReason: `staleness: ${reason}`,
-                            }, orgId)
-                        ).catch((error) => {
-                            console.error(`[sessions] patchSessionMetadata failed while archiving stale session ${sessionId} (reason=${reason})`, error)
-                        }))
-                    }
-                    await Promise.allSettled(tasks)
+                    await engine.archiveSession(sessionId, {
+                        terminateSession: false,
+                        archivedBy: 'system-stale',
+                        archiveReason: `staleness: ${reason}`,
+                    })
                 } catch (error) {
                     console.error(`[sessions] Failed to archive stale session ${sessionId} (reason=${reason})`, error)
                 }
@@ -1618,7 +1617,28 @@ export function createSessionsRoutes(
             }
 
             // Database active=false is the source of truth for archived sessions
-            if (!stored.active) return false
+            if (!stored.active) {
+                // Detect orphaned sessions: DB says inactive but lifecycleState is still 'running'
+                // (not properly archived). This happens when processes die (e.g. Codex sessions
+                // after daemon restart with deleted temp dirs) but are never formally archived.
+                // Give auto-resume MACHINE_ONLINE_ORPHAN_GRACE_MS to recover; after that, archive.
+                const dbMeta = stored.metadata as { lifecycleState?: string; machineId?: string; archivedBy?: string } | null
+                if (dbMeta?.lifecycleState === 'running' && !dbMeta?.archivedBy) {
+                    const orphanMachineId = (() => {
+                        const fromMem = (memorySession?.metadata as { machineId?: unknown } | null | undefined)?.machineId
+                        if (typeof fromMem === 'string' && fromMem) return fromMem
+                        const fromDb = dbMeta?.machineId
+                        if (typeof fromDb === 'string' && fromDb) return fromDb
+                        return undefined
+                    })()
+                    const sessionActiveAt = Math.max(
+                        memorySession?.activeAt ?? 0,
+                        stored.activeAt ?? stored.updatedAt ?? 0
+                    )
+                    archiveStaleSession(stored.id, 'orphaned-inactive', orphanMachineId, sessionActiveAt)
+                }
+                return false
+            }
 
             // Use the freshest activeAt across memory and DB. memory.active can briefly
             // be false right after server restart (hydrate's reset) even when the CLI
