@@ -23,6 +23,7 @@ function asStringArray(value: unknown): string[] {
 export type InsertRunInput = {
     sessionId: string
     namespace: string
+    orgId: string
     level: 1 | 2 | 3
     jobId?: string | null
     jobName?: string | null
@@ -55,7 +56,7 @@ export class RunStore {
     async insert(input: InsertRunInput): Promise<void> {
         await this.pool.query(
             `INSERT INTO summarization_runs (
-                id, session_id, namespace, level, job_id, job_name, job_family, job_version, idempotency_key, status,
+                id, session_id, namespace, org_id, level, job_id, job_name, job_family, job_version, idempotency_key, status,
                 duration_ms, tokens_in, tokens_out,
                 worker_host, worker_version, queue_schema,
                 retry_count, retry_limit, cache_hit,
@@ -63,17 +64,18 @@ export class RunStore {
                 error_code, error, metadata, created_at
             )
             VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                $11, $12, $13,
-                $14, $15, $16,
-                $17, $18, $19,
-                $20, $21, $22, $23, $24,
-                $25, $26, $27, $28
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                $12, $13, $14,
+                $15, $16, $17,
+                $18, $19, $20,
+                $21, $22, $23, $24, $25,
+                $26, $27, $28, $29
             )`,
             [
                 randomUUID(),
                 input.sessionId,
                 input.namespace,
+                input.orgId,
                 input.level,
                 input.jobId ?? null,
                 input.jobName ?? null,
@@ -113,7 +115,7 @@ export class RunStore {
         const result = await this.pool.query(
             `SELECT metadata
              FROM summarization_runs
-             WHERE namespace = $1
+             WHERE org_id = $1
                AND session_id = $2
                AND level = 1
                AND job_name = $4

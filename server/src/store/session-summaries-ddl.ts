@@ -8,12 +8,18 @@ export const SESSION_SUMMARIES_DDL = `
         seq_start INTEGER,
         seq_end INTEGER,
         parent_id TEXT REFERENCES session_summaries(id) ON DELETE SET NULL,
+        segment_batch_id TEXT,
+        claimed_at BIGINT,
+        claim_expires_at BIGINT,
         summary TEXT NOT NULL,
         metadata JSONB,
         created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
     );
 
     ALTER TABLE session_summaries ADD COLUMN IF NOT EXISTS org_id TEXT;
+    ALTER TABLE session_summaries ADD COLUMN IF NOT EXISTS segment_batch_id TEXT;
+    ALTER TABLE session_summaries ADD COLUMN IF NOT EXISTS claimed_at BIGINT;
+    ALTER TABLE session_summaries ADD COLUMN IF NOT EXISTS claim_expires_at BIGINT;
 
     UPDATE session_summaries ss
     SET org_id = s.org_id
@@ -33,6 +39,9 @@ export const SESSION_SUMMARIES_DDL = `
 
     CREATE INDEX IF NOT EXISTS idx_ss_session_level ON session_summaries(session_id, level);
     CREATE INDEX IF NOT EXISTS idx_ss_org_session_level ON session_summaries(org_id, session_id, level);
+    CREATE INDEX IF NOT EXISTS idx_ss_l1_claimable
+        ON session_summaries(org_id, session_id, level, parent_id, claim_expires_at, seq_start)
+        WHERE level = 1;
     CREATE INDEX IF NOT EXISTS idx_ss_created ON session_summaries(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_ss_namespace_level_created
         ON session_summaries(namespace, level, created_at DESC);
@@ -45,6 +54,7 @@ export const SUMMARIZATION_RUNS_DDL = `
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
         namespace TEXT NOT NULL,
+        org_id TEXT,
         level SMALLINT NOT NULL,
         job_id TEXT,
         job_name TEXT,
@@ -72,6 +82,15 @@ export const SUMMARIZATION_RUNS_DDL = `
         created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
     );
 
+    ALTER TABLE summarization_runs ADD COLUMN IF NOT EXISTS org_id TEXT;
+
+    UPDATE summarization_runs sr
+    SET org_id = s.org_id
+    FROM sessions s
+    WHERE sr.session_id = s.id
+      AND sr.org_id IS NULL
+      AND s.org_id IS NOT NULL;
+
     ALTER TABLE summarization_runs ADD COLUMN IF NOT EXISTS job_name TEXT;
     ALTER TABLE summarization_runs ADD COLUMN IF NOT EXISTS job_family TEXT;
     ALTER TABLE summarization_runs ADD COLUMN IF NOT EXISTS job_version INTEGER;
@@ -90,10 +109,13 @@ export const SUMMARIZATION_RUNS_DDL = `
     ALTER TABLE summarization_runs ADD COLUMN IF NOT EXISTS error_code TEXT;
 
     CREATE INDEX IF NOT EXISTS idx_sr_session ON summarization_runs(session_id, level);
+    CREATE INDEX IF NOT EXISTS idx_sr_org_session ON summarization_runs(org_id, session_id, level);
     CREATE INDEX IF NOT EXISTS idx_sr_status ON summarization_runs(status) WHERE status != 'success';
     CREATE INDEX IF NOT EXISTS idx_sr_created ON summarization_runs(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_sr_namespace_created
         ON summarization_runs(namespace, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sr_org_created
+        ON summarization_runs(org_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_sr_job_created
         ON summarization_runs(job_name, created_at DESC) WHERE job_name IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_sr_idempotency_key
