@@ -147,7 +147,7 @@ describe('sessionActivity', () => {
         expect(matchesArchiveFilter(archived, 'archive')).toBe(true)
     })
 
-    test('keeps regular inactive sessions visible in archive view', () => {
+    test('keeps non-archived inactive sessions out of archive view (relies on lifecycleState)', () => {
         const inactive = createSession({
             active: false,
             metadata: {
@@ -155,7 +155,8 @@ describe('sessionActivity', () => {
             },
         })
 
-        expect(matchesArchiveFilter(inactive, 'archive')).toBe(true)
+        expect(matchesArchiveFilter(inactive, 'archive')).toBe(false)
+        expect(matchesArchiveFilter(inactive, 'active')).toBe(false)
     })
 
     test('treats reconnecting sessions as visible in active view without marking them online', () => {

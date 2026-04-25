@@ -1531,6 +1531,36 @@ export function createSessionsRoutes(
         const ACTIVE_THRESHOLD_MS = 2 * 60 * 1000 // 2 minutes
         const now = Date.now()
 
+        // Fire-and-forget reconciliation: when a DB row says active=true but staleness checks
+        // mark it as zombie, persist that finding so the row's `active` and `lifecycleState`
+        // converge with what we return to the client. Without this, every read recomputes
+        // staleness while DB stays out of sync, and clients see ghosts (e.g. sessions that
+        // never appear in either active or archive views).
+        const archiveStaleSession = (sessionId: string, reason: string): void => {
+            void (async () => {
+                try {
+                    const tasks: Promise<unknown>[] = []
+                    if (typeof store.setSessionActive === 'function') {
+                        tasks.push(Promise.resolve(
+                            store.setSessionActive(sessionId, false, now, orgId)
+                        ).catch((error) => {
+                            console.error(`[sessions] setSessionActive failed while archiving stale session ${sessionId} (reason=${reason})`, error)
+                        }))
+                    }
+                    if (typeof store.patchSessionMetadata === 'function') {
+                        tasks.push(Promise.resolve(
+                            store.patchSessionMetadata(sessionId, { lifecycleState: 'archived' }, orgId)
+                        ).catch((error) => {
+                            console.error(`[sessions] patchSessionMetadata failed while archiving stale session ${sessionId} (reason=${reason})`, error)
+                        }))
+                    }
+                    await Promise.allSettled(tasks)
+                } catch (error) {
+                    console.error(`[sessions] Failed to archive stale session ${sessionId} (reason=${reason})`, error)
+                }
+            })()
+        }
+
         const isSessionTrulyActive = (stored: StoredSession, memorySession: Session | undefined): boolean => {
             const reconnecting = typeof (engine as Partial<SyncEngine>).isSessionStartupRecovering === 'function'
                 ? engine.isSessionStartupRecovering(stored.id)
@@ -1549,13 +1579,20 @@ export function createSessionsRoutes(
             if (!memorySession) {
                 const dbActiveAt = stored.activeAt ?? stored.updatedAt
                 const timeSinceDbActive = now - dbActiveAt
-                return timeSinceDbActive < ACTIVE_THRESHOLD_MS
+                if (timeSinceDbActive < ACTIVE_THRESHOLD_MS) return true
+                archiveStaleSession(stored.id, `no-memory-stale-${timeSinceDbActive}ms`)
+                return false
             }
 
-            if (!memorySession.active) return false
+            if (!memorySession.active) {
+                archiveStaleSession(stored.id, 'memory-inactive')
+                return false
+            }
             // Check if activeAt is recent (CLI is sending heartbeats)
             const timeSinceActive = now - memorySession.activeAt
-            return timeSinceActive < ACTIVE_THRESHOLD_MS
+            if (timeSinceActive < ACTIVE_THRESHOLD_MS) return true
+            archiveStaleSession(stored.id, `memory-stale-${timeSinceActive}ms`)
+            return false
         }
 
         // Build session summaries from database, enhanced with memory data

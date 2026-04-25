@@ -26,7 +26,7 @@ export function matchesArchiveFilter(
 ): boolean {
     const archived = isArchivedSession(session)
     if (archiveFilter === 'archive') {
-        return archived || !isSessionVisibleInActiveList(session)
+        return archived
     }
     return !archived && isSessionVisibleInActiveList(session)
 }

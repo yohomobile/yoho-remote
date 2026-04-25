@@ -405,6 +405,115 @@ describe('createSessionsRoutes', () => {
         expect(payload.sessions[0]?.metadata).not.toHaveProperty('mainSessionId')
     })
 
+    it('archives stale zombie sessions when DB says active=true but heartbeat is too old', async () => {
+        const storedSessions = [
+            createStoredSession({
+                id: 'session-zombie',
+                active: true,
+                activeAt: 1_700_000_000_000,
+                updatedAt: 1_700_000_000_000,
+                metadata: { path: '/tmp/zombie' },
+            }),
+        ]
+
+        const setActiveCalls: Array<[string, boolean, string]> = []
+        const patchMetadataCalls: Array<[string, Record<string, unknown>, string]> = []
+
+        const fakeEngine = {
+            getSessionsByNamespace: () => [],
+            isSessionStartupRecovering: () => false,
+        }
+
+        const fakeStore = {
+            getSessionsByNamespace: async () => storedSessions,
+            setSessionActive: async (id: string, active: boolean, _at: number, orgId: string) => {
+                setActiveCalls.push([id, active, orgId])
+                return true
+            },
+            patchSessionMetadata: async (id: string, patch: Record<string, unknown>, orgId: string) => {
+                patchMetadataCalls.push([id, patch, orgId])
+                return true
+            },
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'ns-test')
+            c.set('role', 'developer')
+            c.set('orgs', TEST_ORGS)
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/sessions?orgId=org-a')
+        expect(response.status).toBe(200)
+
+        const payload = await response.json() as {
+            sessions: Array<{ id: string; active: boolean; reconnecting?: boolean }>
+        }
+        expect(payload.sessions[0]).toMatchObject({
+            id: 'session-zombie',
+            active: false,
+        })
+
+        // Fire-and-forget: let the queued archive tasks run.
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        expect(setActiveCalls).toEqual([['session-zombie', false, 'org-a']])
+        expect(patchMetadataCalls).toEqual([
+            ['session-zombie', { lifecycleState: 'archived' }, 'org-a'],
+        ])
+    })
+
+    it('does not archive reconnecting sessions even when their heartbeat looks stale', async () => {
+        const storedSessions = [
+            createStoredSession({
+                id: 'session-reconnect-stale',
+                active: true,
+                activeAt: 1_700_000_000_000,
+                updatedAt: 1_700_000_000_000,
+                metadata: { path: '/tmp/reconnect' },
+            }),
+        ]
+
+        const setActiveCalls: string[] = []
+        const patchMetadataCalls: string[] = []
+
+        const fakeEngine = {
+            getSessionsByNamespace: () => [],
+            isSessionStartupRecovering: (sessionId: string) => sessionId === 'session-reconnect-stale',
+        }
+
+        const fakeStore = {
+            getSessionsByNamespace: async () => storedSessions,
+            setSessionActive: async (id: string) => {
+                setActiveCalls.push(id)
+                return true
+            },
+            patchSessionMetadata: async (id: string) => {
+                patchMetadataCalls.push(id)
+                return true
+            },
+        } as any
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'ns-test')
+            c.set('role', 'developer')
+            c.set('orgs', TEST_ORGS)
+            await next()
+        })
+        app.route('/api', createSessionsRoutes(() => fakeEngine as any, () => null, fakeStore))
+
+        const response = await app.request('/api/sessions?orgId=org-a')
+        expect(response.status).toBe(200)
+
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        expect(setActiveCalls).toEqual([])
+        expect(patchMetadataCalls).toEqual([])
+    })
+
     it('marks startup-recovering sessions as reconnecting instead of dropping them into archive semantics', async () => {
         const storedSessions = [
             createStoredSession({

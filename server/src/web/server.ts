@@ -26,7 +26,6 @@ import { createOrgsRoutes } from './routes/orgs'
 import { createLicensesRoutes } from './routes/licenses'
 import { createCodexOpenAIRoutes } from './routes/codex-openai'
 import { createDownloadCliRoutes, createDownloadApiRoutes } from './routes/downloads'
-import { createControlPlaneRoutes } from './routes/control-plane'
 import { createWorkerMcpRoutes } from './routes/worker-mcp'
 import { createAiTaskSchedulesRoutes } from './routes/aiTaskSchedules'
 import { createIdentityRoutes } from './routes/identity'
@@ -140,7 +139,6 @@ function createWebApp(options: {
     app.route('/api', createOrgsRoutes(options.store))
     app.route('/api', createLicensesRoutes(options.store))
     app.route('/api', createDownloadApiRoutes(options.store))
-    app.route('/api', createControlPlaneRoutes(options.store))
     app.route('/api', createIdentityRoutes(options.store, options.getSseManager))
     app.route('/api', createCommunicationPlanRoutes(options.store))
     app.route('/api', createMemoryConflictRoutes(options.store))
