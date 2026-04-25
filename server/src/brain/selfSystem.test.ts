@@ -54,6 +54,7 @@ describe('selfSystem', () => {
 
         const context = await resolveSessionSelfSystemContext({
             orgId: 'org-1',
+            source: 'brain',
             store: {
                 getBrainConfigByOrg: async () => ({
                     namespace: 'org:org-1',
@@ -78,6 +79,7 @@ describe('selfSystem', () => {
                     name: 'K1',
                     role: 'architect',
                     specialties: ['TypeScript', 'Systems'],
+                    behaviorAnchors: [],
                     personality: '冷静、结构化',
                     greetingTemplate: '先把问题拆干净。',
                     preferredProjects: ['yoho-remote'],
@@ -135,6 +137,7 @@ describe('selfSystem', () => {
 
         const context = await resolveSessionSelfSystemContext({
             orgId: 'org-1',
+            source: 'brain',
             store: {
                 getBrainConfigByOrg: async () => ({
                     namespace: 'org:org-1',
@@ -159,6 +162,7 @@ describe('selfSystem', () => {
                     name: 'K1',
                     role: 'architect',
                     specialties: [],
+                    behaviorAnchors: [],
                     personality: null,
                     greetingTemplate: null,
                     preferredProjects: [],
@@ -229,6 +233,7 @@ describe('selfSystem', () => {
 
         const context = await resolveSessionSelfSystemContext({
             orgId: 'org-1',
+            source: 'brain',
             store: {
                 getBrainConfigByOrg: async () => ({
                     namespace: 'org:org-1',
@@ -253,6 +258,7 @@ describe('selfSystem', () => {
                     name: 'K1',
                     role: 'architect',
                     specialties: [],
+                    behaviorAnchors: [],
                     personality: null,
                     greetingTemplate: null,
                     preferredProjects: [],
@@ -293,6 +299,7 @@ describe('selfSystem', () => {
 
         const context = await resolveSessionSelfSystemContext({
             orgId: 'org-1',
+            source: 'brain',
             store: {
                 getBrainConfigByOrg: async () => ({
                     namespace: 'org:org-1',
@@ -317,6 +324,7 @@ describe('selfSystem', () => {
                     name: 'K1',
                     role: 'architect',
                     specialties: [],
+                    behaviorAnchors: [],
                     personality: null,
                     greetingTemplate: null,
                     preferredProjects: [],
@@ -383,6 +391,7 @@ describe('selfSystem', () => {
                     name: id === 'profile-user' ? 'User Style' : 'Other Style',
                     role: 'developer',
                     specialties: [],
+                    behaviorAnchors: [],
                     personality: null,
                     greetingTemplate: null,
                     preferredProjects: [],
@@ -477,6 +486,175 @@ describe('selfSystem', () => {
         expect(context.metadataPatch.selfSystemEnabled).toBe(false)
         expect(context.metadataPatch.selfProfileId).toBeNull()
         expect(context.metadataPatch.selfMemoryStatus).toBe('disabled')
+    })
+
+    it('skips entire self system for brain-child source', async () => {
+        let fetchCalled = false
+        globalThis.fetch = (async () => {
+            fetchCalled = true
+            return new Response('', { status: 200 })
+        }) as unknown as typeof fetch
+
+        let getAIProfileCalled = false
+        const context = await resolveSessionSelfSystemContext({
+            orgId: 'org-1',
+            source: 'brain-child',
+            store: {
+                getBrainConfigByOrg: async () => ({
+                    namespace: 'org:org-1',
+                    orgId: 'org-1',
+                    agent: 'claude',
+                    claudeModelMode: 'opus',
+                    codexModel: 'gpt-5.4',
+                    extra: {
+                        selfSystem: {
+                            enabled: true,
+                            defaultProfileId: 'profile-1',
+                            memoryProvider: 'yoho-memory',
+                        },
+                    },
+                    updatedAt: 1,
+                    updatedBy: null,
+                }),
+                getAIProfile: async () => {
+                    getAIProfileCalled = true
+                    return null
+                },
+            } as any,
+        })
+
+        expect(fetchCalled).toBe(false)
+        expect(getAIProfileCalled).toBe(false)
+        expect(context.prompt).toBeNull()
+        expect(context.metadataPatch.selfProfileResolved).toBe(false)
+        expect(context.metadataPatch.selfMemoryAttached).toBe(false)
+        expect(context.metadataPatch.selfMemoryStatus).toBe('skipped')
+    })
+
+    it('injects header but skips memory for webapp source', async () => {
+        let fetchCalled = false
+        globalThis.fetch = (async () => {
+            fetchCalled = true
+            return new Response(JSON.stringify({
+                result: {
+                    content: '不应被读取',
+                    sources: ['memories/self/preferences.md'],
+                },
+            }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+            })
+        }) as unknown as typeof fetch
+
+        const context = await resolveSessionSelfSystemContext({
+            orgId: 'org-1',
+            source: 'webapp',
+            store: {
+                getBrainConfigByOrg: async () => ({
+                    namespace: 'org:org-1',
+                    orgId: 'org-1',
+                    agent: 'claude',
+                    claudeModelMode: 'opus',
+                    codexModel: 'gpt-5.4',
+                    extra: {
+                        selfSystem: {
+                            enabled: true,
+                            defaultProfileId: 'profile-1',
+                            memoryProvider: 'yoho-memory',
+                        },
+                    },
+                    updatedAt: 1,
+                    updatedBy: null,
+                }),
+                getAIProfile: async () => ({
+                    id: 'profile-1',
+                    orgId: 'org-1',
+                    namespace: 'org:org-1',
+                    name: 'K1',
+                    role: 'architect',
+                    specialties: [],
+                    behaviorAnchors: [],
+                    personality: null,
+                    greetingTemplate: null,
+                    preferredProjects: [],
+                    workStyle: null,
+                    avatarEmoji: '🤖',
+                    status: 'idle',
+                    stats: {
+                        tasksCompleted: 0,
+                        activeMinutes: 0,
+                        lastActiveAt: null,
+                    },
+                    createdAt: 1,
+                    updatedAt: 1,
+                }),
+            } as any,
+        })
+
+        expect(fetchCalled).toBe(false)
+        expect(context.prompt).toContain('## K1 自我系统')
+        expect(context.prompt).not.toContain('长期自我记忆（yoho-memory）')
+        expect(context.metadataPatch.selfProfileResolved).toBe(true)
+        expect(context.metadataPatch.selfMemoryAttached).toBe(false)
+        expect(context.metadataPatch.selfMemoryStatus).toBe('skipped')
+    })
+
+    it('injects header but skips memory for orchestrator source', async () => {
+        let fetchCalled = false
+        globalThis.fetch = (async () => {
+            fetchCalled = true
+            return new Response('', { status: 200 })
+        }) as unknown as typeof fetch
+
+        const context = await resolveSessionSelfSystemContext({
+            orgId: 'org-1',
+            source: 'orchestrator',
+            store: {
+                getBrainConfigByOrg: async () => ({
+                    namespace: 'org:org-1',
+                    orgId: 'org-1',
+                    agent: 'claude',
+                    claudeModelMode: 'opus',
+                    codexModel: 'gpt-5.4',
+                    extra: {
+                        selfSystem: {
+                            enabled: true,
+                            defaultProfileId: 'profile-1',
+                            memoryProvider: 'yoho-memory',
+                        },
+                    },
+                    updatedAt: 1,
+                    updatedBy: null,
+                }),
+                getAIProfile: async () => ({
+                    id: 'profile-1',
+                    orgId: 'org-1',
+                    namespace: 'org:org-1',
+                    name: 'K1',
+                    role: 'architect',
+                    specialties: [],
+                    behaviorAnchors: [],
+                    personality: null,
+                    greetingTemplate: null,
+                    preferredProjects: [],
+                    workStyle: null,
+                    avatarEmoji: '🤖',
+                    status: 'idle',
+                    stats: {
+                        tasksCompleted: 0,
+                        activeMinutes: 0,
+                        lastActiveAt: null,
+                    },
+                    createdAt: 1,
+                    updatedAt: 1,
+                }),
+            } as any,
+        })
+
+        expect(fetchCalled).toBe(false)
+        expect(context.prompt).toContain('## K1 自我系统')
+        expect(context.prompt).not.toContain('长期自我记忆（yoho-memory）')
+        expect(context.metadataPatch.selfMemoryAttached).toBe(false)
     })
 
     it('matchesProfileScope rejects null orgId with warning', () => {

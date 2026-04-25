@@ -1,0 +1,28 @@
+name: Eval Brain
+
+on:
+    pull_request:
+        paths:
+            - 'server/src/eval/**'
+            - 'server/src/brain/**'
+            - 'server/scripts/eval-brain.ts'
+            - 'server/package.json'
+    workflow_dispatch:
+
+jobs:
+    eval:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: oven-sh/setup-bun@v2
+            - run: bun install
+            - name: Run K1 Brain golden-set eval
+              env:
+                  GIT_SHA: ${{ github.sha }}
+              run: bun run eval:brain:ci
+            - uses: actions/upload-artifact@v4
+              if: always()
+              with:
+                  name: eval-brain-history
+                  path: server/eval-history/
+                  if-no-files-found: warn

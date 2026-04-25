@@ -35,3 +35,6 @@ localdocs/
 execplan/
 .aider*
 .deploy-backups/
+
+# K1 Phase 3D eval run artifacts (CI uploads them as artifact)
+server/eval-history/

@@ -981,7 +981,11 @@ export type ObservationDecision =
     | { action: 'reject'; reason?: string | null }
     | { action: 'dismiss'; reason?: string | null }
     | { action: 'expire'; reason?: string | null }
-export type ObservationDecisionResponse = { ok: true; candidate: StoredObservationCandidate }
+export type ObservationDecisionResponse = {
+    ok: true
+    candidate: StoredObservationCandidate
+    autoPromoted?: boolean
+}
 export type ObservationAuditsResponse = { audits: StoredObservationAudit[] }
 
 // Organization 类型

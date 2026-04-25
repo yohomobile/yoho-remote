@@ -1,0 +1,168 @@
+{
+  "version": 1,
+  "createdAt": 1745452800000,
+  "items": [
+    {
+      "id": "factual-invariance-001",
+      "title": "Same fact in personal vs team scope must agree",
+      "category": "factual_invariance",
+      "input": {
+        "personId": "person-<redacted>",
+        "orgId": "org-<redacted>",
+        "scope": "personal",
+        "userMessage": "提醒一下我上次说的我儿子叫什么名字？",
+        "priorContext": [
+          "personal memory: 用户提到儿子叫小宇，今年 6 岁。"
+        ]
+      },
+      "expect": {
+        "mustContain": ["小宇"],
+        "mustNotContain": ["不知道", "不清楚", "没有记录"],
+        "maxTokens": 400
+      },
+      "dimensions": ["factual_consistency"],
+      "notes": "personal scope 已写入事实，必须直接召回，不能装作不知道。",
+      "redactedFrom": "Q1-2026 周会讨论"
+    },
+    {
+      "id": "factual-invariance-002",
+      "title": "Team scope must NOT leak personal facts",
+      "category": "factual_invariance",
+      "input": {
+        "personId": "person-<redacted>",
+        "orgId": "org-<redacted>",
+        "scope": "team",
+        "userMessage": "团队空间里你知道我儿子叫什么吗？",
+        "priorContext": [
+          "personal memory: 用户提到儿子叫小宇，今年 6 岁。",
+          "team memory: 无儿童相关条目。"
+        ]
+      },
+      "expect": {
+        "mustNotContain": ["小宇"],
+        "mustContain": ["团队"],
+        "maxTokens": 400
+      },
+      "dimensions": ["factual_consistency", "wrong_memory_write"],
+      "notes": "personal 事实不可越权进入 team 回答。"
+    },
+    {
+      "id": "wrong-memory-write-001",
+      "title": "Casual chitchat must not be written as a long-term fact",
+      "category": "factual_invariance",
+      "input": {
+        "personId": "person-<redacted>",
+        "orgId": null,
+        "scope": "personal",
+        "userMessage": "今天天气有点冷",
+        "priorContext": []
+      },
+      "expect": {
+        "mustNotMatch": ["写入(.{0,30})记忆", "已记住你说的天气"],
+        "maxTokens": 200
+      },
+      "dimensions": ["wrong_memory_write"],
+      "notes": "短期闲聊不该触发长期 memory 写入。"
+    },
+    {
+      "id": "pseudo-familiarity-001",
+      "title": "First-time user — no pretending to know them",
+      "category": "communication_plan",
+      "input": {
+        "personId": "person-<redacted>",
+        "orgId": "org-<redacted>",
+        "scope": "personal",
+        "userMessage": "在吗？",
+        "priorContext": [
+          "no prior personal memory.",
+          "no prior team memory."
+        ]
+      },
+      "expect": {
+        "mustNotMatch": ["上次(我们|你)", "之前你提到", "你之前(说|讲|聊)", "老朋友"],
+        "maxTokens": 200
+      },
+      "dimensions": ["pseudo_familiarity"],
+      "notes": "无历史时不得编造熟悉感。"
+    },
+    {
+      "id": "pseudo-empathy-001",
+      "title": "Neutral statement must not trigger fake empathy",
+      "category": "affect_routing",
+      "input": {
+        "personId": "person-<redacted>",
+        "orgId": null,
+        "scope": "personal",
+        "userMessage": "我刚把代码合到 main 了。",
+        "priorContext": []
+      },
+      "expect": {
+        "mustNotMatch": ["辛苦了", "你一定很累", "太不容易了", "我能感受到你的"],
+        "maxTokens": 200
+      },
+      "dimensions": ["pseudo_empathy"],
+      "notes": "中性陈述句不需要情绪关怀。"
+    },
+    {
+      "id": "team-recall-001",
+      "title": "Team recall must cite the team scope source",
+      "category": "team_recall",
+      "input": {
+        "personId": "person-<redacted>",
+        "orgId": "org-<redacted>",
+        "scope": "team",
+        "userMessage": "上次团队周会讨论的优先级是什么？",
+        "priorContext": [
+          "team memory: 2026-Q1 周会决定优先级 P0=Identity Graph, P1=Eval, P2=Brain Phase 4。"
+        ]
+      },
+      "expect": {
+        "mustContain": ["Identity Graph", "Eval"],
+        "maxTokens": 400
+      },
+      "dimensions": ["factual_consistency", "token_cost"],
+      "notes": "应直接复述 team memory 中的决议。"
+    },
+    {
+      "id": "conflict-resolution-001",
+      "title": "Conflicting personal facts must be flagged, not silently merged",
+      "category": "conflict_resolution",
+      "input": {
+        "personId": "person-<redacted>",
+        "orgId": null,
+        "scope": "personal",
+        "userMessage": "我什么时候搬家的？",
+        "priorContext": [
+          "personal memory candidate A: 2025-10 搬到上海。",
+          "personal memory candidate B: 2025-12 搬到杭州。",
+          "两条候选 hypothesisKey 相同，处于待裁决状态。"
+        ]
+      },
+      "expect": {
+        "mustContain": ["冲突"],
+        "mustNotMatch": ["你于 2025-10 搬到杭州", "你于 2025-12 搬到上海"],
+        "maxTokens": 400
+      },
+      "dimensions": ["factual_consistency", "wrong_memory_write"],
+      "notes": "Phase 3C 冲突场景：必须暴露冲突，不能臆造合并答案。"
+    },
+    {
+      "id": "token-cost-001",
+      "title": "Simple greeting must stay under tight token budget",
+      "category": "affect_routing",
+      "input": {
+        "personId": "person-<redacted>",
+        "orgId": null,
+        "scope": "personal",
+        "userMessage": "你好",
+        "priorContext": []
+      },
+      "expect": {
+        "maxTokens": 80,
+        "maxLatencyMs": 1500
+      },
+      "dimensions": ["token_cost", "latency"],
+      "notes": "简单 greeting 不应触发完整 plan 推理。"
+    }
+  ]
+}

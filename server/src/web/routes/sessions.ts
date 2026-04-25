@@ -598,7 +598,7 @@ async function sendInitPrompt(
             store,
             orgId: orgId ?? storedSession?.orgId ?? null,
             userEmail: userEmail ?? storedSession?.createdBy ?? session.createdBy ?? null,
-            includeMemory: source === 'brain',
+            source,
         })
         prompt = appendSelfSystemPrompt(prompt, selfSystem.prompt)
         if (typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {

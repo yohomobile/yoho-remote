@@ -1,5 +1,6 @@
 import type { IStore, StoredAIProfile } from '../store'
 import { evaluateRecallConsumption } from '../agent/memoryResultGate'
+import { isSessionOrchestrationChildSource } from '../sessionOrchestrationPolicy'
 
 export type SelfSystemMemoryProvider = 'yoho-memory' | 'none'
 export type SelfSystemMemoryStatus = 'disabled' | 'skipped' | 'attached' | 'empty' | 'error'
@@ -28,6 +29,16 @@ type ResolveSessionSelfSystemContextOptions = {
     store: IStore
     orgId?: string | null
     userEmail?: string | null
+    /**
+     * Session 的 metadata.source。用于决定是否注入 K1 自我系统：
+     * - orchestration child（brain-child / orchestrator-child）→ 整段不注入
+     * - 'brain' 父 session → 头部 + 长期记忆都注入
+     * - 其他（webapp / null / orchestrator / cli / 自定义）→ 仅注入头部，不拉长期记忆
+     */
+    source?: string | null
+    /**
+     * 显式覆盖 includeMemory 决策。未传时按 source 推导（仅 source === 'brain' 时为 true）。
+     */
     includeMemory?: boolean
     yohoMemoryUrl?: string
     fetchImpl?: typeof fetch
@@ -59,18 +70,21 @@ function cleanOptionalString(value: unknown): string | null {
         : null
 }
 
+const MEMORY_SNIPPET_MAX_CHARS = 2500
+
 function trimMemorySnippet(value: string): string {
     const trimmed = value.trim()
-    if (trimmed.length <= 1200) {
+    if (trimmed.length <= MEMORY_SNIPPET_MAX_CHARS) {
         return trimmed
     }
-    return `${trimmed.slice(0, 1200).trimEnd()}\n...`
+    return `${trimmed.slice(0, MEMORY_SNIPPET_MAX_CHARS).trimEnd()}\n...`
 }
 
 function buildSelfSystemPrompt(profile: StoredAIProfile, memorySnippet: string | null): string {
     const lines = [
         '## K1 自我系统',
         '以下内容是当前会话绑定的稳定 AI 风格设定。保持一致性，但若与用户本轮明确指令冲突，以用户指令为准。',
+        `- 名称：${profile.name}`,
         `- 风格：${profile.role}`,
     ]
 
@@ -328,6 +342,14 @@ export async function resolveSessionSelfSystemContext(
 
     const config = await resolveEffectiveSelfSystemConfig(options)
     const emptyContext = buildContextWithConfig(config)
+
+    const source = cleanOptionalString(options.source)
+    if (source && isSessionOrchestrationChildSource(source)) {
+        // orchestration child（brain-child / orchestrator-child）由父 session 编排，
+        // 不注入 K1 自我系统，避免与父 session 的人格设定冲突。
+        return emptyContext
+    }
+
     if (!config.enabled || !config.defaultProfileId) {
         return emptyContext
     }
@@ -338,7 +360,10 @@ export async function resolveSessionSelfSystemContext(
         return emptyContext
     }
 
-    const includeMemory = options.includeMemory !== false
+    // 长期记忆段（### 长期自我记忆）只在 brain 父 session 注入；caller 可显式 override。
+    const includeMemory = options.includeMemory !== undefined
+        ? options.includeMemory !== false
+        : source === 'brain'
     const scopeKey = orgId ? `org:${orgId}` : 'global'
     let memorySnippet: string | null = null
     let memoryStatus: SelfSystemMemoryStatus = config.memoryProvider === 'none' ? 'disabled' : 'skipped'

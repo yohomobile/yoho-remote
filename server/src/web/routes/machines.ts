@@ -13,7 +13,7 @@ import { requireMachine, requireMachineInOrg, requireRequestedOrgId } from './gu
 import { isMachineBlocked } from './blocklist'
 import { serializeMachine, sortMachinesForDisplay } from './machinePayload'
 import { getLicenseService } from '../../license/licenseService'
-import { getUnsupportedSessionSourceError, isSupportedSessionSource } from '../../sessionSourcePolicy'
+import { getSessionSourceFromMetadata, getUnsupportedSessionSourceError, isSupportedSessionSource } from '../../sessionSourcePolicy'
 import { buildSessionIdentityContextPatch } from '../identityContext'
 
 const spawnBodySchema = z.object({
@@ -63,11 +63,13 @@ async function sendInitPrompt(
         let prompt = await buildInitPrompt(role, { projectRoot, userName, worktree })
 
         if (session) {
+            const source = getSessionSourceFromMetadata(session.metadata)
             try {
                 const selfSystem = await resolveSessionSelfSystemContext({
                     store,
                     orgId: orgId ?? null,
                     userEmail: userEmail ?? null,
+                    source,
                 })
                 prompt = appendSelfSystemPrompt(prompt, selfSystem.prompt)
                 if (typeof (engine as { patchSessionMetadata?: unknown }).patchSessionMetadata === 'function') {

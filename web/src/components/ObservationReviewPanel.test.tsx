@@ -119,6 +119,32 @@ describe('ObservationReviewPanel', () => {
         expect(html).toContain('暂无待确认假设')
     })
 
+    test('shows lastDecisionHint banner when provided', () => {
+        const candidate = createCandidate({ status: 'confirmed', promotedCommunicationPlanId: 'plan-auto-7' })
+        const html = renderToStaticMarkup(
+            <ObservationReviewContent
+                statusFilter="confirmed"
+                onStatusFilterChange={() => {}}
+                candidates={[candidate]}
+                selectedCandidate={candidate}
+                onSelectCandidate={() => {}}
+                planId=""
+                onPlanIdChange={() => {}}
+                reason=""
+                onReasonChange={() => {}}
+                isLoading={false}
+                isDeciding={false}
+                error={null}
+                lastDecisionHint="已确认并自动晋升 communicationPlan：plan-auto-7"
+                onConfirm={() => {}}
+                onReject={() => {}}
+                onDismiss={() => {}}
+                onExpire={() => {}}
+            />
+        )
+        expect(html).toContain('已确认并自动晋升 communicationPlan：plan-auto-7')
+    })
+
     test('renders suggested patch as JSON', () => {
         const candidate = createCandidate({
             suggestedPatch: { length: 'concise', explanationDepth: 'minimal' },

@@ -95,6 +95,12 @@ export function classifyLLMError(error: unknown): PermanentLLMError | TransientL
         code: code ?? null,
     }
 
+    // finish_reason=length means the model hit its output token limit; retrying the same input
+    // will always produce the same truncated result, so treat it as a permanent failure.
+    if (record?.finishReason === 'length') {
+        return new PermanentLLMError(message, context)
+    }
+
     if (status === 400 || status === 401 || status === 403 || status === 404) {
         return new PermanentLLMError(`DeepSeek ${status}: ${message}`, context)
     }

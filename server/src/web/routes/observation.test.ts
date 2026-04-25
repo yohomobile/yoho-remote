@@ -89,13 +89,19 @@ describe('createObservationRoutes', () => {
         expect(response.status).toBe(404)
     })
 
-    it('admin can confirm with promotedCommunicationPlanId', async () => {
+    it('admin can confirm with explicit promotedCommunicationPlanId (manual override)', async () => {
         const decisions: Array<Record<string, unknown>> = []
+        const upsertCalls: Array<Record<string, unknown>> = []
         const app = createApp({
             getUserOrgRole: async () => 'admin',
+            getObservationCandidate: async () => sampleCandidate(),
             decideObservationCandidate: async (input: Record<string, unknown>) => {
                 decisions.push(input)
                 return sampleCandidate({ status: 'confirmed', promotedCommunicationPlanId: 'plan-1' })
+            },
+            upsertCommunicationPlan: async (input: Record<string, unknown>) => {
+                upsertCalls.push(input)
+                return { id: 'should-not-be-used' }
             },
         })
         const response = await app.request('/api/observations/obs-1/decide?orgId=org-1', {
@@ -108,13 +114,137 @@ describe('createObservationRoutes', () => {
             }),
         })
         expect(response.status).toBe(200)
-        const body = await response.json() as { candidate: { status: string; promotedCommunicationPlanId: string } }
+        const body = await response.json() as {
+            candidate: { status: string; promotedCommunicationPlanId: string }
+            autoPromoted: boolean
+        }
         expect(body.candidate.status).toBe('confirmed')
         expect(body.candidate.promotedCommunicationPlanId).toBe('plan-1')
+        expect(body.autoPromoted).toBe(false)
         expect(decisions[0]).toMatchObject({
             action: 'confirm',
             promotedCommunicationPlanId: 'plan-1',
         })
+        // Manual override must NOT trigger upsert auto-promotion.
+        expect(upsertCalls.length).toBe(0)
+    })
+
+    it('confirm without manual id auto-promotes from suggestedPatch', async () => {
+        const decisions: Array<Record<string, unknown>> = []
+        const upsertCalls: Array<Record<string, unknown>> = []
+        const app = createApp({
+            getUserOrgRole: async () => 'admin',
+            getObservationCandidate: async () =>
+                sampleCandidate({
+                    suggestedPatch: { tone: 'concise', length: 'concise', extra: 'ignored' },
+                }),
+            decideObservationCandidate: async (input: Record<string, unknown>) => {
+                decisions.push(input)
+                return sampleCandidate({
+                    status: 'confirmed',
+                    promotedCommunicationPlanId: input.promotedCommunicationPlanId as string,
+                })
+            },
+            upsertCommunicationPlan: async (input: Record<string, unknown>) => {
+                upsertCalls.push(input)
+                return { id: 'plan-auto-1' }
+            },
+        })
+        const response = await app.request('/api/observations/obs-1/decide?orgId=org-1', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'confirm', reason: 'looks good' }),
+        })
+        expect(response.status).toBe(200)
+        const body = await response.json() as {
+            candidate: { promotedCommunicationPlanId: string | null }
+            autoPromoted: boolean
+        }
+        expect(body.autoPromoted).toBe(true)
+        expect(body.candidate.promotedCommunicationPlanId).toBe('plan-auto-1')
+        expect(upsertCalls.length).toBe(1)
+        expect(upsertCalls[0]).toMatchObject({
+            personId: 'person-1',
+            preferences: { tone: 'concise', length: 'concise' },
+        })
+        expect(decisions[0]?.promotedCommunicationPlanId).toBe('plan-auto-1')
+    })
+
+    it('confirm without manual id and no promotable patch leaves plan id null', async () => {
+        const upsertCalls: Array<Record<string, unknown>> = []
+        const app = createApp({
+            getUserOrgRole: async () => 'admin',
+            getObservationCandidate: async () =>
+                sampleCandidate({ suggestedPatch: { unrelated: 'thing' } }),
+            decideObservationCandidate: async (input: Record<string, unknown>) => {
+                return sampleCandidate({
+                    status: 'confirmed',
+                    promotedCommunicationPlanId: input.promotedCommunicationPlanId as string | null,
+                })
+            },
+            upsertCommunicationPlan: async (input: Record<string, unknown>) => {
+                upsertCalls.push(input)
+                return { id: 'plan-x' }
+            },
+        })
+        const response = await app.request('/api/observations/obs-1/decide?orgId=org-1', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'confirm' }),
+        })
+        expect(response.status).toBe(200)
+        const body = await response.json() as { autoPromoted: boolean }
+        expect(body.autoPromoted).toBe(false)
+        expect(upsertCalls.length).toBe(0)
+    })
+
+    it('confirm without subjectPersonId never auto-promotes', async () => {
+        const upsertCalls: Array<Record<string, unknown>> = []
+        const app = createApp({
+            getUserOrgRole: async () => 'admin',
+            getObservationCandidate: async () =>
+                sampleCandidate({
+                    subjectPersonId: null,
+                    suggestedPatch: { tone: 'concise' },
+                }),
+            decideObservationCandidate: async () => sampleCandidate({ status: 'confirmed' }),
+            upsertCommunicationPlan: async (input: Record<string, unknown>) => {
+                upsertCalls.push(input)
+                return { id: 'plan-x' }
+            },
+        })
+        const response = await app.request('/api/observations/obs-1/decide?orgId=org-1', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'confirm' }),
+        })
+        expect(response.status).toBe(200)
+        const body = await response.json() as { autoPromoted: boolean }
+        expect(body.autoPromoted).toBe(false)
+        expect(upsertCalls.length).toBe(0)
+    })
+
+    it('reject action does not auto-promote even with promotable patch', async () => {
+        const upsertCalls: Array<Record<string, unknown>> = []
+        const app = createApp({
+            getUserOrgRole: async () => 'admin',
+            getObservationCandidate: async () =>
+                sampleCandidate({ suggestedPatch: { tone: 'concise' } }),
+            decideObservationCandidate: async () => sampleCandidate({ status: 'rejected' }),
+            upsertCommunicationPlan: async (input: Record<string, unknown>) => {
+                upsertCalls.push(input)
+                return { id: 'plan-x' }
+            },
+        })
+        const response = await app.request('/api/observations/obs-1/decide?orgId=org-1', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'reject' }),
+        })
+        expect(response.status).toBe(200)
+        const body = await response.json() as { autoPromoted: boolean }
+        expect(body.autoPromoted).toBe(false)
+        expect(upsertCalls.length).toBe(0)
     })
 
     it('member who is subject can decide their own observation', async () => {
@@ -162,12 +292,13 @@ describe('createObservationRoutes', () => {
         expect(response.status).toBe(404)
     })
 
-    it('decide returns 404 when store returns null', async () => {
+    it('decide returns 404 when decideObservationCandidate returns null', async () => {
         const app = createApp({
             getUserOrgRole: async () => 'admin',
+            getObservationCandidate: async () => sampleCandidate(),
             decideObservationCandidate: async () => null,
         })
-        const response = await app.request('/api/observations/missing/decide?orgId=org-1', {
+        const response = await app.request('/api/observations/obs-1/decide?orgId=org-1', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'dismiss' }),

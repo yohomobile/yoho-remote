@@ -15,6 +15,8 @@
         "bootstrap:admin-org": "bun run scripts/bootstrap-admin-org.ts",
         "audit:brain-sessions": "bun run scripts/audit-brain-sessions.ts",
         "repair:brain-sessions": "bun run scripts/repair-brain-sessions.ts",
+        "eval:brain": "bun run scripts/eval-brain.ts",
+        "eval:brain:ci": "bun run scripts/eval-brain.ts --fail-on-regression --keep=30",
         "generate:embedded-web-assets": "bun run scripts/generate-embedded-web-assets.ts"
     },
     "dependencies": {

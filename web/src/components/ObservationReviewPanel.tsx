@@ -46,6 +46,7 @@ type ObservationContentProps = {
     isLoading: boolean
     isDeciding: boolean
     error: string | null
+    lastDecisionHint?: string | null
     onConfirm: (candidate: StoredObservationCandidate) => void
     onReject: (candidate: StoredObservationCandidate) => void
     onDismiss: (candidate: StoredObservationCandidate) => void
@@ -66,6 +67,7 @@ export function ObservationReviewContent(props: ObservationContentProps) {
         isLoading,
         isDeciding,
         error,
+        lastDecisionHint,
         onConfirm,
         onReject,
         onDismiss,
@@ -98,6 +100,14 @@ export function ObservationReviewContent(props: ObservationContentProps) {
             {error && (
                 <div className="px-3 py-2 text-xs text-red-500 bg-red-500/10 border-b border-red-500/20">
                     {error}
+                </div>
+            )}
+            {lastDecisionHint && (
+                <div
+                    role="status"
+                    className="px-3 py-2 text-xs text-emerald-700 bg-emerald-500/10 border-b border-emerald-500/20"
+                >
+                    {lastDecisionHint}
                 </div>
             )}
 
@@ -270,6 +280,7 @@ export function ObservationReviewPanel(props: {
     const [selectedId, setSelectedId] = useState<string | null>(null)
     const [planId, setPlanId] = useState('')
     const [reason, setReason] = useState('')
+    const [lastDecisionHint, setLastDecisionHint] = useState<string | null>(null)
 
     const candidatesQuery = useQuery({
         queryKey: queryKeys.observationCandidates(props.orgId, statusFilter, props.subjectEmail ?? null),
@@ -302,7 +313,19 @@ export function ObservationReviewPanel(props: {
             if (!props.orgId) throw new Error('orgId required')
             return await api.decideObservationCandidate(input.id, input.decision, props.orgId)
         },
-        onSuccess: async () => {
+        onSuccess: async (result, variables) => {
+            const promotedId = result.candidate.promotedCommunicationPlanId
+            if (variables.decision.action === 'confirm') {
+                if (result.autoPromoted && promotedId) {
+                    setLastDecisionHint(`已确认并自动晋升 communicationPlan：${promotedId}`)
+                } else if (promotedId) {
+                    setLastDecisionHint(`已确认并关联 communicationPlan：${promotedId}`)
+                } else {
+                    setLastDecisionHint('已确认（未自动晋升 communicationPlan，可手填 planId 或检查 suggestedPatch）')
+                }
+            } else {
+                setLastDecisionHint(null)
+            }
             setPlanId('')
             setReason('')
             setSelectedId(null)
@@ -344,6 +367,7 @@ export function ObservationReviewPanel(props: {
                 : decisionMutation.error instanceof Error
                     ? decisionMutation.error.message
                     : null}
+            lastDecisionHint={lastDecisionHint}
             onConfirm={(c) => decide(c.id, withReason({
                 action: 'confirm',
                 promotedCommunicationPlanId: trimmedPlanId,

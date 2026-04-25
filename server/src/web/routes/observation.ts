@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono'
 import { z } from 'zod'
 import type { IStore, OrgRole } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
+import { tryAutoPromoteObservation } from './observation-promote'
 
 // Observation Hypothesis Pool (Phase 3F)
 // 硬边界：候选默认不进 prompt；确认后才升级为 communicationPlan。
@@ -125,8 +126,10 @@ export function createObservationRoutes(store: IStore): Hono<WebAppEnv> {
     })
 
     // Decide: subject (via email) or org admin can decide.
-    // No auto-promotion: confirm returns the updated candidate so the caller can then
-    // create a communicationPlan from the suggestedPatch and pass back promotedCommunicationPlanId.
+    // Phase 3F auto-promotion: when the action is `confirm` and the caller did
+    // not supply an explicit promotedCommunicationPlanId, the server tries to
+    // upsert a communicationPlan from the candidate's suggestedPatch and links
+    // the resulting plan id. Manual override still wins when provided.
     app.post('/observations/:id/decide', async (c) => {
         const orgId = requireOrgId(c)
         if (orgId instanceof Response) return orgId
@@ -141,31 +144,43 @@ export function createObservationRoutes(store: IStore): Hono<WebAppEnv> {
 
         const id = c.req.param('id')
         const actorEmail = c.get('email') ?? null
-
-        // Permission refinement: if actor is not org admin and not operator,
-        // they must be the subject of the observation.
         const isOperator = c.get('role') === 'operator'
-        if (!isOperator) {
-            const role = actorEmail ? await store.getUserOrgRole(orgId, actorEmail) : null
-            const isAdmin = role && orgAdminRoles.includes(role)
-            if (!isAdmin) {
-                const existing = await store.getObservationCandidate({
-                    namespace: orgId,
-                    orgId,
-                    id,
-                })
-                if (!existing) {
-                    return c.json({ error: 'Observation candidate not found' }, 404)
-                }
-                if (existing.subjectEmail !== actorEmail) {
-                    return c.json({ error: 'Only the subject or an org admin can decide' }, 403)
-                }
+        const role = actorEmail ? await store.getUserOrgRole(orgId, actorEmail) : null
+        const isAdmin = !!role && orgAdminRoles.includes(role)
+
+        const existing = await store.getObservationCandidate({
+            namespace: orgId,
+            orgId,
+            id,
+        })
+        if (!existing) {
+            return c.json({ error: 'Observation candidate not found' }, 404)
+        }
+
+        if (!isOperator && !isAdmin) {
+            if (existing.subjectEmail !== actorEmail) {
+                return c.json({ error: 'Only the subject or an org admin can decide' }, 403)
             }
         }
 
-        const promotedCommunicationPlanId = parsed.data.action === 'confirm'
-            ? parsed.data.promotedCommunicationPlanId ?? null
-            : null
+        let promotedCommunicationPlanId: string | null = null
+        let autoPromoted = false
+        if (parsed.data.action === 'confirm') {
+            const manualId = parsed.data.promotedCommunicationPlanId ?? null
+            if (manualId) {
+                promotedCommunicationPlanId = manualId
+            } else {
+                const promotion = await tryAutoPromoteObservation({
+                    store,
+                    orgId,
+                    candidate: existing,
+                    actorEmail,
+                    decisionReason: parsed.data.reason ?? null,
+                })
+                promotedCommunicationPlanId = promotion.promotedCommunicationPlanId
+                autoPromoted = promotion.autoPromoted
+            }
+        }
 
         const updated = await store.decideObservationCandidate({
             namespace: orgId,
@@ -179,7 +194,7 @@ export function createObservationRoutes(store: IStore): Hono<WebAppEnv> {
         if (!updated) {
             return c.json({ error: 'Observation candidate not found' }, 404)
         }
-        return c.json({ ok: true, candidate: updated })
+        return c.json({ ok: true, candidate: updated, autoPromoted })
     })
 
     // Audits: admin-only.

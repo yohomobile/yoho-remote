@@ -17,6 +17,8 @@
         "smoke:fake-deepseek": "cd server && bun run src/smoke/fakeDeepseekSmoke.ts",
         "audit:brain-sessions": "cd server && bun run audit:brain-sessions",
         "repair:brain-sessions": "cd server && bun run repair:brain-sessions",
+        "eval:brain": "cd server && bun run eval:brain",
+        "eval:brain:ci": "cd server && bun run eval:brain:ci",
         "typecheck": "bun run typecheck:cli && bun run typecheck:web && bun run typecheck:server && bun run typecheck:worker",
         "typecheck:cli": "cd cli && bun run typecheck",
         "typecheck:e2e": "cd e2e && bun run typecheck",
