@@ -7,7 +7,6 @@ function createApp(store: Record<string, unknown>, options?: {
     role?: 'developer' | 'operator'
     email?: string
     namespace?: string
-    events?: unknown[]
 }) {
     const app = new Hono<WebAppEnv>()
     app.use('/api/*', async (c, next) => {
@@ -17,113 +16,14 @@ function createApp(store: Record<string, unknown>, options?: {
         c.set('orgs', [])
         await next()
     })
-    app.route('/api', createIdentityRoutes(store as any, options?.events
-        ? () => ({ broadcast: (event: unknown) => options.events?.push(event) }) as any
-        : undefined))
+    app.route('/api', createIdentityRoutes(store as any))
     return app
 }
 
 describe('createIdentityRoutes', () => {
-    it('lists identity candidates for org admins', async () => {
-        const candidate = {
-            id: 'cand-1',
-            identityId: 'ident-1',
-            status: 'open',
-            score: 0.82,
-        }
-        const calls: Array<Record<string, unknown>> = []
-        const app = createApp({
-            getUserOrgRole: async () => 'admin',
-            listPersonIdentityCandidates: async (options: Record<string, unknown>) => {
-                calls.push(options)
-                return [candidate]
-            },
-        })
-
-        const response = await app.request('/api/identity/candidates?orgId=org-1&status=open')
-
-        expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({ candidates: [candidate] })
-        expect(calls).toEqual([{
-            namespace: 'org-1',
-            orgId: 'org-1',
-            status: 'open',
-            limit: 50,
-        }])
-    })
-
-    it('rejects identity candidate reads for non-admin org members', async () => {
-        const app = createApp({
-            getUserOrgRole: async () => 'member',
-            listPersonIdentityCandidates: async () => [],
-        })
-
-        const response = await app.request('/api/identity/candidates?orgId=org-1')
-
-        expect(response.status).toBe(403)
-        expect(await response.json()).toEqual({ error: 'Insufficient permissions' })
-    })
-
-    it('allows operators to decide candidates within an org and broadcasts a candidate update', async () => {
-        const events: unknown[] = []
-        const decisions: Array<Record<string, unknown>> = []
-        const app = createApp({
-            decidePersonIdentityCandidate: async (candidateId: string, decision: Record<string, unknown>) => {
-                decisions.push({ candidateId, decision })
-                return {
-                    id: candidateId,
-                    identityId: 'ident-1',
-                    status: 'confirmed',
-                    score: 0.95,
-                }
-            },
-        }, {
-            role: 'operator',
-            email: 'operator@example.com',
-            events,
-        })
-
-        const response = await app.request('/api/identity/candidates/cand-1/decision?orgId=org-1', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-                action: 'confirm_existing_person',
-                personId: 'person-1',
-                reason: 'email exact match',
-            }),
-        })
-
-        expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({
-            ok: true,
-            candidate: {
-                id: 'cand-1',
-                identityId: 'ident-1',
-                status: 'confirmed',
-                score: 0.95,
-            },
-        })
-        expect(decisions).toEqual([{
-            candidateId: 'cand-1',
-            decision: {
-                action: 'confirm_existing_person',
-                personId: 'person-1',
-                reason: 'email exact match',
-                decidedBy: 'operator@example.com',
-            },
-        }])
-        expect(events).toEqual([{
-            type: 'identity-candidate-updated',
-            namespace: 'org-1',
-            data: {
-                orgId: 'org-1',
-                candidateId: 'cand-1',
-                identityId: 'ident-1',
-                status: 'confirmed',
-                score: 0.95,
-            },
-        }])
-    })
+    // Candidate list / reject / decide tests moved to the unified Approvals
+    // Engine (see server/src/approvals/executor.test.ts + generic
+    // /api/approvals route integration tests).
 
     it('exposes identity governance audits for org admins', async () => {
         const audit = {

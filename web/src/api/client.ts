@@ -443,94 +443,9 @@ export class ApiClient {
         return await this.request<CommunicationPlanAuditsResponse>(`/api/communication-plans/me/audits${qs ? `?${qs}` : ''}`)
     }
 
-    // ========== Team Memory (Phase 3B) ==========
-
-    async getTeamMemoryCandidates(options: {
-        orgId: string
-        status?: TeamMemoryCandidateStatus
-        limit?: number
-    }): Promise<TeamMemoryCandidatesResponse> {
-        const params = new URLSearchParams()
-        params.set('orgId', options.orgId)
-        if (options.status) params.set('status', options.status)
-        if (options.limit) params.set('limit', String(options.limit))
-        return await this.request<TeamMemoryCandidatesResponse>(`/api/team-memory/candidates?${params.toString()}`)
-    }
-
-    async getTeamMemoryCandidate(id: string, orgId: string): Promise<TeamMemoryCandidateResponse> {
-        const qs = `?orgId=${encodeURIComponent(orgId)}`
-        return await this.request<TeamMemoryCandidateResponse>(`/api/team-memory/candidates/${encodeURIComponent(id)}${qs}`)
-    }
-
-    async proposeTeamMemoryCandidate(input: {
-        orgId: string
-        content: string
-        source?: string | null
-        sessionId?: string | null
-    }): Promise<TeamMemoryCandidateResponse> {
-        const qs = `?orgId=${encodeURIComponent(input.orgId)}`
-        return await this.request<TeamMemoryCandidateResponse>(`/api/team-memory/candidates${qs}`, {
-            method: 'POST',
-            body: JSON.stringify({
-                content: input.content,
-                source: input.source ?? undefined,
-                sessionId: input.sessionId ?? undefined,
-            }),
-        })
-    }
-
-    async decideTeamMemoryCandidate(id: string, decision: TeamMemoryCandidateDecision, orgId: string): Promise<TeamMemoryDecisionResponse> {
-        const qs = `?orgId=${encodeURIComponent(orgId)}`
-        return await this.request<TeamMemoryDecisionResponse>(`/api/team-memory/candidates/${encodeURIComponent(id)}/decide${qs}`, {
-            method: 'POST',
-            body: JSON.stringify(decision),
-        })
-    }
-
-    async getTeamMemoryCandidateAudits(id: string, orgId: string, limit = 50): Promise<TeamMemoryAuditsResponse> {
-        const params = new URLSearchParams()
-        params.set('orgId', orgId)
-        params.set('limit', String(limit))
-        return await this.request<TeamMemoryAuditsResponse>(`/api/team-memory/candidates/${encodeURIComponent(id)}/audits?${params.toString()}`)
-    }
-
-    // ========== Observation Hypothesis (Phase 3F) ==========
-
-    async getObservationCandidates(options: {
-        orgId: string
-        status?: ObservationCandidateStatus
-        subjectEmail?: string | null
-        subjectPersonId?: string | null
-        limit?: number
-    }): Promise<ObservationCandidatesResponse> {
-        const params = new URLSearchParams()
-        params.set('orgId', options.orgId)
-        if (options.status) params.set('status', options.status)
-        if (options.subjectEmail) params.set('subjectEmail', options.subjectEmail)
-        if (options.subjectPersonId) params.set('subjectPersonId', options.subjectPersonId)
-        if (options.limit) params.set('limit', String(options.limit))
-        return await this.request<ObservationCandidatesResponse>(`/api/observations?${params.toString()}`)
-    }
-
-    async getObservationCandidate(id: string, orgId: string): Promise<ObservationCandidateResponse> {
-        const qs = `?orgId=${encodeURIComponent(orgId)}`
-        return await this.request<ObservationCandidateResponse>(`/api/observations/${encodeURIComponent(id)}${qs}`)
-    }
-
-    async decideObservationCandidate(id: string, decision: ObservationDecision, orgId: string): Promise<ObservationDecisionResponse> {
-        const qs = `?orgId=${encodeURIComponent(orgId)}`
-        return await this.request<ObservationDecisionResponse>(`/api/observations/${encodeURIComponent(id)}/decide${qs}`, {
-            method: 'POST',
-            body: JSON.stringify(decision),
-        })
-    }
-
-    async getObservationCandidateAudits(id: string, orgId: string, limit = 50): Promise<ObservationAuditsResponse> {
-        const params = new URLSearchParams()
-        params.set('orgId', orgId)
-        params.set('limit', String(limit))
-        return await this.request<ObservationAuditsResponse>(`/api/observations/${encodeURIComponent(id)}/audits?${params.toString()}`)
-    }
+    // Team Memory / Observation approval endpoints removed — use the unified
+    // Approvals Engine (getApprovals / decideApproval) instead. Team memory
+    // proposal (write path) will be added to /api/approvals in a follow-up.
 
     // ========== Approvals Engine (unified) ==========
 

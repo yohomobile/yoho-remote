@@ -3887,6 +3887,13 @@ export class SyncEngine {
             return
         }
 
+        // After 3 failed attempts (state.attempts increments to 3), refreshSession's
+        // eligibility gate refuses further backfills. That makes this branch the
+        // de-facto exhaustion point — but the original code never re-entered the
+        // function once the gate closed, so the >=3 branch + persist would never
+        // fire. Detect exhaustion at increment time instead so the persist always
+        // runs.
+        state.attempts += 1
         if (state.attempts >= 3) {
             console.warn(`[todo-backfill] Giving up on session ${sessionId.slice(0, 8)} after ${state.attempts} attempts: ${reason}`)
             state.nextRetryAt = Number.POSITIVE_INFINITY
@@ -3910,7 +3917,6 @@ export class SyncEngine {
             return
         }
 
-        state.attempts += 1
         const delay = 1_000 * (2 ** (state.attempts - 1))
         state.nextRetryAt = Date.now() + delay
         state.timer = setTimeout(() => {
