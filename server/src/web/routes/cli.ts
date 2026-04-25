@@ -2214,13 +2214,17 @@ export function createCliRoutes(
         }
         const purgeParam = c.req.query('purge')
         const purge = purgeParam === '1' || purgeParam === 'true'
+        const archivedByParam = c.req.query('archivedBy')
+        const archiveReasonParam = c.req.query('archiveReason')
+        const terminateParam = c.req.query('terminateSession')
+        const terminateSession = terminateParam === '0' || terminateParam === 'false' ? false : true
         const ok = purge
-            ? await engine.deleteSession(sessionId, { terminateSession: true, force: true })
+            ? await engine.deleteSession(sessionId, { terminateSession, force: true })
             : await engine.archiveSession(sessionId, {
-                terminateSession: true,
+                terminateSession,
                 force: true,
-                archivedBy: 'brain',
-                archiveReason: 'Brain closed session',
+                archivedBy: archivedByParam || 'brain',
+                archiveReason: archiveReasonParam || 'Brain closed session',
             })
         return c.json({ ok })
     })

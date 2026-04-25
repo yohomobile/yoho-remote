@@ -471,7 +471,15 @@ export function registerCliHandlers(socket: SocketWithData, deps: CliHandlersDep
             if (todos) {
                 const updated = await store.setSessionTodos(sid, todos, msg.createdAt, session.orgId ?? orgId!)
                 if (updated) {
-                    onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
+                    // status-only:直接发 todoProgress,前端走 applySessionSummaryStatusUpdate
+                    // 增量更新 cache,不再 fallback 到整列表 refetch(2026-04-25)。
+                    const arr = Array.isArray(todos) ? todos : []
+                    const completed = arr.filter((t: any) => t && t.status === 'completed').length
+                    onWebappEvent?.({
+                        type: 'session-updated',
+                        sessionId: sid,
+                        data: { todoProgress: { completed, total: arr.length } },
+                    })
                 }
             }
 

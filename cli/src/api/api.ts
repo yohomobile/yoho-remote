@@ -392,8 +392,19 @@ export class ApiClient {
         return response.data
     }
 
-    async deleteSession(sessionId: string, opts?: { mainSessionId?: string }): Promise<{ ok: boolean }> {
-        const query = buildBrainChildScopeQuery(opts)
+    async deleteSession(sessionId: string, opts?: {
+        mainSessionId?: string
+        archivedBy?: string
+        archiveReason?: string
+        terminateSession?: boolean
+    }): Promise<{ ok: boolean }> {
+        const baseQuery = buildBrainChildScopeQuery(opts)
+        const extra = new URLSearchParams()
+        if (opts?.archivedBy) extra.set('archivedBy', opts.archivedBy)
+        if (opts?.archiveReason) extra.set('archiveReason', opts.archiveReason)
+        if (opts?.terminateSession === false) extra.set('terminateSession', '0')
+        const sep = baseQuery.startsWith('?') ? '&' : '?'
+        const query = extra.toString() ? `${baseQuery}${baseQuery ? sep : '?'}${extra.toString()}` : baseQuery
         const response = await axios.delete(
             `${configuration.serverUrl}/cli/sessions/${encodeURIComponent(sessionId)}${query}`,
             {

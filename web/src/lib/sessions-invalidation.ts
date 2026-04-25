@@ -5,7 +5,10 @@ import { queryKeys } from '@/lib/query-keys'
 // calls. Within this window additional requests are coalesced into a single trailing-edge
 // invalidation, so a burst of SSE events (e.g. 30 sessions reconnecting after a server
 // restart) produces at most one `/api/sessions` refetch instead of 30 sequential ones.
-const SESSIONS_INVALIDATE_MIN_INTERVAL_MS = 500
+//
+// 拉到 3000ms 是因为 /api/sessions 在用户量大时响应可达 4MB+,持续高频 invalidate 会让
+// fetch 在 stream 中反复被 abort 取消,永远拿不完整响应(2026-04-25 实测)。
+const SESSIONS_INVALIDATE_MIN_INTERVAL_MS = 3000
 
 type InvalidatorState = {
     pendingTimer: ReturnType<typeof setTimeout> | null
@@ -24,6 +27,8 @@ function getState(queryClient: QueryClient): InvalidatorState {
 }
 
 export function scheduleSessionsListInvalidation(queryClient: QueryClient): void {
+    // [DEBUG-2026-04-25] 排查 /api/sessions 高频刷新:打印每次 schedule 的调用源
+    console.warn('[schedule-sessions-invalidate] called by:\n' + (new Error().stack || '(no stack)'))
     const state = getState(queryClient)
     if (state.pendingTimer) return
     const now = Date.now()

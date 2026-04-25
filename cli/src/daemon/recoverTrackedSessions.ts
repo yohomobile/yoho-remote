@@ -14,25 +14,33 @@ export function getTrackedSessionStartedBy(metadata: Metadata): TrackedSession['
 }
 
 /**
- * Ask the server to archive a session whose PID can no longer be identified on
- * this machine. Non-fatal on failure — the next recovery pass will retry.
- * Uses `lifecycleState=archiveRequested` (server-driven archival) instead of
- * `deleteSession` to keep message history intact for audit.
+ * Archive a session whose PID can no longer be identified on this machine.
+ * Calls DELETE /cli/sessions/:id which performs a non-purge archive (preserves
+ * messages). Skips terminateSession because the process is already dead — no
+ * point invoking killSession RPC for a missing PID.
+ *
+ * Previously used patchSessionMetadata({lifecycleState:'archiveRequested'}) but
+ * that field was silently stripped by the server's zod schema, so stale sessions
+ * piled up forever. See recoverTrackedSessions audit notes.
  */
 async function requestArchiveForStaleSession(
-    api: { patchSessionMetadata?: ApiClient['patchSessionMetadata'] },
+    api: { deleteSession?: ApiClient['deleteSession'] },
     sessionId: string,
     reason: string,
 ): Promise<void> {
-    if (!api.patchSessionMetadata) {
-        logger.debug(`[DAEMON RUN] Cannot request archive for stale session ${sessionId}: patchSessionMetadata unavailable (reason=${reason})`);
+    if (!api.deleteSession) {
+        logger.debug(`[DAEMON RUN] Cannot archive stale session ${sessionId}: deleteSession unavailable (reason=${reason})`);
         return;
     }
     try {
-        await api.patchSessionMetadata(sessionId, { lifecycleState: 'archiveRequested' });
-        logger.debug(`[DAEMON RUN] Requested archive for stale session ${sessionId} (reason=${reason})`);
+        await api.deleteSession(sessionId, {
+            archivedBy: 'cli-stale-recovery',
+            archiveReason: `stale-on-recovery: ${reason}`,
+            terminateSession: false,
+        });
+        logger.debug(`[DAEMON RUN] Archived stale session ${sessionId} (reason=${reason})`);
     } catch (error) {
-        logger.debug(`[DAEMON RUN] Failed to request archive for stale session ${sessionId}`, error);
+        logger.debug(`[DAEMON RUN] Failed to archive stale session ${sessionId}`, error);
     }
 }
 
@@ -41,7 +49,7 @@ export async function recoverTrackedSessionsFromServer({
     machineId,
     pidToTrackedSession,
 }: {
-    api: Pick<ApiClient, 'listSessions' | 'getSession'> & { patchSessionMetadata?: ApiClient['patchSessionMetadata'] };
+    api: Pick<ApiClient, 'listSessions' | 'getSession'> & { deleteSession?: ApiClient['deleteSession'] };
     machineId: string;
     pidToTrackedSession: Map<number, TrackedSession>;
 }): Promise<number> {

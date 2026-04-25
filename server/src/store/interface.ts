@@ -131,7 +131,7 @@ export interface IStore {
     }>
     getActiveSessionCount(orgId: string): Promise<number>
     deleteSession(id: string): Promise<boolean>
-    patchSessionMetadata(id: string, patch: Record<string, unknown>, orgId: string): Promise<boolean>
+    patchSessionMetadata(id: string, patch: Record<string, unknown>, orgId: string, expectedVersion?: number): Promise<boolean>
 
     // === Machine 操作 ===
     getOrCreateMachine(id: string, metadata: unknown, daemonState: unknown, orgId: string): Promise<StoredMachine>

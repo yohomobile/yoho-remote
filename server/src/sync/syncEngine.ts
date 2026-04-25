@@ -285,6 +285,8 @@ export type SyncEventType =
     | 'group-message'
     | 'file-ready'
     | 'identity-candidate-updated'
+    | 'viewer-changed'
+    | 'participants-changed'
 
 export type OnlineUser = {
     email: string
@@ -353,6 +355,10 @@ export interface SyncEvent {
     typing?: TypingUser
     groupMessage?: GroupMessageData
     fileInfo?: { id: string; filename: string; size: number; mimeType: string }
+    // viewer-changed: 该 session 当前查看者列表(SSEManager 实时算)
+    viewers?: OnlineUser[]
+    // participants-changed: 该 session 的 message authors 聚合
+    participants?: unknown[]
     // 任务完成通知的接收者列表（用于过滤 SSE 广播）
     notifyRecipientClientIds?: string[]
 }
@@ -2130,6 +2136,33 @@ export class SyncEngine {
     }
 
     /**
+     * 增量广播 session.participants(message authors 聚合)。
+     * sessions list 路由 (server/src/web/routes/sessions.ts:1723) 在每次 GET 时
+     * 同步聚合一次 — 现在改用 SSE 推:消息到达时异步算一次,前端把结果合并到 cache。
+     * 不阻塞主流程,失败安静吞掉(下一次 GET 列表时仍会兜底)。
+     */
+    private broadcastSessionParticipants(session: Session): void {
+        const storeAny = this.store as Partial<IStore>
+        if (typeof storeAny.getSessionParticipants !== 'function') return
+        const sessionId = session.id
+        const orgId = session.namespace
+        void storeAny.getSessionParticipants([sessionId], { limitPerSession: 10 })
+            .then(map => {
+                const actors = map.get(sessionId)
+                if (!Array.isArray(actors)) return
+                this.emit({
+                    type: 'participants-changed',
+                    orgId,
+                    sessionId,
+                    participants: actors,
+                })
+            })
+            .catch(err => {
+                console.error(`[participants-changed] failed for ${sessionId}:`, err)
+            })
+    }
+
+    /**
      * 发送任务完成事件（带订阅者信息以过滤 SSE 广播）
      * Toast 通知只发给 owner 和订阅者
      */
@@ -2387,6 +2420,7 @@ export class SyncEngine {
                     const pending = this.brainChildPendingMessages.get(session.id)
                     if (pending && pending.length > 0) {
                         this.brainChildPendingMessages.delete(session.id)
+                        void this.persistBrainChildPendingMessages(session.id)
                         console.log(`[brain-queue] Flushing ${pending.length} buffered message(s) to ${shortId(session.id)}`)
                         for (const item of pending) {
                             await this.sendMessage(session.id, { text: item.text, localId: item.localId, sentFrom: 'brain' })
@@ -3437,17 +3471,15 @@ export class SyncEngine {
                     if (result.type === 'success') {
                         const heartbeatReceived = await this.waitForSessionHeartbeatAfter(session.id, resumeStartedAt, RESUME_TIMEOUT_MS)
                         if (!heartbeatReceived) {
-                            await this.store.setSessionActive(session.id, false, previousActiveAt, namespace)
-                            this._dbActiveSessionIds.delete(session.id)
-                            session.active = false
-                            const timedOutThinking = session.thinking
                             session.activeAt = previousActiveAt
-                            session.thinking = false
-                            if (timedOutThinking !== session.thinking) {
-                                this.persistSessionThinking(session)
-                            }
                             session.resumingUntil = undefined
-                            console.warn(`[auto-resume] Session ${session.id.slice(0, 8)} spawn succeeded but no reconnect heartbeat arrived within ${RESUME_TIMEOUT_MS}ms`)
+                            const archivedOk = await this.archiveSession(session.id, {
+                                terminateSession: false,
+                                force: true,
+                                archivedBy: 'auto-resume-failed',
+                                archiveReason: `auto-resume: spawn ok but no heartbeat within ${RESUME_TIMEOUT_MS}ms`,
+                            })
+                            console.warn(`[auto-resume] Session ${session.id.slice(0, 8)} no heartbeat after ${RESUME_TIMEOUT_MS}ms, archived (ok=${archivedOk})`)
                             return
                         }
                         if (session.metadata?.lifecycleState === 'archived') {
@@ -3464,12 +3496,15 @@ export class SyncEngine {
                             await this.sendAutoResumeContinueMessage(session, previousActiveAt)
                         }
                     } else {
-                        await this.store.setSessionActive(session.id, false, previousActiveAt, namespace)
-                        this._dbActiveSessionIds.delete(session.id)
-                        session.active = false
                         session.activeAt = previousActiveAt
                         session.resumingUntil = undefined
-                        console.warn(`[auto-resume] Failed to resume session ${session.id.slice(0, 8)}: ${result.message}`)
+                        const archivedOk = await this.archiveSession(session.id, {
+                            terminateSession: false,
+                            force: true,
+                            archivedBy: 'auto-resume-failed',
+                            archiveReason: `auto-resume spawn failed: ${result.message}`,
+                        })
+                        console.warn(`[auto-resume] Session ${session.id.slice(0, 8)} spawn failed: ${result.message}, archived (ok=${archivedOk})`)
                     }
                 } catch (err) {
                     console.error(`[auto-resume] Error resuming session ${session.id.slice(0, 8)}:`, err)
@@ -3881,9 +3916,56 @@ export class SyncEngine {
         }
         console.log(`[hydrate] startup reset preserved active state for machines=${preservedActiveMachines}, sessions=${preservedActiveSessions}`)
 
+        // Restore brain-child pending messages from metadata (these survive server restart).
+        // Without this, any brain message that arrived while the brain-child was still
+        // initializing is silently lost across server restarts.
+        let restoredPendingQueues = 0
+        let restoredPendingMessages = 0
+        for (const session of this.sessions.values()) {
+            const persisted = (session.metadata as { brainChildPendingMessages?: unknown } | null | undefined)?.brainChildPendingMessages
+            if (Array.isArray(persisted) && persisted.length > 0) {
+                const cleaned: Array<{ text: string; localId: string | null }> = []
+                for (const item of persisted) {
+                    if (item && typeof item === 'object' && typeof (item as { text?: unknown }).text === 'string') {
+                        const localIdRaw = (item as { localId?: unknown }).localId
+                        cleaned.push({
+                            text: (item as { text: string }).text,
+                            localId: typeof localIdRaw === 'string' ? localIdRaw : null,
+                        })
+                    }
+                }
+                if (cleaned.length > 0) {
+                    this.brainChildPendingMessages.set(session.id, cleaned)
+                    restoredPendingQueues += 1
+                    restoredPendingMessages += cleaned.length
+                }
+            }
+        }
+        if (restoredPendingQueues > 0) {
+            console.log(`[hydrate] Restored ${restoredPendingMessages} brain-child pending message(s) across ${restoredPendingQueues} session(s)`)
+        }
+
         // Don't clean up zombie sessions on startup.
         // expireInactive() will handle stale sessions after the timer fires,
         // giving CLI processes time to reconnect and send heartbeats.
+    }
+
+    private async persistBrainChildPendingMessages(sessionId: string): Promise<void> {
+        const session = this.sessions.get(sessionId)
+        if (!session) return
+        const queue = this.brainChildPendingMessages.get(sessionId) ?? []
+        const patch: Record<string, unknown> = {
+            brainChildPendingMessages: queue.length > 0 ? queue : null,
+        }
+        try {
+            await this.store.patchSessionMetadata(sessionId, patch, session.namespace)
+            session.metadata = {
+                ...((session.metadata ?? {}) as Record<string, unknown>),
+                brainChildPendingMessages: queue.length > 0 ? queue : undefined,
+            } as unknown as Session['metadata']
+        } catch (err) {
+            console.warn(`[brain-queue] Failed to persist pending messages for ${shortId(sessionId)}:`, err)
+        }
     }
 
     private clearTodoBackfillState(sessionId: string): void {
@@ -4157,6 +4239,7 @@ export class SyncEngine {
                     }
                     pending.push({ text: payload.text, localId })
                     this.brainChildPendingMessages.set(sessionId, pending)
+                    void this.persistBrainChildPendingMessages(sessionId)
                     console.log(`[brain-queue] Buffered brain message for ${sessionId.slice(0, 8)} (init not done yet), queue size=${pending.length}`)
                     return {
                         status: 'queued',
@@ -4232,7 +4315,23 @@ export class SyncEngine {
 
         if (session) {
             session.lastMessageAt = msg.createdAt
-            this.emit({ type: 'session-updated', sessionId, data: this.buildSessionPayload(session) })
+            // status-only:消息流频率高,不带 metadata 等 full payload(2026-04-25)。
+            // full payload 会让前端走 isFullSessionUpdate 分支额外触发 /api/sessions
+            // (4MB) refetch,在 25+ active session 稳态下流量爆炸。
+            this.emit({
+                type: 'session-updated',
+                sessionId,
+                data: {
+                    active: session.active,
+                    activeAt: session.activeAt,
+                    reconnecting: this.isSessionStartupRecovering(session.id),
+                    thinking: session.thinking,
+                    lastMessageAt: session.lastMessageAt,
+                }
+            })
+            // participants 由 message authors 聚合,新消息可能引入新 actor。
+            // 异步广播,不阻塞主流程。
+            this.broadcastSessionParticipants(session)
         }
 
         const update = {
@@ -4291,7 +4390,19 @@ export class SyncEngine {
             const session = this.sessions.get(sessionId)
             if (session) {
                 session.lastMessageAt = msg.createdAt
-                this.emit({ type: 'session-updated', sessionId, data: this.buildSessionPayload(session) })
+                // status-only:同 sendMessage(2026-04-25)。
+                this.emit({
+                    type: 'session-updated',
+                    sessionId,
+                    data: {
+                        active: session.active,
+                        activeAt: session.activeAt,
+                        reconnecting: this.isSessionStartupRecovering(session.id),
+                        thinking: session.thinking,
+                        lastMessageAt: session.lastMessageAt,
+                    }
+                })
+                this.broadcastSessionParticipants(session)
             }
         }
 
@@ -4543,38 +4654,64 @@ export class SyncEngine {
         }
 
         const startedAt = Date.now()
+        const rpcPayload = {
+            type: 'spawn-in-directory',
+            directory,
+            agent,
+            yolo,
+            sessionType: options?.sessionType,
+            worktreeName: options?.worktreeName,
+            sessionId: options?.sessionId,
+            resumeSessionId: options?.resumeSessionId,
+            token: options?.token,
+            tokenSourceId: options?.tokenSourceId,
+            tokenSourceName: options?.tokenSourceName,
+            tokenSourceType: options?.tokenSourceType,
+            tokenSourceBaseUrl: options?.tokenSourceBaseUrl,
+            tokenSourceApiKey: options?.tokenSourceApiKey,
+            claudeSettingsType: options?.claudeSettingsType,
+            claudeAgent: options?.claudeAgent,
+            codexModel: options?.codexModel,
+            permissionMode: options?.permissionMode,
+            modelMode: options?.modelMode,
+            modelReasoningEffort: options?.modelReasoningEffort,
+            source: options?.source,
+            mainSessionId: options?.mainSessionId,
+            caller: options?.caller,
+            brainPreferences: options?.brainPreferences,
+            reuseExistingWorktree: options?.reuseExistingWorktree,
+        }
+        // Retry on "RPC handler not registered" — observed when the daemon's
+        // machineSyncClient is mid-reconnect (handlers briefly de-registered).
+        // Spawn is critical for auto-resume; without retry, a 3-second window
+        // around daemon restarts leaves sessions permanently stuck.
+        const SPAWN_RPC_MAX_ATTEMPTS = 3
+        const SPAWN_RPC_RETRY_BACKOFF_MS = 250
         try {
-            const result = await this.machineRpc(
-                machineId,
-                'spawn-yoho-remote-session',
-                {
-                    type: 'spawn-in-directory',
-                    directory,
-                    agent,
-                    yolo,
-                    sessionType: options?.sessionType,
-                    worktreeName: options?.worktreeName,
-                    sessionId: options?.sessionId,
-                    resumeSessionId: options?.resumeSessionId,
-                    token: options?.token,
-                    tokenSourceId: options?.tokenSourceId,
-                    tokenSourceName: options?.tokenSourceName,
-                    tokenSourceType: options?.tokenSourceType,
-                    tokenSourceBaseUrl: options?.tokenSourceBaseUrl,
-                    tokenSourceApiKey: options?.tokenSourceApiKey,
-                    claudeSettingsType: options?.claudeSettingsType,
-                    claudeAgent: options?.claudeAgent,
-                    codexModel: options?.codexModel,
-                    permissionMode: options?.permissionMode,
-                    modelMode: options?.modelMode,
-                    modelReasoningEffort: options?.modelReasoningEffort,
-                    source: options?.source,
-                    mainSessionId: options?.mainSessionId,
-                    caller: options?.caller,
-                    brainPreferences: options?.brainPreferences,
-                    reuseExistingWorktree: options?.reuseExistingWorktree,
+            let result: unknown
+            let lastError: unknown
+            for (let attempt = 1; attempt <= SPAWN_RPC_MAX_ATTEMPTS; attempt++) {
+                try {
+                    result = await this.machineRpc(machineId, 'spawn-yoho-remote-session', rpcPayload)
+                    if (attempt > 1) {
+                        console.log(`[spawn-perf] machine=${shortId(machineId)} agent=${agent} recovered after ${attempt} attempt(s)`)
+                    }
+                    break
+                } catch (error) {
+                    lastError = error
+                    const message = error instanceof Error ? error.message : String(error)
+                    const isHandlerMissing = message.includes('RPC handler not registered')
+                    if (!isHandlerMissing || attempt === SPAWN_RPC_MAX_ATTEMPTS) {
+                        throw error
+                    }
+                    const delay = SPAWN_RPC_RETRY_BACKOFF_MS * attempt
+                    console.warn(`[spawn-perf] machine=${shortId(machineId)} agent=${agent} attempt=${attempt} handler-not-registered, retry in ${delay}ms`)
+                    await new Promise(r => setTimeout(r, delay))
                 }
-            )
+            }
+            if (result === undefined) {
+                throw lastError instanceof Error ? lastError : new Error('spawn rpc failed without throw')
+            }
             const elapsedMs = Date.now() - startedAt
             if (result && typeof result === 'object') {
                 const obj = result as Record<string, unknown>

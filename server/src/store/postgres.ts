@@ -1533,7 +1533,22 @@ export class PostgresStore implements IStore {
         return (result.rowCount ?? 0) > 0
     }
 
-    async patchSessionMetadata(id: string, patch: Record<string, unknown>, orgId: string): Promise<boolean> {
+    async patchSessionMetadata(id: string, patch: Record<string, unknown>, orgId: string, expectedVersion?: number): Promise<boolean> {
+        // When expectedVersion is provided, fail-fast on concurrent writes (returns false on
+        // mismatch). Otherwise behave as before — best-effort blind merge. Callers in critical
+        // ordering paths (archive/unarchive, lifecycle changes) should pass expectedVersion;
+        // simple status patches without ordering requirements can omit it.
+        if (typeof expectedVersion === 'number') {
+            const result = await this.pool.query(`
+                UPDATE sessions
+                SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+                    metadata_version = metadata_version + 1,
+                    updated_at = $2,
+                    seq = seq + 1
+                WHERE id = $3 AND org_id = $4 AND metadata_version = $5
+            `, [JSON.stringify(patch), Date.now(), id, orgId, expectedVersion])
+            return (result.rowCount ?? 0) > 0
+        }
         const result = await this.pool.query(`
             UPDATE sessions
             SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,

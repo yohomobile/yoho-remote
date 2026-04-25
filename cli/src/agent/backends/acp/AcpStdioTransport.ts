@@ -28,6 +28,9 @@ interface JsonRpcResponse {
 
 type RequestHandler = (params: unknown, requestId: string | number | null) => Promise<unknown>;
 
+const ACP_REQUEST_TIMEOUT_MS = 60_000;
+const ACP_MAX_PARSE_FAILURES = 5;
+
 export class AcpStdioTransport {
     private readonly process: ChildProcessWithoutNullStreams;
     private readonly pending = new Map<string | number, {
@@ -39,6 +42,7 @@ export class AcpStdioTransport {
     private buffer = '';
     private nextId = 1;
     private protocolError: Error | null = null;
+    private consecutiveParseFailures = 0;
 
     private processExitHandler: (() => void) | null = null;
 
@@ -107,7 +111,7 @@ export class AcpStdioTransport {
         this.requestHandlers.set(method, handler);
     }
 
-    async sendRequest(method: string, params?: unknown): Promise<unknown> {
+    async sendRequest(method: string, params?: unknown, options?: { timeoutMs?: number }): Promise<unknown> {
         const id = this.nextId++;
         const payload: JsonRpcRequest = {
             jsonrpc: '2.0',
@@ -115,9 +119,27 @@ export class AcpStdioTransport {
             method,
             params
         };
+        const timeoutMs = options?.timeoutMs ?? ACP_REQUEST_TIMEOUT_MS;
 
         return new Promise<unknown>((resolve, reject) => {
-            this.pending.set(id, { resolve, reject });
+            const timer = timeoutMs > 0
+                ? setTimeout(() => {
+                    if (this.pending.delete(id)) {
+                        reject(new Error(`ACP sendRequest(${method}) timed out after ${timeoutMs}ms`));
+                    }
+                }, timeoutMs)
+                : null;
+            timer?.unref?.();
+            this.pending.set(id, {
+                resolve: (value) => {
+                    if (timer) clearTimeout(timer);
+                    resolve(value);
+                },
+                reject: (error) => {
+                    if (timer) clearTimeout(timer);
+                    reject(error);
+                },
+            });
             this.writePayload(payload);
         });
     }
@@ -164,13 +186,20 @@ export class AcpStdioTransport {
         let message: JsonRpcRequest | JsonRpcResponse | JsonRpcNotification | null = null;
         try {
             message = JSON.parse(line) as JsonRpcRequest | JsonRpcResponse | JsonRpcNotification;
+            this.consecutiveParseFailures = 0;
         } catch (error) {
-            const protocolError = new Error('Failed to parse JSON-RPC from ACP agent');
-            this.protocolError = protocolError;
-            logger.debug('[ACP] Failed to parse JSON-RPC line', { line, error });
-            this.rejectAllPending(protocolError);
-            this.process.stdin.end();
-            void killProcessByChildProcess(this.process);
+            // Don't kill the session for a single bad line — agents sometimes emit debug
+            // output, banners, or partial lines to stdout. Tolerate up to N consecutive
+            // failures (likely indicates the protocol is genuinely broken vs. one bad line).
+            this.consecutiveParseFailures += 1;
+            logger.debug(`[ACP] Failed to parse JSON-RPC line (${this.consecutiveParseFailures}/${ACP_MAX_PARSE_FAILURES})`, { line: line.slice(0, 200), error });
+            if (this.consecutiveParseFailures >= ACP_MAX_PARSE_FAILURES) {
+                const protocolError = new Error(`ACP agent emitted ${ACP_MAX_PARSE_FAILURES} consecutive non-JSON-RPC lines; treating as protocol failure`);
+                this.protocolError = protocolError;
+                this.rejectAllPending(protocolError);
+                this.process.stdin.end();
+                void killProcessByChildProcess(this.process);
+            }
             return;
         }
 

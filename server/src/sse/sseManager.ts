@@ -26,6 +26,8 @@ export class SSEManager {
     // events into N broadcasts to every connection in the org.
     private readonly onlineUsersBroadcastTimers: Map<string, NodeJS.Timeout> = new Map()
     private readonly onlineUsersBroadcastDebounceMs: number
+    // viewer-changed:per (orgId, sessionId) debounce,语义同 onlineUsers
+    private readonly viewerBroadcastTimers: Map<string, NodeJS.Timeout> = new Map()
 
     constructor(heartbeatMs = 30_000, onlineUsersBroadcastDebounceMs = 500) {
         this.heartbeatMs = heartbeatMs
@@ -65,6 +67,11 @@ export class SSEManager {
         // 广播在线用户更新（debounced）
         this.scheduleOnlineUsersBroadcast(options.orgId)
 
+        // 如果订阅了具体 session,该 session 的 viewers 改变需要广播
+        if (subscription.sessionId) {
+            this.scheduleViewerBroadcast(options.orgId, subscription.sessionId)
+        }
+
         return {
             id: subscription.id,
             orgId: subscription.orgId,
@@ -81,6 +88,7 @@ export class SSEManager {
     unsubscribe(id: string): void {
         const connection = this.connections.get(id)
         const orgId = connection?.orgId
+        const sessionId = connection?.sessionId
         this.connections.delete(id)
         if (this.connections.size === 0) {
             this.stopHeartbeat()
@@ -88,6 +96,9 @@ export class SSEManager {
         // 广播在线用户更新（debounced）
         if (orgId) {
             this.scheduleOnlineUsersBroadcast(orgId)
+            if (sessionId) {
+                this.scheduleViewerBroadcast(orgId, sessionId)
+            }
         }
     }
 
@@ -113,6 +124,10 @@ export class SSEManager {
             clearTimeout(timer)
         }
         this.onlineUsersBroadcastTimers.clear()
+        for (const timer of this.viewerBroadcastTimers.values()) {
+            clearTimeout(timer)
+        }
+        this.viewerBroadcastTimers.clear()
         this.connections.clear()
     }
 
@@ -133,6 +148,37 @@ export class SSEManager {
             this.broadcastOnlineUsers(orgId)
         }, this.onlineUsersBroadcastDebounceMs)
         this.onlineUsersBroadcastTimers.set(orgId, timer)
+    }
+
+    private scheduleViewerBroadcast(orgId: string, sessionId: string): void {
+        const key = `${orgId}::${sessionId}`
+        const existing = this.viewerBroadcastTimers.get(key)
+        if (existing) {
+            clearTimeout(existing)
+        }
+
+        if (this.onlineUsersBroadcastDebounceMs <= 0) {
+            this.viewerBroadcastTimers.delete(key)
+            this.broadcastSessionViewers(orgId, sessionId)
+            return
+        }
+
+        const timer = setTimeout(() => {
+            this.viewerBroadcastTimers.delete(key)
+            this.broadcastSessionViewers(orgId, sessionId)
+        }, this.onlineUsersBroadcastDebounceMs)
+        this.viewerBroadcastTimers.set(key, timer)
+    }
+
+    private broadcastSessionViewers(orgId: string, sessionId: string): void {
+        const viewers = this.getSessionViewers(orgId, sessionId)
+        const event: SyncEvent = {
+            type: 'viewer-changed',
+            orgId,
+            sessionId,
+            viewers,
+        }
+        this.broadcast(event)
     }
 
     private ensureHeartbeat(): void {

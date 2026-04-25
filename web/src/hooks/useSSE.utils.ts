@@ -1,6 +1,6 @@
 import { isLicenseTermination } from '@/lib/license'
 import { getSessionOrchestrationParentSessionId } from '@/lib/sessionOrchestration'
-import type { Session, SessionSummary, SessionsResponse } from '@/types/api'
+import type { Session, SessionSummary, SessionsResponse, SessionViewer, IdentityActorMeta } from '@/types/api'
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object'
@@ -20,6 +20,9 @@ export type SessionStatusUpdateData = {
     activeMonitors?: Session['activeMonitors']
     activeMonitorCount?: number
     terminationReason?: string
+    todoProgress?: SessionSummary['todoProgress']
+    viewers?: SessionViewer[]
+    participants?: IdentityActorMeta[]
     sid?: string
 }
 
@@ -74,7 +77,10 @@ export function hasSessionStatusFields(data: SessionStatusUpdateData | null): bo
         data.fastMode !== undefined ||
         data.activeMonitors !== undefined ||
         data.activeMonitorCount !== undefined ||
-        data.terminationReason !== undefined
+        data.terminationReason !== undefined ||
+        data.todoProgress !== undefined ||
+        data.viewers !== undefined ||
+        data.participants !== undefined
     )
 }
 
@@ -271,9 +277,13 @@ export function toSessionSummaryFromSsePayload(data: Record<string, unknown>): S
 export function upsertSessionSummary(
     previous: SessionsResponse | undefined,
     nextSession: SessionSummary
-): SessionsResponse {
+): SessionsResponse | undefined {
     if (!previous?.sessions) {
-        return { sessions: [nextSession] }
+        // 还没有完整 list(initial fetch 没 done),不要靠 SSE 单条事件构造 [single]:
+        // 那会让 useSessions 进入 success/empty 状态,UI 显示 "No matching sessions",
+        // 然后 fetch 完成才补满 — 看起来像列表先空一下再炸出来(2026-04-25)。
+        // 返回 undefined 让 react-query 跳过本次更新,继续等首次 fetch。
+        return previous
     }
 
     const existingIndex = previous.sessions.findIndex((session) => session.id === nextSession.id)
@@ -320,7 +330,10 @@ export function applySessionSummaryStatusUpdate(
         (data.modelReasoningEffort !== undefined && data.modelReasoningEffort !== target.modelReasoningEffort) ||
         (data.fastMode !== undefined && data.fastMode !== target.fastMode) ||
         (data.activeMonitorCount !== undefined && data.activeMonitorCount !== target.activeMonitorCount) ||
-        (data.terminationReason !== undefined && data.terminationReason !== target.terminationReason)
+        (data.terminationReason !== undefined && data.terminationReason !== target.terminationReason) ||
+        data.todoProgress !== undefined ||
+        data.viewers !== undefined ||
+        data.participants !== undefined
 
     if (!hasChange) {
         return previous
@@ -342,6 +355,9 @@ export function applySessionSummaryStatusUpdate(
                     ...(data.fastMode !== undefined && { fastMode: data.fastMode }),
                     ...(data.activeMonitorCount !== undefined && { activeMonitorCount: data.activeMonitorCount }),
                     ...(data.terminationReason !== undefined && { terminationReason: data.terminationReason }),
+                    ...(data.todoProgress !== undefined && { todoProgress: data.todoProgress }),
+                    ...(data.viewers !== undefined && { viewers: data.viewers }),
+                    ...(data.participants !== undefined && { participants: data.participants }),
                 }
                 : session
         )

@@ -6,11 +6,15 @@
  */
 
 import chalk from 'chalk'
-import { appendFileSync } from 'fs'
+import { appendFileSync, unlinkSync } from 'fs'
 import { configuration } from '@/configuration'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { readDaemonState } from '@/persistence'
+
+const MAX_LOG_FILES_TO_KEEP = 10
+const ROTATE_LOG_MAX_BYTES = 50 * 1024 * 1024 // 50MB per file
+const ROTATE_LOG_CHECK_EVERY_N_WRITES = 200
 
 /**
  * Consistent date/time formatting functions
@@ -46,6 +50,8 @@ function getSessionLogPath(): string {
 
 class Logger {
   private dangerouslyUnencryptedServerLoggingUrl: string | undefined
+  private writeCounter = 0
+  private rotatedFilePath: string | null = null
 
   constructor(
     public readonly logFilePath = getSessionLogPath()
@@ -55,6 +61,33 @@ class Logger {
       && process.env.YOHO_REMOTE_URL) {
       this.dangerouslyUnencryptedServerLoggingUrl = process.env.YOHO_REMOTE_URL
       console.log(chalk.yellow('[REMOTE LOGGING] Sending logs to server for AI debugging'))
+    }
+    try {
+      pruneOldLogFiles()
+    } catch {
+      // Don't fail logger construction over cleanup errors.
+    }
+  }
+
+  private get currentLogFilePath(): string {
+    return this.rotatedFilePath ?? this.logFilePath
+  }
+
+  private rotateIfTooLarge(): void {
+    const target = this.currentLogFilePath
+    try {
+      if (!existsSync(target)) return
+      const size = statSync(target).size
+      if (size < ROTATE_LOG_MAX_BYTES) return
+      const ts = new Date().toISOString().replace(/[:.]/g, '-')
+      this.rotatedFilePath = `${this.logFilePath}.${ts}`
+      try {
+        pruneOldLogFiles()
+      } catch {
+        // best-effort cleanup
+      }
+    } catch {
+      // ignore stat failures
     }
   }
 
@@ -219,13 +252,40 @@ class Logger {
     
     // Handle async file path
     try {
-      appendFileSync(this.logFilePath, logLine)
+      this.writeCounter += 1
+      if (this.writeCounter % ROTATE_LOG_CHECK_EVERY_N_WRITES === 0) {
+        this.rotateIfTooLarge()
+      }
+      appendFileSync(this.currentLogFilePath, logLine)
     } catch (appendError) {
       if (process.env.DEBUG) {
         console.error('[DEV MODE ONLY THROWING] Failed to append to log file:', appendError)
         throw appendError
       }
       // In production, fail silently to avoid disturbing Claude session
+    }
+  }
+}
+
+function pruneOldLogFiles(): void {
+  if (!existsSync(configuration.logsDir)) return
+  const entries = readdirSync(configuration.logsDir)
+    .filter(name => name.endsWith('.log') || name.includes('.log.'))
+    .map(name => {
+      const path = join(configuration.logsDir, name)
+      try {
+        return { name, path, mtime: statSync(path).mtimeMs }
+      } catch {
+        return null
+      }
+    })
+    .filter((entry): entry is { name: string; path: string; mtime: number } => entry !== null)
+    .sort((a, b) => b.mtime - a.mtime)
+  for (const entry of entries.slice(MAX_LOG_FILES_TO_KEEP)) {
+    try {
+      unlinkSync(entry.path)
+    } catch {
+      // ignore unlink failures
     }
   }
 }

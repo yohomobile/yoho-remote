@@ -645,6 +645,8 @@ export type SyncEvent =
     | { type: 'online-users-changed'; users: OnlineUser[]; orgId?: string | null; namespace?: string }
     | { type: 'typing-changed'; sessionId: string; typing: TypingUser; orgId?: string | null; namespace?: string }
     | { type: 'file-ready'; sessionId: string; fileInfo: DownloadFileInfo; orgId?: string | null; namespace?: string }
+    | { type: 'viewer-changed'; sessionId: string; viewers: SessionViewer[]; orgId?: string | null; namespace?: string }
+    | { type: 'participants-changed'; sessionId: string; participants: IdentityActorMeta[]; orgId?: string | null; namespace?: string }
 
 export type OnlineUsersResponse = { users: OnlineUser[] }
 

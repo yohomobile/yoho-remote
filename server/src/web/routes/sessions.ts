@@ -1720,12 +1720,19 @@ export function createSessionsRoutes(
             return summary
         })
 
-        if (typeof (store as { getSessionParticipants?: unknown }).getSessionParticipants === 'function' && sessionSummaries.length > 0) {
+        // 只对 active session 聚合 participants:archived/inactive session 数量大(本机
+        // ~1700+ 条),`getSessionParticipants` 内部 jsonb 查询走不到索引会全表扫,首屏
+        // loading ~2s 大头在这。archived 的 participants 由 SSE participants-changed 推送
+        // 维护(2026-04-25 加入),进入归档 tab 时即使 participants 暂时为空,等下条
+        // 消息或重新进入 detail 都能补上。
+        const activeSummaryIds = sessionSummaries.filter((s) => s.active).map((s) => s.id)
+        if (typeof (store as { getSessionParticipants?: unknown }).getSessionParticipants === 'function' && activeSummaryIds.length > 0) {
             try {
                 const participantMap = await (store as unknown as {
                     getSessionParticipants: (ids: string[], opts?: { limitPerSession?: number }) => Promise<Map<string, unknown[]>>
-                }).getSessionParticipants(sessionSummaries.map((s) => s.id), { limitPerSession: 10 })
+                }).getSessionParticipants(activeSummaryIds, { limitPerSession: 10 })
                 for (const summary of sessionSummaries) {
+                    if (!summary.active) continue
                     const actors = participantMap.get(summary.id)
                     if (actors && actors.length > 0) {
                         summary.participants = actors.filter((a): a is WebActorMeta => !!a && typeof a === 'object')

@@ -4,7 +4,6 @@ import type { MessagesResponse, Session, SessionResponse, SessionsResponse, Sess
 import { queryKeys } from '@/lib/query-keys'
 import { upsertMessagesInCache } from '@/lib/messages'
 import { getClientId, getDeviceType } from '@/lib/client-identity'
-import { scheduleSessionsListInvalidation } from '@/lib/sessions-invalidation'
 import {
     applySessionSummaryStatusUpdate,
     hasSessionStatusFields,
@@ -148,7 +147,18 @@ export function useSSE(options: {
                         if (import.meta.env.DEV) {
                             console.log('[sse] remove session queries', event.sessionId)
                         }
-                        void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+                        // 增量从 list cache 中移除该 session,不再 fallback 到整列表 refetch
+                        // (4MB,在 25+ active session 稳态下流量爆炸)。2026-04-25
+                        const removedId = event.sessionId
+                        queryClient.setQueriesData<SessionsResponse>(
+                            { queryKey: queryKeys.sessions },
+                            (prev) => {
+                                if (!prev?.sessions) return prev
+                                const filtered = prev.sessions.filter(s => s.id !== removedId)
+                                if (filtered.length === prev.sessions.length) return prev
+                                return { ...prev, sessions: filtered }
+                            }
+                        )
                         void queryClient.removeQueries({ queryKey: queryKeys.session(event.sessionId) })
                         void queryClient.removeQueries({ queryKey: queryKeys.messages(event.sessionId) })
                     } else if (event.type === 'session-added') {
@@ -169,11 +179,12 @@ export function useSSE(options: {
                             )
                         }
 
-                        // New session added - still invalidate in background to refresh server-derived fields.
+                        // session-added: 不再 schedule list refetch。
+                        // viewers/participants 等服务端衍生字段会通过专门的 SSE 事件(viewer-changed/participants-changed)推送。
+                        // 仅 invalidate 该 session 详情,确保进入 detail 页面时拿到完整数据。2026-04-25
                         if (import.meta.env.DEV) {
-                            console.log('[sse] invalidate sessions (new session)', event.sessionId)
+                            console.log('[sse] session-added (no list refetch)', event.sessionId)
                         }
-                        scheduleSessionsListInvalidation(queryClient)
                         void queryClient.invalidateQueries({ queryKey: queryKeys.session(event.sessionId) })
                     } else if (event.type === 'session-updated') {
                         const rawData = ('data' in event ? event.data : null)
@@ -220,10 +231,9 @@ export function useSSE(options: {
                                 { queryKey: queryKeys.sessions },
                                 (prev) => upsertSessionSummary(prev, nextSummary)
                             )
-                            // viewers / ownerEmail 等服务端衍生字段仍然走后台刷新。
-                            // 用 throttle 版本，避免 daemon 重启后 ~30 个 session 同时 full-update
-                            // 触发 30 次 /api/sessions 回查。
-                            scheduleSessionsListInvalidation(queryClient)
+                            // 不再 schedule list refetch:setQueriesData 已经把最新 summary 写进 cache。
+                            // viewers/participants 通过 viewer-changed / participants-changed 单独 SSE 推送;
+                            // ownerEmail 在用户改 sharing 设置时由 mutation 路径显式 invalidate。2026-04-25
                         } else if (hasStatusUpdate && statusData) {
                             if (import.meta.env.DEV) {
                                 console.log('[sse] update session cache directly', event.sessionId, statusData)
@@ -260,29 +270,47 @@ export function useSSE(options: {
                                 }
                             )
                         } else if (isSidOnlyUpdate) {
-                            // sid-only update 可能来自 metadata 更新（source/mainSessionId/lifecycleState 等），
-                            // 这些字段会影响 session 列表分组与筛选；同时详情也必须刷新。
+                            // sid-only update:metadata 改了(lifecycleState/source/mainSessionId 等),
+                            // SSE 没带具体字段,只能拉 detail 走 query 兜底,不再触发整列表 refetch。
+                            // 列表 cache 里 metadata 暂时滞后;若用户进入该 session detail 查看,
+                            // detail invalidate 会拿到最新 metadata。2026-04-25
                             if (import.meta.env.DEV) {
-                                console.log('[sse] sid-only update, invalidating session detail + list', event.sessionId)
+                                console.log('[sse] sid-only update (no list refetch)', event.sessionId)
                             }
-                            scheduleSessionsListInvalidation(queryClient)
                             void queryClient.invalidateQueries({ queryKey: queryKeys.session(event.sessionId) })
                         } else {
-                            // No status fields and no sid in event, fallback to invalidation
+                            // 不识别的 session-updated payload:仅 invalidate 详情,不动 list cache。
                             if (import.meta.env.DEV) {
-                                console.log('[sse] invalidate session (unknown update type)', event.sessionId, rawData)
+                                console.log('[sse] unknown session-updated payload (no list refetch)', event.sessionId, rawData)
                             }
-                            scheduleSessionsListInvalidation(queryClient)
                             void queryClient.invalidateQueries({ queryKey: queryKeys.session(event.sessionId) })
                         }
                     }
                 } else {
-                    // No sessionId in event, invalidate all
+                    // session-updated without sessionId: 极少见,跳过(原来会兜底 invalidate 整列表)。
                     if (import.meta.env.DEV) {
-                        console.log('[sse] invalidate sessions (no sessionId)')
+                        console.log('[sse] session-updated without sessionId, ignored')
                     }
-                    scheduleSessionsListInvalidation(queryClient)
                 }
+            }
+
+            // viewer-changed:某 session 的查看者变化(SSE 客户端 join/leave 时由 server 推)。
+            // 只更新 list cache 中该 session 的 viewers 字段,不触发 refetch。2026-04-25
+            if (event.type === 'viewer-changed' && 'sessionId' in event && Array.isArray((event as unknown as { viewers?: unknown }).viewers)) {
+                const viewers = (event as unknown as { viewers: SessionSummary['viewers'] }).viewers
+                queryClient.setQueriesData<SessionsResponse>(
+                    { queryKey: queryKeys.sessions },
+                    (prev) => applySessionSummaryStatusUpdate(prev, event.sessionId, { viewers } as SessionStatusUpdateData)
+                )
+            }
+
+            // participants-changed:message authors 聚合,同上,只走增量。2026-04-25
+            if (event.type === 'participants-changed' && 'sessionId' in event && Array.isArray((event as unknown as { participants?: unknown }).participants)) {
+                const participants = (event as unknown as { participants: SessionSummary['participants'] }).participants
+                queryClient.setQueriesData<SessionsResponse>(
+                    { queryKey: queryKeys.sessions },
+                    (prev) => applySessionSummaryStatusUpdate(prev, event.sessionId, { participants } as SessionStatusUpdateData)
+                )
             }
 
             if (event.type === 'machine-updated') {
