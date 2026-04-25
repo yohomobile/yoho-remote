@@ -1,6 +1,7 @@
 import type { ApiClient } from '@/api/api';
 import type { Metadata } from '@/api/types';
 import { logger } from '@/ui/logger';
+import { isProcessAlive } from '@/utils/process';
 import type { TrackedSession } from './types';
 import { getDaemonTempDirsFromMetadata } from './tempDirs';
 import { isDaemonOwnedSession, normalizeSessionProcessIdentity } from './trackedSessionIdentity';
@@ -86,8 +87,27 @@ export async function recoverTrackedSessionsFromServer({
             trust: 'passive',
         });
         if (!normalizedMetadata) {
-            logger.debug(`[DAEMON RUN] Skipping recovered session ${sessionId}: process identity no longer matches PID ${pid}`);
-            await requestArchiveForStaleSession(api, session.id, 'identity-mismatch');
+            // Differentiate "dead pid" from "alive pid but identity mismatch": the latter
+            // is the alive-but-archived false-positive we keep watching for. Log it loudly
+            // (warn-level + structured fields) so ops can grep `[ALIVE_ARCHIVE]` in daemon
+            // logs to confirm tolerance is wide enough.
+            const stillAlive = isProcessAlive(pid);
+            if (stillAlive) {
+                logger.warn(`[DAEMON RUN] [ALIVE_ARCHIVE] Archiving session ${sessionId} whose PID ${pid} is still alive (identity mismatch on recovery)`, {
+                    sessionId: session.id,
+                    pid,
+                    hostProcessStartedAt: metadata.hostProcessStartedAt,
+                    startedBy: metadata.startedBy,
+                    startedFromDaemon: metadata.startedFromDaemon,
+                });
+            } else {
+                logger.debug(`[DAEMON RUN] Skipping recovered session ${sessionId}: process identity no longer matches PID ${pid}`);
+            }
+            // Reason taxonomy:
+            //   alive-identity-mismatch — PID is alive but its fingerprint no
+            //                             longer matches; needs ops attention.
+            //   dead-pid                — PID is gone; routine cleanup.
+            await requestArchiveForStaleSession(api, session.id, stillAlive ? 'alive-identity-mismatch' : 'dead-pid');
             continue;
         }
 

@@ -2,7 +2,7 @@ import { hostname } from 'node:os'
 import { Pool } from 'pg'
 import { PgBoss } from 'pg-boss'
 import packageJson from '../package.json'
-import { QUEUE, AI_TASK_DISPATCH_QUEUE, AI_TASK_RUN_QUEUE, CONFLICT_SCAN_QUEUE } from './boss'
+import { QUEUE, AI_TASK_DISPATCH_QUEUE, AI_TASK_RUN_QUEUE } from './boss'
 import { loadConfig } from './config'
 import { RunStore } from './db/runStore'
 import { ensureWorkerSchema } from './db/schema'
@@ -12,7 +12,6 @@ import { enqueueSegmentIfNeeded } from './handlers/summarizeSegment'
 import { handleAiTask, aiTaskPayloadSchema } from './handlers/aiTask'
 import { handleAiTaskDispatcher } from './handlers/aiTaskDispatcher'
 import { AiTaskStore } from './db/aiTaskStore'
-import { handleConflictScan } from './handlers/conflictScan'
 import { startWorkerHealthServer, type WorkerHealthSnapshot } from './health'
 import { YohoMemoryClient } from './infra/yohoMemory'
 import { registerWorkerJobs } from './jobs/core'
@@ -243,17 +242,6 @@ async function main(): Promise<void> {
     })
 
     await boss.schedule(AI_TASK_DISPATCH_QUEUE, '* * * * *', {}, { retryLimit: 0 })
-
-    // Phase 3C Conflict Scan: hourly, opportunistic. Runs alongside other handlers.
-    await boss.createQueue(CONFLICT_SCAN_QUEUE, { retentionSeconds: 86_400 })
-    await boss.work(CONFLICT_SCAN_QUEUE, async (jobs) => {
-        for (const job of jobs) {
-            await handleConflictScan(job.data, ctx).catch((err: unknown) => {
-                console.error('[Worker] conflictScan error:', err)
-            })
-        }
-    })
-    await boss.schedule(CONFLICT_SCAN_QUEUE, '17 * * * *', {}, { retryLimit: 0 })
 
     // Run catch-up scan on startup then on interval
     void runCatchup(ctx, state)

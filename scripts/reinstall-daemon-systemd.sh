@@ -59,6 +59,57 @@ load_current_daemon_env
 
 daemon_home="${YOHO_REMOTE_HOME:-$service_home/.yoho-remote}"
 
+check_user_systemd_prerequisites() {
+    local uid
+    uid="$(id -u "$service_user")"
+    local xdg="/run/user/$uid"
+
+    if ! command -v systemd-run >/dev/null 2>&1; then
+        echo "[daemon-deploy] Error: systemd-run is required so daemon sessions can enter independent scopes" >&2
+        exit 1
+    fi
+
+    if ! command -v loginctl >/dev/null 2>&1; then
+        echo "[daemon-deploy] Error: loginctl is required to verify linger before daemon deploy" >&2
+        exit 1
+    fi
+
+    local linger
+    linger="$(loginctl show-user "$service_user" -p Linger --value 2>/dev/null || true)"
+    if [[ "$linger" != "yes" ]]; then
+        echo "[daemon-deploy] Error: user linger is ${linger:-<empty>} for $service_user" >&2
+        echo "[daemon-deploy] Refusing daemon deploy: sessions would plain-spawn in the daemon cgroup and die on daemon restart" >&2
+        echo "[daemon-deploy] Fix:  sudo loginctl enable-linger $service_user" >&2
+        echo "[daemon-deploy] Note: socket may take 1-3 seconds to appear; rerun deploy if it still fails" >&2
+        exit 1
+    fi
+
+    if [[ ! -S "$xdg/systemd/private" ]]; then
+        echo "[daemon-deploy] Error: user systemd manager is not reachable at $xdg/systemd/private" >&2
+        echo "[daemon-deploy] Fix: enable linger if not done (sudo loginctl enable-linger $service_user); wait 1-3s for socket; or log in once as $service_user to force user manager startup" >&2
+        exit 1
+    fi
+
+    if ! sudo -u "$service_user" env \
+            "HOME=$service_home" \
+            "XDG_RUNTIME_DIR=$xdg" \
+            "DBUS_SESSION_BUS_ADDRESS=unix:path=$xdg/bus" \
+            systemd-run --user --scope --collect --quiet --unit="yr-preflight-$$" -- true \
+            >/dev/null 2>&1; then
+        echo "[daemon-deploy] Error: systemd-run --user --scope failed for $service_user" >&2
+        echo "[daemon-deploy] Diagnose (run as $service_user):" >&2
+        echo "  sudo -u $service_user XDG_RUNTIME_DIR=$xdg DBUS_SESSION_BUS_ADDRESS=unix:path=$xdg/bus systemctl --user status" >&2
+        echo "  sudo -u $service_user XDG_RUNTIME_DIR=$xdg DBUS_SESSION_BUS_ADDRESS=unix:path=$xdg/bus systemctl --user --failed" >&2
+        echo "  journalctl --user-unit=user@$uid.service -xe -n 40 --no-pager" >&2
+        echo "[daemon-deploy] Refusing silent plain spawn; fix user D-Bus/systemd before deploying daemon" >&2
+        exit 1
+    fi
+
+    echo "[daemon-deploy] Verified user systemd prerequisites: user=$service_user linger=yes scope=available"
+}
+
+check_user_systemd_prerequisites
+
 if [[ -z "${CLI_API_TOKEN:-}" ]]; then
     echo "[daemon-deploy] Error: CLI_API_TOKEN is missing from the current daemon environment" >&2
     exit 1

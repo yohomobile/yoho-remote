@@ -54,6 +54,67 @@ ok()   { echo "  ✓ $1"; }
 warn() { echo "  ⚠ $1"; }
 fail() { echo "  ✗ $1"; }
 
+daemon_systemd_preflight_snippet() {
+    cat <<'EOS'
+set -euo pipefail
+service_user="${1:-$(id -un)}"
+uid="$(id -u "$service_user")"
+xdg="${XDG_RUNTIME_DIR:-/run/user/$uid}"
+
+if ! command -v systemd-run >/dev/null 2>&1; then
+    echo "[daemon-preflight] Error: systemd-run is required for daemon session scopes" >&2
+    exit 1
+fi
+
+if ! command -v loginctl >/dev/null 2>&1; then
+    echo "[daemon-preflight] Error: loginctl is required to verify user linger" >&2
+    exit 1
+fi
+
+linger="$(loginctl show-user "$service_user" -p Linger --value 2>/dev/null || true)"
+if [[ "$linger" != "yes" ]]; then
+    echo "[daemon-preflight] Error: user linger is $linger for $service_user; daemon sessions would fall back to parent cgroup and die on daemon restart" >&2
+    echo "[daemon-preflight] Fix: sudo loginctl enable-linger $service_user" >&2
+    echo "[daemon-preflight] Note: socket may take 1-3 seconds to appear; rerun preflight if it still fails" >&2
+    exit 1
+fi
+
+if [[ ! -S "$xdg/systemd/private" ]]; then
+    echo "[daemon-preflight] Error: user systemd manager is not reachable at $xdg/systemd/private" >&2
+    echo "[daemon-preflight] Fix: enable linger if not done (sudo loginctl enable-linger $service_user); wait 1-3s for socket; or log in once as $service_user to force user manager startup" >&2
+    exit 1
+fi
+
+if ! XDG_RUNTIME_DIR="$xdg" DBUS_SESSION_BUS_ADDRESS="unix:path=$xdg/bus" systemd-run --user --scope --collect --quiet --unit="yr-preflight-$$" -- true >/dev/null 2>&1; then
+    echo "[daemon-preflight] Error: systemd-run --user --scope failed for $service_user" >&2
+    echo "[daemon-preflight] Diagnose:" >&2
+    echo "  XDG_RUNTIME_DIR=$xdg DBUS_SESSION_BUS_ADDRESS=unix:path=$xdg/bus systemctl --user status" >&2
+    echo "  XDG_RUNTIME_DIR=$xdg DBUS_SESSION_BUS_ADDRESS=unix:path=$xdg/bus systemctl --user --failed" >&2
+    echo "  journalctl --user-unit=user@$uid.service -xe -n 40 --no-pager" >&2
+    echo "[daemon-preflight] Refusing silent plain spawn; fix user D-Bus/systemd before deploying daemon" >&2
+    exit 1
+fi
+
+echo "[daemon-preflight] OK: linger=yes and user systemd scope is available for $service_user"
+EOS
+}
+
+check_ncu_daemon_systemd_preflight() {
+    [[ "$DEPLOY_DAEMON" == "true" ]] || return 0
+    should_deploy_daemon ncu || return 0
+
+    log "Checking ncu daemon user systemd prerequisites..."
+    local snippet
+    snippet="$(daemon_systemd_preflight_snippet)"
+    if is_ncu; then
+        bash -c "$snippet" _ "$SELF_USER"
+    else
+        local remote_user="${NCU_SSH%@*}"
+        ssh $SSH_OPTS "$NCU_SSH" "bash -s -- '$remote_user'" <<< "$snippet"
+    fi
+    ok "ncu daemon systemd prerequisites verified"
+}
+
 # 获取当前进程的所有祖先 PID（daemon → yoho-remote → claude → bash）
 # 用于 kill 时排除自己的进程链，避免误杀当前会话
 get_ancestor_pids() {
@@ -253,15 +314,17 @@ maybe_self_detach() {
     uid=$(id -u)
     local xdg="${XDG_RUNTIME_DIR:-/run/user/$uid}"
 
-    # 确保 user systemd 可用（需要 linger，不然 SSH 下线后就没了）
-    if [[ ! -d "$xdg/systemd" ]]; then
-        echo "  ⚠ user systemd 不可用 ($xdg/systemd 缺失)，尝试 enable-linger..."
-        echo "$NCU_SUDO_PASS" | sudo -S loginctl enable-linger "$SELF_USER" >/dev/null 2>&1 || true
-        sleep 1
+    local linger
+    linger="$(loginctl show-user "$SELF_USER" -p Linger --value 2>/dev/null || true)"
+    if [[ "$linger" != "yes" ]]; then
+        echo "  ✗ user linger is ${linger:-<empty>} for $SELF_USER; refusing daemon deploy that would silently plain-spawn sessions" >&2
+        echo "    Fix:  sudo loginctl enable-linger $SELF_USER" >&2
+        echo "    Note: socket may take 1-3 seconds to appear; rerun deploy if it still fails" >&2
+        exit 1
     fi
-    if [[ ! -d "$xdg/systemd" ]]; then
-        echo "  ✗ 无法启用 user systemd，请手动执行: sudo loginctl enable-linger $SELF_USER" >&2
-        echo "    或先 SSH 登录一次触发 user manager 启动。" >&2
+    if [[ ! -S "$xdg/systemd/private" ]]; then
+        echo "  ✗ user systemd 不可用 ($xdg/systemd/private 缺失)，无法创建独立 yr-session scope" >&2
+        echo "    Fix: 1) 若刚 enable-linger，等 1-3 秒重试；2) 或 SSH 登录一次以拉起 user@$uid.service" >&2
         exit 1
     fi
 
@@ -276,7 +339,15 @@ maybe_self_detach() {
     # re-inject everything the child deploy.sh needs:
     #   • Fixed vars the child always needs
     #   • YOHO_/YR_/CLI_/ANTHROPIC_/OPENAI_ prefixes (daemon env passthrough group)
-    #   • NCU_SUDO_PASS for sudo calls inside deploy.sh
+    #
+    # NCU_SUDO_PASS is NOT passed via --setenv: that would publish the password in
+    # `systemctl --user show yr-deploy-* -p Environment`, in `/proc/<systemd-run>/cmdline`,
+    # and in `ps auxf` for the entire deploy lifetime. The detached child re-execs
+    # `bash $0`, which re-evaluates the literal `NCU_SUDO_PASS=...` assignment at
+    # the top of this script — so the child gets the same value without any env
+    # exposure. If you ever change line 10 to read NCU_SUDO_PASS from elsewhere
+    # (env / file), revisit this branch — the child must keep getting the value
+    # without re-introducing argv exposure.
     local setenv_args=(
         "--setenv=YR_DEPLOY_DETACHED=1"
         "--setenv=XDG_RUNTIME_DIR=$xdg"
@@ -285,7 +356,7 @@ maybe_self_detach() {
         "--setenv=HOME=$HOME"
     )
     local passthrough_prefixes=(YOHO_ YR_ CLI_ ANTHROPIC_ OPENAI_ GEMINI_ GOOGLE_ OPENROUTER_)
-    local passthrough_keys=(NCU_SUDO_PASS HTTPS_PROXY HTTP_PROXY NO_PROXY)
+    local passthrough_keys=(HTTPS_PROXY HTTP_PROXY NO_PROXY)
     while IFS='=' read -r key _; do
         [[ -z "$key" ]] && continue
         local forward=false
@@ -312,6 +383,8 @@ maybe_self_detach
 
 resolve_ncu_ssh
 echo "  NCU SSH: $NCU_SSH"
+
+check_ncu_daemon_systemd_preflight
 
 # ==================== Step 1: Commit ====================
 log "Committing changes..."

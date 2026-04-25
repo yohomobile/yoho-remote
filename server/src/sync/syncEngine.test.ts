@@ -3530,6 +3530,87 @@ describe('SyncEngine', () => {
         })
     })
 
+    test('refreshSession heal also clears preArchiveActiveAt and autoResumeFailureAttempts', async () => {
+        const updateMetadataCalls: Array<{
+            id: string
+            metadata: Record<string, unknown>
+            expectedVersion: number
+        }> = []
+        const storedSession: any = createSession('session-heal-cleanup', {
+            path: '/tmp/project',
+            host: 'ncu',
+            machineId: 'machine-1',
+            flavor: 'codex',
+            codexSessionId: 'thread-heal',
+            lifecycleState: 'archived',
+            lifecycleStateSince: 150,
+            archivedBy: 'cli-stale-recovery',
+            archiveReason: 'stale-on-recovery: alive-identity-mismatch',
+            preArchiveActiveAt: 120,
+            autoResumeFailureAttempts: 2,
+        })
+        storedSession.active = true
+        storedSession.activeAt = 260
+        storedSession.thinking = false
+        storedSession.thinkingAt = 200
+        storedSession.metadataVersion = 5
+
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            getSession: async () => storedSession,
+            updateSessionMetadata: async (
+                id: string,
+                metadata: Record<string, unknown>,
+                expectedVersion: number,
+            ) => {
+                updateMetadataCalls.push({ id, metadata, expectedVersion })
+                storedSession.metadata = metadata
+                storedSession.metadataVersion = expectedVersion + 1
+                return {
+                    result: 'success',
+                    version: expectedVersion + 1,
+                    value: metadata,
+                }
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any,
+        )
+        engine.stop()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        const healed = await engine.getOrRefreshSession('session-heal-cleanup')
+
+        expect(healed?.active).toBe(true)
+        const healedMetadata = healed?.metadata as Record<string, unknown>
+        expect(healedMetadata.lifecycleState).toBe('active')
+        expect(healedMetadata.archivedBy).toBeUndefined()
+        expect(healedMetadata.archiveReason).toBeUndefined()
+        expect(healedMetadata.preArchiveActiveAt).toBeUndefined()
+        expect(healedMetadata.autoResumeFailureAttempts).toBeUndefined()
+        expect(updateMetadataCalls).toHaveLength(1)
+        const persistedMetadata = updateMetadataCalls[0].metadata
+        expect(persistedMetadata.preArchiveActiveAt).toBeUndefined()
+        expect(persistedMetadata.autoResumeFailureAttempts).toBeUndefined()
+        expect(persistedMetadata.archivedBy).toBeUndefined()
+        expect(persistedMetadata.archiveReason).toBeUndefined()
+    })
+
     test('broadcasts session:clear-messages updates to the CLI room', async () => {
         const cliEmits: Array<{
             room: string
@@ -3840,6 +3921,607 @@ describe('SyncEngine', () => {
 
         // Session on other machine is untouched
         expect(otherSession.active).toBe(true)
+    })
+
+    test('archiveSession stamps preArchiveActiveAt only for recoverable cli archives', async () => {
+        // Captures real last-activity time so auto-resume's too-old window survives a
+        // server restart. Without this, hydrate would reload session.activeAt from DB
+        // (where setSessionActive stamps `now` on archive) and the 2h CLI window would
+        // measure from the archive event instead of from real idleness.
+        const setSessionActiveCalls: Array<{ id: string; active: boolean; activeAt: number }> = []
+        const patches: Array<{ id: string; patch: Record<string, unknown> }> = []
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActive: async (id: string, active: boolean, activeAt: number) => {
+                setSessionActiveCalls.push({ id, active, activeAt })
+                return true
+            },
+            patchSessionMetadata: async (id: string, patch: Record<string, unknown>) => {
+                patches.push({ id, patch })
+                return true
+            },
+            getSession: async () => null,
+        } as any
+
+        const io = { of: () => ({ to: () => ({ emit() {} }), emit() {} }) } as any
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        const machine = createMachine('machine-1', {
+            host: 'h',
+            platform: 'linux',
+            yohoRemoteCliVersion: 't',
+        })
+        ;(engine as any).machines.set(machine.id, machine)
+
+        const lastHeartbeatAt = 1_700_000_000_000
+        const recoverable = createSession('sess-recoverable', {
+            path: '/tmp/p',
+            host: 'h',
+            machineId: machine.id,
+            flavor: 'claude',
+            claudeSessionId: 'claude-x',
+            startedFromDaemon: true,
+            startedBy: 'daemon',
+            lifecycleState: 'running',
+        })
+        recoverable.active = true
+        recoverable.activeAt = lastHeartbeatAt
+        ;(engine as any).sessions.set(recoverable.id, recoverable)
+
+        const userInitiated = createSession('sess-user-archive', {
+            path: '/tmp/p',
+            host: 'h',
+            machineId: machine.id,
+            flavor: 'claude',
+            claudeSessionId: 'claude-y',
+            startedFromDaemon: true,
+            startedBy: 'daemon',
+            lifecycleState: 'running',
+        })
+        userInitiated.active = true
+        userInitiated.activeAt = lastHeartbeatAt
+        ;(engine as any).sessions.set(userInitiated.id, userInitiated)
+
+        await engine.archiveSession(recoverable.id, {
+            terminateSession: false,
+            force: true,
+            archivedBy: 'cli-stale-recovery',
+            archiveReason: 'stale-on-recovery: missing-host-pid',
+        })
+        await engine.archiveSession(userInitiated.id, {
+            terminateSession: false,
+            force: true,
+            archivedBy: 'user',
+            archiveReason: 'User archived',
+        })
+
+        const recoverablePatch = patches.find((p) => p.id === recoverable.id)?.patch
+        expect(recoverablePatch).toBeDefined()
+        expect(recoverablePatch!.preArchiveActiveAt).toBe(lastHeartbeatAt)
+        expect((recoverable.metadata as Record<string, unknown>).preArchiveActiveAt).toBe(lastHeartbeatAt)
+
+        const userPatch = patches.find((p) => p.id === userInitiated.id)?.patch
+        expect(userPatch).toBeDefined()
+        expect(userPatch!).not.toHaveProperty('preArchiveActiveAt')
+        expect((userInitiated.metadata as Record<string, unknown>).preArchiveActiveAt).toBeUndefined()
+    })
+
+    test('archiveSession respects caller-supplied preArchiveActiveAt in extraMetadata', async () => {
+        const patches: Array<{ id: string; patch: Record<string, unknown> }> = []
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActive: async () => true,
+            patchSessionMetadata: async (id: string, patch: Record<string, unknown>) => {
+                patches.push({ id, patch })
+                return true
+            },
+            getSession: async () => null,
+        } as any
+
+        const io = { of: () => ({ to: () => ({ emit() {} }), emit() {} }) } as any
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        const session = createSession('sess-explicit', {
+            path: '/tmp/p',
+            host: 'h',
+            machineId: 'machine-1',
+            flavor: 'claude',
+            claudeSessionId: 'claude-z',
+            startedFromDaemon: true,
+            startedBy: 'daemon',
+            lifecycleState: 'running',
+        })
+        session.active = true
+        session.activeAt = 5_000_000
+        ;(engine as any).sessions.set(session.id, session)
+
+        const explicitPreArchive = 1_111_111
+        await engine.archiveSession(session.id, {
+            terminateSession: false,
+            force: true,
+            archivedBy: 'cli-stale-recovery',
+            archiveReason: 'override-test',
+            extraMetadata: { preArchiveActiveAt: explicitPreArchive },
+        })
+
+        const persistedPatch = patches.find((p) => p.id === session.id)?.patch
+        expect(persistedPatch?.preArchiveActiveAt).toBe(explicitPreArchive)
+    })
+
+    test('getAutoResumeSkipReasons uses preArchiveActiveAt for too-old window after server restart', async () => {
+        // Simulates the post-restart state: hydrate populated session.activeAt from
+        // DB (which setSessionActive stamped to the archive event time). Without the
+        // preArchiveActiveAt fallback, a session that was idle for 6h before being
+        // archived would falsely look fresh after restart and slip past the 2h gate.
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+        } as any
+        const io = { of: () => ({ to: () => ({ emit() {} }), emit() {} }) } as any
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        const machine = createMachine('machine-1', {
+            host: 'h',
+            platform: 'linux',
+            yohoRemoteCliVersion: 't',
+        })
+        ;(engine as any).machines.set(machine.id, machine)
+
+        const now = Date.now()
+        const archiveEventAt = now - 60_000 // archived 1 minute ago
+        const realLastActivityAt = now - 6 * 60 * 60 * 1000 // 6 hours ago
+
+        const baseMetadata = {
+            path: '/tmp/p',
+            host: 'h',
+            machineId: machine.id,
+            flavor: 'claude',
+            claudeSessionId: 'claude-x',
+            startedFromDaemon: true,
+            startedBy: 'daemon',
+            lifecycleState: 'archived',
+            archivedBy: 'cli-stale-recovery',
+            archiveReason: 'stale-on-recovery: missing-host-pid',
+        }
+
+        const withSnapshot = createSession('sess-with-snapshot', {
+            ...baseMetadata,
+            preArchiveActiveAt: realLastActivityAt,
+        })
+        withSnapshot.active = false
+        withSnapshot.activeAt = archiveEventAt
+        ;(engine as any).sessions.set(withSnapshot.id, withSnapshot)
+
+        const withoutSnapshot = createSession('sess-without-snapshot', baseMetadata)
+        withoutSnapshot.active = false
+        withoutSnapshot.activeAt = archiveEventAt
+        ;(engine as any).sessions.set(withoutSnapshot.id, withoutSnapshot)
+
+        const skipReasons = (session: Session): string[] => (engine as any).getAutoResumeSkipReasons(
+            session,
+            machine.id,
+            machine.namespace,
+            machine.supportedAgents,
+            now,
+        )
+
+        // Session with the snapshot correctly trips too-old (real activity 6h ago > 2h window).
+        expect(skipReasons(withSnapshot)).toContain('too-old')
+        // Session without snapshot falls back to session.activeAt (archive time, 1min ago)
+        // and slips through — this is the legacy bug we want to be aware of.
+        expect(skipReasons(withoutSnapshot)).not.toContain('too-old')
+    })
+
+    test('unarchiveSession clears preArchiveActiveAt so subsequent archive cycles re-baseline', async () => {
+        let updateCalls = 0
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            updateSessionMetadata: async (
+                _id: string,
+                metadata: Record<string, unknown>,
+                _expectedVersion: number,
+                _orgId: string,
+            ) => {
+                updateCalls += 1
+                return { result: 'success' as const, version: 7, value: metadata }
+            },
+        } as any
+
+        const io = { of: () => ({ to: () => ({ emit() {} }), emit() {} }) } as any
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        const session = createSession('sess-unarchive', {
+            path: '/tmp/p',
+            host: 'h',
+            machineId: 'machine-1',
+            flavor: 'claude',
+            claudeSessionId: 'claude-x',
+            startedFromDaemon: true,
+            startedBy: 'daemon',
+            lifecycleState: 'archived',
+            archivedBy: 'cli-stale-recovery',
+            archiveReason: 'stale-on-recovery',
+            preArchiveActiveAt: 1_700_000_000_000,
+        })
+        session.active = false
+        ;(engine as any).sessions.set(session.id, session)
+
+        const result = await engine.unarchiveSession(session.id, { actor: 'test' })
+        expect(result).toEqual({ ok: true })
+        expect(updateCalls).toBe(1)
+        expect((session.metadata as Record<string, unknown>).preArchiveActiveAt).toBeUndefined()
+        expect((session.metadata as Record<string, unknown>).archivedBy).toBeUndefined()
+        expect((session.metadata as Record<string, unknown>).lifecycleState).toBe('active')
+    })
+
+    test('auto-resume gate handles cli-stale-recovery archives without weakening other gates', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
+        engine.stop()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        const machine = createMachine('machine-stale-recovery', {
+            host: 'test-host',
+            platform: 'linux',
+            yohoRemoteCliVersion: 'test',
+        })
+        ;(engine as any).machines.set(machine.id, machine)
+
+        const now = Date.now()
+        const baseMetadata = {
+            path: '/tmp/project',
+            host: 'test-host',
+            machineId: machine.id,
+            flavor: 'claude',
+            claudeSessionId: 'claude-abc',
+            startedFromDaemon: true,
+            startedBy: 'daemon',
+            lifecycleState: 'archived',
+            archivedBy: 'cli-stale-recovery',
+            archiveReason: 'stale-on-recovery: missing-host-pid',
+        }
+        const addSession = (
+            id: string,
+            metadataPatch: Record<string, unknown>,
+            activeAt: number = now - 60_000,
+        ): Session => {
+            const session = createSession(id, { ...baseMetadata, ...metadataPatch })
+            session.active = false
+            session.activeAt = activeAt
+            ;(engine as any).sessions.set(session.id, session)
+            return session
+        }
+
+        const recentStaleArchive = addSession('sess-cli-stale-recovery', {})
+        const staleArchiveTooOld = addSession('sess-cli-stale-recovery-old', {}, now - 3 * 60 * 60 * 1000)
+        const userArchive = addSession('sess-user-archive', { archivedBy: 'user' })
+        const systemArchive = addSession('sess-system-archive', { archivedBy: 'system-stale' })
+        const notDaemonStarted = addSession('sess-not-daemon', {
+            startedFromDaemon: false,
+            startedBy: 'user',
+        })
+        const missingPath = addSession('sess-missing-path', { path: undefined })
+        const missingNativeSessionId = addSession('sess-missing-native-id', { claudeSessionId: undefined })
+        const missingCodexNativeSessionId = addSession('sess-missing-codex-native-id', {
+            flavor: 'codex',
+            claudeSessionId: undefined,
+            codexSessionId: undefined,
+        })
+        const codexStaleArchive = addSession('sess-codex-cli-stale-recovery', {
+            flavor: 'codex',
+            claudeSessionId: undefined,
+            codexSessionId: 'codex-abc',
+        })
+        const wrongMachine = addSession('sess-wrong-machine', { machineId: 'other-machine' })
+        const badFlavor = addSession('sess-bad-flavor', { flavor: 'aider' })
+        const runningWithoutDbActive = addSession('sess-running-without-db-active', {
+            lifecycleState: 'running',
+            archivedBy: undefined,
+        })
+        const runningWithDbActive = addSession('sess-running-with-db-active', {
+            lifecycleState: 'running',
+            archivedBy: undefined,
+        })
+        ;(engine as any)._dbActiveSessionIds.add(runningWithDbActive.id)
+
+        const candidates = (engine as any).getAutoResumeCandidates(
+            machine.id,
+            machine.namespace,
+            machine.supportedAgents,
+            Date.now()
+        ) as Session[]
+        const candidateIds = candidates.map((session) => session.id)
+
+        expect(candidateIds).toContain(recentStaleArchive.id)
+        expect(candidateIds).toContain(codexStaleArchive.id)
+        expect(candidateIds).toContain(runningWithDbActive.id)
+        expect(candidateIds).not.toContain(staleArchiveTooOld.id)
+        expect(candidateIds).not.toContain(userArchive.id)
+        expect(candidateIds).not.toContain(systemArchive.id)
+        expect(candidateIds).not.toContain(notDaemonStarted.id)
+        expect(candidateIds).not.toContain(missingPath.id)
+        expect(candidateIds).not.toContain(missingNativeSessionId.id)
+        expect(candidateIds).not.toContain(missingCodexNativeSessionId.id)
+        expect(candidateIds).not.toContain(wrongMachine.id)
+        expect(candidateIds).not.toContain(badFlavor.id)
+        expect(candidateIds).not.toContain(runningWithoutDbActive.id)
+
+        const skipReasons = (session: Session): string[] => (engine as any).getAutoResumeSkipReasons(
+            session,
+            machine.id,
+            machine.namespace,
+            machine.supportedAgents,
+            now
+        )
+
+        expect(skipReasons(recentStaleArchive)).toEqual([])
+        expect(skipReasons(codexStaleArchive)).toEqual([])
+        expect(skipReasons(recentStaleArchive)).not.toContain('archived:cli-stale-recovery')
+        expect(skipReasons(staleArchiveTooOld)).toContain('too-old')
+        expect(skipReasons(userArchive)).toContain('archived:user')
+        expect(skipReasons(systemArchive)).toContain('archived:system-stale')
+        expect(skipReasons(notDaemonStarted)).toContain('not-daemon-started')
+        expect(skipReasons(missingPath)).toContain('no-path')
+        expect(skipReasons(missingNativeSessionId)).toContain('no-native-session-id')
+        expect(skipReasons(missingCodexNativeSessionId)).toContain('no-native-session-id')
+        expect(skipReasons(wrongMachine)).toContain('wrong-machine')
+        expect(skipReasons(badFlavor)).toContain('bad-flavor:aider')
+        expect(skipReasons(runningWithoutDbActive)).toContain('not-in-dbActive')
+        expect(skipReasons(runningWithDbActive)).toEqual([])
+
+        for (const session of [missingNativeSessionId, missingCodexNativeSessionId, missingPath, badFlavor]) {
+            expect(skipReasons(session)).not.toContain('archived:cli-stale-recovery')
+            expect(skipReasons(session)).not.toContain('not-in-dbActive')
+        }
+    })
+
+    test('auto-resume-failed archives are retryable in short window with attempts cap', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
+        engine.stop()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        const machine = createMachine('machine-arf', {
+            host: 'test-host',
+            platform: 'linux',
+            yohoRemoteCliVersion: 'test',
+        })
+        ;(engine as any).machines.set(machine.id, machine)
+
+        const now = Date.now()
+        const baseMetadata = {
+            path: '/tmp/project',
+            host: 'test-host',
+            machineId: machine.id,
+            flavor: 'claude',
+            claudeSessionId: 'claude-abc',
+            startedFromDaemon: true,
+            startedBy: 'daemon',
+            lifecycleState: 'archived',
+            archivedBy: 'auto-resume-failed',
+            archiveReason: 'auto-resume spawn failed: rpc timeout',
+        }
+        const addSession = (
+            id: string,
+            metadataPatch: Record<string, unknown>,
+            activeAt: number = now - 60_000,
+        ): Session => {
+            const session = createSession(id, { ...baseMetadata, ...metadataPatch })
+            session.active = false
+            session.activeAt = activeAt
+            ;(engine as any).sessions.set(session.id, session)
+            return session
+        }
+
+        const recentFirstFailure = addSession('sess-arf-recent-first', {
+            lifecycleStateSince: now - 60_000,
+            autoResumeFailureAttempts: 1,
+        })
+        const recentSecondFailure = addSession('sess-arf-recent-second', {
+            lifecycleStateSince: now - 30_000,
+            autoResumeFailureAttempts: 2,
+        })
+        const exhaustedAttempts = addSession('sess-arf-exhausted', {
+            lifecycleStateSince: now - 60_000,
+            autoResumeFailureAttempts: 3,
+        })
+        const failureWindowExpired = addSession('sess-arf-window-expired', {
+            lifecycleStateSince: now - 3 * 60 * 60 * 1000,
+            autoResumeFailureAttempts: 1,
+        })
+        const activeAtTooOld = addSession(
+            'sess-arf-active-too-old',
+            {
+                lifecycleStateSince: now - 60_000,
+                autoResumeFailureAttempts: 1,
+            },
+            now - 3 * 60 * 60 * 1000
+        )
+        const userArchive = addSession('sess-user-archive-arf', {
+            archivedBy: 'user',
+            archiveReason: 'user archived',
+            lifecycleStateSince: now - 60_000,
+        })
+        const serverArchive = addSession('sess-server-archive-arf', {
+            archivedBy: 'server',
+            archiveReason: 'server archived',
+            lifecycleStateSince: now - 60_000,
+        })
+
+        const candidates = (engine as any).getAutoResumeCandidates(
+            machine.id,
+            machine.namespace,
+            machine.supportedAgents,
+            now
+        ) as Session[]
+        const candidateIds = candidates.map((session) => session.id)
+
+        expect(candidateIds).toContain(recentFirstFailure.id)
+        expect(candidateIds).toContain(recentSecondFailure.id)
+        expect(candidateIds).not.toContain(exhaustedAttempts.id)
+        expect(candidateIds).not.toContain(failureWindowExpired.id)
+        expect(candidateIds).not.toContain(activeAtTooOld.id)
+        expect(candidateIds).not.toContain(userArchive.id)
+        expect(candidateIds).not.toContain(serverArchive.id)
+
+        const skipReasons = (session: Session): string[] => (engine as any).getAutoResumeSkipReasons(
+            session,
+            machine.id,
+            machine.namespace,
+            machine.supportedAgents,
+            now
+        )
+
+        expect(skipReasons(recentFirstFailure)).toEqual([])
+        expect(skipReasons(recentSecondFailure)).toEqual([])
+        expect(skipReasons(exhaustedAttempts)).toContain('archived:auto-resume-failed')
+        expect(skipReasons(exhaustedAttempts)).toContain('not-in-dbActive')
+        expect(skipReasons(failureWindowExpired)).toContain('archived:auto-resume-failed')
+        expect(skipReasons(failureWindowExpired)).toContain('not-in-dbActive')
+        expect(skipReasons(activeAtTooOld)).toContain('too-old')
+        expect(skipReasons(userArchive)).toContain('archived:user')
+        expect(skipReasons(userArchive)).toContain('not-in-dbActive')
+        expect(skipReasons(serverArchive)).toContain('archived:server')
+
+        for (const session of [userArchive, serverArchive, exhaustedAttempts, failureWindowExpired]) {
+            const reasons = skipReasons(session)
+            expect(reasons).not.toEqual([])
+        }
+    })
+
+    test('archiveSession persists extraMetadata alongside archive stamps', async () => {
+        type PatchCall = { id: string; patch: Record<string, unknown>; namespace: string }
+        const patchCalls: PatchCall[] = []
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActive: async (
+                _id: string,
+                _active: boolean,
+                _activeAt: number,
+                _namespace: string,
+                _orgId: unknown
+            ) => true,
+            patchSessionMetadata: async (
+                id: string,
+                patch: Record<string, unknown>,
+                namespace: string,
+            ) => {
+                patchCalls.push({ id, patch, namespace })
+                return true
+            },
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(
+            store,
+            io,
+            {} as any,
+            {
+                broadcast() {},
+                broadcastToGroup() {},
+            } as any
+        )
+        engine.stop()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        const session = createSession('sess-archive-extra', {
+            path: '/tmp/project',
+            machineId: 'machine-arf',
+            flavor: 'claude',
+            startedFromDaemon: true,
+            startedBy: 'daemon',
+            autoResumeFailureAttempts: 2,
+        })
+        session.active = true
+        session.activeAt = Date.now() - 60_000
+        ;(engine as any).sessions.set(session.id, session)
+        ;(engine as any)._dbActiveSessionIds.add(session.id)
+
+        const archived = await engine.archiveSession(session.id, {
+            terminateSession: false,
+            force: true,
+            archivedBy: 'auto-resume-failed',
+            archiveReason: 'spawn failed: rpc timeout',
+            extraMetadata: { autoResumeFailureAttempts: 3 },
+        })
+
+        expect(archived).toBe(true)
+        expect(patchCalls).toHaveLength(1)
+        const patched = patchCalls[0]?.patch ?? {}
+        expect(patched.archivedBy).toBe('auto-resume-failed')
+        expect(patched.archiveReason).toBe('spawn failed: rpc timeout')
+        expect(patched.lifecycleState).toBe('archived')
+        expect(patched.autoResumeFailureAttempts).toBe(3)
+        expect((session.metadata as any)?.autoResumeFailureAttempts).toBe(3)
+        expect((session.metadata as any)?.archivedBy).toBe('auto-resume-failed')
     })
 
     test('tracks monitor lifecycle from realtime messages', async () => {

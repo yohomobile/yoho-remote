@@ -121,6 +121,31 @@ export function getBrainChildMainSessionId(metadata: unknown): string | undefine
 
 const ARCHIVE_STAMP_FIELDS = ['lifecycleState', 'lifecycleStateSince', 'archivedBy', 'archiveReason'] as const
 
+// Archive reasons that auto-resume treats as "this CLI process went away,
+// pull it back if the daemon comes online again." They must NOT be treated
+// as protected archives by archive-protection guards — otherwise the heal
+// paths (refreshSession, unarchiveSession during auto-resume, CLI replace-on-
+// patch) silently snap them back to archived and the session is stranded.
+//
+// Intentional asymmetry with auto-resume-failed:
+// - 'cli' / 'cli-stale-recovery' mean the daemon process disappeared while the
+//   session was healthy from the server's POV; protection guards should let
+//   ordinary writes (heal, heartbeat backfill) lift the archive freely.
+// - 'auto-resume-failed' means we *tried* to bring the session back and
+//   something genuinely broke (spawn failed, no heartbeat in 60s). The
+//   skip-gate in syncEngine.getAutoResumeSkipReasons still allows retry
+//   inside a 2h window with a 3-attempt cap, but archive-protection MUST
+//   stay on so the failure stamp is not blown away by an unrelated metadata
+//   patch — that would reset the attempts counter and turn a real failure
+//   into an infinite retry loop.
+// Keep the two policies separate: RECOVERABLE_CLI_ARCHIVE_REASONS lifts
+// archive *protection*; the auto-resume retry policy lives at the skip-gate.
+export const RECOVERABLE_CLI_ARCHIVE_REASONS: ReadonlySet<string> = new Set(['cli', 'cli-stale-recovery'])
+
+export function isRecoverableCliArchiveReason(archivedBy: unknown): boolean {
+    return typeof archivedBy === 'string' && RECOVERABLE_CLI_ARCHIVE_REASONS.has(archivedBy)
+}
+
 export function isProtectedArchivedSession(metadata: unknown): boolean {
     if (!isRecord(metadata)) {
         return false
@@ -132,7 +157,7 @@ export function isProtectedArchivedSession(metadata: unknown): boolean {
     if (!archivedBy) {
         return false
     }
-    return archivedBy !== 'cli'
+    return !RECOVERABLE_CLI_ARCHIVE_REASONS.has(archivedBy)
 }
 
 export type ArchiveProtectionResult<T> = {

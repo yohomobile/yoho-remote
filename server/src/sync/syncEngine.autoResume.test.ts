@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { buildBrainSessionPreferences } from '../brain/brainSessionPreferences'
-import { SyncEngine, type Machine, type Session } from './syncEngine'
+import { SyncEngine, categorizeAutoResumeSpawnError, type Machine, type Session } from './syncEngine'
 
 function createSession(id: string, metadata: Record<string, unknown>): Session {
     return {
@@ -47,6 +47,209 @@ function createMachine(id: string): Machine {
 }
 
 describe('SyncEngine auto-resume', () => {
+    test('logs skip-reason histogram before returning when no candidates are resumable', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActive: async () => true,
+            getSession: async () => null,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const rpcRegistry = {
+            getSocketIdForMethod: () => 'socket-1',
+        } as any
+
+        const engine = new SyncEngine(store, io, rpcRegistry, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const machine = createMachine('machine-1')
+        const stale = createSession('session-stale', {
+            machineId: machine.id,
+            path: '/tmp/project-stale',
+            flavor: 'codex',
+            codexSessionId: 'thread-stale',
+            startedFromDaemon: true,
+        })
+        const terminal = createSession('session-terminal', {
+            machineId: machine.id,
+            path: '/tmp/project-terminal',
+            flavor: 'codex',
+            codexSessionId: 'thread-terminal',
+            startedBy: 'terminal',
+        })
+
+        ;(engine as any).machines.set(machine.id, machine)
+        ;(engine as any).sessions.set(stale.id, stale)
+        ;(engine as any).sessions.set(terminal.id, terminal)
+        ;(engine as any)._dbActiveSessionIds = new Set<string>()
+        ;(engine as any).listDaemonLiveSessions = async () => []
+
+        const originalLog = console.log
+        const logs: string[] = []
+        console.log = (...args: unknown[]) => {
+            logs.push(args.map(String).join(' '))
+        }
+        try {
+            await (engine as any).autoResumeSessions(machine.id, machine.namespace)
+        } finally {
+            console.log = originalLog
+        }
+
+        expect(logs.some(line => line.includes('[auto-resume] Skip-reason histogram'))).toBe(true)
+        expect(logs.some(line => line.includes('not-in-dbActive'))).toBe(true)
+        expect(logs.some(line => line.includes('not-daemon-started'))).toBe(true)
+        expect(logs.some(line => line.includes('No candidates found'))).toBe(true)
+    })
+
+    test('handleMachineAlive defers auto-resume until reloadAllAsync completes', async () => {
+        // Regression: a daemon that reconnects fast enough to race the constructor's
+        // reloadAllAsync used to land on an empty _dbActiveSessionIds and skip every
+        // candidate with `not-in-dbActive`. The hydrationDone gate inside
+        // handleMachineAlive must hold the autoResumeSessions trigger until hydrate
+        // has populated session/machine state.
+
+        let resolveGetSessions!: (rows: unknown[]) => void
+        const sessionsHydratePromise = new Promise<unknown[]>((resolve) => {
+            resolveGetSessions = resolve
+        })
+
+        const machineRow = {
+            id: 'machine-1',
+            namespace: 'default',
+            seq: 0,
+            createdAt: 0,
+            updatedAt: 0,
+            active: false,
+            activeAt: 0,
+            metadata: { host: 'h', platform: 'linux', yohoRemoteCliVersion: 't' },
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 1,
+            orgId: null,
+            supportedAgents: null,
+        }
+
+        const store = {
+            getSessions: () => sessionsHydratePromise,
+            getSession: async () => null,
+            getMachines: async () => [machineRow],
+            getMachine: async (id: string) => (id === 'machine-1' ? machineRow : null),
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+
+        let autoResumeCalls = 0
+        ;(engine as any).autoResumeSessions = async () => {
+            autoResumeCalls += 1
+        }
+
+        // Fire machine-alive while reloadAllAsync is still awaiting getSessions.
+        // The handler returns immediately (machine.active flips, broadcasts), but
+        // the autoResume trigger is gated on hydrationDone.
+        await engine.handleMachineAlive({ machineId: 'machine-1', time: Date.now() })
+
+        // Drain microtasks: gate must still be holding, autoResume not invoked.
+        await new Promise((r) => setTimeout(r, 0))
+        expect(autoResumeCalls).toBe(0)
+
+        // Releasing getSessions lets reloadAllAsync finish; the .then() that
+        // gated the trigger then schedules autoResumeSessions on the microtask
+        // queue. One macrotask drain is enough to observe it.
+        resolveGetSessions([])
+        await (engine as any).hydrationDone
+        await new Promise((r) => setTimeout(r, 0))
+        expect(autoResumeCalls).toBe(1)
+
+        // A second machine-alive after hydrate (without going offline first) is
+        // already wasActive=true and must not double-trigger.
+        await engine.handleMachineAlive({ machineId: 'machine-1', time: Date.now() })
+        await new Promise((r) => setTimeout(r, 0))
+        expect(autoResumeCalls).toBe(1)
+
+        engine.stop()
+    })
+
+    test('hydrationDone gate skips deferred trigger when machine bounced offline during hydrate', async () => {
+        let resolveGetSessions!: (rows: unknown[]) => void
+        const sessionsHydratePromise = new Promise<unknown[]>((resolve) => {
+            resolveGetSessions = resolve
+        })
+
+        const machineRow = {
+            id: 'machine-2',
+            namespace: 'default',
+            seq: 0,
+            createdAt: 0,
+            updatedAt: 0,
+            active: false,
+            activeAt: 0,
+            metadata: { host: 'h', platform: 'linux', yohoRemoteCliVersion: 't' },
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 1,
+            orgId: null,
+            supportedAgents: null,
+        }
+
+        const store = {
+            getSessions: () => sessionsHydratePromise,
+            getSession: async () => null,
+            getMachines: async () => [machineRow],
+            getMachine: async (id: string) => (id === 'machine-2' ? machineRow : null),
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+
+        let autoResumeCalls = 0
+        ;(engine as any).autoResumeSessions = async () => {
+            autoResumeCalls += 1
+        }
+
+        await engine.handleMachineAlive({ machineId: 'machine-2', time: Date.now() })
+        // Mark the machine offline before hydrate completes — the gated trigger
+        // must observe the new state and short-circuit.
+        const machine = (engine as any).machines.get('machine-2')
+        machine.active = false
+
+        resolveGetSessions([])
+        await (engine as any).hydrationDone
+        await new Promise((r) => setTimeout(r, 0))
+        expect(autoResumeCalls).toBe(0)
+
+        engine.stop()
+    })
+
     test('only auto-resumes sessions that were last known active in DB', async () => {
         const store = {
             getSessions: async () => [],
@@ -322,6 +525,10 @@ describe('SyncEngine auto-resume', () => {
                 setSessionActiveCalls.push({ id, active, activeAt, namespace })
                 return true
             },
+            // archiveSession (invoked from the rollback path) patches metadata before
+            // returning. Without this stub, the call throws before _dbActiveSessionIds
+            // is cleaned up and the rollback assertions silently flap.
+            patchSessionMetadata: async () => true,
             getSession: async () => null,
         } as any
 
@@ -869,5 +1076,169 @@ describe('SyncEngine auto-resume', () => {
 
         engine.noteResumeClientEvent('session-trace', 'message-post', { sentFrom: 'webapp' })
         expect((engine as any).resumeTraceBySessionId.has('session-trace')).toBe(false)
+    })
+
+    test('spawn-failed branch redacts raw daemon error: archiveReason and warn carry only the category', async () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+            setSessionActive: async () => true,
+            getSession: async () => null,
+        } as any
+
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+
+        const rpcRegistry = {
+            getSocketIdForMethod: () => 'socket-1',
+        } as any
+
+        const engine = new SyncEngine(store, io, rpcRegistry, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        const machine = createMachine('machine-1')
+        const session = createSession('session-leaky-fail', {
+            machineId: machine.id,
+            path: '/tmp/project-leaky',
+            flavor: 'codex',
+            codexSessionId: 'thread-leaky',
+            startedFromDaemon: true,
+        })
+
+        ;(engine as any).machines.set(machine.id, machine)
+        ;(engine as any).sessions.set(session.id, session)
+        ;(engine as any)._dbActiveSessionIds = new Set([session.id])
+        ;(engine as any).listDaemonLiveSessions = async () => []
+        ;(engine as any).waitForSessionHeartbeatAfter = async () => true
+
+        // Realistic daemon error payload. Includes:
+        //  - a fake bearer token (must never reach archiveReason or logs)
+        //  - an absolute filesystem path (PII / topology leak)
+        //  - a stderr tail matching what runClaude.ts would emit
+        //  - a token-source env hint
+        const SENSITIVE_TOKEN = 'sk-ant-FAKE-SECRET-DO-NOT-LEAK-9zX7Q'
+        const SENSITIVE_PATH = '/home/guang/.yoho-remote/runtime/secret-credentials.json'
+        const SENSITIVE_TOKEN_SOURCE_KEY = 'YOHO_REMOTE_TOKEN_SOURCE_API_KEY=AKIA-FAKE-TS-KEY'
+        const sensitiveFragments = [SENSITIVE_TOKEN, SENSITIVE_PATH, SENSITIVE_TOKEN_SOURCE_KEY, 'sk-ant-', 'AKIA-']
+        const rawDaemonError =
+            `Session process for PID 31337 exited before the webhook was ready (code=1, signal=null).\n` +
+            `Stderr tail (last 512B):\n` +
+            `Error: failed to load credentials from ${SENSITIVE_PATH}\n` +
+            `  Authorization: Bearer ${SENSITIVE_TOKEN}\n` +
+            `  env: ${SENSITIVE_TOKEN_SOURCE_KEY}\n`
+
+        ;(engine as any).spawnSession = async () => ({
+            type: 'error',
+            message: rawDaemonError,
+        })
+
+        type ArchiveCall = { id: string; opts: any }
+        const archiveCalls: ArchiveCall[] = []
+        ;(engine as any).archiveSession = async (id: string, opts: any) => {
+            archiveCalls.push({ id, opts })
+            return true
+        }
+
+        const originalWarn = console.warn
+        const originalLog = console.log
+        const warnLines: string[] = []
+        const logLines: string[] = []
+        console.warn = (...args: unknown[]) => {
+            warnLines.push(args.map(String).join(' '))
+        }
+        console.log = (...args: unknown[]) => {
+            logLines.push(args.map(String).join(' '))
+        }
+        try {
+            await (engine as any).autoResumeSessions(machine.id, machine.namespace)
+        } finally {
+            console.warn = originalWarn
+            console.log = originalLog
+        }
+
+        // 1. archiveSession was called with redacted, fixed-format reason
+        expect(archiveCalls).toHaveLength(1)
+        const [call] = archiveCalls
+        expect(call.id).toBe(session.id)
+        expect(call.opts.archivedBy).toBe('auto-resume-failed')
+        expect(call.opts.archiveReason).toBe('auto-resume spawn failed: process-exited-early')
+        expect(call.opts.terminateSession).toBe(false)
+        expect(call.opts.force).toBe(true)
+
+        // 2. attempts increment is preserved
+        expect(call.opts.extraMetadata).toEqual({ autoResumeFailureAttempts: 1 })
+
+        // 3. neither archive options nor logs leak any sensitive fragment
+        const archiveJson = JSON.stringify(call.opts)
+        for (const fragment of sensitiveFragments) {
+            expect(archiveJson).not.toContain(fragment)
+            for (const line of warnLines) {
+                expect(line).not.toContain(fragment)
+            }
+            for (const line of logLines) {
+                expect(line).not.toContain(fragment)
+            }
+        }
+
+        // 4. warn line includes the safe category (and only the short session id) so ops can still triage
+        const matchingWarn = warnLines.find(line => line.includes('spawn failed') && line.includes('process-exited-early'))
+        expect(matchingWarn).toBeDefined()
+        expect(matchingWarn).toContain(session.id.slice(0, 8))
+        expect(matchingWarn).toContain('attempt=1')
+    })
+
+    test('categorizeAutoResumeSpawnError maps daemon error strings to a fixed code without echoing input', () => {
+        // Each entry mirrors a known daemon error string from cli/src/daemon/run.ts
+        // (or server-side spawnSession). The categorizer must drop the raw payload.
+        const cases: Array<{ input: string; category: string }> = [
+            { input: 'AGENT_NOT_AVAILABLE: "claude" not found in PATH on this machine /opt/secrets', category: 'agent-not-available' },
+            { input: 'Machine "host" does not support agent "codex". Supported: claude', category: 'unsupported-agent' },
+            { input: 'rpc method spawn-yoho-remote-session: RPC handler not registered for /tmp/secret', category: 'rpc-handler-not-registered' },
+            { input: 'Session webhook timeout for PID 31337 with token sk-ant-FAKE', category: 'webhook-timeout' },
+            { input: 'Session process for PID 31337 exited before the webhook was ready (code=1)…stderr… token=sk-ant-FAKE', category: 'process-exited-early' },
+            { input: 'Child process error for PID 31337: EACCES /home/guang/secrets', category: 'child-process-error' },
+            { input: 'Worktree creation failed: fatal: not a git repository', category: 'worktree-failed' },
+            { input: 'Worktree sessions require an existing Git repository. Directory not found: /tmp/x', category: 'directory-missing' },
+            { input: 'Unable to create directory at \'/tmp/x\'. Permission denied.', category: 'directory-create-failed' },
+            { input: 'Failed to spawn YR process - no PID returned', category: 'no-pid' },
+            { input: 'Unexpected spawn result', category: 'rpc-error' },
+            { input: 'totally novel error: leaked /home/secret', category: 'unexpected' },
+            { input: '', category: 'unexpected' },
+        ]
+
+        for (const { input, category } of cases) {
+            expect(categorizeAutoResumeSpawnError(input)).toBe(category)
+        }
+
+        // Sanity: the categorizer never returns the raw input
+        expect(categorizeAutoResumeSpawnError('contains sk-ant-FAKE token')).not.toContain('sk-ant')
+    })
+
+    test('claimed-live reconnect timeout default covers socket reconnectionDelayMax=5s', () => {
+        const store = {
+            getSessions: async () => [],
+            getMachines: async () => [],
+        } as any
+        const io = {
+            of: () => ({
+                to: () => ({ emit() {} }),
+                emit() {},
+            }),
+        } as any
+        const engine = new SyncEngine(store, io, {} as any, {
+            broadcast() {},
+            broadcastToGroup() {},
+        } as any)
+        engine.stop()
+        const timeout = (engine as any).autoResumeClaimedReconnectTimeoutMs
+        expect(timeout).toBeGreaterThanOrEqual(8_000)
     })
 })

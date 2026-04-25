@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import os from 'os';
 import { spawnSync } from 'child_process';
+import { randomBytes } from 'crypto';
 
 import { ApiClient, isRetryableServerError } from '@/api/api';
 import { TrackedSession } from './types';
@@ -52,6 +53,68 @@ function isManagedBySystemd(): boolean {
 
 function toTomlString(value: string): string {
   return JSON.stringify(value);
+}
+
+/**
+ * The unit name is fixed at systemd-run time; webhook arrival later updates the
+ * tracked session id by PID, not by unit name. Returning a placeholder when
+ * options.sessionId is missing is what keeps every daemon-spawned session out
+ * of the daemon cgroup — without it, new sessions would plain-spawn and die on
+ * daemon restart via KillMode=control-group.
+ */
+export function buildSessionUnitName(sessionId?: string): string {
+    if (sessionId) {
+        const sanitized = sessionId.replace(/[^a-zA-Z0-9]/g, '');
+        if (sanitized.length > 0) {
+            return `yr-session-${sanitized}-${Date.now()}`;
+        }
+    }
+    return `yr-session-pending-${Date.now()}-${randomBytes(4).toString('hex')}`;
+}
+
+export function sanitizeSpawnEnvForAgent(
+  childEnv: NodeJS.ProcessEnv,
+  options: { agent?: string; tokenSourceType?: 'claude' | 'codex' }
+): string[] {
+  const removeKeys = new Set<string>();
+
+  if (options.tokenSourceType === 'claude' && options.agent === 'claude') {
+    removeKeys.add('ANTHROPIC_AUTH_TOKEN');
+    removeKeys.add('CLAUDE_CODE_OAUTH_TOKEN');
+  }
+
+  if (options.agent === 'codex') {
+    for (const key of [
+      'OPENAI_API_KEY',
+      'OPENAI_BASE_URL',
+      'OPENAI_ORG',
+      'OPENAI_ORGANIZATION',
+      'OPENAI_PROJECT',
+      'ANTHROPIC_API_KEY',
+      'ANTHROPIC_AUTH_TOKEN',
+      'ANTHROPIC_BASE_URL',
+      'CLAUDE_CODE_OAUTH_TOKEN',
+    ]) {
+      removeKeys.add(key);
+    }
+
+    if (options.tokenSourceType !== 'codex') {
+      for (const key of [
+        'YOHO_REMOTE_TOKEN_SOURCE_API_KEY',
+        'YR_TOKEN_SOURCE_ID',
+        'YR_TOKEN_SOURCE_NAME',
+        'YR_TOKEN_SOURCE_TYPE',
+      ]) {
+        removeKeys.add(key);
+      }
+    }
+  }
+
+  const removedEnvKeys = [...removeKeys].filter((key) => childEnv[key] !== undefined);
+  for (const key of removedEnvKeys) {
+    delete childEnv[key];
+  }
+  return removedEnvKeys;
 }
 
 function machineMetadataChanged(currentMetadata: MachineMetadata | null | undefined, nextMetadata: MachineMetadata): boolean {
@@ -748,43 +811,17 @@ export async function startDaemon(): Promise<void> {
           ...extraEnv
         };
 
-        if (options.tokenSourceType === 'claude' && agent === 'claude') {
-          const removedEnvKeys = [
-            'ANTHROPIC_AUTH_TOKEN',
-            'CLAUDE_CODE_OAUTH_TOKEN'
-          ].filter((key) => childEnv[key] !== undefined);
-
-          for (const key of removedEnvKeys) {
-            delete childEnv[key];
-          }
-
-          if (removedEnvKeys.length > 0) {
-            logger.debug('[DAEMON RUN] Cleared inherited Claude auth env overrides for Token Source', {
-              removedEnvKeys
-            });
-            addLog('env', `Cleared inherited Claude auth env overrides: ${removedEnvKeys.join(', ')}`, 'success');
-          }
-        }
-
-        if (agent === 'codex') {
-          const removedEnvKeys = [
-            'OPENAI_API_KEY',
-            'OPENAI_BASE_URL',
-            'OPENAI_ORG',
-            'OPENAI_ORGANIZATION',
-            'OPENAI_PROJECT'
-          ].filter((key) => childEnv[key] !== undefined);
-
-          for (const key of removedEnvKeys) {
-            delete childEnv[key];
-          }
-
-          if (removedEnvKeys.length > 0) {
-            logger.debug('[DAEMON RUN] Cleared OpenAI env overrides for Codex session auth', {
-              removedEnvKeys
-            });
-            addLog('env', `Cleared OpenAI env overrides for Codex: ${removedEnvKeys.join(', ')}`, 'success');
-          }
+        const removedEnvKeys = sanitizeSpawnEnvForAgent(childEnv, {
+          agent,
+          tokenSourceType: options.tokenSourceType,
+        });
+        if (removedEnvKeys.length > 0) {
+          logger.debug('[DAEMON RUN] Cleared inherited auth env overrides for child session', {
+            agent,
+            tokenSourceType: options.tokenSourceType,
+            removedEnvKeys
+          });
+          addLog('env', `Cleared inherited auth env overrides: ${removedEnvKeys.join(', ')}`, 'success');
         }
 
         // Spawn from a local (non-NFS) directory to avoid bun's early getcwd() call
@@ -797,11 +834,10 @@ export async function startDaemon(): Promise<void> {
         // so `systemctl restart yoho-remote-daemon` does NOT SIGKILL us via
         // KillMode=control-group. Plain `detached: true` is not enough —
         // cgroup membership is inherited from the spawner and ignores setsid.
-        // When user-systemd is unreachable (no /run/user/$UID/systemd), this
-        // is a no-op and we fall back to the plain spawn.
-        const sessionUnitName = options.sessionId
-          ? `yr-session-${options.sessionId.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now()}`
-          : undefined;
+        // We always generate a unit name so brand-new sessions (no sessionId yet)
+        // also escape the daemon cgroup; the unit name is just a cgroup label
+        // and stays fixed even after the webhook resolves the real session id.
+        const sessionUnitName = buildSessionUnitName(options.sessionId);
 
         cliProcess = spawnYohoRemoteCLI(args, {
           cwd: safeSpawnCwd,

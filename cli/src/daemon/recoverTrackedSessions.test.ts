@@ -10,6 +10,7 @@ import {
 } from './recoverTrackedSessions';
 import type { TrackedSession } from './types';
 import { getProcessStartedAtMs, isProcessAlive } from '@/utils/process';
+import { logger } from '@/ui/logger';
 
 vi.mock('@/utils/process', () => ({
     isProcessAlive: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock('cross-spawn', () => ({
 vi.mock('@/ui/logger', () => ({
     logger: {
         debug: vi.fn(),
+        warn: vi.fn(),
     },
 }));
 
@@ -48,6 +50,8 @@ describe('recoverTrackedSessionsFromServer', () => {
         (isProcessAlive as unknown as { mockReset: () => void }).mockReset();
         (getProcessStartedAtMs as unknown as { mockReset: () => void }).mockReset();
         (spawn.sync as unknown as { mockReset: () => void }).mockReset();
+        (logger.warn as unknown as { mockReset: () => void }).mockReset();
+        (logger.debug as unknown as { mockReset: () => void }).mockReset();
     });
 
     it('classifies daemon-owned metadata using startedFromDaemon as well as startedBy', () => {
@@ -293,6 +297,167 @@ describe('recoverTrackedSessionsFromServer', () => {
         });
     });
 
+    it('does not archive a live daemon-owned session when explicit fingerprint matches despite larger start time drift', async () => {
+        const api = {
+            listSessions: vi.fn().mockResolvedValue({
+                sessions: [
+                    { id: 'session-daemon-large-drift', active: true, metadata: { machineId: 'machine-1' } },
+                ],
+            }),
+            getSession: vi.fn().mockResolvedValue(createSession('session-daemon-large-drift', {
+                path: '/tmp/daemon-large-drift',
+                host: 'host-daemon',
+                homeDir: '/tmp',
+                yohoRemoteHomeDir: '/tmp/.yr',
+                yohoRemoteLibDir: '/tmp/.yr/lib',
+                yohoRemoteToolsDir: '/tmp/.yr/tools',
+                machineId: 'machine-1',
+                hostPid: 456,
+                hostProcessStartedAt: 10_000,
+                startedBy: 'daemon',
+            })),
+            deleteSession: vi.fn(),
+        } satisfies Pick<ApiClient, 'listSessions' | 'getSession' | 'deleteSession'>;
+
+        (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
+        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(120_000);
+        (spawn.sync as unknown as { mockReturnValue: (value: unknown) => void }).mockReturnValue({
+            status: 0,
+            stdout: 'yoho-remote codex --started-by daemon --yoho-remote-session-id session-daemon-large-drift',
+        });
+
+        const tracked = new Map<number, TrackedSession>();
+        const recovered = await recoverTrackedSessionsFromServer({
+            api,
+            machineId: 'machine-1',
+            pidToTrackedSession: tracked,
+        });
+
+        expect(recovered).toBe(1);
+        expect(api.deleteSession).not.toHaveBeenCalled();
+        expect(tracked.get(456)).toMatchObject({
+            pid: 456,
+            startedBy: 'daemon',
+            yohoRemoteSessionId: 'session-daemon-large-drift',
+            yohoRemoteSessionMetadataFromLocalWebhook: {
+                hostProcessStartedAt: 120_000,
+            },
+        });
+    });
+
+    it('archives a still-alive session when explicit fingerprint matches but drift exceeds 24h tolerance', async () => {
+        const api = {
+            listSessions: vi.fn().mockResolvedValue({
+                sessions: [
+                    { id: 'session-daemon-overflow', active: true, metadata: { machineId: 'machine-1' } },
+                ],
+            }),
+            getSession: vi.fn().mockResolvedValue(createSession('session-daemon-overflow', {
+                path: '/tmp/daemon-overflow',
+                host: 'host-daemon',
+                homeDir: '/tmp',
+                yohoRemoteHomeDir: '/tmp/.yr',
+                yohoRemoteLibDir: '/tmp/.yr/lib',
+                yohoRemoteToolsDir: '/tmp/.yr/tools',
+                machineId: 'machine-1',
+                hostPid: 789,
+                hostProcessStartedAt: 0,
+                startedBy: 'daemon',
+            })),
+            deleteSession: vi.fn(),
+        } satisfies Pick<ApiClient, 'listSessions' | 'getSession' | 'deleteSession'>;
+
+        // 25h drift — beyond the 24h tolerance even with explicit session fingerprint match.
+        const driftMs = 25 * 60 * 60 * 1000;
+        (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
+        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(driftMs);
+        (spawn.sync as unknown as { mockReturnValue: (value: unknown) => void }).mockReturnValue({
+            status: 0,
+            stdout: 'yoho-remote codex --started-by daemon --yoho-remote-session-id session-daemon-overflow',
+        });
+
+        const tracked = new Map<number, TrackedSession>();
+        const recovered = await recoverTrackedSessionsFromServer({
+            api,
+            machineId: 'machine-1',
+            pidToTrackedSession: tracked,
+        });
+
+        expect(recovered).toBe(0);
+        expect(tracked.size).toBe(0);
+        // Server-compat payload: archivedBy is the gate string syncEngine recognizes,
+        // terminateSession=false because the process is already alive (we don't kill it).
+        expect(api.deleteSession).toHaveBeenCalledWith('session-daemon-overflow', {
+            archivedBy: 'cli-stale-recovery',
+            archiveReason: 'stale-on-recovery: alive-identity-mismatch',
+            terminateSession: false,
+        });
+        // Structured warn fields are the operator's eyes on alive-but-archived events.
+        expect(logger.warn).toHaveBeenCalledWith(
+            expect.stringContaining('[ALIVE_ARCHIVE]'),
+            {
+                sessionId: 'session-daemon-overflow',
+                pid: 789,
+                hostProcessStartedAt: 0,
+                startedBy: 'daemon',
+                startedFromDaemon: undefined,
+            },
+        );
+    });
+
+    it('logs alive-but-archived warn when fingerprint missing on a live pid', async () => {
+        const api = {
+            listSessions: vi.fn().mockResolvedValue({
+                sessions: [
+                    { id: 'session-no-fingerprint', active: true, metadata: { machineId: 'machine-1' } },
+                ],
+            }),
+            getSession: vi.fn().mockResolvedValue(createSession('session-no-fingerprint', {
+                path: '/tmp/no-fp',
+                host: 'host-daemon',
+                homeDir: '/tmp',
+                yohoRemoteHomeDir: '/tmp/.yr',
+                yohoRemoteLibDir: '/tmp/.yr/lib',
+                yohoRemoteToolsDir: '/tmp/.yr/tools',
+                machineId: 'machine-1',
+                hostPid: 222,
+                hostProcessStartedAt: 10_000,
+                startedBy: 'daemon',
+            })),
+            deleteSession: vi.fn(),
+        } satisfies Pick<ApiClient, 'listSessions' | 'getSession' | 'deleteSession'>;
+
+        (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
+        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(60_000);
+        (spawn.sync as unknown as { mockReturnValue: (value: unknown) => void }).mockReturnValue({
+            status: 0,
+            stdout: 'python worker.py',
+        });
+
+        const tracked = new Map<number, TrackedSession>();
+        await recoverTrackedSessionsFromServer({
+            api,
+            machineId: 'machine-1',
+            pidToTrackedSession: tracked,
+        });
+
+        expect(api.deleteSession).toHaveBeenCalledWith('session-no-fingerprint', {
+            archivedBy: 'cli-stale-recovery',
+            archiveReason: 'stale-on-recovery: alive-identity-mismatch',
+            terminateSession: false,
+        });
+        expect(logger.warn).toHaveBeenCalledWith(
+            expect.stringContaining('[ALIVE_ARCHIVE]'),
+            {
+                sessionId: 'session-no-fingerprint',
+                pid: 222,
+                hostProcessStartedAt: 10_000,
+                startedBy: 'daemon',
+                startedFromDaemon: undefined,
+            },
+        );
+    });
+
     it('skips daemon-owned coarse drift during passive recovery when daemon fingerprint is missing', async () => {
         const api = {
             listSessions: vi.fn().mockResolvedValue({
@@ -365,5 +530,91 @@ describe('recoverTrackedSessionsFromServer', () => {
 
         expect(recovered).toBe(0);
         expect(tracked.size).toBe(0);
+    });
+
+    it('archives a dead pid quietly without [ALIVE_ARCHIVE] warn noise', async () => {
+        const api = {
+            listSessions: vi.fn().mockResolvedValue({
+                sessions: [
+                    { id: 'session-dead', active: true, metadata: { machineId: 'machine-1' } },
+                ],
+            }),
+            getSession: vi.fn().mockResolvedValue(createSession('session-dead', {
+                path: '/tmp/dead',
+                host: 'host-dead',
+                homeDir: '/tmp',
+                yohoRemoteHomeDir: '/tmp/.yr',
+                yohoRemoteLibDir: '/tmp/.yr/lib',
+                yohoRemoteToolsDir: '/tmp/.yr/tools',
+                machineId: 'machine-1',
+                hostPid: 999,
+                hostProcessStartedAt: 1_000,
+                startedBy: 'daemon',
+            })),
+            deleteSession: vi.fn(),
+        } satisfies Pick<ApiClient, 'listSessions' | 'getSession' | 'deleteSession'>;
+
+        (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(false);
+
+        const tracked = new Map<number, TrackedSession>();
+        await recoverTrackedSessionsFromServer({
+            api,
+            machineId: 'machine-1',
+            pidToTrackedSession: tracked,
+        });
+
+        expect(api.deleteSession).toHaveBeenCalledWith('session-dead', {
+            archivedBy: 'cli-stale-recovery',
+            archiveReason: 'stale-on-recovery: dead-pid',
+            terminateSession: false,
+        });
+        expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it('also covers startedFromDaemon=true sessions in ALIVE_ARCHIVE structured fields', async () => {
+        const api = {
+            listSessions: vi.fn().mockResolvedValue({
+                sessions: [
+                    { id: 'session-from-daemon', active: true, metadata: { machineId: 'machine-1' } },
+                ],
+            }),
+            getSession: vi.fn().mockResolvedValue(createSession('session-from-daemon', {
+                path: '/tmp/from-daemon',
+                host: 'host-daemon',
+                homeDir: '/tmp',
+                yohoRemoteHomeDir: '/tmp/.yr',
+                yohoRemoteLibDir: '/tmp/.yr/lib',
+                yohoRemoteToolsDir: '/tmp/.yr/tools',
+                machineId: 'machine-1',
+                hostPid: 333,
+                hostProcessStartedAt: 5_000,
+                startedFromDaemon: true,
+            })),
+            deleteSession: vi.fn(),
+        } satisfies Pick<ApiClient, 'listSessions' | 'getSession' | 'deleteSession'>;
+
+        (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
+        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(80_000);
+        (spawn.sync as unknown as { mockReturnValue: (value: unknown) => void }).mockReturnValue({
+            status: 0,
+            stdout: 'python worker.py',
+        });
+
+        await recoverTrackedSessionsFromServer({
+            api,
+            machineId: 'machine-1',
+            pidToTrackedSession: new Map<number, TrackedSession>(),
+        });
+
+        expect(logger.warn).toHaveBeenCalledWith(
+            expect.stringContaining('[ALIVE_ARCHIVE]'),
+            {
+                sessionId: 'session-from-daemon',
+                pid: 333,
+                hostProcessStartedAt: 5_000,
+                startedBy: undefined,
+                startedFromDaemon: true,
+            },
+        );
     });
 });

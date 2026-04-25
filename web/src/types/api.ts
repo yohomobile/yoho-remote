@@ -838,9 +838,7 @@ export type ApprovalActorRole = 'admin' | 'subject' | 'operator' | 'system'
 
 export type ApprovalDomainName =
     | 'identity'
-    | 'team_memory'
-    | 'observation'
-    | 'memory_conflict'
+    | 'skill'
 
 export type ApprovalRecord = {
     id: string

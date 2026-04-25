@@ -78,59 +78,13 @@ export const APPROVAL_PAYLOAD_IDENTITY_DDL = `
         ON approval_payload_identity(identity_id);
 `
 
-// Domain payload: team-shared memory candidate (Phase 3B).
-export const APPROVAL_PAYLOAD_TEAM_MEMORY_DDL = `
-    CREATE TABLE IF NOT EXISTS approval_payload_team_memory (
-        approval_id TEXT PRIMARY KEY REFERENCES approvals(id) ON DELETE CASCADE,
-        proposed_by_person_id TEXT,
-        proposed_by_email TEXT,
-        scope TEXT NOT NULL,
-        content TEXT NOT NULL,
-        source TEXT,
-        session_id TEXT,
-        memory_ref TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_approval_payload_team_memory_proposed_by
-        ON approval_payload_team_memory(proposed_by_email);
-`
-
-// Domain payload: observation hypothesis (Phase 3F).
-export const APPROVAL_PAYLOAD_OBSERVATION_DDL = `
-    CREATE TABLE IF NOT EXISTS approval_payload_observation (
-        approval_id TEXT PRIMARY KEY REFERENCES approvals(id) ON DELETE CASCADE,
-        subject_person_id TEXT,
-        subject_email TEXT,
-        hypothesis_key TEXT NOT NULL,
-        summary TEXT NOT NULL,
-        detail TEXT,
-        detector_version TEXT NOT NULL,
-        confidence DOUBLE PRECISION,
-        signals JSONB NOT NULL DEFAULT '[]',
-        suggested_patch JSONB,
-        promoted_communication_plan_id TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_approval_payload_observation_subject
-        ON approval_payload_observation(subject_person_id);
-`
-
-// Domain payload: memory conflict candidate (Phase 3C).
-export const APPROVAL_PAYLOAD_MEMORY_CONFLICT_DDL = `
-    CREATE TABLE IF NOT EXISTS approval_payload_memory_conflict (
-        approval_id TEXT PRIMARY KEY REFERENCES approvals(id) ON DELETE CASCADE,
-        scope TEXT NOT NULL,
-        summary TEXT NOT NULL,
-        entries JSONB NOT NULL DEFAULT '[]',
-        evidence JSONB,
-        detector_version TEXT NOT NULL,
-        resolution TEXT
-    );
-`
+// team_memory / observation / memory_conflict payload tables removed —
+// those domains were never wired to a real producer and have been retired.
+// `skill` domain runs in proxy mode (candidates live in yoho-vault) and
+// therefore needs no payload table here.
 
 export const APPROVALS_ALL_DDL = [
     APPROVALS_DDL,
     APPROVAL_AUDITS_DDL,
     APPROVAL_PAYLOAD_IDENTITY_DDL,
-    APPROVAL_PAYLOAD_TEAM_MEMORY_DDL,
-    APPROVAL_PAYLOAD_OBSERVATION_DDL,
-    APPROVAL_PAYLOAD_MEMORY_CONFLICT_DDL,
 ].join('\n')

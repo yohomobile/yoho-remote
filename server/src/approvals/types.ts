@@ -1,10 +1,15 @@
 // Unified Approvals Engine — core type contracts.
 //
-// Four domains (identity / team_memory / observation / memory_conflict) share
-// one master table + one audit table (see store/approvals-ddl.ts). Each domain
-// owns a typed payload table and plugs a `ApprovalDomain` into the registry.
-// Core code routes decisions without knowing domain semantics; domain plugins
-// own state-machine / permission / effects.
+// Two flavours of domain are supported:
+//   1. "owner" mode (default): candidate data lives in our `approvals` master
+//      table + a per-domain `approval_payload_*` table. The standard store
+//      layer (`store.listApprovals` / `decideApproval`) drives the workflow.
+//   2. "proxy" mode (set `proxyAdapter`): candidate data lives in another
+//      service (e.g. yoho-vault skill candidates). The store layer is
+//      bypassed; the route layer calls the adapter's list/get/decide methods
+//      directly, and audits are skipped (the upstream system owns history).
+//
+// Today: identity uses owner mode; skill uses proxy mode.
 
 import type { OrgRole } from '../store'
 
@@ -110,15 +115,46 @@ export interface ApprovalEffectsResult<TPayload> {
  * provided transactional context; do not reach to external state in ways that
  * cannot be rolled back with the surrounding transaction.
  */
+export interface ApprovalProxyAdapter<TAction extends { action: string }> {
+    list(filter: {
+        namespace: string
+        orgId: string
+        status: ApprovalMasterStatus | null
+        limit: number
+    }): Promise<ApprovalRecord[]>
+    get(filter: {
+        namespace: string
+        orgId: string
+        id: string
+    }): Promise<{ record: ApprovalRecord; payload: unknown } | null>
+    decide(args: {
+        namespace: string
+        orgId: string
+        id: string
+        action: TAction
+        reason: string | null
+        actorEmail: string | null
+        isOperator: boolean
+    }): Promise<{
+        record: ApprovalRecord
+        payload: unknown
+        effectsMeta: Record<string, unknown> | null
+        effectsError: string | null
+    }>
+}
+
 export interface ApprovalDomain<
     TPayload,
     TAction extends { action: string } = { action: string },
 > {
     readonly name: string
     readonly subjectKind: string
-    /** Physical `approval_payload_*` table this domain owns. Must pass the
-     *  snake_case identifier check enforced by the store layer. */
+    /** Owner-mode physical payload table. Empty string when running in proxy
+     *  mode (no payload row in our DB). */
     readonly payloadTable: string
+    /** Proxy mode: when set, the route layer bypasses store and uses this
+     *  adapter to list/get/decide. */
+    readonly proxyAdapter?: ApprovalProxyAdapter<TAction>
     /** Validator for the decide-body `{ action: ... }` payload. The generic
      *  HTTP route calls `safeParse` and returns 400 on failure. */
     readonly actionSchema: ApprovalActionValidator<TAction>

@@ -138,6 +138,27 @@ Then edit `/etc/yoho-remote/server.env` and `/etc/yoho-remote/worker.env` with r
 
 ## Daemon machines
 
+### Linux user-systemd prerequisite (one-time, per machine)
+
+The daemon launches every session inside its own transient `systemd-run --user
+--scope` cgroup so that `systemctl restart yoho-remote-daemon` does not SIGKILL
+live sessions via `KillMode=control-group`. The per-user systemd manager must
+therefore be reachable. Run this once on each daemon machine before the first
+deploy:
+
+```bash
+sudo loginctl enable-linger $USER
+# wait 1-3 seconds for /run/user/$(id -u)/systemd/private to appear
+systemd-run --user --scope --collect --quiet --unit=preflight-$$ -- true && echo OK
+```
+
+`deploy.sh daemon|all` and `scripts/reinstall-daemon-systemd.sh` both refuse
+to install the daemon if this preflight fails — they will not silently fall
+back to the parent cgroup. See `docs/guide/deployment-runbook.md` § 2.3.1
+for the full diagnose checklist.
+
+### Daemon install
+
 On each worker machine:
 
 ```bash

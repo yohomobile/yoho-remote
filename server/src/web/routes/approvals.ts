@@ -10,6 +10,7 @@ import {
     ApprovalNotFoundError,
     type ApprovalDomain,
     type ApprovalMasterStatus,
+    type ApprovalRecord,
 } from '../../approvals/types'
 
 // Cross-domain approvals HTTP surface. Thin layer on top of store + executor:
@@ -73,19 +74,69 @@ export function createApprovalsRoutes(
         if (statusRaw && !approvalStatusValues.includes(statusRaw as ApprovalMasterStatus)) {
             return c.json({ error: 'Invalid status' }, 400)
         }
-        const domain = c.req.query('domain')?.trim() || null
+        const domainParam = c.req.query('domain')?.trim() || null
         const subjectKey = c.req.query('subjectKey')?.trim() || null
         const limit = Number(c.req.query('limit') ?? 50)
+        const status = (statusRaw as ApprovalMasterStatus | null) ?? null
+        const safeLimit = Number.isFinite(limit) ? limit : 50
 
-        const records = await store.listApprovals({
-            namespace,
-            orgId,
-            domain,
-            status: (statusRaw as ApprovalMasterStatus | null) ?? null,
-            subjectKey,
-            limit: Number.isFinite(limit) ? limit : 50,
+        // Owner-mode list: only run when the caller is asking for "all" or for
+        // a domain we own. When the caller filters by a proxy-only domain we
+        // skip the SQL entirely.
+        const proxyDomains = registry.list().filter((d) => d.proxyAdapter)
+        const isProxyDomain = domainParam !== null
+            && proxyDomains.some((d) => d.name === domainParam)
+
+        let storeRecords: ApprovalRecord[] = []
+        if (!isProxyDomain) {
+            storeRecords = await store.listApprovals({
+                namespace,
+                orgId,
+                domain: domainParam,
+                status,
+                subjectKey,
+                limit: safeLimit,
+            })
+        }
+
+        // Proxy domains: fetch each, but only when the caller didn't pin a
+        // different domain. Proxy failures are captured per-domain so one
+        // upstream outage doesn't break the whole listing.
+        const proxyResults: Array<{ domain: string; records: ApprovalRecord[]; error?: string }> = []
+        const proxyTargets = domainParam === null
+            ? proxyDomains
+            : proxyDomains.filter((d) => d.name === domainParam)
+        for (const proxyDomain of proxyTargets) {
+            try {
+                const adapter = proxyDomain.proxyAdapter!
+                const records = await adapter.list({
+                    namespace,
+                    orgId,
+                    status,
+                    limit: safeLimit,
+                })
+                proxyResults.push({ domain: proxyDomain.name, records })
+            } catch (err) {
+                proxyResults.push({
+                    domain: proxyDomain.name,
+                    records: [],
+                    error: err instanceof Error ? err.message : String(err),
+                })
+            }
+        }
+
+        const merged = [
+            ...storeRecords,
+            ...proxyResults.flatMap((r) => r.records),
+        ]
+        const proxyErrors = proxyResults
+            .filter((r) => r.error)
+            .map((r) => ({ domain: r.domain, error: r.error! }))
+
+        return c.json({
+            approvals: merged,
+            ...(proxyErrors.length > 0 ? { proxyErrors } : {}),
         })
-        return c.json({ approvals: records })
     })
 
     // Human-origin proposal endpoint. Only domains that opt-in via
@@ -158,15 +209,31 @@ export function createApprovalsRoutes(
         if (permissionError) return permissionError
 
         const id = c.req.param('id')
-        const record = await store.getApproval(namespace, orgId, id)
-        if (!record) return c.json({ error: 'Approval not found' }, 404)
 
-        const domain = registry.get(record.domain)
-        let payload: unknown = null
-        if (domain) {
-            payload = await store.getApprovalPayload(namespace, id, domain.payloadTable).catch(() => null)
+        // Try owner-mode first (lookup by id in our DB).
+        const record = await store.getApproval(namespace, orgId, id)
+        if (record) {
+            const domain = registry.get(record.domain)
+            let payload: unknown = null
+            if (domain && domain.payloadTable) {
+                payload = await store.getApprovalPayload(namespace, id, domain.payloadTable).catch(() => null)
+            }
+            return c.json({ approval: record, payload })
         }
-        return c.json({ approval: record, payload })
+
+        // Fall back to proxy domains: id may belong to an external system
+        // (e.g. yoho-vault skill id). Try each proxy adapter until one knows
+        // the id.
+        for (const proxyDomain of registry.list()) {
+            if (!proxyDomain.proxyAdapter) continue
+            try {
+                const found = await proxyDomain.proxyAdapter.get({ namespace, orgId, id })
+                if (found) return c.json({ approval: found.record, payload: found.payload })
+            } catch {
+                // try next adapter
+            }
+        }
+        return c.json({ error: 'Approval not found' }, 404)
     })
 
     app.post('/approvals/:id/decide', async (c) => {
@@ -176,42 +243,98 @@ export function createApprovalsRoutes(
         if (permissionError) return permissionError
 
         const id = c.req.param('id')
-        const record = await store.getApproval(namespace, orgId, id)
-        if (!record) return c.json({ error: 'Approval not found' }, 404)
+        const actorEmail = c.get('email') ?? null
+        const isOperator = c.get('role') === 'operator'
 
-        const domain = registry.get(record.domain)
-        if (!domain) {
-            return c.json({ error: `Unknown approval domain "${record.domain}"` }, 500)
-        }
-
+        const ownerRecord = await store.getApproval(namespace, orgId, id)
         const body = await c.req.json().catch(() => null)
         const reason = typeof body?.reason === 'string' ? body.reason : null
-        const parsed = domain.actionSchema.safeParse(body)
-        if (!parsed.success) {
-            return c.json({ error: 'Invalid action payload', issues: parsed.error.issues }, 400)
+
+        // Owner-mode path: id resolves to a row in our DB.
+        if (ownerRecord) {
+            const domain = registry.get(ownerRecord.domain)
+            if (!domain) {
+                return c.json({ error: `Unknown approval domain "${ownerRecord.domain}"` }, 500)
+            }
+            const parsed = domain.actionSchema.safeParse(body)
+            if (!parsed.success) {
+                return c.json({ error: 'Invalid action payload', issues: parsed.error.issues }, 400)
+            }
+            try {
+                const result = await executeDecide({
+                    store,
+                    domain: domain as ApprovalDomain<Record<string, unknown>, { action: string }>,
+                    namespace,
+                    approvalId: id,
+                    actorEmail,
+                    isOperator,
+                    orgRoleOf: (org, email) => store.getUserOrgRole(org, email),
+                    action: parsed.data,
+                    reason,
+                })
+                return c.json({
+                    ok: true,
+                    approval: result.record,
+                    payload: result.payload,
+                    audit: result.audit,
+                    effectsMeta: result.effectsMeta,
+                    effectsError: result.effectsError,
+                })
+            } catch (err) {
+                return mapDecideError(c, err)
+            }
         }
 
-        try {
-            const result = await executeDecide({
-                store,
-                domain: domain as ApprovalDomain<Record<string, unknown>, { action: string }>,
-                namespace,
-                approvalId: id,
-                actorEmail: c.get('email') ?? null,
-                isOperator: c.get('role') === 'operator',
-                orgRoleOf: (org, email) => store.getUserOrgRole(org, email),
-                action: parsed.data,
-                reason,
+        // Proxy-mode path: try each proxy adapter to find the id.
+        for (const proxyDomain of registry.list()) {
+            if (!proxyDomain.proxyAdapter) continue
+            const found = await proxyDomain.proxyAdapter.get({ namespace, orgId, id }).catch(() => null)
+            if (!found) continue
+
+            const parsed = proxyDomain.actionSchema.safeParse(body)
+            if (!parsed.success) {
+                return c.json({ error: 'Invalid action payload', issues: parsed.error.issues }, 400)
+            }
+
+            // Permission gate (proxy domains still use the same permission hook).
+            const orgRole = actorEmail ? await store.getUserOrgRole(orgId, actorEmail) : null
+            const role = proxyDomain.permission({
+                actorEmail,
+                isOperator,
+                orgRole,
+                record: found.record,
+                payload: found.payload as Record<string, unknown>,
             })
-            return c.json({
-                ok: true,
-                approval: result.record,
-                payload: result.payload,
-                audit: result.audit,
-                effectsMeta: result.effectsMeta,
-                effectsError: result.effectsError,
-            })
-        } catch (err) {
+            if (!role) {
+                return c.json({ error: 'Not permitted to decide this approval' }, 403)
+            }
+
+            try {
+                const result = await proxyDomain.proxyAdapter.decide({
+                    namespace,
+                    orgId,
+                    id,
+                    action: parsed.data,
+                    reason,
+                    actorEmail,
+                    isOperator,
+                })
+                return c.json({
+                    ok: true,
+                    approval: result.record,
+                    payload: result.payload,
+                    audit: null, // proxy mode: upstream system owns audit history
+                    effectsMeta: result.effectsMeta,
+                    effectsError: result.effectsError,
+                })
+            } catch (err) {
+                return mapDecideError(c, err)
+            }
+        }
+
+        return c.json({ error: 'Approval not found' }, 404)
+
+        function mapDecideError(_c: Context<WebAppEnv>, err: unknown): Response {
             if (err instanceof ApprovalForbiddenError) {
                 return c.json({ error: err.message }, 403)
             }

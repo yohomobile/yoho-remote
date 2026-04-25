@@ -27,6 +27,7 @@ import {
     applyArchiveProtectionOnPatch,
     getSessionSourceFromMetadata,
     isProtectedArchivedSession,
+    isRecoverableCliArchiveReason,
 } from '../sessionSourcePolicy'
 import {
     getSessionOrchestrationParentSessionId,
@@ -654,6 +655,39 @@ function getContextBudget(modelMode?: string): number {
     return (windows[modelMode ?? 'default'] ?? 1_000_000) - HEADROOM
 }
 
+// Map daemon spawn-error messages to a fixed, redacted category code.
+// `result.message` from spawnSession can carry stderr tails, file paths,
+// command lines, or token-source values originating from the daemon
+// (cli/src/daemon/run.ts). Persisting or logging the raw string is a leak
+// vector — callers MUST classify and discard the raw payload at the boundary.
+// Patterns are intentionally simple substring/regex tests against well-known
+// daemon error strings; anything else falls through to 'unexpected'.
+const AUTO_RESUME_SPAWN_ERROR_PATTERNS: ReadonlyArray<{ regex: RegExp; category: string }> = [
+    { regex: /AGENT_NOT_AVAILABLE/i, category: 'agent-not-available' },
+    { regex: /does not support agent/i, category: 'unsupported-agent' },
+    { regex: /RPC handler not registered/i, category: 'rpc-handler-not-registered' },
+    { regex: /webhook timeout/i, category: 'webhook-timeout' },
+    { regex: /exited before the webhook/i, category: 'process-exited-early' },
+    { regex: /Child process error for PID/i, category: 'child-process-error' },
+    { regex: /Worktree creation failed/i, category: 'worktree-failed' },
+    { regex: /Worktree sessions require|Worktree base directory missing/i, category: 'directory-missing' },
+    { regex: /Unable to create directory|Directory creation failed|Directory creation not approved/i, category: 'directory-create-failed' },
+    { regex: /Failed to spawn YR process - no PID/i, category: 'no-pid' },
+    { regex: /spawn rpc failed without throw|Unexpected spawn result/i, category: 'rpc-error' },
+]
+
+export function categorizeAutoResumeSpawnError(rawMessage: unknown): string {
+    if (typeof rawMessage !== 'string' || rawMessage.length === 0) {
+        return 'unexpected'
+    }
+    for (const { regex, category } of AUTO_RESUME_SPAWN_ERROR_PATTERNS) {
+        if (regex.test(rawMessage)) {
+            return category
+        }
+    }
+    return 'unexpected'
+}
+
 export class SyncEngine {
     private sessions: Map<string, Session> = new Map()
     private machines: Map<string, Machine> = new Map()
@@ -692,6 +726,14 @@ export class SyncEngine {
     private readonly brainCallbackRetryAborters: Set<() => void> = new Set()
     private stopped = false
     private _dbActiveSessionIds: Set<string> = new Set() // Sessions that were active in DB at startup
+    // Resolves once the constructor's reloadAllAsync() has finished populating
+    // sessions/machines and built _dbActiveSessionIds. handleMachineAlive must
+    // wait on this before triggering auto-resume, otherwise a daemon that
+    // reconnects faster than hydrate would land on an empty _dbActiveSessionIds
+    // and skip every otherwise-eligible candidate with `not-in-dbActive`.
+    private readonly hydrationDone: Promise<void>
+    private resolveHydrationDone!: () => void
+    private hydrationCompleted = false
     private inactivityTimer: NodeJS.Timeout | null = null
     private orphanCleanupTimer: NodeJS.Timeout | null = null
 
@@ -711,7 +753,10 @@ export class SyncEngine {
     private static readonly TASK_MESSAGE_SETTLE_MAX_WAIT_MS = 3_000
     private static readonly RESUME_TRACE_TTL_MS = 10 * 60_000
     private static readonly STARTUP_RECONNECT_GRACE_MS = 30_000
-    private autoResumeClaimedReconnectTimeoutMs = 3_000
+    // Cover socket.io's reconnectionDelayMax=5s plus a small buffer so we do not
+    // race ahead and double-spawn a daemon-claimed live session that is still in
+    // the middle of its socket reconnect handshake.
+    private autoResumeClaimedReconnectTimeoutMs = 8_000
     private autoResumeLiveInventoryRpcWaitMs = 1_500
     private readonly resumeTraceBySessionId: Map<string, ResumeTraceState> = new Map()
 
@@ -730,9 +775,17 @@ export class SyncEngine {
         private readonly sseManager: SSEManager,
         private readonly boss?: SummarizeTurnQueuePublisher
     ) {
-        this.reloadAllAsync().catch(err => {
-            console.error('[SyncEngine] Failed to load initial state from database:', err)
+        this.hydrationDone = new Promise<void>(resolve => {
+            this.resolveHydrationDone = resolve
         })
+        this.reloadAllAsync()
+            .catch(err => {
+                console.error('[SyncEngine] Failed to load initial state from database:', err)
+            })
+            .finally(() => {
+                this.hydrationCompleted = true
+                this.resolveHydrationDone()
+            })
         this.inactivityTimer = setInterval(() => this.expireInactive(), 5_000)
         if (process.env.BRAIN_CHILD_ORPHAN_CLEANUP_ENABLED !== 'false') {
             this.orphanCleanupTimer = setInterval(
@@ -1260,6 +1313,7 @@ export class SyncEngine {
         force?: boolean
         archivedBy?: string
         archiveReason?: string
+        extraMetadata?: Record<string, unknown>
     }): Promise<boolean> {
         let session = this.sessions.get(sessionId)
         if (!session) {
@@ -1320,7 +1374,18 @@ export class SyncEngine {
             this.brainChildInFlightCallbackKeyBySessionId.delete(session.id)
             this.clearTodoBackfillState(session.id)
 
-            const metadataPatch = {
+            // For recoverable archives (cli / cli-stale-recovery) we capture the
+            // pre-archive activeAt so auto-resume's too-old check survives a
+            // server restart. Without this, hydrate would reload session.activeAt
+            // from DB's active_at column — which setSessionActive below stamps to
+            // `now` — making the 2h CLI-archive resume window measure from the
+            // archive event instead of from real last activity.
+            // Caller-supplied extraMetadata wins so auto-resume rollback paths can
+            // override (e.g. autoResumeFailureAttempts already lives there).
+            const recoverableReason = isRecoverableCliArchiveReason(archivedBy)
+            const metadataPatch: Record<string, unknown> = {
+                ...(recoverableReason ? { preArchiveActiveAt: session.activeAt } : {}),
+                ...(options?.extraMetadata ?? {}),
                 lifecycleState: 'archived',
                 lifecycleStateSince: now,
                 archivedBy,
@@ -1332,7 +1397,13 @@ export class SyncEngine {
                 ...metadataPatch,
             } as unknown as Session['metadata']
 
-            const persistedActive = await this.store.setSessionActive(session.id, false, now, session.namespace, null)
+            // Preserve the session's last real activeAt rather than stamping `now`.
+            // active_at is the "last real activity" timestamp the auto-resume too-old
+            // gate keys off after a server restart; overwriting it with the archive
+            // event time would silently extend the 2h CLI-archive resume window past
+            // real idleness. The lifecycle event time lives in lifecycleStateSince
+            // (and updated_at moves on its own through the underlying SQL).
+            const persistedActive = await this.store.setSessionActive(session.id, false, session.activeAt, session.namespace, null)
             const persistedMetadata = await this.store.patchSessionMetadata(session.id, metadataPatch, session.namespace)
             if (persistedMetadata) {
                 session.metadataVersion += 1
@@ -1755,6 +1826,12 @@ export class SyncEngine {
         const cleaned = { ...(session.metadata as Record<string, unknown>) }
         delete cleaned.archivedBy
         delete cleaned.archiveReason
+        delete cleaned.autoResumeFailureAttempts
+        // preArchiveActiveAt was only meaningful while the session was archived
+        // (used by getAutoResumeSkipReasons to compute the too-old window). Once
+        // unarchived, the live session.activeAt becomes authoritative again, so
+        // clear the stale snapshot to avoid surprising future archive cycles.
+        delete cleaned.preArchiveActiveAt
         cleaned.lifecycleState = 'active'
         cleaned.lifecycleStateSince = Date.now()
         const result = await this.store.updateSessionMetadata(sessionId, cleaned, session.metadataVersion, session.namespace)
@@ -3035,9 +3112,28 @@ export class SyncEngine {
             this.emit({ type: 'machine-updated', machineId: machine.id, data: { activeAt: machine.activeAt } })
         }
 
-        // Auto-resume sessions when machine comes back online
+        // Auto-resume sessions when machine comes back online.
+        // Defer until reloadAllAsync has populated _dbActiveSessionIds: a daemon
+        // that reconnects fast enough to race the constructor's hydrate would
+        // otherwise see an empty set and skip every candidate with `not-in-dbActive`.
+        // Re-verify the machine is still online after the await — if it bounced
+        // offline during hydrate, the autoResumeSessions inner machine.active
+        // check would no-op anyway, but skipping the trigger keeps logs clean.
         if (!wasActive && machine.active) {
-            void this.autoResumeSessions(machine.id, machine.namespace)
+            if (this.hydrationCompleted) {
+                void this.autoResumeSessions(machine.id, machine.namespace)
+            } else {
+                console.log(
+                    `[auto-resume] Deferring trigger for ${machine.id.slice(0, 8)} until hydrate completes`
+                )
+                void this.hydrationDone.then(() => {
+                    if (this.stopped) return
+                    const current = this.machines.get(machine.id)
+                    if (current?.active) {
+                        void this.autoResumeSessions(machine.id, machine.namespace)
+                    }
+                })
+            }
         }
     }
 
@@ -3185,10 +3281,28 @@ export class SyncEngine {
         now: number
     ): string[] {
         const reasons: string[] = []
-        const cliArchived = session.metadata?.archivedBy === 'cli'
+        const archivedBy = session.metadata?.archivedBy
+        const cliArchived = archivedBy === 'cli'
+        const cliStaleRecoveryArchived = archivedBy === 'cli-stale-recovery'
+        const autoResumeFailedArchived = archivedBy === 'auto-resume-failed'
         const flavor = session.metadata?.flavor
         const RESUME_WINDOW_MS = 24 * 60 * 60 * 1000
         const CLI_ARCHIVE_RESUME_WINDOW_MS = 2 * 60 * 60 * 1000
+        // Auto-resume-failed retry policy: reuse the short CLI window so a transient
+        // spawn or heartbeat blip does not turn into a permanent terminal state, but
+        // cap attempts to prevent retry storms.
+        const AUTO_RESUME_FAILED_RETRY_WINDOW_MS = CLI_ARCHIVE_RESUME_WINDOW_MS
+        const AUTO_RESUME_FAILED_MAX_ATTEMPTS = 3
+        const autoResumeFailureAttempts = Number(
+            (session.metadata as { autoResumeFailureAttempts?: unknown } | undefined)
+                ?.autoResumeFailureAttempts ?? 0
+        )
+        const lastFailureAt = Number(session.metadata?.lifecycleStateSince ?? 0)
+        const autoResumeFailedRecoverable = autoResumeFailedArchived
+            && lastFailureAt > 0
+            && (now - lastFailureAt) <= AUTO_RESUME_FAILED_RETRY_WINDOW_MS
+            && autoResumeFailureAttempts < AUTO_RESUME_FAILED_MAX_ATTEMPTS
+        const recoverableArchive = cliArchived || cliStaleRecoveryArchived || autoResumeFailedRecoverable
         const brainChildFollowResumeAllowed = this.shouldAllowBrainChildAutoResumeWithoutDbActive(
             session,
             machineId,
@@ -3198,12 +3312,25 @@ export class SyncEngine {
         )
 
         if (session.active) reasons.push('already-active')
-        if (!this._dbActiveSessionIds.has(session.id) && !cliArchived && !brainChildFollowResumeAllowed) reasons.push('not-in-dbActive')
+        if (!this._dbActiveSessionIds.has(session.id) && !recoverableArchive && !brainChildFollowResumeAllowed) reasons.push('not-in-dbActive')
         if (session.terminationReason) reasons.push(`terminated:${session.terminationReason}`)
-        if (session.metadata?.archivedBy && !cliArchived) reasons.push(`archived:${session.metadata.archivedBy}`)
+        if (archivedBy && !recoverableArchive) reasons.push(`archived:${archivedBy}`)
         if (session.metadata?.startedFromDaemon !== true && session.metadata?.startedBy !== 'daemon') reasons.push('not-daemon-started')
-        const maxAge = cliArchived ? CLI_ARCHIVE_RESUME_WINDOW_MS : RESUME_WINDOW_MS
-        if (now - session.activeAt > maxAge) reasons.push('too-old')
+        const maxAge = recoverableArchive ? CLI_ARCHIVE_RESUME_WINDOW_MS : RESUME_WINDOW_MS
+        // archiveSession persists `preArchiveActiveAt` for recoverable archives so the
+        // 2h window measures from real last activity rather than from the archive event
+        // (DB active_at gets stamped to `now` by setSessionActive on every archive,
+        // which would silently extend the resume window past real idleness on restart).
+        // Use the older of the two so resumes-after-restart and a single in-memory
+        // archive both behave conservatively.
+        const preArchiveActiveAtRaw = (session.metadata as { preArchiveActiveAt?: unknown } | null | undefined)?.preArchiveActiveAt
+        const preArchiveActiveAt = typeof preArchiveActiveAtRaw === 'number' && Number.isFinite(preArchiveActiveAtRaw)
+            ? preArchiveActiveAtRaw
+            : null
+        const ageReferenceAt = recoverableArchive && preArchiveActiveAt !== null
+            ? Math.min(preArchiveActiveAt, session.activeAt)
+            : session.activeAt
+        if (now - ageReferenceAt > maxAge) reasons.push('too-old')
         if (session.metadata?.machineId !== machineId) reasons.push('wrong-machine')
         if (session.namespace !== namespace) reasons.push('wrong-namespace')
         if (!session.metadata?.path) reasons.push('no-path')
@@ -3474,13 +3601,20 @@ export class SyncEngine {
                         if (!heartbeatReceived) {
                             session.activeAt = previousActiveAt
                             session.resumingUntil = undefined
+                            const previousAttempts = Number(
+                                (session.metadata as { autoResumeFailureAttempts?: unknown } | undefined)
+                                    ?.autoResumeFailureAttempts ?? 0
+                            )
                             const archivedOk = await this.archiveSession(session.id, {
                                 terminateSession: false,
                                 force: true,
                                 archivedBy: 'auto-resume-failed',
                                 archiveReason: `auto-resume: spawn ok but no heartbeat within ${RESUME_TIMEOUT_MS}ms`,
+                                extraMetadata: {
+                                    autoResumeFailureAttempts: previousAttempts + 1,
+                                },
                             })
-                            console.warn(`[auto-resume] Session ${session.id.slice(0, 8)} no heartbeat after ${RESUME_TIMEOUT_MS}ms, archived (ok=${archivedOk})`)
+                            console.warn(`[auto-resume] Session ${session.id.slice(0, 8)} no heartbeat after ${RESUME_TIMEOUT_MS}ms, archived (ok=${archivedOk}, attempt=${previousAttempts + 1})`)
                             return
                         }
                         if (session.metadata?.lifecycleState === 'archived') {
@@ -3499,13 +3633,24 @@ export class SyncEngine {
                     } else {
                         session.activeAt = previousActiveAt
                         session.resumingUntil = undefined
+                        const previousAttempts = Number(
+                            (session.metadata as { autoResumeFailureAttempts?: unknown } | undefined)
+                                ?.autoResumeFailureAttempts ?? 0
+                        )
+                        // Do NOT persist or log result.message: it can carry daemon stderr
+                        // tails, file paths, command lines, or token-source values. Classify
+                        // into a fixed safe category and discard the raw payload.
+                        const errorCategory = categorizeAutoResumeSpawnError(result.message)
                         const archivedOk = await this.archiveSession(session.id, {
                             terminateSession: false,
                             force: true,
                             archivedBy: 'auto-resume-failed',
-                            archiveReason: `auto-resume spawn failed: ${result.message}`,
+                            archiveReason: `auto-resume spawn failed: ${errorCategory}`,
+                            extraMetadata: {
+                                autoResumeFailureAttempts: previousAttempts + 1,
+                            },
                         })
-                        console.warn(`[auto-resume] Session ${session.id.slice(0, 8)} spawn failed: ${result.message}, archived (ok=${archivedOk})`)
+                        console.warn(`[auto-resume] Session ${session.id.slice(0, 8)} spawn failed (category=${errorCategory}), archived (ok=${archivedOk}, attempt=${previousAttempts + 1})`)
                     }
                 } catch (err) {
                     console.error(`[auto-resume] Error resuming session ${session.id.slice(0, 8)}:`, err)
@@ -3730,6 +3875,13 @@ export class SyncEngine {
             const healedMetadata = { ...session.metadata }
             delete healedMetadata.archivedBy
             delete healedMetadata.archiveReason
+            // Mirror unarchiveSession: clear archive-only bookkeeping so a healed
+            // session does not carry stale resume-window snapshots or retry caps
+            // into its next active life. preArchiveActiveAt would otherwise nudge
+            // the auto-resume too-old gate; autoResumeFailureAttempts would let a
+            // single past failure still count toward the 3-attempt cap.
+            delete healedMetadata.preArchiveActiveAt
+            delete healedMetadata.autoResumeFailureAttempts
             healedMetadata.lifecycleState = 'active'
             healedMetadata.lifecycleStateSince = storedActiveAt
             session.metadata = healedMetadata as Session['metadata']

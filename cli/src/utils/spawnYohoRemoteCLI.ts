@@ -12,6 +12,17 @@ import { isBunCompiled, projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
 import { existsSync, readFile } from 'node:fs';
 
+export class SystemdScopeUnavailableError extends Error {
+  constructor(unitName: string) {
+    super(
+      `systemd-run --user --scope is required (unit=${unitName}) but per-user systemd is not reachable. `
+      + `Daemon-spawned sessions would live in the daemon cgroup and be SIGKILLed on daemon restart. `
+      + `Run \`sudo loginctl enable-linger $(whoami)\` and ensure user@<uid>.service is running.`
+    );
+    this.name = 'SystemdScopeUnavailableError';
+  }
+}
+
 /**
  * Check if we're running as a standalone daemon/server executable (not the main CLI)
  */
@@ -132,8 +143,12 @@ export interface YohoRemoteCliSpawnExtras {
    * SIGKILLs every session via KillMode=control-group — regardless of
    * child_process detached / setsid, because cgroup != process group.
    *
-   * No-op when user-systemd is not reachable; spawn falls back to the plain
-   * path and the caller gets the same behaviour as before.
+   * Hard requirement when set: if the per-user systemd manager is not
+   * reachable, spawnYohoRemoteCLI throws SystemdScopeUnavailableError instead
+   * of falling back to a plain spawn that would die on daemon restart.
+   * Callers that legitimately want plain spawn must omit this field.
+   * Availability is probed for every spawn — the per-user manager may appear
+   * after daemon start once linger is enabled or the user logs in.
    */
   systemdUnitName?: string;
 }
@@ -145,7 +160,7 @@ export interface YohoRemoteCliSpawnExtras {
  * when `user@$UID.service` has exited, so we require the `private` socket to
  * also be present. This is the same file `systemd-run --user` connects to.
  */
-const USER_SYSTEMD_AVAILABLE: boolean = (() => {
+export function isUserSystemdAvailable(): boolean {
   if (process.platform !== 'linux') return false;
   const uid = process.getuid?.();
   if (typeof uid !== 'number') return false;
@@ -154,7 +169,7 @@ const USER_SYSTEMD_AVAILABLE: boolean = (() => {
   } catch {
     return false;
   }
-})();
+}
 
 function buildSystemdRunCommand(
   baseCommand: string,
@@ -220,7 +235,14 @@ export function spawnYohoRemoteCLI(
     }
   }
 
-  if (extras.systemdUnitName && USER_SYSTEMD_AVAILABLE) {
+  if (extras.systemdUnitName) {
+    if (!isUserSystemdAvailable()) {
+      logger.warn(
+        `[SPAWN CLI] Refusing plain spawn for unit=${extras.systemdUnitName}: user systemd not reachable. `
+        + `Throwing SystemdScopeUnavailableError so caller surfaces a real failure instead of a session that dies on daemon restart.`
+      );
+      throw new SystemdScopeUnavailableError(extras.systemdUnitName);
+    }
     const wrapped = buildSystemdRunCommand(base.command, base.args, extras.systemdUnitName);
     const wrappedOptions = ensureUserBusEnv(options);
     logger.debug(`[SPAWN CLI] Wrapping in systemd-run --user --scope: unit=${extras.systemdUnitName}`);
@@ -229,43 +251,30 @@ export function spawnYohoRemoteCLI(
     return child;
   }
 
-  if (extras.systemdUnitName && !USER_SYSTEMD_AVAILABLE) {
-    // Falling back means the session will live in the daemon's cgroup and die
-    // on `systemctl restart yoho-remote-daemon`. Log loudly so the operator
-    // notices and fixes the environment (e.g. `loginctl enable-linger`).
-    logger.debug(
-      `[SPAWN CLI] WARNING: systemdUnitName=${extras.systemdUnitName} requested but user systemd is not reachable; `
-        + `session will run in the parent's cgroup and will NOT survive daemon restart. `
-        + `Run \`sudo loginctl enable-linger $(whoami)\` to fix.`
-    );
-  }
-
   return spawn(base.command, base.args, options);
 }
 
 /**
- * Attach best-effort diagnostics to a child process wrapped in `systemd-run
- * --user --scope`. None of these are blocking: they only log.
+ * Verifies that systemd-run actually placed the child in the requested scope.
+ * If the target's /proc/<pid>/cgroup is missing the unit, SIGKILL it: the
+ * session would otherwise live in the daemon cgroup and die on daemon restart.
+ * Killing turns the silent failure into an early-exit the caller already
+ * handles (no 15s webhook timeout).
  *
- *   1. If systemd-run exits non-zero within the first 500ms, the target likely
- *      never execed into its own scope — surface the exit code.
- *   2. If the target's /proc/<pid>/cgroup does not contain our scope unit,
- *      surface a warning — this indicates the session is still in the daemon's
- *      cgroup and would be killed on daemon restart.
+ * Spawn errors and non-zero early exits are surfaced via the existing
+ * 'error'/'exit' events the daemon already listens for.
  */
 function attachSystemdScopeDiagnostics(child: ChildProcess, unitName: string): void {
   child.on('error', (error) => {
-    logger.debug(`[SPAWN CLI] systemd-run spawn error for unit=${unitName}:`, error);
+    logger.warn(`[SPAWN CLI] systemd-run spawn error for unit=${unitName}: ${error instanceof Error ? error.message : String(error)}`);
   });
 
   const pid = child.pid;
   if (typeof pid !== 'number' || pid <= 0) return;
 
-  // Give systemd-run ~300ms to exec into the target; then peek /proc.
   setTimeout(() => {
     readFile(`/proc/${pid}/cgroup`, 'utf-8', (err, data) => {
       if (err) {
-        // Process may have exited legitimately already; silent unless debugging.
         logger.debug(`[SPAWN CLI] Unable to read /proc/${pid}/cgroup for diagnostics: ${err.message}`);
         return;
       }
@@ -273,11 +282,16 @@ function attachSystemdScopeDiagnostics(child: ChildProcess, unitName: string): v
         logger.debug(`[SPAWN CLI] Verified cgroup membership: pid=${pid} unit=${unitName}.scope`);
         return;
       }
-      logger.debug(
-        `[SPAWN CLI] WARNING: pid=${pid} is NOT in expected scope ${unitName}.scope. `
-          + `Current cgroup: ${data.trim().split('\n').pop() ?? '(empty)'}. `
-          + `Session may die on daemon restart.`
+      const currentCgroup = data.trim().split('\n').pop() ?? '(empty)';
+      logger.warn(
+        `[SPAWN CLI] pid=${pid} is NOT in expected scope ${unitName}.scope (current: ${currentCgroup}). `
+        + `Killing child so spawn fails fast instead of running in the daemon cgroup.`
       );
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch (killError) {
+        logger.debug(`[SPAWN CLI] Failed to SIGKILL pid=${pid} after cgroup mismatch: ${killError instanceof Error ? killError.message : String(killError)}`);
+      }
     });
   }, 300).unref();
 }

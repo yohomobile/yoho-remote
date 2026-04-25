@@ -5,6 +5,15 @@ import type { TrackedSession } from './types';
 
 const PROCESS_START_TIME_STRICT_TOLERANCE_MS = 2_000;
 const DAEMON_OWNED_PROCESS_START_TIME_TOLERANCE_MS = 30_000;
+// Maintenance: keep this in sync with the auto-resume CLI-archive resume window
+// in server/src/sync/syncEngine.ts (CLI_ARCHIVE_RESUME_WINDOW_MS, currently 2h)
+// and the long resume window (RESUME_WINDOW_MS, currently 24h). The 24h value
+// here is "trust a daemon-owned process whose ps args still carry --started-by
+// daemon AND --yoho-remote-session-id <expected> for up to a day even if its
+// recorded hostProcessStartedAt drifted (NTP step, suspend/resume, ps lstart's
+// 1s precision)." Shortening below the long resume window risks pruning sessions
+// the server still considers eligible for auto-resume.
+const DAEMON_OWNED_EXPLICIT_SESSION_FINGERPRINT_TOLERANCE_MS = 24 * 60 * 60 * 1000;
 
 type SessionProcessIdentityTrust = 'passive' | 'tracked' | 'webhook';
 
@@ -46,24 +55,28 @@ function commandLineHasFlagValue(commandLine: string, flag: string, expectedValu
     return commandLine.includes(`${flag} ${expectedValue}`) || commandLine.includes(`${flag}=${expectedValue}`);
 }
 
-function isDaemonOwnedProcessFingerprintMatch(pid: number, expectedSessionId?: string): boolean {
+type DaemonOwnedProcessFingerprintMatch = 'none' | 'daemon' | 'session';
+
+function getDaemonOwnedProcessFingerprintMatch(pid: number, expectedSessionId?: string): DaemonOwnedProcessFingerprintMatch {
     const commandLine = getProcessCommandLine(pid);
     if (!commandLine || !commandLine.includes('--started-by daemon')) {
-        return false;
+        return 'none';
     }
 
     if (!expectedSessionId) {
-        return true;
+        return 'daemon';
     }
 
     const hasExplicitSessionId = commandLine.includes('--yoho-remote-session-id')
         || commandLine.includes('--yoho-remote-resume-session-id');
     if (!hasExplicitSessionId) {
-        return true;
+        return 'daemon';
     }
 
     return commandLineHasFlagValue(commandLine, '--yoho-remote-session-id', expectedSessionId)
-        || commandLineHasFlagValue(commandLine, '--yoho-remote-resume-session-id', expectedSessionId);
+        || commandLineHasFlagValue(commandLine, '--yoho-remote-resume-session-id', expectedSessionId)
+        ? 'session'
+        : 'none';
 }
 
 export function normalizeSessionProcessIdentity(
@@ -100,12 +113,23 @@ export function normalizeSessionProcessIdentity(
         };
     }
 
-    if (!isDaemonOwnedSession(metadata) || startTimeDiffMs > DAEMON_OWNED_PROCESS_START_TIME_TOLERANCE_MS) {
+    if (!isDaemonOwnedSession(metadata)) {
         return null;
     }
 
     const trust = options.trust ?? 'tracked';
-    if (trust !== 'webhook' && !isDaemonOwnedProcessFingerprintMatch(pid, options.expectedSessionId)) {
+    const fingerprintMatch = trust === 'webhook'
+        ? 'session'
+        : getDaemonOwnedProcessFingerprintMatch(pid, options.expectedSessionId);
+    const startTimeToleranceMs = fingerprintMatch === 'session'
+        ? DAEMON_OWNED_EXPLICIT_SESSION_FINGERPRINT_TOLERANCE_MS
+        : DAEMON_OWNED_PROCESS_START_TIME_TOLERANCE_MS;
+
+    if (startTimeDiffMs > startTimeToleranceMs) {
+        return null;
+    }
+
+    if (trust !== 'webhook' && fingerprintMatch === 'none') {
         return null;
     }
 

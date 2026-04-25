@@ -112,10 +112,13 @@ describe('sessionSourcePolicy', () => {
             archiveReason: 'User archived session',
         }
 
-        test('isProtectedArchivedSession flags user / brain archives but not cli', () => {
+        test('isProtectedArchivedSession flags user / brain archives but not recoverable cli archives', () => {
             expect(isProtectedArchivedSession(archivedByUser)).toBe(true)
             expect(isProtectedArchivedSession({ ...archivedByUser, archivedBy: 'brain' })).toBe(true)
             expect(isProtectedArchivedSession({ ...archivedByUser, archivedBy: 'cli' })).toBe(false)
+            // cli-stale-recovery archives come from daemon-startup recovery and must remain
+            // unprotected so refreshSession / unarchiveSession can heal them on auto-resume.
+            expect(isProtectedArchivedSession({ ...archivedByUser, archivedBy: 'cli-stale-recovery' })).toBe(false)
             expect(isProtectedArchivedSession({ ...archivedByUser, lifecycleState: 'running' })).toBe(false)
             expect(isProtectedArchivedSession({ ...archivedByUser, archivedBy: '' })).toBe(false)
             expect(isProtectedArchivedSession(null)).toBe(false)
@@ -194,6 +197,31 @@ describe('sessionSourcePolicy', () => {
             const { metadata, preserved } = applyArchiveProtectionOnPatch(cliArchived, patch)
             expect(preserved).toBe(false)
             expect(metadata).toEqual({ lifecycleState: 'running' })
+        })
+
+        test('applyArchiveProtectionOnPatch is a no-op for cli-stale-recovery archived sessions', () => {
+            // Daemon-startup recovery archives sessions whose CLI process can no longer be
+            // identified. They must be revivable via the same heal paths as plain `cli`
+            // archives — otherwise auto-resume's unarchive call would be silently reverted.
+            const cliStaleRecoveryArchived = { ...archivedByUser, archivedBy: 'cli-stale-recovery' }
+            const patch = { lifecycleState: 'running', archivedBy: null, archiveReason: null }
+            const { metadata, preserved } = applyArchiveProtectionOnPatch(cliStaleRecoveryArchived, patch)
+            expect(preserved).toBe(false)
+            expect(metadata).toEqual({ lifecycleState: 'running', archivedBy: null, archiveReason: null })
+        })
+
+        test('applyArchiveProtectionOnReplace is a no-op for cli-stale-recovery archived sessions', () => {
+            const cliStaleRecoveryArchived = { ...archivedByUser, archivedBy: 'cli-stale-recovery' }
+            const incoming = {
+                source: 'brain-child',
+                mainSessionId: 'brain-1',
+                lifecycleState: 'running',
+                lifecycleStateSince: 999,
+                hostPid: 42,
+            }
+            const { metadata, preserved } = applyArchiveProtectionOnReplace(cliStaleRecoveryArchived, incoming)
+            expect(preserved).toBe(false)
+            expect(metadata).toBe(incoming)
         })
     })
 })

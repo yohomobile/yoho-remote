@@ -211,6 +211,37 @@ CLI_API_TOKEN=replace-with-the-same-secret
 YOHO_REMOTE_URL=https://remote.example.com
 ```
 
+### 2.3.1 daemon 机器一次性前置（user systemd / linger）
+
+Daemon 通过 `systemd-run --user --scope` 把每个 session 包到独立 cgroup，否则
+`systemctl restart yoho-remote-daemon` 会因 `KillMode=control-group` 把所有
+活跃 session 一起 SIGKILL。这要求 user systemd manager 常驻。
+
+每台 daemon 机器**首次部署或重装系统后**必须做一次：
+
+```bash
+# 1) 启用 linger，让 user@<uid>.service 在无登录会话时仍运行
+sudo loginctl enable-linger $USER
+
+# 2) 等待 1-3 秒，让 socket 就绪
+ls -l /run/user/$(id -u)/systemd/private    # expect: srw-------
+
+# 3) dry-run 验证 user systemd-run 可用
+systemd-run --user --scope --collect --quiet --unit=preflight-$$ -- true \
+    && echo OK
+```
+
+第 3 步失败时按下面排错：
+
+```bash
+XDG_RUNTIME_DIR=/run/user/$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus systemctl --user status
+XDG_RUNTIME_DIR=/run/user/$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus systemctl --user --failed
+journalctl --user-unit=user@$(id -u).service -xe -n 40 --no-pager
+```
+
+`deploy.sh daemon|all` 与 `scripts/reinstall-daemon-systemd.sh` 启动时会自动跑同一组
+preflight，失败硬阻断并输出可操作的 fix；上线前**先在新机器手工跑一遍**避免发布日才暴露。
+
 ### 2.4 memory 说明
 
 `memory` 作为独立组件处理。它的环境变量、迁移细节和健康检查以它自身仓库 / 服务说明为准，这份 runbook 不重复枚举，但发布顺序和回滚顺序都必须把它当成单独步骤。

@@ -22,9 +22,7 @@ const DOMAIN_OPTIONS: Array<{
 }> = [
     { value: 'all', label: '全部', activeGradient: 'from-indigo-500 to-purple-600' },
     { value: 'identity', label: 'Identity', activeGradient: 'from-violet-500 to-purple-600' },
-    { value: 'team_memory', label: 'Team Memory', activeGradient: 'from-sky-500 to-blue-600' },
-    { value: 'observation', label: '观察假设', activeGradient: 'from-emerald-500 to-teal-600' },
-    { value: 'memory_conflict', label: '记忆冲突', activeGradient: 'from-amber-500 to-orange-600' },
+    { value: 'skill', label: 'Skill', activeGradient: 'from-amber-500 to-orange-600' },
 ]
 
 const STATUS_GRADIENT: Record<ApprovalMasterStatus, string> = {
@@ -51,17 +49,7 @@ const DOMAIN_TONE: Record<string, { dot: string; badge: string; accent: string }
         badge: 'bg-violet-500/10 text-violet-600 dark:text-violet-400',
         accent: 'text-violet-600 dark:text-violet-400',
     },
-    team_memory: {
-        dot: 'bg-sky-500',
-        badge: 'bg-sky-500/10 text-sky-600 dark:text-sky-400',
-        accent: 'text-sky-600 dark:text-sky-400',
-    },
-    observation: {
-        dot: 'bg-emerald-500',
-        badge: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-        accent: 'text-emerald-600 dark:text-emerald-400',
-    },
-    memory_conflict: {
+    skill: {
         dot: 'bg-amber-500',
         badge: 'bg-amber-500/10 text-amber-700 dark:text-amber-400',
         accent: 'text-amber-700 dark:text-amber-400',
@@ -70,9 +58,7 @@ const DOMAIN_TONE: Record<string, { dot: string; badge: string; accent: string }
 
 const DOMAIN_LABEL: Record<string, string> = {
     identity: 'Identity',
-    team_memory: 'Team Memory',
-    observation: '观察假设',
-    memory_conflict: '记忆冲突',
+    skill: 'Skill',
 }
 
 const STATUS_TONE: Record<ApprovalMasterStatus, string> = {
@@ -121,57 +107,10 @@ const ACTIONS_BY_DOMAIN: Record<string, DomainAction[]> = {
         { value: 'mark_shared', label: '标记为共享身份', tone: 'neutral' },
         { value: 'reject', label: '驳回', tone: 'danger' },
     ],
-    team_memory: [
-        {
-            value: 'approve',
-            label: '批准',
-            tone: 'success',
-            fields: [{ name: 'memoryRef', label: 'memoryRef', type: 'text', placeholder: '可选' }],
-        },
-        {
-            value: 'supersede',
-            label: '覆盖旧版',
-            tone: 'primary',
-            fields: [{ name: 'memoryRef', label: 'memoryRef', type: 'text', placeholder: '指向旧记忆 ref' }],
-        },
-        { value: 'reject', label: '驳回', tone: 'danger' },
-        { value: 'expire', label: '过期', tone: 'neutral' },
-    ],
-    observation: [
-        {
-            value: 'confirm',
-            label: '确认假设',
-            tone: 'success',
-            fields: [
-                {
-                    name: 'promotedCommunicationPlanId',
-                    label: '手动 plan id',
-                    type: 'text',
-                    placeholder: '留空走 auto-promote',
-                },
-            ],
-        },
-        { value: 'reject', label: '驳回', tone: 'danger' },
-        { value: 'dismiss', label: '忽略', tone: 'neutral' },
-        { value: 'expire', label: '过期', tone: 'neutral' },
-    ],
-    memory_conflict: [
-        {
-            value: 'resolve',
-            label: '解决',
-            tone: 'success',
-            fields: [
-                {
-                    name: 'resolution',
-                    label: '解决方式',
-                    type: 'select',
-                    required: true,
-                    options: ['keep_a', 'keep_b', 'supersede', 'discard_all', 'mark_expired'],
-                },
-            ],
-        },
-        { value: 'dismiss', label: '忽略', tone: 'neutral' },
-        { value: 'reopen', label: '重新打开', tone: 'primary' },
+    skill: [
+        { value: 'approve', label: '批准 (promote)', tone: 'success' },
+        { value: 'archive', label: '归档', tone: 'neutral' },
+        { value: 'delete', label: '删除文件', tone: 'danger' },
     ],
 }
 
@@ -658,10 +597,8 @@ function RawJsonView({ value }: { value: unknown }) {
 }
 
 function DomainPayloadView({ domain, payload }: { domain: string; payload: Record<string, unknown> }) {
-    if (domain === 'team_memory') return <TeamMemoryPayload p={payload} />
-    if (domain === 'observation') return <ObservationPayload p={payload} />
-    if (domain === 'memory_conflict') return <MemoryConflictPayload p={payload} />
     if (domain === 'identity') return <IdentityPayload p={payload} />
+    if (domain === 'skill') return <SkillPayload p={payload} />
     return <RawJsonView value={payload} />
 }
 
@@ -726,33 +663,13 @@ const DOMAIN_CONTEXT: Record<string, DomainContext> = {
             { action: '驳回', effect: '本次不绑定。同候选不再重复打扰你。', tone: 'negative' },
         ],
     },
-    team_memory: {
-        what: '组织成员提议把一条规则/约定写入团队共享知识库（yoho-vault 的 team/ 命名空间），所有人召回时会读到。',
-        why: '团队共享记忆是高权限写入，会影响所有人的 AI 决策上下文，必须 org admin 批准；同时防止低质量/错误事实污染共享池。',
+    skill: {
+        what: 'worker 在 L2/L3 摘要时让 LLM 判断有没有可复用的工作流，识别出来就调 yoho-vault `skill_save` 写一条 candidate skill。这些 candidate 默认不激活，必须有人 promote 才会被注入到 prompt。',
+        why: 'skill 一旦 active 就会被全员 AI 召回并按里面的指令行事，权限极高。LLM 自动出的 skill 质量参差不齐，必须 admin 把关；驳回质量差的、合并重复的、删除无关的。',
         outcomes: [
-            { action: '批准', effect: '记录决策 + 标记 memory_ref。', tone: 'positive', warn: '当前未真正写入 yoho-vault；后续接通后会自动 remember' },
-            { action: '覆盖旧版', effect: '声明此条替换某个旧 memory_ref。', tone: 'positive', warn: '当前未真正替换旧记忆' },
-            { action: '驳回', effect: '不写入团队记忆库；同提议人短期内不再重复同样内容。', tone: 'negative' },
-            { action: '过期', effect: '候选超过保留期，自动清理。', tone: 'neutral' },
-        ],
-    },
-    observation: {
-        what: 'K1 detector 在多次会话里观察到某个 person 表现出某种偏好（如「要更短回复」「要更详细解释」），生成一条"假设"等你确认。',
-        why: '把假设直接写成事实风险大（错误标签会被 AI 当真）。必须由本人或 admin 确认后才升级为 communicationPlan，让 Brain 在后续会话里调整风格。',
-        outcomes: [
-            { action: '确认假设', effect: '把 suggested_patch 写入此人的 communicationPlan；后续 Brain 会话会按这些 hint 调整 length/tone/explanationDepth。', tone: 'positive', warn: '当前 demo 数据 person_id 为空时会跳过 auto-promote' },
-            { action: '驳回', effect: '明确否决，detector 短期不再生成同 hypothesis_key。', tone: 'negative' },
-            { action: '忽略', effect: '暂不处理也不否决，候选静默归档。', tone: 'neutral' },
-            { action: '过期', effect: '超过 TTL 自动隐藏。', tone: 'neutral' },
-        ],
-    },
-    memory_conflict: {
-        what: 'worker 扫描发现同一主体下有多条互相矛盾的记忆（如「onboarding 周一 / 周三」），需要人工裁决保留哪条。',
-        why: '冲突解决的正确性取决于业务上下文，自动合并/删除可能丢失正确信息或保留错的版本，所以由 admin 裁决。',
-        outcomes: [
-            { action: '解决（keep_a / keep_b / supersede / discard_all / mark_expired）', effect: '记录裁决方式。', tone: 'positive', warn: '当前未真正应用裁决（未删除/合并冲突项）；接通 yoho-vault forget 后会自动执行' },
-            { action: '忽略', effect: '暂不处理，冲突候选保留为已忽略。', tone: 'neutral' },
-            { action: '重新打开', effect: '把已解决的冲突回滚为待审，重新进入决策流。', tone: 'neutral' },
+            { action: '批准 (promote)', effect: '调 yoho-vault skill_promote，candidate 立即变 active；以后 yoho-memory 会按 skill_list 把它推荐给所有用户。', tone: 'positive' },
+            { action: '归档', effect: '调 yoho-vault skill_archive，文件保留但不再被路由召回。', tone: 'neutral' },
+            { action: '删除文件', effect: '调 yoho-vault skill_delete，文件物理删除（active skill 不允许，需先 archive）。', tone: 'negative' },
         ],
     },
 }
@@ -781,124 +698,103 @@ function PayloadCard({ children }: { children: React.ReactNode }) {
     )
 }
 
-function TeamMemoryPayload({ p }: { p: Record<string, unknown> }) {
+function SkillPayload({ p }: { p: Record<string, unknown> }) {
+    const tags = Array.isArray(p.tags) ? (p.tags as unknown[]).map(String) : []
+    const requiredTools = Array.isArray(p.requiredTools) ? (p.requiredTools as unknown[]).map(String) : []
+    const allowedTools = Array.isArray(p.allowedTools) ? (p.allowedTools as unknown[]).map(String) : []
+    const paths = Array.isArray(p.paths) ? (p.paths as unknown[]).map(String) : []
+    const antiTriggers = Array.isArray(p.antiTriggers) ? (p.antiTriggers as unknown[]).map(String) : []
+    const content = typeof p.content === 'string' ? p.content : ''
     return (
         <PayloadCard>
-            <FieldRow label="提议人">{emptyDash(p.proposed_by_email ?? p.proposed_by_person_id)}</FieldRow>
-            <FieldRow label="范围">{emptyDash(p.scope)}</FieldRow>
-            <FieldRow label="memory_ref">{emptyDash(p.memory_ref)}</FieldRow>
-            <FieldRow label="来源">{emptyDash(p.source)}</FieldRow>
-            <FieldRow label="内容">
-                <div className="whitespace-pre-wrap leading-relaxed text-[var(--app-fg)]">{String(p.content ?? '')}</div>
+            <FieldRow label="名称"><div className="font-medium text-[var(--app-fg)]">{String(p.name ?? '')}</div></FieldRow>
+            <FieldRow label="描述"><div className="leading-relaxed">{String(p.description ?? '')}</div></FieldRow>
+            <FieldRow label="分类">{emptyDash(p.category)}</FieldRow>
+            <FieldRow label="状态">
+                <span className="inline-flex items-center gap-1">
+                    <code className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                        {String(p.status ?? 'candidate')}
+                    </code>
+                    <span className="text-[var(--app-hint)] text-[11px]">activation: {String(p.activationMode ?? 'model')}</span>
+                </span>
             </FieldRow>
-        </PayloadCard>
-    )
-}
-
-function ObservationPayload({ p }: { p: Record<string, unknown> }) {
-    const confidence = typeof p.confidence === 'number' ? Math.round(p.confidence * 100) : null
-    const signals = Array.isArray(p.signals) ? p.signals : []
-    return (
-        <PayloadCard>
-            <FieldRow label="主体">{emptyDash(p.subject_email ?? p.subject_person_id)}</FieldRow>
-            <FieldRow label="hypothesis">
-                <code className="text-[11px] font-mono">{String(p.hypothesis_key ?? '')}</code>
-            </FieldRow>
-            <FieldRow label="置信度">
-                {confidence !== null ? (
-                    <div className="flex items-center gap-2">
-                        <div className="flex-1 h-1.5 rounded-full bg-[var(--app-divider)] overflow-hidden max-w-[180px]">
-                            <div className="h-full bg-emerald-500" style={{ width: `${confidence}%` }} />
-                        </div>
-                        <span className="text-[var(--app-fg)] font-mono text-[11px]">{confidence}%</span>
+            {tags.length > 0 && (
+                <FieldRow label="标签">
+                    <div className="flex flex-wrap gap-1">
+                        {tags.map((t, i) => (
+                            <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 font-mono">
+                                {t}
+                            </span>
+                        ))}
                     </div>
-                ) : <span className="text-[var(--app-hint)]">—</span>}
-            </FieldRow>
-            <FieldRow label="摘要">
-                <div className="font-medium">{String(p.summary ?? '')}</div>
-            </FieldRow>
-            {p.detail ? (
-                <FieldRow label="详情">
-                    <div className="whitespace-pre-wrap text-[var(--app-hint)] leading-relaxed">{String(p.detail)}</div>
-                </FieldRow>
-            ) : null}
-            {signals.length > 0 && (
-                <FieldRow label="信号">
-                    <ul className="space-y-1">
-                        {signals.map((s, i) => {
-                            const sig = s as Record<string, unknown>
-                            return (
-                                <li key={i} className="flex items-baseline gap-2">
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-mono">
-                                        {String(sig.kind ?? '?')}
-                                    </span>
-                                    <span className="text-[var(--app-hint)]">{String(sig.summary ?? '')}</span>
-                                </li>
-                            )
-                        })}
-                    </ul>
                 </FieldRow>
             )}
-            {p.suggested_patch ? (
-                <FieldRow label="建议 patch">
-                    <pre className="text-[11px] font-mono bg-[var(--app-secondary-bg)] rounded p-2 overflow-x-auto">
-                        {JSON.stringify(p.suggested_patch, null, 2)}
-                    </pre>
+            {requiredTools.length > 0 && (
+                <FieldRow label="required">
+                    <div className="flex flex-wrap gap-1">
+                        {requiredTools.map((t, i) => (
+                            <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--app-secondary-bg)] font-mono">{t}</span>
+                        ))}
+                    </div>
                 </FieldRow>
-            ) : null}
-            {p.promoted_communication_plan_id ? (
-                <FieldRow label="已晋升 plan">
-                    <code className="text-[11px] font-mono">{String(p.promoted_communication_plan_id)}</code>
+            )}
+            {allowedTools.length > 0 && (
+                <FieldRow label="allowed">
+                    <div className="flex flex-wrap gap-1">
+                        {allowedTools.map((t, i) => (
+                            <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--app-secondary-bg)] font-mono">{t}</span>
+                        ))}
+                    </div>
                 </FieldRow>
-            ) : null}
+            )}
+            {paths.length > 0 && (
+                <FieldRow label="paths">
+                    <div className="flex flex-wrap gap-1">
+                        {paths.map((t, i) => (
+                            <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--app-secondary-bg)] font-mono">{t}</span>
+                        ))}
+                    </div>
+                </FieldRow>
+            )}
+            {antiTriggers.length > 0 && (
+                <FieldRow label="antiTriggers">
+                    <div className="flex flex-wrap gap-1">
+                        {antiTriggers.map((t, i) => (
+                            <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-700 dark:text-rose-300 font-mono">{t}</span>
+                        ))}
+                    </div>
+                </FieldRow>
+            )}
+            {content && (
+                <FieldRow label="内容">
+                    <SkillContent content={content} />
+                </FieldRow>
+            )}
         </PayloadCard>
     )
 }
 
-function MemoryConflictPayload({ p }: { p: Record<string, unknown> }) {
-    const entries = Array.isArray(p.entries) ? p.entries : []
+function SkillContent({ content }: { content: string }) {
+    const PREVIEW_LINES = 12
+    const lines = content.split('\n')
+    const isLong = lines.length > PREVIEW_LINES
+    const [expanded, setExpanded] = useState(false)
+    const shown = expanded || !isLong ? content : lines.slice(0, PREVIEW_LINES).join('\n')
     return (
-        <PayloadCard>
-            <FieldRow label="范围">{emptyDash(p.scope)}</FieldRow>
-            <FieldRow label="检测器">
-                <code className="text-[11px] font-mono">{String(p.detector_version ?? '')}</code>
-            </FieldRow>
-            <FieldRow label="resolution">
-                {p.resolution
-                    ? <code className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300">{String(p.resolution)}</code>
-                    : <span className="text-[var(--app-hint)]">未决</span>
-                }
-            </FieldRow>
-            <FieldRow label="摘要">
-                <div className="leading-relaxed">{String(p.summary ?? '')}</div>
-            </FieldRow>
-            {entries.length > 0 && (
-                <FieldRow label="冲突项">
-                    <ul className="space-y-2">
-                        {entries.map((e, i) => {
-                            const entry = e as Record<string, unknown>
-                            return (
-                                <li
-                                    key={i}
-                                    className="rounded-lg border border-[var(--app-divider)] bg-[var(--app-secondary-bg)] p-2.5 text-[11px]"
-                                >
-                                    <div className="flex items-center gap-2 mb-1 text-[var(--app-hint)]">
-                                        <span className="font-mono">#{i + 1}</span>
-                                        <span>{String(entry.actor ?? '系统')}</span>
-                                        {entry.capturedAt ? (
-                                            <span className="ml-auto">
-                                                {formatTimestamp(Number(entry.capturedAt) * 1000)}
-                                            </span>
-                                        ) : null}
-                                    </div>
-                                    <div className="text-[var(--app-fg)] leading-relaxed">{String(entry.content ?? '')}</div>
-                                </li>
-                            )
-                        })}
-                    </ul>
-                </FieldRow>
+        <div>
+            <pre className="text-[11px] font-mono bg-[var(--app-secondary-bg)] rounded p-2.5 overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-[400px] overflow-y-auto">
+                {shown}
+            </pre>
+            {isLong && (
+                <button
+                    type="button"
+                    onClick={() => setExpanded((v) => !v)}
+                    className="mt-1 text-[11px] text-[var(--app-link)] hover:underline"
+                >
+                    {expanded ? `折叠（共 ${lines.length} 行）` : `展开全部（${lines.length} 行）`}
+                </button>
             )}
-        </PayloadCard>
+        </div>
     )
 }
 

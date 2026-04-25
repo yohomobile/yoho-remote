@@ -71,6 +71,112 @@ describe('tracked session identity', () => {
         });
     });
 
+    it('accepts larger daemon-owned start time drift when explicit session fingerprint matches', () => {
+        (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
+        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(1_120_000);
+        (spawn.sync as unknown as { mockReturnValue: (value: unknown) => void }).mockReturnValue({
+            status: 0,
+            stdout: 'yoho-remote codex --started-by daemon --yoho-remote-session-id session-1',
+        });
+
+        expect(normalizeSessionProcessIdentity(baseMetadata, {
+            expectedSessionId: 'session-1',
+            trust: 'passive',
+        })).toMatchObject({
+            ...baseMetadata,
+            hostProcessStartedAt: 1_120_000,
+        });
+    });
+
+    it('keeps coarse tolerance when only daemon fingerprint matches without explicit session id', () => {
+        (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
+        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(1_120_000);
+        (spawn.sync as unknown as { mockReturnValue: (value: unknown) => void }).mockReturnValue({
+            status: 0,
+            stdout: 'yoho-remote codex --started-by daemon',
+        });
+
+        expect(normalizeSessionProcessIdentity(baseMetadata, {
+            expectedSessionId: 'session-1',
+            trust: 'passive',
+        })).toBeNull();
+    });
+
+    it('rejects explicit session fingerprint match when drift exceeds 24h tolerance', () => {
+        const driftBeyond24h = 24 * 60 * 60 * 1000 + 60_000;
+        (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
+        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(baseMetadata.hostProcessStartedAt! + driftBeyond24h);
+        (spawn.sync as unknown as { mockReturnValue: (value: unknown) => void }).mockReturnValue({
+            status: 0,
+            stdout: 'yoho-remote codex --started-by daemon --yoho-remote-session-id session-1',
+        });
+
+        expect(normalizeSessionProcessIdentity(baseMetadata, {
+            expectedSessionId: 'session-1',
+            trust: 'passive',
+        })).toBeNull();
+    });
+
+    it('rejects session-id fingerprint mismatch even when drift would fit within 24h tolerance', () => {
+        const driftWithin24h = 60 * 60 * 1000;
+        (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
+        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(baseMetadata.hostProcessStartedAt! + driftWithin24h);
+        (spawn.sync as unknown as { mockReturnValue: (value: unknown) => void }).mockReturnValue({
+            status: 0,
+            stdout: 'yoho-remote codex --started-by daemon --yoho-remote-session-id session-OTHER',
+        });
+
+        expect(normalizeSessionProcessIdentity(baseMetadata, {
+            expectedSessionId: 'session-1',
+            trust: 'passive',
+        })).toBeNull();
+    });
+
+    it('returns null at coarse drift when ps fails and command line is unavailable', () => {
+        (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
+        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(1_025_000);
+        (spawn.sync as unknown as { mockReturnValue: (value: unknown) => void }).mockReturnValue({
+            status: 1,
+            stdout: '',
+        });
+
+        expect(normalizeSessionProcessIdentity(baseMetadata, {
+            expectedSessionId: 'session-1',
+            trust: 'passive',
+        })).toBeNull();
+    });
+
+    it('still rejects within the 2s..30s coarse window when ps fails (cmdline=null)', () => {
+        (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
+        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(1_010_000);
+        (spawn.sync as unknown as { mockReturnValue: (value: unknown) => void }).mockReturnValue({
+            status: 1,
+            stdout: '',
+        });
+
+        expect(normalizeSessionProcessIdentity(baseMetadata, {
+            expectedSessionId: 'session-1',
+            trust: 'passive',
+        })).toBeNull();
+    });
+
+    it('webhook trust bypasses cmdline lookup and accepts coarse drift without fingerprint check', () => {
+        (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
+        (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(1_025_000);
+        (spawn.sync as unknown as { mockReturnValue: (value: unknown) => void }).mockReturnValue({
+            status: 1,
+            stdout: '',
+        });
+
+        expect(normalizeSessionProcessIdentity(baseMetadata, {
+            expectedSessionId: 'session-1',
+            trust: 'webhook',
+        })).toMatchObject({
+            ...baseMetadata,
+            hostProcessStartedAt: 1_025_000,
+        });
+    });
+
     it('rejects daemon-owned coarse drift during passive recovery when command line fingerprint mismatches', () => {
         (isProcessAlive as unknown as { mockReturnValue: (value: boolean) => void }).mockReturnValue(true);
         (getProcessStartedAtMs as unknown as { mockReturnValue: (value: number) => void }).mockReturnValue(1_025_000);
