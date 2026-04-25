@@ -247,16 +247,16 @@ describe('PostgresStore schema migrations', () => {
         expect(source).toContain('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS thinking_at BIGINT;')
     })
 
-    it('declares identity graph tables and review indexes in schema bootstrap', () => {
+    it('declares identity graph tables and audit indexes in schema bootstrap', () => {
         expect(source).toContain('CREATE TABLE IF NOT EXISTS persons')
         expect(source).toContain('CREATE TABLE IF NOT EXISTS person_identities')
         expect(source).toContain('CREATE TABLE IF NOT EXISTS person_identity_links')
-        expect(source).toContain('CREATE TABLE IF NOT EXISTS person_identity_candidates')
         expect(source).toContain('CREATE TABLE IF NOT EXISTS person_identity_audits')
         expect(source).toContain('CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_person_identity_link')
-        expect(source).toContain('CREATE INDEX IF NOT EXISTS idx_person_identity_candidates_open')
         expect(source).toContain('CREATE INDEX IF NOT EXISTS idx_person_identity_audits_scope')
-        expect(source).toContain('decision_reason TEXT')
+        // person_identity_candidates migrated into the unified Approvals Engine
+        // (see store/approvals-ddl.ts).
+        expect(source).not.toContain('CREATE TABLE IF NOT EXISTS person_identity_candidates')
     })
 
     it('declares communication plan tables and indexes in schema bootstrap', () => {

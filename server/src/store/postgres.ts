@@ -786,6 +786,30 @@ export class PostgresStore implements IStore {
                 WHERE valid_to IS NULL AND state IN ('auto_verified', 'admin_verified');
             CREATE INDEX IF NOT EXISTS idx_person_identity_links_person ON person_identity_links(person_id);
 
+            -- Identity Graph: governance audit trail for merge/unmerge/detach
+            -- (admin actions on persons + identity links). NOT for approval
+            -- candidates — those moved to the unified Approvals Engine.
+            CREATE TABLE IF NOT EXISTS person_identity_audits (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+                action TEXT NOT NULL,
+                actor_email TEXT,
+                person_id TEXT REFERENCES persons(id) ON DELETE SET NULL,
+                target_person_id TEXT REFERENCES persons(id) ON DELETE SET NULL,
+                identity_id TEXT REFERENCES person_identities(id) ON DELETE SET NULL,
+                link_id TEXT REFERENCES person_identity_links(id) ON DELETE SET NULL,
+                reason TEXT,
+                payload JSONB NOT NULL DEFAULT '{}',
+                created_at BIGINT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_person_identity_audits_scope
+                ON person_identity_audits(namespace, org_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_person_identity_audits_person
+                ON person_identity_audits(person_id, target_person_id);
+            CREATE INDEX IF NOT EXISTS idx_person_identity_audits_identity
+                ON person_identity_audits(identity_id);
+
             -- Communication Plan (Phase 3A): per-person reply preferences
             CREATE TABLE IF NOT EXISTS communication_plans (
                 id TEXT PRIMARY KEY,
